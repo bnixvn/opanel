@@ -186,20 +186,17 @@ def change_database_password(database_id: int, payload: DatabasePasswordUpdate, 
 @router.get("/mariadb/tuning")
 def get_mariadb_tuning(current_user: User = Depends(get_current_user)):
     """Return current OPanel MariaDB config + hardware recommendation."""
-    ensure_role(current_user, Role.admin)
+    ensure_role(current_user.role, Role.admin)
     current = mariadb.read_mariadb_tuning()
     recommendation = mariadb.recommend_mariadb_config()
     return {"current": current, "recommendation": recommendation}
 
 
 @router.post("/mariadb/tuning")
-def apply_mariadb_tuning(current_user: User = Depends(get_current_user)):
+def apply_mariadb_tuning(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Auto-tune MariaDB for the current hardware and restart."""
-    ensure_role(current_user, Role.admin)
+    ensure_role(current_user.role, Role.admin)
     result = mariadb.apply_mariadb_tuning()
-    log_action(current_user, "mariadb_tuning_apply", detail={
-        "ram_mb": result["ram_mb"],
-        "buffer_pool": result["innodb_buffer_pool_size"],
-        "max_connections": result["max_connections"],
-    })
+    log_action(db, current_user.id, "mariadb_tuning_apply",
+               f"pool={result['innodb_buffer_pool_size']} conn={result['max_connections']}")
     return result

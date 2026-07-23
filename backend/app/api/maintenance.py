@@ -872,6 +872,47 @@ def install_php_version(php_version: str, current_user: User = Depends(get_curre
     return result
 
 
+# ---------------------------------------------------------------------------
+# PHP / LSPHP auto-tuning
+# ---------------------------------------------------------------------------
+@router.get("/php/tuning")
+def get_php_tuning(
+    php_version: str = Query(default="8.3"),
+    current_user: User = Depends(get_current_user),
+):
+    """Return current OPanel PHP config + hardware recommendation."""
+    ensure_role(current_user.role, Role.admin)
+    try:
+        current = php.read_php_tuning(php_version)
+        recommendation = php.recommend_php_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"current": current, "recommendation": recommendation}
+
+
+@router.post("/php/tuning")
+def apply_php_tuning_endpoint(
+    php_version: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Auto-tune PHP/LSPHP for current hardware and restart OLS.
+
+    If php_version is omitted, applies to ALL installed LSPHP versions.
+    """
+    ensure_role(current_user.role, Role.admin)
+    try:
+        result = php.apply_php_tuning(php_version)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    log_action(db, current_user.id, "php_tuning_apply",
+               ",".join(result["applied_to"]),
+               detail=f"mem={result['memory_limit']} opcache={result['opcache_memory_consumption']}M workers={result['lsapi_children']}")
+    return result
+
+
 @router.post("/cron")
 def add_cron(payload: CronCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     website = get_owned_website(db, current_user, payload.website_id)

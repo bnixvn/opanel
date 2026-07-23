@@ -12,7 +12,7 @@ import 'ace-builds/src-noconflict/mode-php';
 import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
-import { Archive, Check, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, MoveRight, Network, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle } from 'lucide-react';
+import { Archive, Check, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, MoveRight, Network, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import './style.css';
 import './brand.css';
@@ -420,6 +420,7 @@ function App() {
   const [editingUserForm, setEditingUserForm] = useState({ email: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
   const [phpConfig, setPhpConfig] = useState({ php_version: '8.3', display_errors: 'Off', max_execution_time: 300, max_input_time: 600, max_input_vars: 10000, memory_limit: '512M', post_max_size: '1024M', upload_max_filesize: '1024M' });
   const [phpVersions, setPhpVersions] = useState({ installed: ['8.3', '8.4'], supported: ['5.6', '7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5'] });
+  const [phpTuning, setPhpTuning] = useState(null);
   const [firewallStatus, setFirewallStatus] = useState(null);
   const [firewallPort, setFirewallPort] = useState('80');
   const [firewallProtocol, setFirewallProtocol] = useState('tcp');
@@ -2045,9 +2046,24 @@ function App() {
   }
 
   async function installPhpVersion(version) {
-    if (!confirm(`Install PHP ${version}? This will install php${version}-fpm via apt.`)) return;
+    if (!confirm(`Install PHP ${version}? This will install lsphp${version.replace('.','')} via apt.`)) return;
     const data = await request(`/maintenance/php-versions/${version}/install`, { method: 'POST' }, `Installing PHP ${version}...`);
     if (data) { setNotice(`PHP ${version} installed successfully.`); await loadPhpVersions(); await loadServiceNames(); }
+  }
+
+  async function loadPhpTuning() {
+    const data = await request(`/maintenance/php/tuning?php_version=${encodeURIComponent(phpConfig.php_version)}`, {}, 'Loading PHP tuning...');
+    if (data) setPhpTuning(data);
+  }
+
+  async function applyPhpTuning() {
+    if (!confirm(`Auto-tune PHP ${phpConfig.php_version} for this server? This will overwrite the OPanel ini file and restart OpenLiteSpeed.`)) return;
+    const data = await request(`/maintenance/php/tuning?php_version=${encodeURIComponent(phpConfig.php_version)}`, { method: 'POST' }, 'Applying PHP tuning...');
+    if (data) {
+      setNotice(`PHP tuned: memory_limit=${data.memory_limit}, OPcache=${data.opcache_memory_consumption}MB, LSAPI workers=${data.lsapi_children}`);
+      setPhpTuning(null);
+      await loadPhpConfig(phpConfig.php_version);
+    }
   }
 
   async function loadFirewall() {
@@ -2338,7 +2354,7 @@ function App() {
 
   useEffect(() => {
     if (isAuthenticated && page === 'users') loadUsers();
-    if (isAuthenticated && page === 'php') loadPhpConfig();
+    if (isAuthenticated && page === 'php') { loadPhpConfig(); loadPhpVersions(); }
     if (isAuthenticated && page === 'firewall') { loadFirewall(); loadFirewallBlocklists(); }
     if (isAuthenticated && page === 'waf') loadWafRules();
     if (isAuthenticated && page === 'updates' && currentUser?.role === 'admin') loadUpdates();
@@ -3187,8 +3203,25 @@ function App() {
         <label><span>post_max_size</span><input value={phpConfig.post_max_size} onChange={e => setPhpConfig(prev => ({ ...prev, post_max_size: e.target.value }))} placeholder="1024M" /></label>
         <label><span>upload_max_filesize</span><input value={phpConfig.upload_max_filesize} onChange={e => setPhpConfig(prev => ({ ...prev, upload_max_filesize: e.target.value }))} placeholder="1024M" /></label>
         <button className="secondary-light" disabled={!!loading} onClick={restorePhpDefaults}><RotateCcw size={14}/> Restore defaults</button>
+        <button className="secondary-light" disabled={!!loading} onClick={loadPhpTuning}><Zap size={14}/> Auto-tune</button>
         <button disabled={!!loading} onClick={updatePhpConfig}>Save</button>
       </div>
+      {phpTuning && phpTuning.recommendation && <div className="user-create-card" style={{ marginTop: 16, borderColor: 'var(--accent, #4f8ff7)' }}>
+        <h3>⚡ Auto-tune Recommendation</h3>
+        <p className="hint">Based on {phpTuning.recommendation.ram_mb} MB RAM, {phpTuning.recommendation.cores} CPU cores, {phpTuning.recommendation.is_ssd ? 'SSD' : 'HDD'} storage</p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px', margin: '12px 0', fontSize: '0.9em' }}>
+          <div><strong>memory_limit:</strong> {phpTuning.recommendation.memory_limit}</div>
+          <div><strong>OPcache memory:</strong> {phpTuning.recommendation.opcache_memory_consumption} MB</div>
+          <div><strong>OPcache files:</strong> {phpTuning.recommendation.opcache_max_accelerated_files}</div>
+          <div><strong>OPcache JIT:</strong> {phpTuning.recommendation.opcache_jit} ({phpTuning.recommendation.opcache_jit_buffer_size}MB)</div>
+          <div><strong>LSAPI workers:</strong> {phpTuning.recommendation.lsapi_children}</div>
+          <div><strong>LSAPI idle:</strong> {phpTuning.recommendation.lsapi_max_idle}s, max idle children: {phpTuning.recommendation.lsapi_max_idle_children}</div>
+          <div><strong>upload_max:</strong> {phpTuning.recommendation.upload_max_filesize}</div>
+          <div><strong>post_max:</strong> {phpTuning.recommendation.post_max_size}</div>
+        </div>
+        <button disabled={!!loading} onClick={applyPhpTuning}><Zap size={14}/> Apply Auto-tune to PHP {phpConfig.php_version}</button>
+        <button className="secondary-light" style={{ marginLeft: 8 }} onClick={() => setPhpTuning(null)}>Dismiss</button>
+      </div>}
       {notInstalled.length > 0 && <div className="user-create-card" style={{ marginTop: 16 }}>
         <h3>Install PHP</h3>
         <div className="php-install-grid">
