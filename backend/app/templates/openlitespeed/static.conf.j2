@@ -65,6 +65,19 @@ module mod_security {
 
 # Static site: no PHP processor needed
 
+context / {
+    type                  null
+    location              {{ root_path }}/{{ document_root }}
+    allowOverride         all
+
+    addDefaultCharset     off
+
+    rewrite {
+        enable              1
+        inherit             1
+    }
+}
+
 {% for redirect in redirects %}
 rewrite {
     enable                1

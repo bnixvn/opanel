@@ -88,13 +88,12 @@ extprocessor {{ lsphp_app }} {
 context / {
     type                  null
     location              {{ root_path }}/{{ document_root }}
+    allowOverride         all
 
 {% if lsphp_app %}
     rewrite {
         enable            1
         rewriteRules      <<<END_RULES
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^index\.php$ - [L]
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
