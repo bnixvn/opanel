@@ -785,6 +785,7 @@ setup_phpmyadmin_sso() {
     pma_secure="true"
   fi
 
+  mkdir -p /etc/phpmyadmin/conf.d
   cat >/etc/phpmyadmin/conf.d/opanel-signon.php <<PHP
 <?php
 \$cfg['blowfish_secret'] = '${blowfish_secret}';
