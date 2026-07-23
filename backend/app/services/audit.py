@@ -22,8 +22,8 @@ def log_action(
     if request is not None:
         # request.client.host is trustworthy because uvicorn is started with
         # --proxy-headers --forwarded-allow-ips 127.0.0.1, so X-Forwarded-For
-        # is only honoured when the peer is the trusted local Nginx (matches
-        # /usr/local/sbin/opanel-api-start). Direct hits on 0.0.0.0:2222 from
+        # is only honoured when the peer is the trusted local OpenLiteSpeed
+        # (started by opanel). Direct hits on 0.0.0.0:2222 from
         # the public Internet cannot forge the source IP.
         ip = request.client.host if request.client else ""
         ua = request.headers.get("user-agent", "")[:200]

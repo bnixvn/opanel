@@ -5,18 +5,19 @@ from pathlib import Path
 
 from app.services.shell import shell
 
-BASE_SERVICES = ("opanel-api", "nginx", "mariadb", "redis-server")
+BASE_SERVICES = ("opanel-api", "lsws", "mariadb", "redis-server")
 PHP_VERSION_ORDER = ("5.6", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5")
-PHP_ETC_DIR = Path("/etc/php")
+LSPHP_ETC_DIR = Path("/usr/local/lsws/lsphp*")
 SUPPORTED_ACTIONS = {"start", "stop", "restart", "reload", "status"}
 PROTECTED_SERVICE_ACTIONS = {
     ("opanel-api", "stop"): "Stopping opanel-api from the panel would make the panel unavailable",
     ("redis-server", "stop"): "Stopping redis-server would disable production login rate limiting",
+    ("lsws", "stop"): "Stopping lsws would take all websites offline",
 }
 
 
 def _php_sort_key(service_name: str) -> tuple[int, list[int]]:
-    version = service_name.removeprefix("php").removesuffix("-fpm")
+    version = service_name.removeprefix("lsphp")
     try:
         known_index = PHP_VERSION_ORDER.index(version)
     except ValueError:
@@ -31,13 +32,14 @@ def _php_sort_key(service_name: str) -> tuple[int, list[int]]:
 
 
 def installed_php_services() -> list[str]:
-    if not PHP_ETC_DIR.exists():
-        return []
+    """Detect installed lsphp versions by checking /usr/local/lsws/lsphpNN/."""
     services = []
-    for version_dir in PHP_ETC_DIR.iterdir():
-        version = version_dir.name
-        if (version_dir / "fpm" / "php-fpm.conf").exists():
-            services.append(f"php{version}-fpm")
+    lsws_dir = Path("/usr/local/lsws")
+    if not lsws_dir.exists():
+        return []
+    for entry in lsws_dir.iterdir():
+        if entry.is_dir() and entry.name.startswith("lsphp") and entry.name[5:].replace(".", "").isdigit():
+            services.append(entry.name)
     return sorted(set(services), key=_php_sort_key)
 
 

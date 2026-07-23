@@ -44,7 +44,7 @@ def validate_php_version(php_version: str) -> str:
     return php_version
 
 
-def php_fpm_pool_name(username: str, php_version: str, root_path: str | Path | None = None) -> str:
+def lsphp_app_name(username: str, php_version: str, root_path: str | Path | None = None) -> str:
     """Return the LSPHP external app name for a site user + PHP version."""
     safe_user = validate_linux_user(username)
     safe_version = validate_php_version(php_version).replace(".", "")
@@ -55,7 +55,11 @@ def php_fpm_pool_name(username: str, php_version: str, root_path: str | Path | N
     return f"opanel-{safe_user}-lsphp{safe_version}"
 
 
-def php_fpm_socket(
+# backward-compat alias
+php_fpm_pool_name = lsphp_app_name
+
+
+def lsphp_socket(
     username: Optional[str],
     php_version: Optional[str] = None,
     root_path: str | Path | None = None,
@@ -64,13 +68,21 @@ def php_fpm_socket(
     if not username:
         return None
     if php_version:
-        return f"/tmp/lshttpd/{php_fpm_pool_name(username, php_version, root_path)}.sock"
+        return f"/tmp/lshttpd/{lsphp_app_name(username, php_version, root_path)}.sock"
     safe_user = validate_linux_user(username)
     return f"/tmp/lshttpd/opanel-{safe_user}.sock"
 
 
-def site_php_fpm_socket(username: Optional[str], root_path: str | Path, php_version: Optional[str]) -> Optional[str]:
-    return php_fpm_socket(username, php_version, root_path) if php_version else None
+# backward-compat alias
+php_fpm_socket = lsphp_socket
+
+
+def site_lsphp_socket(username: Optional[str], root_path: str | Path, php_version: Optional[str]) -> Optional[str]:
+    return lsphp_socket(username, php_version, root_path) if php_version else None
+
+
+# backward-compat alias
+site_php_fpm_socket = site_lsphp_socket
 
 
 def site_root_for_domain(domain: str) -> str:

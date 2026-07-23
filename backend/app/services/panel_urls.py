@@ -16,10 +16,10 @@ def _request_host_without_port(request: Request) -> str:
 
 
 def tools_base_url(request: Request) -> str:
-    """Public Nginx URL for phpMyAdmin helper routes.
+    """Public OpenLiteSpeed URL for phpMyAdmin helper routes.
 
     The panel itself listens on PANEL_PORT, but phpMyAdmin is
-    served by Nginx on the normal web ports. Keep generated URLs off :2222.
+    served by OpenLiteSpeed on the normal web ports. Keep generated URLs off :2222.
     """
     current_panel_url = panel_settings.current_settings().get("panel_url") or settings.panel_url
     parsed_panel = urlparse(current_panel_url if "://" in current_panel_url else "")

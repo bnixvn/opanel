@@ -167,17 +167,17 @@ def _rewrite_website_vhost(website: Website, **overrides) -> str:
     root_path = overrides.pop("root_path", website.root_path)
     linux_user = overrides.pop("linux_user", website.linux_user)
     runtime_php_version = php_version if app_type in {"wordpress", "php"} else None
-    if "php_fpm_socket_override" in overrides:
-        php_fpm_socket_override = overrides.pop("php_fpm_socket_override")
+    if "lsphp_socket_override" in overrides:
+        lsphp_socket_override = overrides.pop("lsphp_socket_override")
     elif runtime_php_version:
-        php_fpm_socket_override = site_users.site_php_fpm_socket(linux_user, root_path, runtime_php_version)
+        lsphp_socket_override = site_users.site_lsphp_socket(linux_user, root_path, runtime_php_version)
     else:
-        php_fpm_socket_override = None
+        lsphp_socket_override = None
     rewrite_kwargs = {
         "app_type": app_type,
         "php_version": php_version,
         "custom_directives": overrides.pop("custom_directives", website.nginx_custom or ""),
-        "php_fpm_socket_override": php_fpm_socket_override,
+        "lsphp_socket_override": lsphp_socket_override,
         "waf_enabled": overrides.pop("waf_enabled", website.waf_enabled),
         "http_flood_enabled": overrides.pop("http_flood_enabled", website.http_flood_enabled),
         "http_flood_config": overrides.pop("http_flood_config", website.http_flood_config or ""),
@@ -302,7 +302,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
                 root_path,
                 app_type="wordpress",
                 php_version=payload.php_version,
-                php_fpm_socket_override=site_users.site_php_fpm_socket(linux_user, root_path, payload.php_version),
+                lsphp_socket_override=site_users.site_lsphp_socket(linux_user, root_path, payload.php_version),
                 document_root="public_html",
                 rewrite_mode="front_controller",
             )
@@ -327,7 +327,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
                 root_path,
                 app_type=app_type_value,
                 php_version=payload.php_version,
-                php_fpm_socket_override=site_users.site_php_fpm_socket(linux_user, root_path, runtime_php_version),
+                lsphp_socket_override=site_users.site_lsphp_socket(linux_user, root_path, runtime_php_version),
                 document_root="public_html",
                 rewrite_mode="none",
             )
@@ -422,7 +422,7 @@ def create_website_alias(
                 raise RuntimeError(_command_error(result))
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Cannot write Nginx config: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Cannot write webserver config: {exc}") from exc
     db.commit()
     db.refresh(alias)
     log_action(db, current_user.id, "create_website_alias", website.domain, payload.domain, request=request)
@@ -453,7 +453,7 @@ def delete_website_alias(
         _rewrite_website_vhost(website, aliases=aliases, redirects=redirects)
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Cannot write Nginx config: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Cannot write webserver config: {exc}") from exc
     db.commit()
     log_action(db, current_user.id, "delete_website_alias", website.domain, domain, request=request)
     return {"ok": True}

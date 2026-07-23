@@ -2735,7 +2735,7 @@ function App() {
         </label>
         <p className="hint">{wpFieldsEnabled
           ? 'WordPress will be installed and the panel will show the URL, admin account, and password after creation.'
-          : 'A PHP-FPM vhost will be created with public_html/ folder. Upload your PHP, HTML, or static files via File Manager.'}</p>
+          : 'A virtual host will be created with public_html/ folder. Upload your PHP, HTML, or static files via File Manager.'}</p>
       </section>
       <section className="section">
         <div className="section-title">
