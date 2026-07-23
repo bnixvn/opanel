@@ -146,7 +146,7 @@ def default_rule_definitions() -> list[dict]:
 
 def site_rules_file(domain: str) -> str:
     safe_domain = _validate_domain(domain)
-    return f"/usr/local/lsws/conf/opanel/modsec/sites/{safe_domain}.conf"
+    return f"/usr/local/lsws/conf/opanel/waf/sites/{safe_domain}.conf"
 
 
 def render_site_rules(domain: str, enabled_rule_ids: Iterable[str], custom_rules: str = "") -> str:
@@ -155,7 +155,7 @@ def render_site_rules(domain: str, enabled_rule_ids: Iterable[str], custom_rules
     custom = _validate_custom_rules(custom_rules)
     chunks = [
         f"# OPanel WAF rules for {safe_domain}",
-        "Include /usr/local/lsws/conf/opanel/modsec/opanel-base.conf",
+        "Include /usr/local/lsws/conf/opanel/waf/opanel-base.conf",
         "",
         "# OPanel selected default rules",
     ]
@@ -235,7 +235,7 @@ def status():
     return shell.privileged(
         "waf-status",
         check=False,
-        fallback=["bash", "-lc", "test -f /usr/local/lsws/conf/opanel/modsec/opanel-base.conf && echo installed || echo not-installed"],
+        fallback=["bash", "-lc", "test -f /usr/local/lsws/conf/opanel/waf/opanel-base.conf && echo installed || echo not-installed"],
     )
 
 
@@ -259,7 +259,7 @@ def default_rules():
     return shell.privileged(
         "waf-default-rules",
         check=False,
-        fallback=["bash", "-lc", "cat /usr/local/lsws/conf/opanel/modsec/opanel-default.conf 2>/dev/null || true"],
+        fallback=["bash", "-lc", "cat /usr/local/lsws/conf/opanel/waf/opanel-default.conf 2>/dev/null || true"],
     )
 
 
@@ -267,7 +267,7 @@ def custom_rules():
     return shell.privileged(
         "waf-custom-rules",
         check=False,
-        fallback=["bash", "-lc", "cat /usr/local/lsws/conf/opanel/modsec/opanel-custom.conf 2>/dev/null || true"],
+        fallback=["bash", "-lc", "cat /usr/local/lsws/conf/opanel/waf/opanel-custom.conf 2>/dev/null || true"],
     )
 
 

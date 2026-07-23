@@ -112,8 +112,8 @@ def test_install_manual_ssl_uses_helper_without_logging_key(monkeypatch):
     paths = ssl.install_manual_ssl("example.test", cert_pem, key_pem)
 
     assert paths == {
-        "cert": "/etc/nginx/opanel/ssl/sites/example.test/cert.crt",
-        "key": "/etc/nginx/opanel/ssl/sites/example.test/privkey.key",
+        "cert": "/usr/local/lsws/conf/opanel/ssl/sites/example.test/cert.crt",
+        "key": "/usr/local/lsws/conf/opanel/ssl/sites/example.test/privkey.key",
         "ca": None,
     }
     assert captured["helper_command"] == "manual-ssl-install"

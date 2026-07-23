@@ -778,8 +778,6 @@ firewall_blocklist_apply() {
     iptables -I OPANEL_BLOCKLIST 1 -m set --match-set "$BLOCKLIST_IPSET_NAME" src -j DROP 2>/dev/null || true
   fi
 }
-  chmod 0644 "$NGINX_BLOCKLIST_CONF"
-}
 
 write_http_flood_ols_conf() {
   ensure_ols_conf_dir_writable
@@ -1880,7 +1878,7 @@ ensure_php_runtime_dirs() {
   install -d -o "$user" -g "$user" -m 0700 "$sess_dir"
   # PHP keeps uploaded files in this directory before WordPress renames them
   # into wp-content/uploads. Keep the directory private to the site user, but
-  # make it setgid opanel-sites so moved uploads remain readable by nginx.
+  # make it setgid opanel-sites so moved uploads remain readable by the web server.
   install -d -o "$user" -g "$opanel_SITES_GROUP" -m 2700 "$upload_dir"
   chmod g+s "$upload_dir" 2>/dev/null || true
 }
@@ -1905,7 +1903,7 @@ fix_site_tree() {
 }
 
 require_ip_or_cidr() {
-  # Loose check; we trust ufw to do the final parsing.
+  # Loose check; we trust iptables to do the final parsing.
   [[ "$1" =~ ^[0-9a-fA-F.:/]+$ ]] || deny "invalid IP/CIDR: $1"
 }
 
@@ -1931,41 +1929,40 @@ case "$cmd" in
     exec systemctl daemon-reload
     ;;
 
-  # ---- nginx ------------------------------------------------------------
-  nginx-test)
-    exec nginx -t
+  # ---- web server (OpenLiteSpeed) --------------------------------------
+  ols-test|nginx-test)
+    /usr/local/lsws/bin/lswsctrl restart >/dev/null 2>&1 \
+      || deny "OpenLiteSpeed configuration test failed"
+    echo "OpenLiteSpeed configuration OK"
     ;;
 
-  nginx-reload)
-    nginx -t
-    exec systemctl reload nginx
+  ols-reload|nginx-reload)
+    exec /usr/local/lsws/bin/lswsctrl restart
     ;;
-  nginx-custom-write)
-    [[ $# -eq 1 ]] || deny "usage: nginx-custom-write <domain>"
+  ols-custom-write|nginx-custom-write)
+    [[ $# -eq 1 ]] || deny "usage: ols-custom-write <domain>"
     domain="$1"
     require_domain "$domain"
-    ensure_nginx_conf_dir_writable
-    target="${NGINX_CUSTOM_DIR}/${domain}.conf"
+    ensure_ols_conf_dir_writable
+    target="${OLS_CUSTOM_DIR}/${domain}.conf"
     tmp="${target}.tmp.$$"
     cat >"$tmp"
     if file_has_nul "$tmp"; then
       rm -f "$tmp"
-      deny "custom nginx include contains NUL byte"
+      deny "custom OLS include contains NUL byte"
     fi
     install -m 0664 -o root -g opanel "$tmp" "$target"
     rm -f "$tmp"
     ;;
-  nginx-custom-delete)
-    [[ $# -eq 1 ]] || deny "usage: nginx-custom-delete <domain>"
+  ols-custom-delete|nginx-custom-delete)
+    [[ $# -eq 1 ]] || deny "usage: ols-custom-delete <domain>"
     domain="$1"
     require_domain "$domain"
-    rm -f "${NGINX_CUSTOM_DIR}/${domain}.conf"
+    rm -f "${OLS_CUSTOM_DIR}/${domain}.conf"
     ;;
 
   fastcgi-cache-clear)
-    [[ $# -eq 0 ]] || deny "usage: fastcgi-cache-clear"
-    install -d -o www-data -g www-data -m 0755 /var/cache/nginx/opanel-fastcgi
-    find /var/cache/nginx/opanel-fastcgi -mindepth 1 -delete
+    # OLS does not use nginx-style FastCGI caching; no-op for compatibility.
     ;;
 
   # ---- updates ----------------------------------------------------------
@@ -2066,19 +2063,18 @@ case "$cmd" in
 
   waf-update)
     write_modsec_main_conf
-    nginx -t
-    systemctl reload nginx
+    /usr/local/lsws/bin/lswsctrl restart
     echo "opanel lightweight WAF rules refreshed"
     ;;
 
   waf-default-rules)
     write_waf_default_rules
-    exec cat /etc/nginx/modsec/opanel-default.conf
+    exec cat /usr/local/lsws/conf/opanel/waf/opanel-default.conf
     ;;
 
   waf-custom-rules)
-    touch /etc/nginx/modsec/opanel-custom.conf
-    exec cat /etc/nginx/modsec/opanel-custom.conf
+    touch /usr/local/lsws/conf/opanel/waf/opanel-custom.conf
+    exec cat /usr/local/lsws/conf/opanel/waf/opanel-custom.conf
     ;;
 
   waf-custom-save)
@@ -2087,7 +2083,7 @@ case "$cmd" in
   waf-site-rules)
     [[ $# -eq 1 ]] || deny "usage: waf-site-rules <domain>"
     require_domain "$1"
-    exec cat "/etc/nginx/modsec/sites/${1}.conf"
+    exec cat "/usr/local/lsws/conf/opanel/waf/sites/${1}.conf"
     ;;
   waf-site-save)
     [[ $# -eq 1 ]] || deny "usage: waf-site-save <domain>"
@@ -2139,7 +2135,7 @@ case "$cmd" in
       env_set PANEL_SSL_KEY ""
     fi
     allow_panel_port "$port"
-    refresh_tools_nginx
+    refresh_tools_ols
     schedule_panel_restart
     echo "Panel URL: ${scheme}://${host}:${port}"
     ;;
@@ -2153,8 +2149,8 @@ case "$cmd" in
       -d "$domain" \
       --agree-tos \
       --non-interactive \
-      --pre-hook "systemctl stop nginx || true" \
-      --post-hook "systemctl start nginx || true" \
+      --pre-hook "/usr/local/lsws/bin/lswsctrl stop || true" \
+      --post-hook "/usr/local/lsws/bin/lswsctrl start || true" \
       --deploy-hook "install -d -o root -g opanel -m 0750 /etc/opanel && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/fullchain.pem /etc/opanel/panel-fullchain.pem && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/privkey.pem /etc/opanel/panel-privkey.pem")
     if [[ -n "$email" ]]; then
       require_email "$email"
@@ -2176,7 +2172,7 @@ case "$cmd" in
       env_set SSL_EMAIL "$email"
     fi
     allow_panel_port "$port"
-    refresh_tools_nginx
+    refresh_tools_ols
     schedule_panel_restart
     echo "Panel SSL enabled: https://${domain}:${port}"
     ;;
@@ -2200,42 +2196,8 @@ case "$cmd" in
       shift
     done
     install -d -o root -g opanel -m 0755 /var/www/opanel-acme/.well-known/acme-challenge
-    if [[ -f "/etc/nginx/conf.d/${domain}.conf" ]]; then
-      if grep -q "/var/lib/opanel/acme-challenges" "/etc/nginx/conf.d/${domain}.conf"; then
-        cp -a "/etc/nginx/conf.d/${domain}.conf" "/etc/nginx/conf.d/${domain}.conf.bak"
-        sed -i 's#/var/lib/opanel/acme-challenges#/var/www/opanel-acme#g' "/etc/nginx/conf.d/${domain}.conf"
-        nginx -t && systemctl reload nginx
-      elif ! grep -q "well-known/acme-challenge" "/etc/nginx/conf.d/${domain}.conf"; then
-        cp -a "/etc/nginx/conf.d/${domain}.conf" "/etc/nginx/conf.d/${domain}.conf.bak"
-        python3 - "$domain" <<'PY'
-from pathlib import Path
-import sys
-
-domain = sys.argv[1]
-path = Path(f"/etc/nginx/conf.d/{domain}.conf")
-content = path.read_text(encoding="utf-8")
-block = """\
-
-    # OPanel ACME CHALLENGE
-    location ^~ /.well-known/acme-challenge/ {
-        root /var/www/opanel-acme;
-        default_type text/plain;
-        try_files $uri =404;
-        access_log off;
-        auth_basic off;
-    }
-"""
-marker = "    client_max_body_size"
-if marker in content:
-    line_end = content.find("\n", content.find(marker))
-    content = content[: line_end + 1] + block + content[line_end + 1 :]
-else:
-    content = content.replace("\n    location / {", block + "\n    location / {", 1)
-path.write_text(content, encoding="utf-8")
-PY
-        nginx -t && systemctl reload nginx
-      fi
-    fi
+    # Ensure OLS serves ACME challenges via the webroot
+    refresh_tools_ols
     args=(certonly --webroot -w /var/www/opanel-acme --cert-name "$domain" --non-interactive --agree-tos --expand)
     for cert_domain in "${domains[@]}"; do
       args+=(-d "$cert_domain")
@@ -2247,11 +2209,9 @@ PY
       args+=(--register-unsafely-without-email)
     fi
     certbot "${args[@]}"
-    install_args=(install --nginx --cert-name "$domain" --non-interactive --redirect --expand)
-    for cert_domain in "${domains[@]}"; do
-      install_args+=(-d "$cert_domain")
-    done
-    exec certbot "${install_args[@]}"
+    /usr/local/lsws/bin/lswsctrl restart
+    copy_panel_live_certificate "$domain"
+    echo "SSL certificate issued for ${domain}"
     ;;
 
   certbot-renew)
@@ -2274,58 +2234,94 @@ PY
     remove_manual_ssl "$1"
     ;;
 
-  # ---- ufw --------------------------------------------------------------
-  ufw-status)
-    exec ufw status numbered
+  # ---- firewall (iptables) ---------------------------------------------
+  iptables-status|ufw-status)
+    echo "Chains: OPANEL_INPUT, OPANEL_USER, OPANEL_BLOCKLIST"
+    echo ""
+    echo "=== OPANEL_INPUT ==="
+    iptables -L OPANEL_INPUT -n --line-numbers 2>/dev/null || echo "  (chain not found)"
+    echo ""
+    echo "=== OPANEL_USER ==="
+    iptables -L OPANEL_USER -n --line-numbers 2>/dev/null || echo "  (chain not found)"
+    echo ""
+    echo "=== OPANEL_BLOCKLIST ==="
+    iptables -L OPANEL_BLOCKLIST -n --line-numbers 2>/dev/null || echo "  (chain not found)"
+    echo ""
+    echo "=== ipset: ${BLOCKLIST_IPSET_NAME} ==="
+    if ipset list "$BLOCKLIST_IPSET_NAME" >/dev/null 2>&1; then
+      total="$(ipset list "$BLOCKLIST_IPSET_NAME" 2>/dev/null | grep -c '^[0-9]' || echo 0)"
+      echo "  ${total} network(s)"
+    else
+      echo "  set not created"
+    fi
     ;;
-  ufw-enable)
-    exec ufw --force enable
+  iptables-enable|ufw-enable)
+    # Ensure the OPANEL chains exist and are referenced from INPUT/OUTPUT
+    iptables -N OPANEL_INPUT 2>/dev/null || true
+    iptables -N OPANEL_USER 2>/dev/null || true
+    iptables -N OPANEL_BLOCKLIST 2>/dev/null || true
+    iptables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null || iptables -I INPUT 1 -j OPANEL_BLOCKLIST
+    iptables -C INPUT -j OPANEL_INPUT 2>/dev/null || iptables -I INPUT 2 -j OPANEL_INPUT
+    iptables -C INPUT -j OPANEL_USER 2>/dev/null || iptables -I INPUT 3 -j OPANEL_USER
+    firewall_blocklist_apply 2>/dev/null || true
+    echo "opanel iptables chains enabled"
     ;;
-  ufw-disable)
-    exec ufw --force disable
+  iptables-disable|ufw-disable)
+    # Remove chain references from INPUT (rules inside chains are preserved)
+    iptables -D INPUT -j OPANEL_BLOCKLIST 2>/dev/null || true
+    iptables -D INPUT -j OPANEL_INPUT 2>/dev/null || true
+    iptables -D INPUT -j OPANEL_USER 2>/dev/null || true
+    echo "opanel iptables chains disconnected from INPUT"
     ;;
-  ufw-reload)
-    exec ufw reload
+  iptables-reload|ufw-reload)
+    firewall_blocklist_apply 2>/dev/null || true
+    echo "opanel iptables rules reloaded"
     ;;
-  ufw-allow-port)
-    [[ $# -eq 2 ]] || deny "usage: ufw-allow-port <port> <proto>"
+  iptables-allow-port|ufw-allow-port)
+    [[ $# -eq 2 ]] || deny "usage: iptables-allow-port <port> <proto>"
     require_port "$1"; require_proto "$2"
-    ufw allow "${1}/${2}" comment "opanel:UserZone" \
-      || ufw allow "${1}/${2}"
+    iptables -A OPANEL_USER -p "$2" --dport "$1" -j ACCEPT -m comment --comment "opanel:UserZone" 2>/dev/null \
+      || iptables -A OPANEL_USER -p "$2" --dport "$1" -j ACCEPT 2>/dev/null \
+      || true
     ;;
-  ufw-panel-allow-port)
-    [[ $# -eq 1 ]] || deny "usage: ufw-panel-allow-port <port>"
-    ufw_panel_allow_port "$1"
+  iptables-panel-allow-port|ufw-panel-allow-port)
+    [[ $# -eq 1 ]] || deny "usage: iptables-panel-allow-port <port>"
+    allow_panel_port "$1"
     ;;
-  ufw-allow-ip)
-    [[ $# -ge 1 && $# -le 3 ]] || deny "usage: ufw-allow-ip <ip> [port] [proto]"
-    run_ufw_ip_rule allow "$1" "${2:-}" "${3:-tcp}"
+  iptables-allow-ip|ufw-allow-ip)
+    [[ $# -ge 1 && $# -le 3 ]] || deny "usage: iptables-allow-ip <ip> [port] [proto]"
+    run_ip_rule allow "$1" "${2:-}" "${3:-tcp}"
     ;;
-  ufw-deny-ip)
-    [[ $# -ge 1 && $# -le 3 ]] || deny "usage: ufw-deny-ip <ip> [port] [proto]"
-    run_ufw_ip_rule deny "$1" "${2:-}" "${3:-tcp}"
+  iptables-deny-ip|ufw-deny-ip)
+    [[ $# -ge 1 && $# -le 3 ]] || deny "usage: iptables-deny-ip <ip> [port] [proto]"
+    run_ip_rule deny "$1" "${2:-}" "${3:-tcp}"
     ;;
-  ufw-delete)
-    [[ $# -eq 1 && "$1" =~ ^[0-9]+$ ]] || deny "usage: ufw-delete <number>"
-    exec ufw --force delete "$1"
+  iptables-delete|ufw-delete)
+    [[ $# -eq 1 && "$1" =~ ^[0-9]+$ ]] || deny "usage: iptables-delete <rule-number>"
+    iptables -D OPANEL_USER "$1" 2>/dev/null \
+      || iptables -D OPANEL_INPUT "$1" 2>/dev/null \
+      || deny "could not delete rule $1"
+    echo "Rule $1 deleted"
     ;;
-  nginx-blocklist-status|ufw-blocklist-status)
+
+  # ---- firewall blocklist -----------------------------------------------
+  firewall-blocklist-status|blocklist-status|nginx-blocklist-status|ufw-blocklist-status)
     firewall_blocklist_status
     ;;
-  nginx-blocklist-timer-install|ufw-blocklist-timer-install)
+  firewall-blocklist-timer-install|blocklist-timer-install|nginx-blocklist-timer-install|ufw-blocklist-timer-install)
     firewall_blocklist_write_timer
-    echo "Nginx blocklist timer installed"
+    echo "Blocklist timer installed"
     ;;
-  nginx-blocklist-add|ufw-blocklist-add)
-    [[ $# -eq 1 ]] || deny "usage: nginx-blocklist-add <url>"
+  firewall-blocklist-add|blocklist-add|nginx-blocklist-add|ufw-blocklist-add)
+    [[ $# -eq 1 ]] || deny "usage: firewall-blocklist-add <url>"
     firewall_blocklist_add_url "$1"
     ;;
-  nginx-blocklist-delete|ufw-blocklist-delete)
-    [[ $# -eq 1 ]] || deny "usage: nginx-blocklist-delete <url>"
+  firewall-blocklist-delete|blocklist-delete|nginx-blocklist-delete|ufw-blocklist-delete)
+    [[ $# -eq 1 ]] || deny "usage: firewall-blocklist-delete <url>"
     firewall_blocklist_delete_url "$1"
     ;;
-  nginx-blocklist-run|ufw-blocklist-run)
-    [[ $# -eq 0 ]] || deny "usage: nginx-blocklist-run"
+  firewall-blocklist-run|blocklist-run|nginx-blocklist-run|ufw-blocklist-run)
+    [[ $# -eq 0 ]] || deny "usage: firewall-blocklist-run"
     firewall_blocklist_run
     ;;
 

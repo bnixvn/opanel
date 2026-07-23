@@ -532,16 +532,16 @@ def _write_custom_include(domain: str, custom_directives: str) -> str:
     if settings.command_dry_run:
         return str(target)
     shell.privileged(
-        "nginx-custom-write",
+        "ols-custom-write",
         helper_args=[safe_domain],
         input=safe_custom,
         fallback=[
             "bash",
             "-lc",
             (
-                "install -d -m 0775 /etc/nginx/opanel/custom && "
-                f"cat > /etc/nginx/opanel/custom/{safe_domain}.conf && "
-                f"chmod 0664 /etc/nginx/opanel/custom/{safe_domain}.conf"
+                "install -d -m 0775 /usr/local/lsws/conf/opanel/custom && "
+                f"cat > /usr/local/lsws/conf/opanel/custom/{safe_domain}.conf && "
+                f"chmod 0664 /usr/local/lsws/conf/opanel/custom/{safe_domain}.conf"
             ),
         ],
     )
@@ -553,7 +553,7 @@ def _delete_custom_include(domain: str) -> None:
     if settings.command_dry_run:
         return
     shell.privileged(
-        "nginx-custom-delete",
+        "ols-custom-delete",
         helper_args=[safe_domain],
         fallback=["rm", "-f", str(_custom_include_path(safe_domain))],
     )
@@ -946,7 +946,7 @@ def _test_and_reload(
     custom_domain: Optional[str] = None,
     custom_snapshot: Optional[tuple[bool, str]] = None,
 ) -> None:
-    test = shell.privileged("nginx-test", check=False, fallback=["nginx", "-t"])
+    test = shell.privileged("ols-test", check=False, fallback=["/usr/local/lsws/bin/lswsctrl", "restart"])
     if test.returncode != 0:
         if old_content is not None:
             target.write_text(old_content, encoding="utf-8")
@@ -954,8 +954,8 @@ def _test_and_reload(
             target.unlink(missing_ok=True)
         if custom_domain is not None and custom_snapshot is not None:
             _restore_custom_include(custom_domain, custom_snapshot)
-        raise RuntimeError((test.stderr or test.stdout or "nginx -t failed").strip())
-    shell.privileged("nginx-reload", fallback=["bash", "-lc", "nginx -t && systemctl reload nginx"])
+        raise RuntimeError((test.stderr or test.stdout or "OpenLiteSpeed config test failed").strip())
+    shell.privileged("ols-reload", fallback=["/usr/local/lsws/bin/lswsctrl", "restart"])
 
 
 def render_vhost(
@@ -1218,7 +1218,7 @@ def delete_wordpress_vhost(domain: str):
         return str(target)
     target.unlink(missing_ok=True)
     _delete_custom_include(domain)
-    shell.privileged("nginx-reload", fallback=["bash", "-lc", "nginx -t && systemctl reload nginx"])
+    shell.privileged("ols-reload", fallback=["/usr/local/lsws/bin/lswsctrl", "restart"])
     return str(target)
 
 

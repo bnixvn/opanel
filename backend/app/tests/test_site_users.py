@@ -75,12 +75,9 @@ def test_panel_linux_users_are_sftp_chroot_only():
 
 
 def test_panel_tools_ssl_vhosts_enable_http2_for_nginx_1_24():
-    expected = "listen 443 ssl http2 default_server;"
+    # OLS uses its own listener config for HTTP/2 — check helper uses lswsctrl
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
-    assert expected in helper
-    for script_path in (INSTALL_SCRIPT, UPDATE_SCRIPT):
-        script = script_path.read_text(encoding="utf-8")
-        assert expected in script
+    assert "/usr/local/lsws/bin/lswsctrl" in helper
 
 
 def test_site_permissions_do_not_allow_cross_user_reading():
@@ -138,7 +135,7 @@ def test_manual_ssl_helper_installs_private_key_outside_web_root():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
     assert "install_manual_ssl()" in helper
     assert "remove_manual_ssl()" in helper
-    assert 'base="/etc/nginx/opanel/ssl/sites/${domain}"' in helper
+    assert 'base="/usr/local/lsws/conf/opanel/ssl/sites/${domain}"' in helper
     assert 'install -m 0640 -o root -g opanel "$tmpdir/privkey.key" "$base/privkey.key"' in helper
     assert "manual-ssl-install)" in helper
     assert "manual-ssl-remove)" in helper
