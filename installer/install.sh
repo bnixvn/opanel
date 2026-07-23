@@ -228,16 +228,15 @@ NODE
 
 install_openlitespeed() {
   export DEBIAN_FRONTEND=noninteractive
-  # Add LiteSpeed repository
-  if [[ ! -f /etc/apt/sources.list.d/lst_debian_repo.list ]]; then
-    curl -fsSL --connect-timeout 15 --max-time 120 https://repo.litespeed.sh | bash
-  fi
+  # Add LiteSpeed repository (always re-run to ensure fresh repo config)
+  curl -fsSL --connect-timeout 15 --max-time 120 https://repo.litespeed.sh | bash
   apt-get update --allow-releaseinfo-change
   # Install OLS + LSPHP versions + modsecurity
   local lsphp_packages=""
   for version in $PHP_VERSIONS; do
     local ver_no_dot="${version//./}"
-    lsphp_packages+=" lsphp${ver_no_dot} lsphp${ver_no_dot}-common lsphp${ver_no_dot}-mysql lsphp${ver_no_dot}-sqlite3 lsphp${ver_no_dot}-gd lsphp${ver_no_dot}-xml lsphp${ver_no_dot}-mbstring lsphp${ver_no_dot}-curl lsphp${ver_no_dot}-zip lsphp${ver_no_dot}-opcache lsphp${ver_no_dot}-intl lsphp${ver_no_dot}-bcmath lsphp${ver_no_dot}-redis lsphp${ver_no_dot}-imagick"
+    # NOTE: gd, xml, mbstring, zip, bcmath are bundled in the base lsphp package
+    lsphp_packages+=" lsphp${ver_no_dot} lsphp${ver_no_dot}-common lsphp${ver_no_dot}-mysql lsphp${ver_no_dot}-sqlite3 lsphp${ver_no_dot}-curl lsphp${ver_no_dot}-opcache lsphp${ver_no_dot}-intl lsphp${ver_no_dot}-redis lsphp${ver_no_dot}-imagick"
   done
   apt-get install -y openlitespeed ${lsphp_packages} ols-modsecurity || \
     apt-get install -y openlitespeed ${lsphp_packages}

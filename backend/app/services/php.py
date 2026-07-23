@@ -143,15 +143,11 @@ def install_php(php_version: str) -> dict:
             f"lsphp{lsphp_ver}-mysql",
             f"lsphp{lsphp_ver}-sqlite3",
             f"lsphp{lsphp_ver}-curl",
-            f"lsphp{lsphp_ver}-gd",
-            f"lsphp{lsphp_ver}-mbstring",
-            f"lsphp{lsphp_ver}-xml",
-            f"lsphp{lsphp_ver}-zip",
             f"lsphp{lsphp_ver}-opcache",
             f"lsphp{lsphp_ver}-intl",
-            f"lsphp{lsphp_ver}-bcmath",
             f"lsphp{lsphp_ver}-redis",
             f"lsphp{lsphp_ver}-imagick",
+            # NOTE: gd, xml, mbstring, zip, bcmath are bundled in the base lsphp package
         ],
     )
     return {"status": "ensured" if already_installed else "installed", "version": php_version, "output": result.stdout}
