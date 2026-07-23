@@ -45,7 +45,7 @@ backend/bpanel.db
 
 # Landing page
 landing.html
-style.css
+/style.css
 
 # Dev / CI / tooling (not part of release)
 .codex/
