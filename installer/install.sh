@@ -24,7 +24,8 @@ BACKEND_SRC="${PROJECT_ROOT}/backend"
 FRONTEND_SRC="${PROJECT_ROOT}/frontend"
 
 # When running via bash <(curl ...), BASH_SOURCE[0] resolves to /dev/fd/N
-# so PROJECT_ROOT becomes /dev. Auto-clone the repo to a temp directory.
+# so PROJECT_ROOT becomes /dev and SCRIPT_DIR becomes /dev/fd.
+# Clone the repo to a temp directory and fix both paths.
 if [[ ! -d "${BACKEND_SRC}" ]]; then
   OPANEL_REPO="${OPANEL_REPO:-https://github.com/bnixvn/opanel.git}"
   if [[ -z "${OPANEL_VERSION:-}" ]]; then
@@ -33,9 +34,10 @@ if [[ ! -d "${BACKEND_SRC}" ]]; then
   fi
   [[ -n "${OPANEL_VERSION}" ]] || fail "Could not detect latest OPanel release tag"
   OPANEL_CLONE_DIR="$(mktemp -d)"
-  log "Backend source not found locally — cloning ${OPANEL_VERSION} to ${OPANEL_CLONE_DIR}"
+  log "Source not found locally — cloning ${OPANEL_VERSION} to ${OPANEL_CLONE_DIR}"
   git clone --depth 1 --branch "${OPANEL_VERSION}" "${OPANEL_REPO}" "${OPANEL_CLONE_DIR}"
   PROJECT_ROOT="${OPANEL_CLONE_DIR}"
+  SCRIPT_DIR="${PROJECT_ROOT}/installer"
   BACKEND_SRC="${PROJECT_ROOT}/backend"
   FRONTEND_SRC="${PROJECT_ROOT}/frontend"
   trap 'cd /; rm -rf "${OPANEL_CLONE_DIR}"' EXIT
