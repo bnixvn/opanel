@@ -1,39 +1,47 @@
 # OPanel
 
-Lightweight hosting management panel for Ubuntu 24.04. opanel helps you run
-WordPress and PHP websites from a single clean web UI with user
-ownership, quotas, backups, SSL, services, and firewall tools built in.
+Lightweight hosting management panel for Ubuntu 24.04, powered by **OpenLiteSpeed** and **LSPHP**. OPanel helps you run WordPress and PHP websites from a single clean web UI with user ownership, quotas, backups, SSL, services, and firewall tools built in.
+
+## Features
 
 - Dashboard resource monitoring for CPU, RAM, disk, and network throughput
-- WordPress one-click installer (PHP 8.3 / 8.4) with WP-CLI
-- WordPress and PHP sites with editable full Nginx vhosts
+- WordPress one-click installer (LSPHP 8.3 / 8.4) with WP-CLI
+- WordPress and PHP sites with editable OpenLiteSpeed vhost configs
 - Panel users map to Linux/SFTP users; website source lives in `/home/<panel-user>/<domain>/public_html`
 - Admin quick-login for creating sites as a selected user, plus one-owner assignment per website
-- Website count limits and opanel soft storage quotas per end user
+- Website count limits and soft storage quotas per end user
 - MariaDB database creation and management with phpMyAdmin SSO (60s tokens)
-- Let's Encrypt SSL via certbot
-- Native opanel file manager with upload, edit, archive, and extract support
+- Let's Encrypt SSL via certbot (webroot mode)
+- Native file manager with upload, edit, archive, and extract support
 - Backups: archive site files + SQL, scheduled full-user backups, restore, upload, download
 - SFTP backup targets for off-server backup copies
-- UFW firewall manager with protected panel/web/mail defaults and user rules below them
-- Update controls for apt-based OS packages and opanel source updates
-- Nginx ModSecurity/WAF engine installed by default, using lightweight WordPress/Laravel/PHP rules, per-site toggles, and HTTP Flood limits
-- PHP-FPM config editor per version
+- iptables + ipset firewall manager with protected panel/web/mail defaults, blocklists, and user rules
+- Update controls for apt-based OS packages and OPanel source updates
+- OpenLiteSpeed ModSecurity/WAF engine with lightweight WordPress/Laravel/PHP rules, per-site toggles, and HTTP Flood limits
+- LSPHP config editor per version
 - Cron job manager with whitelisted WP-CLI commands
 - Role-based access: Admin / End user
 - Google Authenticator compatible 2FA
 
 ## Tech stack
 
-- Backend: FastAPI, SQLAlchemy, SQLite (default), Pydantic v2
-- Frontend: React 18, Vite, lucide-react
-- Server: Nginx, OpenSSH/SFTP, ModSecurity/WAF, systemd, MariaDB, Redis, PHP-FPM, certbot
+- **Backend:** Python 3, FastAPI, SQLAlchemy, SQLite (default), Pydantic v2, Jinja2
+- **Frontend:** React 18, Vite, lucide-react
+- **Webserver:** [OpenLiteSpeed](https://openlitespeed.org/) with LSPHP/LSAPI
+- **PHP:** LSPHP 8.3 & 8.4 (LiteSpeed SAPI)
+- **Database:** MariaDB
+- **Cache:** Redis
+- **Firewall:** iptables + ipset (chains: `OPANEL_INPUT`, `OPANEL_USER`, `OPANEL_BLOCKLIST`)
+- **SSL:** Let's Encrypt via certbot (webroot)
+- **WAF:** OpenLiteSpeed ModSecurity
+- **SSH/SFTP:** OpenSSH
+- **System:** systemd, Ubuntu 24.04 LTS
 
 ## Versioning
 
 Current release: `1.0.46`.
 
-opanel versions use semantic versioning: `major.minor.patch`.
+OPanel versions use semantic versioning: `major.minor.patch`.
 
 ## System requirements
 
@@ -46,7 +54,13 @@ opanel versions use semantic versioning: `major.minor.patch`.
 
 Run as root on a fresh Ubuntu 24.04 server.
 
-Recommended auto latest-tag install:
+### Quick install (recommended)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/install.sh)
+```
+
+### Git clone install
 
 ```bash
 set -e
@@ -72,52 +86,139 @@ chmod +x installer/install.sh installer/update.sh installer/rescue-ufw-blocklist
 bash installer/install.sh
 ```
 
-Release zip install:
+### Git clone install
 
 ```bash
+set -e
 apt-get update
-apt-get install -y git curl unzip
-opanel_REPO=https://github.com/BNIX-VN/opanel.git
-if [ -z "${opanel_VERSION:-}" ]; then
-  opanel_VERSION="$(
-    git ls-remote --tags --refs "${opanel_REPO}" 'refs/tags/v*' |
+apt-get install -y git
+OPANEL_REPO=https://github.com/bnixvn/opanel.git
+if [ -z "${OPANEL_VERSION:-}" ]; then
+  OPANEL_VERSION="$(
+    git ls-remote --tags --refs "${OPANEL_REPO}" 'refs/tags/v*' |
     awk -F/ '{print $NF}' |
     grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
     sort -V |
     tail -n 1
   )"
 fi
-test -n "${opanel_VERSION}" || { echo "Could not detect latest opanel release tag" >&2; exit 1; }
-echo "Installing opanel ${opanel_VERSION}"
-rm -rf /opt/opanel-source /tmp/opanel-release /tmp/opanel-release.zip
-curl -fL --connect-timeout 10 --max-time 300 "https://github.com/BNIX-VN/opanel/archive/refs/tags/${opanel_VERSION}.zip" -o /tmp/opanel-release.zip
-unzip -q /tmp/opanel-release.zip -d /tmp/opanel-release
-mv /tmp/opanel-release/opanel-* /opt/opanel-source
-cd /opt/opanel-source
-chmod +x installer/install.sh installer/update.sh installer/rescue-ufw-blocklist.sh
+test -n "${OPANEL_VERSION}" || { echo "Could not detect latest OPanel release tag" >&2; exit 1; }
+echo "Installing OPanel ${OPANEL_VERSION}"
+rm -rf /tmp/opanel-source
+git clone --depth 1 --branch "${OPANEL_VERSION}" "${OPANEL_REPO}" /tmp/opanel-source
+cd /tmp/opanel-source
+trap 'cd /; rm -rf /tmp/opanel-source' EXIT
+chmod +x installer/install.sh installer/update.sh
 bash installer/install.sh
 ```
 
-The commands auto-detect the newest semantic release tag from GitHub; at the
-time of this README, that tag is `v1.0.46`. To pin another release, run the
-same command with `opanel_VERSION=v1.0.46` exported or set before the detection
-block. GitHub auto-generates the tag zip, but the `git clone` method avoids
-archive cache after a forced tag refresh. The clone path cleans up
-`/tmp/opanel-source`; the zip path cleans up `/opt/opanel-source` and its
-temporary archive files.
+### Release zip install
 
-The installer will:
+```bash
+apt-get update
+apt-get install -y git curl unzip
+OPANEL_REPO=https://github.com/bnixvn/opanel.git
+if [ -z "${OPANEL_VERSION:-}" ]; then
+  OPANEL_VERSION="$(
+    git ls-remote --tags --refs "${OPANEL_REPO}" 'refs/tags/v*' |
+    awk -F/ '{print $NF}' |
+    grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+    sort -V |
+    tail -n 1
+  )"
+fi
+test -n "${OPANEL_VERSION}" || { echo "Could not detect latest OPanel release tag" >&2; exit 1; }
+echo "Installing OPanel ${OPANEL_VERSION}"
+rm -rf /opt/opanel-source /tmp/opanel-release /tmp/opanel-release.zip
+curl -fL --connect-timeout 10 --max-time 300 \
+  "https://github.com/bnixvn/opanel/archive/refs/tags/${OPANEL_VERSION}.zip" \
+  -o /tmp/opanel-release.zip
+unzip -q /tmp/opanel-release.zip -d /tmp/opanel-release
+mv /tmp/opanel-release/opanel-* /opt/opanel-source
+cd /opt/opanel-source
+chmod +x installer/install.sh installer/update.sh
+bash installer/install.sh
+```
 
-1. Install git, Nginx, MariaDB, Redis, OpenSSH/SFTP, PHP 8.3/8.4, Node.js 22,
-   certbot, phpMyAdmin, WP-CLI, UFW.
-2. Copy source to `/opt/opanel`, build the frontend, set up the Python venv.
-3. Create the `opanel` service account and the `admin` Linux/SFTP account.
-4. Create the systemd service `opanel-api`.
-5. Configure phpMyAdmin SSO.
-6. Start the panel directly on the configured panel port without relying on Nginx for login.
-7. Issue Let's Encrypt SSL for the panel domain (optional).
-8. Install `/usr/local/sbin/opanel-update` and `/usr/local/sbin/opanel-rescue-ufw-blocklist`.
-9. Remove the extracted release source.
+To pin a specific version, set `OPANEL_VERSION=v1.0.46` before running the script.
+
+### What the installer does
+
+1. Installs base packages: git, MariaDB, Redis, OpenSSH/SFTP, Node.js 22, certbot, phpMyAdmin, WP-CLI, iptables, ipset
+2. Installs **OpenLiteSpeed** + **LSPHP 8.3/8.4** from the LiteSpeed repository
+3. Copies source to `/opt/opanel`, builds the frontend, sets up the Python venv
+4. Creates the `opanel` service account and the `admin` Linux/SFTP account
+5. Creates the systemd service `opanel-api`
+6. Configures phpMyAdmin SSO
+7. Sets up iptables firewall with `OPANEL_INPUT`/`OPANEL_USER`/`OPANEL_BLOCKLIST` chains
+8. Starts the panel on the configured port
+9. Optionally issues Let's Encrypt SSL for the panel domain
+10. Installs `/usr/local/sbin/opanel-update` for future updates
+
+## Directory structure
+
+| Path | Purpose |
+|------|---------|
+| `/opt/opanel/` | Application source + frontend |
+| `/var/backups/opanel/` | Backup archives |
+| `/var/lib/opanel/` | Runtime data (firewall rules, etc.) |
+| `/usr/local/lsws/conf/opanel/` | OpenLiteSpeed vhost configs, SSL certs, ModSecurity rules |
+| `/usr/local/lsws/lsphp83/` | LSPHP 8.3 binaries and config |
+| `/usr/local/lsws/lsphp84/` | LSPHP 8.4 binaries and config |
+| `/home/<user>/<domain>/public_html` | Website source files |
+
+## Updating
+
+```bash
+opanel-update
+```
+
+Or manually:
+
+```bash
+cd /opt/opanel
+git pull
+bash installer/update.sh
+```
+
+## Firewall
+
+OPanel uses **iptables + ipset** for firewall management:
+
+- **Protected ports** (22, 80, 443, 465, 587, panel port) are always allowed
+- **User rules** allow/block specific ports and IPs
+- **Blocklists** via ipset sets (`opanel_blocklist4`, `opanel_blocklist6`) with auto-update from URL lists
+- All rules persist in `/var/lib/opanel/firewall/rules.json`
+
+## Webserver
+
+OPanel uses **OpenLiteSpeed** as the webserver:
+
+- Vhost configs stored in `/usr/local/lsws/conf/opanel/vhosts/`
+- Custom directives supported per-site via the panel UI
+- LSPHP replaces PHP-FPM — socket at `/tmp/lshttpd/lsphp{ver}.sock`
+- LSCache built-in for WordPress sites
+- ModSecurity/WAF per-site toggle with HTTP flood protection
+
+## Development
+
+```bash
+# Backend
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+
+# Frontend
+cd frontend
+npm install
+npm run dev
+```
+
+## License
+
+See [LICENSE](LICENSE) for details.
 10. Print only the panel URL, user, and password; save the same fields to
     `/root/login.txt`.
 
