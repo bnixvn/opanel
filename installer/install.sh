@@ -23,6 +23,24 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BACKEND_SRC="${PROJECT_ROOT}/backend"
 FRONTEND_SRC="${PROJECT_ROOT}/frontend"
 
+# When running via bash <(curl ...), BASH_SOURCE[0] resolves to /dev/fd/N
+# so PROJECT_ROOT becomes /dev. Auto-clone the repo to a temp directory.
+if [[ ! -d "${BACKEND_SRC}" ]]; then
+  OPANEL_REPO="${OPANEL_REPO:-https://github.com/bnixvn/opanel.git}"
+  if [[ -z "${OPANEL_VERSION:-}" ]]; then
+    OPANEL_VERSION="$(git ls-remote --tags --refs "${OPANEL_REPO}" 'refs/tags/v*' \
+      | awk -F/ '{print $NF}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+  fi
+  [[ -n "${OPANEL_VERSION}" ]] || fail "Could not detect latest OPanel release tag"
+  OPANEL_CLONE_DIR="$(mktemp -d)"
+  log "Backend source not found locally — cloning ${OPANEL_VERSION} to ${OPANEL_CLONE_DIR}"
+  git clone --depth 1 --branch "${OPANEL_VERSION}" "${OPANEL_REPO}" "${OPANEL_CLONE_DIR}"
+  PROJECT_ROOT="${OPANEL_CLONE_DIR}"
+  BACKEND_SRC="${PROJECT_ROOT}/backend"
+  FRONTEND_SRC="${PROJECT_ROOT}/frontend"
+  trap 'cd /; rm -rf "${OPANEL_CLONE_DIR}"' EXIT
+fi
+
 PANEL_URL="${PANEL_URL:-}"
 PANEL_HOSTNAME="${PANEL_HOSTNAME:-}"
 PANEL_DOMAIN=""
