@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
@@ -26,24 +26,25 @@ FRONTEND_SRC="${PROJECT_ROOT}/frontend"
 # When running via bash <(curl ...), BASH_SOURCE[0] resolves to /dev/fd/N
 # so PROJECT_ROOT becomes /dev and BACKEND_SRC becomes /dev/backend which
 # does not exist.  Detect this and download the release tarball via curl
-# (curl is guaranteed to be available — the user just used it to fetch us).
+# (curl is guaranteed to be available - the user just used it to fetch us).
 OPANEL_GITHUB="${OPANEL_GITHUB:-https://github.com/bnixvn/opanel}"
+OPANEL_REPO_SLUG="${OPANEL_GITHUB#*github.com/}"
 if [[ ! -d "${BACKEND_SRC}" ]]; then
-  # --- resolve latest tag via GitHub API (no git required) -------------------
+  # --- resolve latest tag via GitHub API (no git required) -----------
   if [[ -z "${OPANEL_VERSION:-}" ]]; then
-    OPANEL_VERSION="$(
-      curl -fsSL "${OPANEL_GITHUB}/releases/latest" -o /dev/null -w '%{url_effective}' \
-      | sed 's|.*/||'
-    )" || true
+    OPANEL_VERSION="$(curl -fsSL "https://api.github.com/repos/${OPANEL_REPO_SLUG}/tags?per_page=1" \
+      | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\(v[^"]*\)".*/\1/p' | head -1)" || true
   fi
-  if [[ -z "${OPANEL_VERSION:-}" ]]; then
-    echo "ERROR: Could not detect latest OPanel release. Set OPANEL_VERSION and retry." >&2
+  if [[ ! "${OPANEL_VERSION:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "ERROR: Could not detect latest OPanel release tag." >&2
+    echo "       Set OPANEL_VERSION=vX.Y.Z and retry, e.g.:" >&2
+    echo "       OPANEL_VERSION=v1.0.46 bash <(curl -fsSL ...)" >&2
     exit 1
   fi
 
   OPANEL_CLONE_DIR="$(mktemp -d)"
   echo ""
-  echo "==> Source not found locally — downloading ${OPANEL_VERSION} to ${OPANEL_CLONE_DIR}"
+  echo "==> Source not found locally - downloading ${OPANEL_VERSION} to ${OPANEL_CLONE_DIR}"
 
   curl -fsSL "${OPANEL_GITHUB}/archive/refs/tags/${OPANEL_VERSION}.tar.gz" \
     | tar xz -C "${OPANEL_CLONE_DIR}" --strip-components=1
