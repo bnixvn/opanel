@@ -1,10 +1,10 @@
-# /etc/sudoers.d/bpanel
+# /etc/sudoers.d/opanel
 # Installed by installer/install.sh as root:root mode 0440.
-# Grants the 'bpanel' system user the right to run a single root-owned
+# Grants the 'opanel' system user the right to run a single root-owned
 # helper script with no password. The helper does its own validation.
 #
 # Threat model:
-# - The wildcard "*" lets bpanel pass any args to bpanel-helper. That is
+# - The wildcard "*" lets opanel pass any args to opanel-helper. That is
 #   safe because the helper enforces the security boundary itself: it runs
 #   under `set -euo pipefail`, validates every argv with anchored regexes,
 #   resolves user-supplied paths with `readlink -m`, and downgrades to
@@ -12,11 +12,11 @@
 #   site files.
 # - The helper script must remain root-owned mode 0755 (no group write).
 #   `installer/install.sh` enforces those perms; do not loosen them.
-# - Adding a new subcommand requires editing only bpanel-helper.sh; this
+# - Adding a new subcommand requires editing only opanel-helper.sh; this
 #   sudoers file does not need to enumerate subcommands.
 
-Defaults:bpanel !requiretty
-Defaults:bpanel env_reset
-Defaults:bpanel secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Defaults:opanel !requiretty
+Defaults:opanel env_reset
+Defaults:opanel secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-bpanel ALL=(root) NOPASSWD: /usr/local/sbin/bpanel-helper *
+opanel ALL=(root) NOPASSWD: /usr/local/sbin/opanel-helper *

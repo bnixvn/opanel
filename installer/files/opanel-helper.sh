@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-if [[ "${SUDO_USER:-}" != "OPanel" ]]; then
+if [[ "${SUDO_USER:-}" != "opanel" ]]; then
   echo "opanel-helper must be invoked by user 'opanel' via sudo" >&2
   exit 2
 fi
