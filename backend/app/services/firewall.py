@@ -91,6 +91,22 @@ def _display_source(value: str) -> str:
     return value
 
 
+def _display_protocol(value: str, extra: str = "") -> str:
+    value = (value or "").strip().lower()
+    if value == "6":
+        return "tcp"
+    if value == "17":
+        return "udp"
+    if value in PROTOCOLS:
+        return value
+    extra_value = (extra or "").lower()
+    if re.search(r"\btcp\b", extra_value):
+        return "tcp"
+    if re.search(r"\budp\b", extra_value):
+        return "udp"
+    return value or "all"
+
+
 def _port_list_from_extra(extra: str) -> list[str]:
     ports: list[str] = []
 
@@ -194,9 +210,9 @@ def _parse_numbered_output(output: str) -> list[dict]:
         if iptables_match:
             number = int(iptables_match.group(1))
             target = iptables_match.group(2).upper()
-            protocol = iptables_match.group(3).lower()
             source = _strip_inline_comment(iptables_match.group(4))
             extra = iptables_match.group(6)
+            protocol = _display_protocol(iptables_match.group(3), extra)
             ports = _port_list_from_extra(extra)
             port = ",".join(ports)
             rule_type = "port" if port else "ip"

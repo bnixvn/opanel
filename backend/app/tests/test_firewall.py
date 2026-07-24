@@ -52,12 +52,12 @@ def test_parse_iptables_status_and_open_ports(monkeypatch):
     rules = firewall.parse_numbered_rules(
         "Chain OPANEL_INPUT (1 references)\n"
         "num  target     prot opt source               destination\n"
-        "1    ACCEPT     tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:22 /* opanel:PanelZone */\n"
-        "2    ACCEPT     tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:2222 /* opanel:PanelZone */\n"
-        "3    ACCEPT     tcp  --  0.0.0.0/0            0.0.0.0/0            multiport dports 465,587 /* opanel:PanelZone */\n"
+        "1    ACCEPT     6    --  0.0.0.0/0            0.0.0.0/0            tcp dpt:22 /* opanel:PanelZone */\n"
+        "2    ACCEPT     6    --  0.0.0.0/0            0.0.0.0/0            tcp dpt:2222 /* opanel:PanelZone */\n"
+        "3    ACCEPT     6    --  0.0.0.0/0            0.0.0.0/0            multiport dports 465,587 /* opanel:PanelZone */\n"
         "Chain OPANEL_USER (1 references)\n"
         "num  target     prot opt source               destination\n"
-        "1    ACCEPT     udp  --  203.0.113.10         0.0.0.0/0            udp dpt:53 /* opanel:UserZone */\n"
+        "1    ACCEPT     17   --  203.0.113.10         0.0.0.0/0            udp dpt:53 /* opanel:UserZone */\n"
         "2    DROP       tcp  --  198.51.100.0/24      0.0.0.0/0            tcp dpt:443 /* opanel:UserZone */\n"
     )
 
