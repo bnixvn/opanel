@@ -75,6 +75,8 @@ extprocessor {{ lsphp_app }} {
     respBuffer            0
     autoStart             2
     path                  {{ lsphp_path }}
+    extUser               {{ linux_user }}
+    extGroup              {{ linux_user }}
     backlog               100
     instances             1
     priority              0

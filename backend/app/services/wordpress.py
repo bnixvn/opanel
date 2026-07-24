@@ -105,14 +105,14 @@ def install_wordpress(
     if not settings.command_dry_run:
         shell.privileged(
             "site-file-write",
-            helper_args=[linux_user, str(root), "public_html/wp-config.php", "0640"],
+            helper_args=[linux_user, str(root), "public_html/wp-config.php", "0644"],
             fallback=[
                 "sh",
                 "-c",
                 'cat >"$1" && chmod "$2" "$1"',
                 "sh",
                 str(config_path),
-                "0640",
+                "0644",
             ],
             input=config_content,
             sensitive=True,
@@ -146,14 +146,14 @@ def install_wordpress(
     if not settings.command_dry_run:
         shell.privileged(
             "site-file-write",
-            helper_args=[linux_user, str(root), "public_html/wp-config.php", "0640"],
+            helper_args=[linux_user, str(root), "public_html/wp-config.php", "0644"],
             fallback=[
                 "sh",
                 "-c",
                 'chmod "$2" "$1"',
                 "sh",
                 str(config_path),
-                "0640",
+                "0644",
             ],
             input=config_content,
             sensitive=True,

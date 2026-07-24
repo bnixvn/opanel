@@ -515,20 +515,20 @@ harden_existing_panel_users() {
     fi
     find "$home_dir" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | while IFS= read -r -d '' site_dir; do
       [[ "$(basename "$site_dir")" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]] || continue
-      chown -R "$user:opanel-sites" "$site_dir" 2>/dev/null || true
+      chown -R "$user:$user" "$site_dir" 2>/dev/null || true
       if command -v setfacl >/dev/null 2>&1; then
         setfacl -Rb "$site_dir" 2>/dev/null || true
         find "$site_dir" -type d -exec setfacl -k {} + 2>/dev/null || true
       fi
-      find "$site_dir" -type d -exec chmod 2750 {} + 2>/dev/null || true
-      find "$site_dir" -type d -exec chmod u-s {} + 2>/dev/null || true
+      find "$site_dir" -type d -exec chmod 755 {} + 2>/dev/null || true
+      find "$site_dir" -type d -exec chmod a-s {} + 2>/dev/null || true
       find "$site_dir" -type d -exec chmod -t {} + 2>/dev/null || true
-      find "$site_dir" -type f -exec chmod 640 {} + 2>/dev/null || true
+      find "$site_dir" -type f -exec chmod 644 {} + 2>/dev/null || true
     done
     if [[ -d "/var/lib/php/uploads/$user" ]]; then
-      chown "$user:opanel-sites" "/var/lib/php/uploads/$user" 2>/dev/null || true
-      chmod 2700 "/var/lib/php/uploads/$user" 2>/dev/null || true
-      chmod g+s "/var/lib/php/uploads/$user" 2>/dev/null || true
+      chown "$user:$user" "/var/lib/php/uploads/$user" 2>/dev/null || true
+      chmod 0700 "/var/lib/php/uploads/$user" 2>/dev/null || true
+      chmod g-s "/var/lib/php/uploads/$user" 2>/dev/null || true
     fi
   done < <(getent group opanel-sftp | awk -F: '{gsub(",", "\n", $4); print $4}')
 }

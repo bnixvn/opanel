@@ -80,15 +80,26 @@ def test_panel_tools_ssl_vhosts_enable_http2_for_nginx_1_24():
     assert "/usr/local/lsws/bin/lswsctrl" in helper
 
 
-def test_site_permissions_do_not_allow_cross_user_reading():
+def test_site_permissions_use_standard_wordpress_modes():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
-    assert 'find "$target" -type d -exec chmod 2750 {} +' in helper
-    assert 'find "$target" -type f -exec chmod 640 {} +' in helper
-    assert 'chown -R "$user:$opanel_SITES_GROUP" "$target"' in helper
+    update = UPDATE_SCRIPT.read_text(encoding="utf-8")
+    assert 'find "$target" -type d -exec chmod 755 {} +' in helper
+    assert 'find "$target" -type f -exec chmod 644 {} +' in helper
+    assert 'chown -R "$user:$user" "$target"' in helper
     assert 'harden_site_file "$target" "$user"' in helper
-    assert 'install -o "$user" -g "$opanel_SITES_GROUP" -m 0640' in helper
-    assert 'chmod 0755 "$target" "$target/public_html"' not in helper
-    assert 'find "$target" -type d -exec chmod 755 {} +' not in helper
+    assert 'install -o "$user" -g "$user" -m 0644' in helper
+    assert 'chown -R "$user:$user" "$site_dir"' in update
+    assert 'find "$site_dir" -type d -exec chmod 755 {} +' in update
+    assert 'find "$site_dir" -type f -exec chmod 644 {} +' in update
+    assert 'find "$target" -type d -exec chmod a-s {} +' in helper
+    assert 'find "$site_dir" -type d -exec chmod a-s {} +' in update
+    assert 'chmod a-s "$target"' in helper
+    assert 'find "$target" -type d -exec chmod 2750 {} +' not in helper
+    assert 'find "$target" -type f -exec chmod 640 {} +' not in helper
+    assert 'find "$site_dir" -type d -exec chmod 2750 {} +' not in update
+    assert 'find "$site_dir" -type f -exec chmod 640 {} +' not in update
+    assert 'find "$target" -type d -exec chmod u-s {} +' not in helper
+    assert 'find "$site_dir" -type d -exec chmod u-s {} +' not in update
 
 
 def test_ols_server_group_can_read_managed_site_roots():
@@ -103,9 +114,13 @@ def test_ols_server_group_can_read_managed_site_roots():
 def test_php_upload_tmp_dir_keeps_nginx_readable_group():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
     assert "ensure_php_runtime_dirs()" in helper
-    assert 'install -d -o "$user" -g "$opanel_SITES_GROUP" -m 2700 "$upload_dir"' in helper
-    assert 'chmod g+s "$upload_dir"' in helper
+    assert 'install -d -o "$user" -g "$user" -m 0700 "$upload_dir"' in helper
+    assert 'chmod g-s "$upload_dir"' in helper
     assert 'install -d -o "$user" -g "$user" -m 0700 "$sess_dir"' in helper
+    update = UPDATE_SCRIPT.read_text(encoding="utf-8")
+    assert 'chown "$user:$user" "/var/lib/php/uploads/$user"' in update
+    assert 'chmod 0700 "/var/lib/php/uploads/$user"' in update
+    assert 'chmod g-s "/var/lib/php/uploads/$user"' in update
     assert 'ensure_php_runtime_dirs "$pool_user"' in helper
 
 
