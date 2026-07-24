@@ -13,7 +13,7 @@ SUPPORTED_APP_TYPES = {"wordpress", "php", "static"}
 SUPPORTED_NGINX_REWRITE_MODES = {"none", "front_controller", "laravel", "codeigniter", "seohburl"}
 SUPPORTED_WEBSERVER_REWRITE_MODES = SUPPORTED_NGINX_REWRITE_MODES  # alias — same modes apply to OLS
 SUPPORTED_ROLES = {"admin", "end_user"}
-SIZE_RE = re.compile(r"^\d{1,6}[KMG]?$")  # e.g. "512M", "1024M"
+SIZE_RE = re.compile(r"^\d{1,6}[KMG]?$")  # e.g. "1024M", "2G"
 PANEL_HOST_RE = re.compile(r"^(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|(?:(?!-)[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,})$")
 RESERVED_LINUX_USERNAMES = {
     "root", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail",
@@ -227,7 +227,7 @@ class AuditLogOut(BaseModel):
 class WebsiteCreate(BaseModel):
     domain: str
     owner_id: Optional[int] = None
-    php_version: str = "8.3"
+    php_version: str = "8.4"
     app_type: str = "wordpress"
     install_wordpress: bool = True
     title: str = "My WordPress Site"
@@ -816,9 +816,9 @@ class RestoreBackup(BaseModel):
 
 
 class PhpConfigUpdate(BaseModel):
-    php_version: str = "8.3"
+    php_version: str = "8.4"
     display_errors: Literal["On", "Off"] = "Off"
-    memory_limit: str = "512M"
+    memory_limit: str = "1024M"
     upload_max_filesize: str = "1024M"
     post_max_size: str = "1024M"
     max_execution_time: int = Field(default=300, ge=1, le=3600)
@@ -828,7 +828,7 @@ class PhpConfigUpdate(BaseModel):
     @field_validator("php_version")
     @classmethod
     def validate_php_version(cls, value: str) -> str:
-        return _validate_php_version(value) or "8.3"
+        return _validate_php_version(value) or "8.4"
 
     @field_validator("memory_limit", "upload_max_filesize", "post_max_size")
     @classmethod
@@ -846,12 +846,12 @@ class CronCreate(BaseModel):
 
 
 class PhpConfigRestore(BaseModel):
-    php_version: str = "8.3"
+    php_version: str = "8.4"
 
     @field_validator("php_version")
     @classmethod
     def validate_php_version(cls, value: str) -> str:
-        return _validate_php_version(value) or "8.3"
+        return _validate_php_version(value) or "8.4"
 
 
 class WpAction(BaseModel):

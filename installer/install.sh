@@ -340,7 +340,7 @@ install_php() {
     cat >"${ini_dir}/99-opanel.ini" <<INI
 upload_max_filesize = 1024M
 post_max_size = 1024M
-memory_limit = 512M
+memory_limit = 1024M
 max_execution_time = 300
 max_input_time = 600
 max_input_vars = 10000

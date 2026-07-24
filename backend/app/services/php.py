@@ -52,7 +52,7 @@ def update_php_ini(payload: PhpConfigUpdate) -> str:
 
 PHP_CONFIG_KEYS = {
     "display_errors": "Off",
-    "memory_limit": "512M",
+    "memory_limit": "1024M",
     "upload_max_filesize": "1024M",
     "post_max_size": "1024M",
     "max_execution_time": "300",
@@ -163,11 +163,11 @@ from app.services.mariadb import _detect_ram_mb, _detect_cpu_cores, _detect_is_s
 #  lsapi_children, lsapi_max_idle, lsapi_max_idle_children, lsapi_max_process_time)
 _PHP_TIERS = [
     # Tiny VPS (≤512 MB)
-    (512,   "128M",   32,  2000,   8,   5,  60,   3,  300),
+    (512,  "1024M",   32,  2000,   8,   5,  60,   3,  300),
     # Small VPS (≤1 GB)
-    (1024,  "256M",   64,  4000,  16,  10,  60,   5,  300),
+    (1024, "1024M",   64,  4000,  16,  10,  60,   5,  300),
     # Medium VPS (≤2 GB)
-    (2048,  "512M",  128,  8000,  32,  20, 120,  10,  600),
+    (2048, "1024M",  128,  8000,  32,  20, 120,  10,  600),
     # Large VPS (≤4 GB)
     (4096, "1024M",  256, 12000,  64,  40, 120,  20,  600),
     # XLarge VPS (≤8 GB)
@@ -186,7 +186,7 @@ def recommend_php_config() -> dict:
     # Pick tier
     (memory_limit, opcache_mem, opcache_files, interned_buf,
      lsapi_children, lsapi_idle, lsapi_idle_children, lsapi_max_proc) = (
-        "256M", 64, 4000, 16, 10, 60, 5, 300
+        "1024M", 64, 4000, 16, 10, 60, 5, 300
     )
     for tier in _PHP_TIERS:
         if ram_mb <= tier[0]:

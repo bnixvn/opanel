@@ -5,7 +5,7 @@ Lightweight hosting management panel for Ubuntu 24.04, powered by **OpenLiteSpee
 ## Features
 
 - Dashboard resource monitoring for CPU, RAM, disk, and network throughput
-- WordPress one-click installer (LSPHP 8.3 / 8.4) with WP-CLI
+- WordPress one-click installer (default LSPHP 8.4, with 8.3 installed) with WP-CLI
 - WordPress and PHP sites with editable OpenLiteSpeed vhost configs
 - `.htaccess` fully supported (`allowOverride all` in all vhost templates)
 - Panel users map to Linux/SFTP users; website source lives in `/home/<panel-user>/<domain>/public_html`
@@ -33,7 +33,7 @@ Lightweight hosting management panel for Ubuntu 24.04, powered by **OpenLiteSpee
 | Backend | Python 3.12, FastAPI, SQLAlchemy, SQLite, Pydantic v2, Jinja2 |
 | Frontend | React 18, Vite, lucide-react |
 | Webserver | [OpenLiteSpeed](https://openlitespeed.org/) |
-| PHP | LSPHP 8.3 and 8.4 (LiteSpeed SAPI) |
+| PHP | LSPHP 8.4 default + 8.3 installed; 7.4, 8.1, 8.2, and 8.5 can be installed from the panel |
 | Database | MariaDB |
 | Cache | Redis |
 | Firewall | iptables + ipset |
@@ -43,9 +43,7 @@ Lightweight hosting management panel for Ubuntu 24.04, powered by **OpenLiteSpee
 
 ## Versioning
 
-Current release: `1.0.46`.
-
-OPanel versions use semantic versioning: `major.minor.patch`.
+The `main` branch is the update/install source. Tagged releases use semantic versioning: `major.minor.patch`.
 
 ## System requirements
 
@@ -71,25 +69,22 @@ set -e
 apt-get update
 apt-get install -y git
 OPANEL_REPO=https://github.com/bnixvn/opanel.git
-if [ -z "${OPANEL_VERSION:-}" ]; then
-  OPANEL_VERSION="$(git ls-remote --tags --refs "${OPANEL_REPO}" '"'"'refs/tags/v*'"'"' | awk -F/ '"'"'{print $NF}'"'"' | grep -E '"'"'^v[0-9]+\.[0-9]+\.[0-9]+$'"'"' | sort -V | tail -n 1)"
-fi
-test -n "${OPANEL_VERSION}" || { echo "Could not detect latest OPanel release tag" >&2; exit 1; }
-echo "Installing OPanel ${OPANEL_VERSION}"
+OPANEL_REF="${OPANEL_REF:-main}"
+echo "Installing OPanel ${OPANEL_REF}"
 rm -rf /tmp/opanel-source
-git clone --depth 1 --branch "${OPANEL_VERSION}" "${OPANEL_REPO}" /tmp/opanel-source
+git clone --depth 1 --branch "${OPANEL_REF}" "${OPANEL_REPO}" /tmp/opanel-source
 cd /tmp/opanel-source
 trap '"'"'cd /; rm -rf /tmp/opanel-source'"'"' EXIT
 chmod +x installer/install.sh installer/update.sh
 bash installer/install.sh
 ```
 
-To pin a specific version, set `OPANEL_VERSION=v1.0.46` before running the script.
+To pin a specific tag, set `OPANEL_REF=v1.0.46` before running the script.
 
 ### What the installer does
 
 1. Installs base packages: git, MariaDB, Redis, OpenSSH/SFTP, Node.js 22, certbot, phpMyAdmin, WP-CLI, iptables, ipset
-2. Installs **OpenLiteSpeed** + **LSPHP 8.3/8.4** from the LiteSpeed repository
+2. Installs **OpenLiteSpeed** + **LSPHP 8.4 and 8.3** from the LiteSpeed repository, with PHP 8.4 as the default CLI/site version
 3. Copies source to `/opt/opanel`, builds the frontend, sets up the Python venv
 4. Creates the `opanel` service account and the `admin` Linux/SFTP account
 5. Creates the systemd service `opanel-api`
@@ -117,7 +112,7 @@ After install, open the panel URL printed at the end of the installer. The admin
 | `/var/lib/opanel/` | Runtime data (firewall rules, etc.) |
 | `/usr/local/lsws/conf/opanel/` | OpenLiteSpeed vhost configs, SSL certs, ModSecurity rules |
 | `/usr/local/lsws/lsphp83/` | LSPHP 8.3 binaries and config |
-| `/usr/local/lsws/lsphp84/` | LSPHP 8.4 binaries and config |
+| `/usr/local/lsws/lsphp84/` | LSPHP 8.4 binaries and config (default) |
 | `/etc/mysql/mariadb.conf.d/99-opanel.cnf` | MariaDB auto-tuned config |
 | `/home/<user>/<domain>/public_html` | Website source files |
 
@@ -155,7 +150,7 @@ Run as root:
 opanel
 ```
 
-Use this menu when the web panel is unavailable. It can show the saved login, show rescue status, print recent logs, restart panel services, reopen required firewall ports, reset the panel URL/port, repair panel SSL, fix runtime permissions, change the `admin` password, and update OPanel from the latest release tag. Website and user management stays in the web panel.
+Use this menu when the web panel is unavailable. It can show the saved login, show rescue status, print recent logs, restart panel services, reopen required firewall ports, reset the panel URL/port, repair panel SSL, fix runtime permissions, change the `admin` password, and update OPanel from the `main` branch. Website and user management stays in the web panel.
 
 ## Updating
 
@@ -230,13 +225,15 @@ POST /databases/mariadb/tuning      # Apply auto-tune + restart MariaDB
 
 OPanel includes a VPS-aware PHP auto-tuner for all installed LSPHP versions.
 
-**What it tunes:** `memory_limit`, OPcache (memory, max files, JIT, interned strings), LSAPI process manager (workers, idle timeout, max process time), upload limits.
+Fresh installs include PHP 8.4 and 8.3. PHP 8.4 is the default version, and PHP 7.4, 8.1, 8.2, and 8.5 can be installed later from the **PHP Configuration** page.
+
+**What it tunes:** `memory_limit` (minimum/default `1024M`), OPcache (memory, max files, JIT, interned strings), LSAPI process manager (workers, idle timeout, max process time), upload limits.
 
 **How it works:** Same hardware detection as MariaDB tuner. Tiers from 512 MB to 8 GB+. Writes `/usr/local/lsws/lsphp{ver}/etc/php.d/99-opanel.ini` and restarts OpenLiteSpeed.
 
 ```
-GET  /maintenance/php/tuning?php_version=8.3       # Read current + recommendation
-POST /maintenance/php/tuning?php_version=8.3        # Apply to one version
+GET  /maintenance/php/tuning?php_version=8.4       # Read current + recommendation
+POST /maintenance/php/tuning?php_version=8.4        # Apply to one version
 POST /maintenance/php/tuning                        # Apply to ALL installed versions
 ```
 

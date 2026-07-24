@@ -98,7 +98,7 @@ function websiteConfigForm(site = {}) {
   const appType = site.app_type || 'wordpress';
   return {
     app_type: appType,
-    php_version: site.php_version || '8.3',
+    php_version: site.php_version || '8.4',
     nginx_rewrite_mode: appType === 'wordpress'
       ? 'front_controller'
       : appType === 'static'
@@ -367,7 +367,7 @@ function App() {
   const [adminEmail, setAdminEmail] = useState('');
   const [wpAdminUser, setWpAdminUser] = useState('admin');
   const [wpAdminPassword, setWpAdminPassword] = useState('');
-  const [phpVersion, setPhpVersion] = useState('8.3');
+  const [phpVersion, setPhpVersion] = useState('8.4');
   const [siteType, setSiteType] = useState('wordpress');
   const [installSslAfterCreate, setInstallSslAfterCreate] = useState(false);
   const [installWordPress, setInstallWordPress] = useState(true);
@@ -418,7 +418,7 @@ function App() {
   const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
   const [editingUser, setEditingUser] = useState(null);
   const [editingUserForm, setEditingUserForm] = useState({ email: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
-  const [phpConfig, setPhpConfig] = useState({ php_version: '8.3', display_errors: 'Off', max_execution_time: 300, max_input_time: 600, max_input_vars: 10000, memory_limit: '512M', post_max_size: '1024M', upload_max_filesize: '1024M' });
+  const [phpConfig, setPhpConfig] = useState({ php_version: '8.4', display_errors: 'Off', max_execution_time: 300, max_input_time: 600, max_input_vars: 10000, memory_limit: '1024M', post_max_size: '1024M', upload_max_filesize: '1024M' });
   const [phpVersions, setPhpVersions] = useState({ installed: ['8.3', '8.4'], supported: ['7.4', '8.1', '8.2', '8.3', '8.4', '8.5'] });
   const [phpTuning, setPhpTuning] = useState(null);
   const [firewallStatus, setFirewallStatus] = useState(null);
@@ -1297,7 +1297,7 @@ function App() {
     const original = nginxCustomEditing.site || {};
     const body = {};
     const nextAppType = websiteSettingsForm.app_type || original.app_type || 'wordpress';
-    const nextPhp = websiteSettingsForm.php_version || original.php_version || '8.3';
+    const nextPhp = websiteSettingsForm.php_version || original.php_version || '8.4';
     const nextRewrite = nextAppType === 'wordpress'
       ? 'front_controller'
       : nextAppType === 'static'
@@ -3199,7 +3199,7 @@ function App() {
         <label><span>max_execution_time</span><input type="number" value={phpConfig.max_execution_time} onChange={e => setPhpConfig(prev => ({ ...prev, max_execution_time: e.target.value }))} /></label>
         <label><span>max_input_time</span><input type="number" value={phpConfig.max_input_time} onChange={e => setPhpConfig(prev => ({ ...prev, max_input_time: e.target.value }))} /></label>
         <label><span>max_input_vars</span><input type="number" value={phpConfig.max_input_vars} onChange={e => setPhpConfig(prev => ({ ...prev, max_input_vars: e.target.value }))} /></label>
-        <label><span>memory_limit</span><input value={phpConfig.memory_limit} onChange={e => setPhpConfig(prev => ({ ...prev, memory_limit: e.target.value }))} placeholder="512M" /></label>
+        <label><span>memory_limit</span><input value={phpConfig.memory_limit} onChange={e => setPhpConfig(prev => ({ ...prev, memory_limit: e.target.value }))} placeholder="1024M" /></label>
         <label><span>post_max_size</span><input value={phpConfig.post_max_size} onChange={e => setPhpConfig(prev => ({ ...prev, post_max_size: e.target.value }))} placeholder="1024M" /></label>
         <label><span>upload_max_filesize</span><input value={phpConfig.upload_max_filesize} onChange={e => setPhpConfig(prev => ({ ...prev, upload_max_filesize: e.target.value }))} placeholder="1024M" /></label>
         <button className="secondary-light" disabled={!!loading} onClick={restorePhpDefaults}><RotateCcw size={14}/> Restore defaults</button>

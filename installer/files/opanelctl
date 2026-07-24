@@ -205,7 +205,7 @@ refresh_tools_nginx() {
   port="$(env_get PANEL_PORT)"; port="${port:-$DEFAULT_PANEL_PORT}"
   cert="$(env_get PANEL_SSL_CERT)"; key="$(env_get PANEL_SSL_KEY)"
   domain="$(env_get PANEL_DOMAIN)"; host="${domain:-$(detect_ip)}"
-  php_version="${PHP_DEFAULT:-8.3}"
+  php_version="${PHP_DEFAULT:-8.4}"
   api_scheme="http"; tools_scheme="http"; pma_secure="false"; ssl_block=""
   if [[ -n "$cert" && -n "$key" && -f "$cert" && -f "$key" ]]; then
     api_scheme="https"; tools_scheme="https"; pma_secure="true"

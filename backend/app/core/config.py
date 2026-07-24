@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     webserver_vhosts_dir: str = "/usr/local/lsws/conf/opanel/vhosts"
     ols_conf_root: str = "/usr/local/lsws/conf/opanel"
     ols_bin: str = "/usr/local/lsws/bin/lswsctrl"
-    default_php_version: str = "8.3"
+    default_php_version: str = "8.4"
     ssl_email: str = ""
     redis_url: str = "redis://localhost:6379/0"
     rate_limit_backend: str = "redis"
