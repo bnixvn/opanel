@@ -313,9 +313,9 @@ def status() -> CommandResult:
             "bash", "-lc",
             (
                 "echo '=== IPv4 ==='; "
-                "iptables -L OPANEL_INPUT -n -v 2>/dev/null || echo 'Chain not found'; "
+                "iptables -L OPANEL_INPUT -n --line-numbers 2>/dev/null || echo 'Chain not found'; "
                 "echo; echo '=== IPv6 ==='; "
-                "ip6tables -L OPANEL_INPUT -n -v 2>/dev/null || echo 'Chain not found'"
+                "ip6tables -L OPANEL_INPUT -n --line-numbers 2>/dev/null || echo 'Chain not found'"
             ),
         ],
     )
