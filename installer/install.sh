@@ -86,8 +86,11 @@ validate_port() {
 }
 
 detect_ssh_ports() {
-  local sshd_bin
+  local sshd_bin ssh_config ssh_config_files=()
   sshd_bin="$(find_sshd || true)"
+  for ssh_config in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do
+    [[ -f "$ssh_config" ]] && ssh_config_files+=("$ssh_config")
+  done
   {
     if [[ -n "$sshd_bin" ]]; then
       "$sshd_bin" -T 2>/dev/null | awk '$1 == "port" {print $2}'
@@ -95,20 +98,22 @@ detect_ssh_ports() {
     if [[ -n "${SSH_CONNECTION:-}" ]]; then
       awk '{print $4}' <<<"$SSH_CONNECTION"
     fi
-    awk '
-      tolower($1) == "port" && $2 ~ /^[0-9]+$/ { print $2 }
-      tolower($1) == "listenaddress" {
-        for (i = 2; i <= NF; i++) {
-          value = $i
-          gsub(/^\[/, "", value)
-          gsub(/\]$/, "", value)
-          if (value ~ /:[0-9]+$/) {
-            sub(/^.*:/, "", value)
-            print value
+    if (( ${#ssh_config_files[@]} > 0 )); then
+      awk '
+        tolower($1) == "port" && $2 ~ /^[0-9]+$/ { print $2 }
+        tolower($1) == "listenaddress" {
+          for (i = 2; i <= NF; i++) {
+            value = $i
+            gsub(/^\[/, "", value)
+            gsub(/\]$/, "", value)
+            if (value ~ /:[0-9]+$/) {
+              sub(/^.*:/, "", value)
+              print value
+            }
           }
         }
-      }
-    ' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null
+      ' "${ssh_config_files[@]}" 2>/dev/null
+    fi
   } | awk '$1 ~ /^[0-9]+$/ && $1 >= 1 && $1 <= 65535 {print $1}' | sort -nu
 }
 
@@ -957,7 +962,7 @@ setup_firewall() {
     [[ "$ssh_port" == "22" ]] && continue
     fw iptables -A OPANEL_INPUT -p tcp --dport "$ssh_port" -j ACCEPT || true
     fw ip6tables -A OPANEL_INPUT -p tcp --dport "$ssh_port" -j ACCEPT || true
-  done <<<"$seen_ssh_ports"
+  done <<<"$seen_ssh_ports" || true
 
   fw iptables -A OPANEL_INPUT -p tcp --dport 80 -j ACCEPT || true
   fw iptables -A OPANEL_INPUT -p tcp --dport 443 -j ACCEPT || true
