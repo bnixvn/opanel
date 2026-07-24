@@ -124,6 +124,17 @@ def test_php_upload_tmp_dir_keeps_nginx_readable_group():
     assert 'ensure_php_runtime_dirs "$pool_user"' in helper
 
 
+def test_firewall_blocklist_ipset_sizes_scale_with_list_size():
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    assert "v4_count=\"$(awk" in helper
+    assert 'index($0, ":") == 0' in helper
+    assert 'index($0, ":") > 0' in helper
+    assert 'v4_max=$(( v4_count + v4_count / 4 + 1024 ))' in helper
+    assert 'ipset swap "$v4_new" "$BLOCKLIST_IPSET_V4"' in helper
+    assert 'maxelem "$v4_max"' in helper
+    assert 'maxelem "$v6_max"' in helper
+
+
 def test_php_fpm_pools_are_auto_tuned_for_vps_size():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
     assert "calculate_php_fpm_pool_tuning()" in helper

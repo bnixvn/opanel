@@ -1051,21 +1051,51 @@ TIMER
 }
 
 firewall_blocklist_apply() {
+  local v4_count=0 v6_count=0 v4_max=65536 v6_max=65536
+  local v4_new="${BLOCKLIST_IPSET_V4}_new" v6_new="${BLOCKLIST_IPSET_V6}_new"
+  local v4_target="$v4_new" v6_target="$v6_new"
   ensure_ols_conf_dir_writable
   install -d -o root -g root -m 0755 "$BLOCKLIST_DIR"
-  ipset create "$BLOCKLIST_IPSET_V4" hash:net family inet -exist 2>/dev/null || true
-  ipset create "$BLOCKLIST_IPSET_V6" hash:net family inet6 -exist 2>/dev/null || true
-  ipset flush "$BLOCKLIST_IPSET_V4" 2>/dev/null || true
-  ipset flush "$BLOCKLIST_IPSET_V6" 2>/dev/null || true
+  if [[ -s "${BLOCKLIST_DIR}/blocklist.set" ]]; then
+    v4_count="$(awk 'NF && $0 !~ /^[[:space:]]*#/ && index($0, ":") == 0 { count++ } END { print count + 0 }' "${BLOCKLIST_DIR}/blocklist.set")"
+    v6_count="$(awk 'NF && $0 !~ /^[[:space:]]*#/ && index($0, ":") > 0 { count++ } END { print count + 0 }' "${BLOCKLIST_DIR}/blocklist.set")"
+    v4_max=$(( v4_count + v4_count / 4 + 1024 ))
+    v6_max=$(( v6_count + v6_count / 4 + 1024 ))
+    (( v4_max < 65536 )) && v4_max=65536
+    (( v6_max < 65536 )) && v6_max=65536
+  fi
+  ipset create "$BLOCKLIST_IPSET_V4" hash:net family inet hashsize 32768 maxelem "$v4_max" -exist 2>/dev/null || true
+  ipset create "$BLOCKLIST_IPSET_V6" hash:net family inet6 hashsize 32768 maxelem "$v6_max" -exist 2>/dev/null || true
+  ipset destroy "$v4_new" 2>/dev/null || true
+  ipset destroy "$v6_new" 2>/dev/null || true
+  ipset create "$v4_new" hash:net family inet hashsize 32768 maxelem "$v4_max" 2>/dev/null || true
+  ipset create "$v6_new" hash:net family inet6 hashsize 32768 maxelem "$v6_max" 2>/dev/null || true
+  if ! ipset list "$v4_new" >/dev/null 2>&1; then
+    v4_target="$BLOCKLIST_IPSET_V4"
+    ipset flush "$v4_target" 2>/dev/null || true
+  fi
+  if ! ipset list "$v6_new" >/dev/null 2>&1; then
+    v6_target="$BLOCKLIST_IPSET_V6"
+    ipset flush "$v6_target" 2>/dev/null || true
+  fi
   if [[ -s "${BLOCKLIST_DIR}/blocklist.set" ]]; then
     while IFS= read -r net; do
       [[ -n "$net" ]] || continue
+      [[ "$net" == \#* ]] && continue
       if [[ "$net" == *:* ]]; then
-        ipset add "$BLOCKLIST_IPSET_V6" "$net" 2>/dev/null || true
+        ipset add "$v6_target" "$net" 2>/dev/null || true
       else
-        ipset add "$BLOCKLIST_IPSET_V4" "$net" 2>/dev/null || true
+        ipset add "$v4_target" "$net" 2>/dev/null || true
       fi
     done <"${BLOCKLIST_DIR}/blocklist.set"
+  fi
+  if [[ "$v4_target" == "$v4_new" ]]; then
+    ipset swap "$v4_new" "$BLOCKLIST_IPSET_V4" 2>/dev/null || true
+    ipset destroy "$v4_new" 2>/dev/null || true
+  fi
+  if [[ "$v6_target" == "$v6_new" ]]; then
+    ipset swap "$v6_new" "$BLOCKLIST_IPSET_V6" 2>/dev/null || true
+    ipset destroy "$v6_new" 2>/dev/null || true
   fi
   if ! iptables -C OPANEL_BLOCKLIST -m set --match-set "$BLOCKLIST_IPSET_V4" src -j DROP 2>/dev/null; then
     iptables -I OPANEL_BLOCKLIST 1 -m set --match-set "$BLOCKLIST_IPSET_V4" src -j DROP 2>/dev/null || true

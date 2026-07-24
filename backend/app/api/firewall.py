@@ -97,7 +97,10 @@ def get_blocklists(current_user: User = Depends(get_current_user)):
 @router.post("/blocklists")
 def add_blocklist(payload: FirewallBlocklistUrl, current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
-    result = firewall.add_blocklist_url(payload.url)
+    try:
+        result = firewall.add_blocklist_url(payload.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=(result.stderr or result.stdout or "Could not add URL").strip())
     return _result(result)
@@ -106,7 +109,10 @@ def add_blocklist(payload: FirewallBlocklistUrl, current_user: User = Depends(ge
 @router.post("/blocklists/delete")
 def delete_blocklist(payload: FirewallBlocklistUrl, current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
-    result = firewall.delete_blocklist_url(payload.url)
+    try:
+        result = firewall.delete_blocklist_url(payload.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=(result.stderr or result.stdout or "Could not delete URL").strip())
     return _result(result)

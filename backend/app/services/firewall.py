@@ -557,25 +557,44 @@ def add_blocklist_url(url: str) -> CommandResult:
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         raise ValueError("URL must start with http:// or https://")
-    _ensure_rules_dir()
-    existing = ""
-    if BLOCKLIST_URLS_FILE.exists():
-        existing = BLOCKLIST_URLS_FILE.read_text(encoding="utf-8")
-    if url in existing.splitlines():
-        return CommandResult(command="add blocklist url", returncode=0, stdout="URL already added", stderr="")
-    with open(BLOCKLIST_URLS_FILE, "a", encoding="utf-8") as f:
-        f.write(url + "\n")
-    return CommandResult(command="add blocklist url", returncode=0, stdout="URL added", stderr="")
+    return shell.privileged(
+        "iptables-blocklist-add",
+        helper_args=[url],
+        check=False,
+        fallback=[
+            "bash", "-lc",
+            (
+                f"mkdir -p {BLOCKLIST_URLS_FILE.parent} && "
+                f"touch {BLOCKLIST_URLS_FILE} && "
+                "(grep -Fxq -- \"$1\" \"$2\" || printf '%s\\n' \"$1\" >>\"$2\") && "
+                "sort -u -o \"$2\" \"$2\" && "
+                "echo 'Blocklist URL added'"
+            ),
+            "bash", url, str(BLOCKLIST_URLS_FILE),
+        ],
+    )
 
 
 def delete_blocklist_url(url: str) -> CommandResult:
-    if not BLOCKLIST_URLS_FILE.exists():
-        return CommandResult(command="delete blocklist url", returncode=0, stdout="URL not found", stderr="")
-    lines = BLOCKLIST_URLS_FILE.read_text(encoding="utf-8").splitlines()
-    new_lines = [line for line in lines if line.strip() != url.strip()]
-    suffix = "\n" if new_lines else ""
-    BLOCKLIST_URLS_FILE.write_text("\n".join(new_lines) + suffix, encoding="utf-8")
-    return CommandResult(command="delete blocklist url", returncode=0, stdout="URL removed", stderr="")
+    url = (url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("URL must start with http:// or https://")
+    return shell.privileged(
+        "iptables-blocklist-delete",
+        helper_args=[url],
+        check=False,
+        fallback=[
+            "bash", "-lc",
+            (
+                f"mkdir -p {BLOCKLIST_URLS_FILE.parent} && "
+                f"touch {BLOCKLIST_URLS_FILE} && "
+                "grep -Fxv -- \"$1\" \"$2\" >\"$2.tmp\" || true && "
+                "mv -f \"$2.tmp\" \"$2\" && "
+                "echo 'Blocklist URL removed'"
+            ),
+            "bash", url, str(BLOCKLIST_URLS_FILE),
+        ],
+    )
 
 
 def update_blocklists() -> CommandResult:
