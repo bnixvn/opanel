@@ -22,6 +22,7 @@ export PATH
 ALLOWED_SERVICES=(lsws mariadb redis-server opanel-api)
 ALLOWED_ACTIONS=(start stop restart reload status is-active is-enabled)
 HOME_ROOT="/home"
+OLS_HTTPD_CONF="/usr/local/lsws/conf/httpd_config.conf"
 OLS_VHOSTS_DIR="/usr/local/lsws/conf/opanel/vhosts"
 PHP_CONF_DIRS=(/usr/local/lsws/lsphp{83,84}/etc/php.d)
 opanel_SITES_GROUP="opanel-sites"
@@ -50,6 +51,8 @@ ensure_opanel_data_dir() {
 
 ensure_ols_conf_dir_writable() {
   install -d -o root -g root -m 0755 "$BLOCKLIST_DIR"
+  install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /tmp/lshttpd
+  chmod g+s /tmp/lshttpd 2>/dev/null || true
   if getent group opanel >/dev/null 2>&1; then
     install -d -o root -g opanel -m 2775 "$OLS_VHOSTS_DIR"
     install -d -o root -g opanel -m 2775 "$OLS_CUSTOM_DIR"
@@ -59,6 +62,116 @@ ensure_ols_conf_dir_writable() {
     install -d -o root -g root -m 0755 "$OLS_VHOSTS_DIR"
     install -d -o root -g root -m 0755 "$OLS_CUSTOM_DIR"
   fi
+}
+
+ols_disable_conflicting_apache() {
+  if systemctl list-unit-files apache2.service >/dev/null 2>&1; then
+    systemctl disable --now apache2 >/dev/null 2>&1 || true
+  fi
+}
+
+ols_sync_main_config() {
+  ensure_ols_conf_dir_writable
+  install -d -o root -g root -m 0755 /usr/local/lsws/conf/opanel
+  ols_disable_conflicting_apache
+  python3 - "$OLS_HTTPD_CONF" "$OLS_VHOSTS_DIR" <<'PY'
+import pathlib
+import re
+import sys
+
+conf = pathlib.Path(sys.argv[1])
+vhosts_dir = pathlib.Path(sys.argv[2])
+domain_re = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+
+if conf.exists():
+    text = conf.read_text(encoding="utf-8", errors="replace")
+else:
+    text = ""
+text = text.replace("\r\n", "\n")
+if re.search(r"(?m)^\s*user\s+", text):
+    text = re.sub(r"(?m)^\s*user\s+.*$", "user                             www-data", text, count=1)
+else:
+    text = "user                             www-data\n" + text
+if re.search(r"(?m)^\s*group\s+", text):
+    text = re.sub(r"(?m)^\s*group\s+.*$", "group                            opanel-sites", text, count=1)
+else:
+    text = "group                            opanel-sites\n" + text
+
+def remove_named_block(source: str, directive: str, name: str) -> str:
+    pattern = re.compile(rf"(?ms)^[ \t]*{re.escape(directive)}[ \t]+{re.escape(name)}[ \t]*\{{.*?^[ \t]*\}}[ \t]*\n?")
+    return pattern.sub("", source)
+
+for block_name in ("opanel_http", "opanel_https"):
+    text = remove_named_block(text, "listener", block_name)
+text = re.sub(r"(?ms)^# OPanel managed vhosts BEGIN\n.*?^# OPanel managed vhosts END\n?", "", text)
+
+sites = []
+if vhosts_dir.is_dir():
+    for vhost_file in sorted(vhosts_dir.glob("*/vhost.conf")):
+        domain = vhost_file.parent.name.lower()
+        if not domain_re.fullmatch(domain):
+            continue
+        content = vhost_file.read_text(encoding="utf-8", errors="replace")
+        hosts = [domain]
+        for match in re.finditer(r"(?m)^\s*vh(?:Domain|Aliases)\s+(.+?)\s*$", content):
+            for host in re.split(r"[,\s]+", match.group(1).strip()):
+                host = host.strip().lower()
+                if domain_re.fullmatch(host) and host not in hosts:
+                    hosts.append(host)
+        cert_match = re.search(r"(?m)^\s*certFile\s+(.+?)\s*$", content)
+        key_match = re.search(r"(?m)^\s*keyFile\s+(.+?)\s*$", content)
+        has_ssl = False
+        if cert_match and key_match:
+            cert_path = pathlib.Path(cert_match.group(1).strip())
+            key_path = pathlib.Path(key_match.group(1).strip())
+            has_ssl = cert_path.is_file() and key_path.is_file()
+        sites.append((domain, hosts, has_ssl))
+
+managed = ["# OPanel managed vhosts BEGIN"]
+for domain, _hosts, _has_ssl in sites:
+    managed.extend([
+        f"virtualHost {domain} {{",
+        f"    vhRoot                   conf/opanel/vhosts/{domain}/",
+        "    allowSymbolLink          1",
+        "    enableScript             1",
+        "    restrained               1",
+        f"    configFile               conf/opanel/vhosts/{domain}/vhost.conf",
+        "}",
+        "",
+    ])
+
+def listener_block(name: str, address: str, secure: bool, include_ssl_sites: bool) -> list[str]:
+    lines = [f"listener {name} {{", f"    address                  {address}", f"    secure                   {1 if secure else 0}"]
+    if secure:
+        lines.extend([
+            "    keyFile                 /etc/ssl/private/ssl-cert-snakeoil.key",
+            "    certFile                /etc/ssl/certs/ssl-cert-snakeoil.pem",
+            "    certChain               1",
+            "    enableSpdy              16",
+            "    enableQuic              1",
+        ])
+    for domain, hosts, has_ssl in sites:
+        if include_ssl_sites and not has_ssl:
+            continue
+        lines.append(f"    map                      {domain} {', '.join(hosts)}")
+    lines.append("}")
+    lines.append("")
+    return lines
+
+managed.extend(listener_block("opanel_http", "*:80", False, False))
+managed.extend(listener_block("opanel_https", "*:443", True, True))
+managed.append("# OPanel managed vhosts END")
+managed.append("")
+
+new_text = text.rstrip() + "\n\n" + "\n".join(managed)
+conf.parent.mkdir(parents=True, exist_ok=True)
+if conf.exists() and conf.read_text(encoding="utf-8", errors="replace") == new_text:
+    raise SystemExit(0)
+backup = conf.with_suffix(conf.suffix + ".opanel.bak")
+if conf.exists():
+    backup.write_text(conf.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+conf.write_text(new_text, encoding="utf-8")
+PY
 }
 
 file_has_nul() {
@@ -317,24 +430,14 @@ schedule_panel_restart() {
 }
 
 refresh_tools_ols() {
-  local port cert key domain host api_scheme tools_scheme pma_secure ssl_block php_version
+  local port cert key domain host api_scheme tools_scheme pma_secure php_version
   port="$(env_get PANEL_PORT)"; port="${port:-$DEFAULT_PANEL_PORT}"
   cert="$(env_get PANEL_SSL_CERT)"; key="$(env_get PANEL_SSL_KEY)"
   domain="$(env_get PANEL_DOMAIN)"; host="${domain:-$(detect_ip)}"
   php_version="${PHP_DEFAULT:-8.4}"
-  api_scheme="http"; tools_scheme="http"; pma_secure="false"; ssl_block=""
+  api_scheme="http"; tools_scheme="http"; pma_secure="false"
   if [[ -n "$cert" && -n "$key" && -f "$cert" && -f "$key" ]]; then
     api_scheme="https"; tools_scheme="https"; pma_secure="true"
-    ssl_block="listener HTTPS {
-  address                 *:443
-  secure                  1
-  keyFile                 ${key}
-  certFile                ${cert}
-  certChain               1
-  enableSPDY              1
-  enableQuic              1
-}
-"
   fi
   ensure_ols_conf_dir_writable
   firewall_blocklist_apply 2>/dev/null || true
@@ -343,7 +446,7 @@ docRoot                   /usr/share/phpmyadmin/
 vhDomain                  ${host}
 enableIpGeo               0
 
-${ssl_block}context /phpmyadmin/ {
+context /phpmyadmin/ {
   type                    null
   extraHeaders            X-Frame-Options SAMEORIGIN
 }
@@ -351,6 +454,7 @@ OLS_VHOST
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   [[ -n "$host" ]] && sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
+  ols_sync_main_config
   /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
 }
 
@@ -2058,6 +2162,8 @@ ensure_php_runtime_dirs() {
   local upload_dir="/var/lib/php/uploads/${user}"
   ensure_sites_group
   require_linux_user "$user"
+  install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /tmp/lshttpd
+  chmod g+s /tmp/lshttpd 2>/dev/null || true
   install -d -o "$user" -g "$user" -m 0700 "$sess_dir"
   # PHP keeps uploaded files in this directory before WordPress renames them
   # into wp-content/uploads. Keep the directory private to the site user, but
@@ -2120,7 +2226,13 @@ case "$cmd" in
     ;;
 
   ols-reload|nginx-reload)
+    ols_sync_main_config
     exec /usr/local/lsws/bin/lswsctrl restart
+    ;;
+  ols-sync-main)
+    ols_sync_main_config
+    /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+    echo "OpenLiteSpeed main config synced"
     ;;
   ols-custom-write|nginx-custom-write)
     [[ $# -eq 1 ]] || deny "usage: ols-custom-write <domain>"
@@ -2215,14 +2327,19 @@ case "$cmd" in
     ;;
 
   ols-vhost-write)
-    [[ $# -eq 1 ]] || deny "usage: ols-vhost-write <domain>"
+    [[ $# -ge 1 ]] || deny "usage: ols-vhost-write <domain> [hostname ...]"
     safe_domain="$1"
     require_domain "$safe_domain"
+    shift
+    for hostname in "$@"; do
+      require_domain "$hostname"
+    done
     install -d -o root -g opanel -m 2775 "$OLS_VHOSTS_DIR/$safe_domain"
     cat >"$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
     chown -R root:opanel "$OLS_VHOSTS_DIR/$safe_domain"
     chmod 2775 "$OLS_VHOSTS_DIR/$safe_domain"
     chmod 0644 "$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
+    ols_sync_main_config
     /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
     ;;
 
@@ -2231,6 +2348,7 @@ case "$cmd" in
     safe_domain="$1"
     require_domain "$safe_domain"
     rm -rf "$OLS_VHOSTS_DIR/$safe_domain"
+    ols_sync_main_config
     /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
     ;;
 

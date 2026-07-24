@@ -20,7 +20,7 @@ def test_site_php_fpm_socket_is_scoped_to_site_root(tmp_path):
     second_socket = site_users.site_php_fpm_socket("siteuser", second_root, "8.3")
 
     first_hash = hashlib.sha256(str(first_root.resolve()).encode("utf-8")).hexdigest()[:12]
-    assert first_socket == f"/run/php/opanel-siteuser-{first_hash}-8_3.sock"
+    assert first_socket == f"/tmp/lshttpd/opanel-siteuser-{first_hash}-lsphp83.sock"
     assert second_socket != first_socket
 
 
@@ -34,7 +34,7 @@ def test_php_fpm_socket_rejects_invalid_php_version(tmp_path):
 
 
 def test_legacy_user_php_fpm_socket_is_kept_for_callers_without_site_root():
-    assert site_users.php_fpm_socket("siteuser", "8.3") == "/run/php/opanel-siteuser-8_3.sock"
+    assert site_users.php_fpm_socket("siteuser", "8.3") == "/tmp/lshttpd/opanel-siteuser-lsphp83.sock"
 
 
 def test_placeholder_page_for_linux_user_uses_site_file_write(tmp_path, monkeypatch):
@@ -91,15 +91,22 @@ def test_site_permissions_do_not_allow_cross_user_reading():
     assert 'find "$target" -type d -exec chmod 755 {} +' not in helper
 
 
+def test_ols_server_group_can_read_managed_site_roots():
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    assert 'user                             www-data' in helper
+    assert 'group                            opanel-sites' in helper
+    assert 'user                             nobody' not in helper
+    assert 'group                            nogroup' not in helper
+    assert 'install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /tmp/lshttpd' in helper
+
+
 def test_php_upload_tmp_dir_keeps_nginx_readable_group():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
-    update = UPDATE_SCRIPT.read_text(encoding="utf-8")
     assert "ensure_php_runtime_dirs()" in helper
     assert 'install -d -o "$user" -g "$opanel_SITES_GROUP" -m 2700 "$upload_dir"' in helper
     assert 'chmod g+s "$upload_dir"' in helper
     assert 'install -d -o "$user" -g "$user" -m 0700 "$sess_dir"' in helper
     assert 'ensure_php_runtime_dirs "$pool_user"' in helper
-    assert 'chmod 2700 "/var/lib/php/uploads/$user"' in update
 
 
 def test_php_fpm_pools_are_auto_tuned_for_vps_size():
@@ -109,10 +116,10 @@ def test_php_fpm_pools_are_auto_tuned_for_vps_size():
     assert "php_fpm_cpu_count()" in helper
     assert "php_fpm_pool_count()" in helper
     assert "active_pool_divisor * active_pool_divisor < pool_count" in helper
-    assert "pm.max_children = ${PHP_FPM_MAX_CHILDREN}" in helper
-    assert "pm.process_idle_timeout = ${PHP_FPM_PROCESS_IDLE_TIMEOUT}s" in helper
-    assert "pm.max_requests = ${PHP_FPM_MAX_REQUESTS}" in helper
-    assert "request_terminate_timeout = ${PHP_FPM_REQUEST_TERMINATE_TIMEOUT}s" in helper
+    assert 'php_fpm_set_directive "$pool_file" "pm.max_children" "$PHP_FPM_MAX_CHILDREN"' in helper
+    assert 'php_fpm_set_directive "$pool_file" "pm.process_idle_timeout" "${PHP_FPM_PROCESS_IDLE_TIMEOUT}s"' in helper
+    assert 'php_fpm_set_directive "$pool_file" "pm.max_requests" "$PHP_FPM_MAX_REQUESTS"' in helper
+    assert 'php_fpm_set_directive "$pool_file" "request_terminate_timeout" "${PHP_FPM_REQUEST_TERMINATE_TIMEOUT}s"' in helper
     assert "opanel_PHP_FPM_WORKER_MB" in helper
     assert "opanel_PHP_FPM_MAX_CHILDREN" in helper
     assert "php-fpm-retune)" in helper

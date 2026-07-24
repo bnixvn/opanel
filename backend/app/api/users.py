@@ -60,7 +60,7 @@ def _delete_owned_website(db: Session, website: Website) -> None:
     db_item = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
     if db_item:
         mariadb.drop_database(db_item.db_name, db_item.db_user)
-    openlitespeed.delete_wordpress_vhost(website.domain)
+    openlitespeed.remove_vhost(website.domain)
     wordpress.delete_wordpress(website.root_path)
     if db_item:
         db.delete(db_item)

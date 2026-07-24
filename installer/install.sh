@@ -248,6 +248,7 @@ install_openlitespeed() {
   done
   apt-get install -y openlitespeed ${lsphp_packages} ols-modsecurity || \
     apt-get install -y openlitespeed ${lsphp_packages}
+  systemctl disable --now apache2 2>/dev/null || true
   systemctl enable --now lsws || true
   # Install ionCube for each LSPHP version
   for version in $PHP_VERSIONS; do
@@ -779,6 +780,9 @@ OLS
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${PANEL_PORT}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
+  if id -u opanel >/dev/null 2>&1 && [[ -x /usr/local/sbin/opanel-helper ]]; then
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper ols-sync-main >/dev/null 2>&1 || true
+  fi
 }
 
 

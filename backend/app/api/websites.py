@@ -78,6 +78,8 @@ def _website_http_flood_config(website: Website) -> dict:
 
 
 def _rewrite_ssl_kwargs(website: Website) -> dict:
+    if getattr(website, "ssl_mode", "none") == "letsencrypt" and getattr(website, "ssl_enabled", False):
+        return {"ssl_enabled": True}
     if (
         getattr(website, "ssl_mode", "none") == "manual"
         and website.ssl_cert_path
@@ -781,7 +783,10 @@ def delete_website(website_id: int, request: Request, delete_files: bool = True,
     if delete_database and db_item:
         mariadb.drop_database(db_item.db_name, db_item.db_user)
     db.query(WebsiteAlias).filter(WebsiteAlias.website_id == website.id).delete(synchronize_session=False)
-    openlitespeed.delete_wordpress_vhost(website.domain)
+    try:
+        openlitespeed.remove_vhost(website.domain)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot delete webserver config: {exc}") from exc
     if delete_files:
         if website.linux_user:
             site_users.delete_site_runtime(website.root_path, website.linux_user)
@@ -830,15 +835,14 @@ def enable_ssl(website_id: int, db: Session = Depends(get_db), current_user: Use
         ensure_role(current_user.role, Role.admin)
     previous_manual_paths = (website.ssl_cert_path, website.ssl_key_path, website.ssl_ca_path)
     previous_snapshot = ssl.snapshot_manual_ssl_domain(website.domain)
-    if getattr(website, "ssl_mode", "none") == "manual":
-        try:
-            _rewrite_website_vhost(
-                website,
-                preserve_existing_ssl=False,
-                include_ssl=False,
-            )
-        except (RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=f"Cannot prepare vhost config for Let's Encrypt: {exc}") from exc
+    try:
+        _rewrite_website_vhost(
+            website,
+            preserve_existing_ssl=False,
+            include_ssl=False,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot prepare vhost config for Let's Encrypt: {exc}") from exc
     result = ssl.issue_ssl(website.domain, _ssl_domains(website))
     if result.returncode != 0:
         if getattr(website, "ssl_mode", "none") == "manual":
@@ -855,6 +859,10 @@ def enable_ssl(website_id: int, db: Session = Depends(get_db), current_user: Use
     website.ssl_key_path = None
     website.ssl_ca_path = None
     ssl.remove_manual_ssl_files(*previous_manual_paths)
+    try:
+        _rewrite_website_vhost(website)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot enable SSL in webserver config: {exc}") from exc
     db.commit()
     db.refresh(website)
     log_action(db, current_user.id, "enable_ssl", website.domain)

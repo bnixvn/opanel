@@ -1,4 +1,5 @@
 import json
+import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
@@ -15,6 +16,7 @@ from app.services.shell import CommandResult, shell
 MAX_SSL_PART_BYTES = 256 * 1024
 ALLOWED_SSL_EXTENSIONS = {".crt", ".pem", ".key", ".ca"}
 MANUAL_SSL_ROOT = Path("/usr/local/lsws/conf/opanel/ssl/sites")
+ACME_WEBROOT = "/var/www/opanel-acme"
 
 
 class ManualSslSnapshot:
@@ -61,16 +63,22 @@ def _safe_domain_list(domain: str, aliases: list[str] | tuple[str, ...] | None =
 def issue_ssl(domain: str, aliases: list[str] | tuple[str, ...] | None = None) -> CommandResult:
     domains = _safe_domain_list(domain, aliases)
     helper_args = domains[:]
-    # Use webroot mode instead of --nginx since we use OpenLiteSpeed
-    fallback = ["certbot", "certonly", "--webroot", "-w", "/var/www/opanel/acme"]
-    for name in domains:
-        fallback.extend(["-d", name])
-    fallback.extend(["--non-interactive", "--agree-tos", "--expand"])
+    fallback_domains = " ".join(f"-d {shlex.quote(name)}" for name in domains)
+    fallback = [
+        "bash",
+        "-lc",
+        (
+            "install -d -o root -g opanel -m 0755 "
+            f"{shlex.quote(ACME_WEBROOT)}/.well-known/acme-challenge && "
+            f"certbot certonly --webroot -w {shlex.quote(ACME_WEBROOT)} "
+            f"--cert-name {shlex.quote(domains[0])} --non-interactive --agree-tos --expand {fallback_domains}"
+        ),
+    ]
     if settings.ssl_email:
         helper_args.append(settings.ssl_email)
-        fallback.extend(["--email", settings.ssl_email])
+        fallback[-1] += f" --email {shlex.quote(settings.ssl_email)}"
     else:
-        fallback.append("--register-unsafely-without-email")
+        fallback[-1] += " --register-unsafely-without-email"
     return shell.privileged("certbot-issue", helper_args=helper_args, check=False, fallback=fallback)
 
 

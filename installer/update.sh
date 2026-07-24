@@ -849,7 +849,7 @@ fi
 log "Installing direct panel runtime"
 update_progress 25 "syncing" "Syncing source into ${APP_DIR}"
 install_panel_runtime
-log "Configuring Nginx FastCGI cache"
+log "Configuring legacy FastCGI cache compatibility"
 configure_fastcgi_cache
 ensure_terminal_tools
 venv_needs_recreate=false
@@ -905,13 +905,14 @@ if [[ -f "$SOURCE_DIR/installer/files/opanelctl" ]]; then
   sed -i "s#APP_DIR=\"\${APP_DIR:-/opt/opanel}\"#APP_DIR=\"\${APP_DIR:-${APP_DIR}}\"#" /usr/local/sbin/opanel /usr/local/sbin/opanelctl 2>/dev/null || true
 fi
 
-log "Ensuring Nginx ModSecurity WAF engine is installed"
+log "Ensuring OpenLiteSpeed ModSecurity WAF engine is installed"
 if id -u opanel >/dev/null 2>&1; then
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper waf-install || \
     echo "WARNING: WAF engine installation failed; continuing without ModSecurity."
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper certbot-auto-renew-install >/dev/null 2>&1 || true
-  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper nginx-blocklist-timer-install >/dev/null 2>&1 || true
-  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper nginx-blocklist-run >/dev/null 2>&1 || true
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper blocklist-timer-install >/dev/null 2>&1 || true
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper blocklist-run >/dev/null 2>&1 || true
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper ols-sync-main >/dev/null 2>&1 || true
 else
   echo "  (opanel user not found; skipping WAF install - run install.sh first)"
 fi
@@ -952,12 +953,12 @@ if id -u opanel >/dev/null 2>&1; then
   sudo -u opanel env HOME="$APP_DIR" opanel_USE_HELPER=true "$APP_DIR/backend/.venv/bin/python" - <<'PY'
 from app.core.database import SessionLocal
 from app.models.entities import Website
-from app.services import nginx, site_users, waf
+from app.services import openlitespeed, site_users, waf
 
 with SessionLocal() as db:
     websites = db.query(Website).all()
     try:
-        result = nginx.sync_http_flood_zones(websites)
+        result = openlitespeed.sync_http_flood_zones(websites)
         if result.returncode != 0:
             print(f"WARNING: could not refresh HTTP flood zones: {result.stderr or result.stdout}")
     except Exception as exc:
@@ -981,23 +982,27 @@ with SessionLocal() as db:
                 db.commit()
             app_type = website.app_type or "wordpress"
             runtime_php_version = website.php_version if app_type in {"wordpress", "php"} else None
-            nginx.rewrite_vhost(
+            openlitespeed.rewrite_vhost(
                 website.domain,
                 website.root_path,
                 app_type=app_type,
                 php_version=website.php_version,
                 custom_directives=website.nginx_custom or "",
-                php_fpm_socket_override=site_users.site_php_fpm_socket(website.linux_user, website.root_path, runtime_php_version),
+                lsphp_socket_override=site_users.site_lsphp_socket(website.linux_user, website.root_path, runtime_php_version),
                 waf_enabled=website.waf_enabled,
                 http_flood_enabled=website.http_flood_enabled,
                 http_flood_config=website.http_flood_config or "",
                 document_root=getattr(website, "document_root", "public_html") or "public_html",
                 rewrite_mode=getattr(website, "nginx_rewrite_mode", "none") or "none",
+                ssl_enabled=bool(getattr(website, "ssl_enabled", False)),
+                ssl_cert_path=getattr(website, "ssl_cert_path", None),
+                ssl_key_path=getattr(website, "ssl_key_path", None),
+                ssl_ca_path=getattr(website, "ssl_ca_path", None),
             )
         except Exception as exc:
             print(f"WARNING: could not refresh permissions for {website.domain}: {exc}")
     try:
-        result = nginx.sync_http_flood_zones(websites)
+        result = openlitespeed.sync_http_flood_zones(websites)
         if result.returncode != 0:
             print(f"WARNING: could not refresh HTTP flood zones: {result.stderr or result.stdout}")
     except Exception as exc:
@@ -1090,12 +1095,14 @@ chmod -R o+rX "$APP_DIR/frontend/dist"
 log "Restarting opanel-api after frontend build"
 systemctl restart opanel-api
 
-# --- Reload Nginx ----------------------------------------------------------
-log "Reloading nginx"
-update_progress 92 "restarting" "Restarting services and reloading nginx"
+# --- Reload OpenLiteSpeed --------------------------------------------------
+log "Reloading OpenLiteSpeed"
+update_progress 92 "restarting" "Restarting services and reloading OpenLiteSpeed"
 migrate_nginx_wordpress_csp_worker_src
-nginx -t
-systemctl reload nginx
+if id -u opanel >/dev/null 2>&1; then
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper ols-sync-main >/dev/null 2>&1 || true
+fi
+/usr/local/lsws/bin/lswsctrl restart
 
 # --- Health check ----------------------------------------------------------
 log "Health check"

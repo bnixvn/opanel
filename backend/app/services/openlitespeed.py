@@ -13,7 +13,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -48,6 +48,8 @@ HTTP_FLOOD_DEFAULTS = {
     "access_limit_burst": 100,
     "connection_limit": 60,
 }
+
+ACME_WEBROOT = "/var/www/opanel-acme"
 
 WORDPRESS_CSP = (
     "default-src 'self' https: data: blob:; "
@@ -103,6 +105,37 @@ def _safe_alias_domains(aliases: list[str] | tuple[str, ...] | None) -> list[str
         safe_aliases.append(safe_alias)
         seen.add(safe_alias)
     return safe_aliases
+
+
+def _safe_hostnames(hostnames: Iterable[str]) -> list[str]:
+    safe_hosts: list[str] = []
+    seen: set[str] = set()
+    for hostname in hostnames:
+        try:
+            safe_hostname = _safe_domain(str(hostname))
+        except ValueError:
+            continue
+        if safe_hostname in seen:
+            continue
+        safe_hosts.append(safe_hostname)
+        seen.add(safe_hostname)
+    return safe_hosts
+
+
+def _redirect_source_domains(redirects: list | tuple | None) -> list[str]:
+    domains: list[str] = []
+    for redirect in redirects or []:
+        if isinstance(redirect, dict):
+            source = redirect.get("source") or redirect.get("domain")
+        else:
+            source = redirect
+        if source:
+            domains.append(str(source))
+    return domains
+
+
+def _vhost_hostnames(domain: str, aliases: list[str] | tuple[str, ...] | None, redirects: list | tuple | None) -> list[str]:
+    return _safe_hostnames([domain, *(aliases or []), *_redirect_source_domains(redirects)])
 
 
 def _check_php_version(php_version: str | None) -> str | None:
@@ -370,6 +403,7 @@ def _build_context(
     checked_rewrite = _check_rewrite_mode(rewrite_mode)
     safe_doc_root = _effective_document_root(document_root, checked_rewrite)
     safe_aliases = _safe_alias_domains(aliases)
+    has_ssl = bool(ssl_cert_path and ssl_key_path)
 
     # Determine LSPHP external app
     lsphp_app = ""
@@ -395,6 +429,7 @@ def _build_context(
         "rewrite_block": rewrite_block,
         "custom_directives": validate_custom_directives(custom_directives),
         "ssl_enabled": ssl_enabled,
+        "has_ssl": has_ssl,
         "ssl_cert_path": ssl_cert_path or "",
         "ssl_key_path": ssl_key_path or "",
         "ssl_ca_path": ssl_ca_path or "",
@@ -408,6 +443,7 @@ def _build_context(
         "linux_user": linux_user or "www-data",
         "access_log": str(_log_path(safe_domain, "access")),
         "error_log": str(_log_path(safe_domain, "error")),
+        "acme_webroot": ACME_WEBROOT,
         "csp_header": WORDPRESS_CSP if checked_app == "wordpress" else "",
     }
 
@@ -468,11 +504,18 @@ def rewrite_vhost(
     **kwargs,
 ) -> str:
     """Render and write a vhost config to disk, then restart OLS."""
+    kwargs.pop("preserve_existing_ssl", None)
+    kwargs.pop("include_ssl", None)
+    if kwargs.get("ssl_enabled") and not (kwargs.get("ssl_cert_path") and kwargs.get("ssl_key_path")):
+        live_dir = Path("/etc/letsencrypt/live") / _safe_domain(domain)
+        kwargs["ssl_cert_path"] = str(live_dir / "fullchain.pem")
+        kwargs["ssl_key_path"] = str(live_dir / "privkey.pem")
     content = render_vhost(domain, root_path, **kwargs)
     safe_domain = _safe_domain(domain)
+    hostnames = _vhost_hostnames(safe_domain, kwargs.get("aliases"), kwargs.get("redirects"))
     shell.privileged(
         "ols-vhost-write",
-        helper_args=[safe_domain],
+        helper_args=[safe_domain, *hostnames],
         input=content,
         fallback=[
             "bash", "-lc",
@@ -508,6 +551,11 @@ def get_vhost_config(domain: str) -> str | None:
     if conf_path.exists():
         return conf_path.read_text(encoding="utf-8")
     return None
+
+
+def sync_http_flood_zones(websites):
+    """Compatibility no-op: OLS flood rules are rendered per vhost."""
+    return shell.run(["true"], check=False)
 
 
 # ---------------------------------------------------------------------------

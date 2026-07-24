@@ -139,3 +139,23 @@ def test_issue_ssl_passes_aliases_and_email(monkeypatch):
     assert result.returncode == 0
     assert captured["helper_command"] == "certbot-issue"
     assert captured["helper_args"] == ["example.test", "www.example.test", "admin@example.test"]
+
+
+def test_issue_ssl_uses_opanel_acme_webroot(monkeypatch):
+    captured = {}
+
+    def fake_privileged(helper_command, helper_args=None, **kwargs):
+        captured["helper_command"] = helper_command
+        captured["helper_args"] = helper_args
+        captured["kwargs"] = kwargs
+        return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(ssl.shell, "privileged", fake_privileged)
+    monkeypatch.setattr(ssl.settings, "ssl_email", "")
+
+    result = ssl.issue_ssl("example.test")
+
+    assert result.returncode == 0
+    fallback = " ".join(captured["kwargs"]["fallback"])
+    assert "/var/www/opanel-acme" in fallback
+    assert "/var/www/opanel/acme" not in fallback
