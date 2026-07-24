@@ -635,37 +635,29 @@ install_clamav_engine() {
 }
 
 install_php_version() {
-  local version="$1"
+  local version="$1" lsphp_ver ini_dir
   export DEBIAN_FRONTEND=noninteractive
   require_php_version "$version"
-  if [[ -f /etc/php/"$version"/fpm/php-fpm.conf ]]; then
-    echo "PHP $version is already installed; ensuring opanel extension set..."
+  lsphp_ver="${version//./}"
+  if [[ -x "/usr/local/lsws/lsphp${lsphp_ver}/bin/lsphp" ]]; then
+    echo "LSPHP $version is already installed; ensuring opanel extension set..."
   fi
-  if ! apt-cache show "php${version}-fpm" >/dev/null 2>&1; then
-    if ! grep -q "ondrej/php" /etc/apt/sources.list.d/*.list 2>/dev/null; then
-      echo "Adding ondrej/php PPA for PHP $version..."
-      apt-get update --allow-releaseinfo-change
-      apt-get install -y software-properties-common || true
-      add-apt-repository -y ppa:ondrej/php 2>/dev/null || true
-    fi
+  if ! apt-cache show "lsphp${lsphp_ver}" >/dev/null 2>&1; then
+    echo "Refreshing LiteSpeed package metadata for LSPHP $version..."
+    curl -fsSL --connect-timeout 15 --max-time 120 https://repo.litespeed.sh | bash
     apt-get update --allow-releaseinfo-change
   fi
-  echo "Installing PHP $version..."
+  echo "Installing LSPHP $version..."
   local packages=(
-    "php${version}-fpm"
-    "php${version}-cli"
-    "php${version}-mysql"
-    "php${version}-sqlite3"
-    "php${version}-curl"
-    "php${version}-gd"
-    "php${version}-mbstring"
-    "php${version}-xml"
-    "php${version}-zip"
-    "php${version}-opcache"
-    "php${version}-intl"
-    "php${version}-bcmath"
-    "php${version}-redis"
-    "php${version}-imagick"
+    "lsphp${lsphp_ver}"
+    "lsphp${lsphp_ver}-common"
+    "lsphp${lsphp_ver}-mysql"
+    "lsphp${lsphp_ver}-sqlite3"
+    "lsphp${lsphp_ver}-curl"
+    "lsphp${lsphp_ver}-opcache"
+    "lsphp${lsphp_ver}-intl"
+    "lsphp${lsphp_ver}-redis"
+    "lsphp${lsphp_ver}-imagick"
   )
   local available_packages=() missing_packages=() package
   for package in "${packages[@]}"; do
@@ -678,12 +670,25 @@ install_php_version() {
   if [[ ${#missing_packages[@]} -gt 0 ]]; then
     echo "Skipping PHP packages not available in repo: ${missing_packages[*]}"
   fi
-  [[ ${#available_packages[@]} -gt 0 ]] || deny "No package found for PHP ${version}"
-  apt-get install -y "${available_packages[@]}" || { echo "Failed to install PHP $version"; return 1; }
+  [[ ${#available_packages[@]} -gt 0 ]] || deny "No LSPHP package found for PHP ${version}"
+  apt-get install -y "${available_packages[@]}" || { echo "Failed to install LSPHP $version"; return 1; }
+  ini_dir="/usr/local/lsws/lsphp${lsphp_ver}/etc/php.d"
+  install -d -o root -g root -m 0755 "$ini_dir"
+  cat >"${ini_dir}/99-opanel.ini" <<INI
+upload_max_filesize = 1024M
+post_max_size = 1024M
+memory_limit = 512M
+max_execution_time = 300
+max_input_time = 600
+max_input_vars = 10000
+max_file_uploads = 100
+INI
+  chown root:root "${ini_dir}/99-opanel.ini"
+  chmod 0644 "${ini_dir}/99-opanel.ini"
   install_ioncube_loader "$version"
   # Enable and start OLS (which manages lsphp)
   /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
-  echo "PHP $version installed successfully"
+  echo "LSPHP $version installed successfully"
 }
 
 install_ioncube_loader() {
