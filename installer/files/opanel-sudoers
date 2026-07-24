@@ -4,7 +4,7 @@
 # helper script with no password. The helper does its own validation.
 #
 # Threat model:
-# - The wildcard "*" lets opanel pass any args to opanel-helper. That is
+# - The empty-string command argument lets opanel pass any args to opanel-helper. That is
 #   safe because the helper enforces the security boundary itself: it runs
 #   under `set -euo pipefail`, validates every argv with anchored regexes,
 #   resolves user-supplied paths with `readlink -m`, and downgrades to
@@ -19,4 +19,4 @@ Defaults:opanel !requiretty
 Defaults:opanel env_reset
 Defaults:opanel secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-opanel ALL=(root) NOPASSWD: /usr/local/sbin/opanel-helper *
+opanel ALL=(root) NOPASSWD: /usr/local/sbin/opanel-helper ""
