@@ -554,6 +554,7 @@ install_privileged_helper() {
   sed -i "s#^APP_DIR=\"/opt/opanel\"#APP_DIR=\"${APP_DIR}\"#" /usr/local/sbin/opanel-helper
   install -m 0755 -o root -g root "${SCRIPT_DIR}/update.sh" /usr/local/sbin/opanel-update
   install -m 0440 -o root -g root "${SCRIPT_DIR}/files/opanel-sudoers" /etc/sudoers.d/opanel
+  sed -i 's/\r$//' /etc/sudoers.d/opanel
   visudo -c -f /etc/sudoers.d/opanel >/dev/null
   if [[ -f "${PROJECT_ROOT}/change_IP.sh" ]]; then
     install -m 0755 -o root -g root "${PROJECT_ROOT}/change_IP.sh" /usr/local/sbin/opanel-change-ip

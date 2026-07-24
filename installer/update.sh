@@ -917,6 +917,7 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
     install -m 0750 -o root -g opanel "$SOURCE_DIR/installer/files/opanel-helper.sh" /usr/local/sbin/opanel-helper
     sed -i "s#^APP_DIR=\"/opt/opanel\"#APP_DIR=\"${APP_DIR}\"#" /usr/local/sbin/opanel-helper
     install -m 0440 -o root -g root  "$SOURCE_DIR/installer/files/opanel-sudoers"   /etc/sudoers.d/opanel
+    sed -i 's/\r$//' /etc/sudoers.d/opanel
     visudo -c -f /etc/sudoers.d/opanel >/dev/null
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper wp --info >/dev/null
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper php-fpm-retune >/dev/null || \
