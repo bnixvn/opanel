@@ -207,6 +207,9 @@ ask_panel_url() {
 
 install_base_packages() {
   export DEBIAN_FRONTEND=noninteractive
+  # Pre-seed debconf so iptables-persistent never prompts
+  echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
+  echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
   apt-get update --allow-releaseinfo-change
   apt-get install -y software-properties-common ca-certificates curl gnupg git composer mariadb-server mariadb-client redis-server openssh-server python3 python3-pip python3-venv certbot tar zip unzip openssl iptables iptables-persistent ipset acl phpmyadmin
   systemctl enable --now mariadb redis-server
@@ -970,7 +973,7 @@ setup_firewall() {
   # Remove UFW if installed (clean migration)
   if dpkg -s ufw >/dev/null 2>&1; then
     ufw --force disable 2>/dev/null || true
-    apt-get remove -y ufw 2>/dev/null || true
+    DEBIAN_FRONTEND=noninteractive timeout 30 apt-get remove -y ufw 2>/dev/null || dpkg --purge --force-depends ufw 2>/dev/null || true
   fi
 }
 
