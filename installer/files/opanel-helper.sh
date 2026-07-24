@@ -35,7 +35,8 @@ opanel_DATA_DIR="/var/lib/opanel"
 FIREWALL_BLOCKLIST_URLS="${opanel_DATA_DIR}/firewall-blocklists.urls"
 FIREWALL_BLOCKLIST_WORK="${opanel_DATA_DIR}/firewall-blocklists.current"
 BLOCKLIST_DIR="${opanel_DATA_DIR}/firewall"
-BLOCKLIST_IPSET_NAME="opanel-blocklist"
+BLOCKLIST_IPSET_V4="opanel_blocklist4"
+BLOCKLIST_IPSET_V6="opanel_blocklist6"
 OLS_CUSTOM_DIR="/usr/local/lsws/conf/opanel/custom"
 LSPHP_DEFAULT_WORKER_MB=128
 LSPHP_DEFAULT_REQUEST_TERMINATE_TIMEOUT=300
@@ -126,6 +127,7 @@ allow_panel_port() {
 iptables_panel_allow_port() {
   local port="$1"
   require_port "$port"
+  iptables_ensure_opanel_chains
   # Remove any existing opanel panel-zone rules for this port first
   iptables_panel_delete_port_rules "$port" "opanel:PanelZone"
   iptables -I OPANEL_INPUT 1 -p tcp --dport "$port" -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null \
@@ -167,6 +169,132 @@ iptables_panel_delete_commented_rules() {
     [[ -n "$num" ]] || continue
     iptables -D OPANEL_INPUT "$num" 2>/dev/null || true
   done
+}
+
+iptables_ensure_opanel_chains() {
+  iptables -N OPANEL_INPUT 2>/dev/null || true
+  iptables -N OPANEL_USER 2>/dev/null || true
+  iptables -N OPANEL_BLOCKLIST 2>/dev/null || true
+  ip6tables -N OPANEL_INPUT 2>/dev/null || true
+  ip6tables -N OPANEL_USER 2>/dev/null || true
+  ip6tables -N OPANEL_BLOCKLIST 2>/dev/null || true
+}
+
+iptables_flush_managed_chains() {
+  iptables_ensure_opanel_chains
+  iptables -F OPANEL_INPUT 2>/dev/null || true
+  iptables -F OPANEL_USER 2>/dev/null || true
+  iptables -F OPANEL_BLOCKLIST 2>/dev/null || true
+  ip6tables -F OPANEL_INPUT 2>/dev/null || true
+  ip6tables -F OPANEL_USER 2>/dev/null || true
+  ip6tables -F OPANEL_BLOCKLIST 2>/dev/null || true
+}
+
+iptables_insert_managed_jumps() {
+  iptables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null || iptables -I INPUT 1 -j OPANEL_BLOCKLIST
+  iptables -C INPUT -j OPANEL_INPUT 2>/dev/null || iptables -I INPUT 2 -j OPANEL_INPUT
+  iptables -C INPUT -j OPANEL_USER 2>/dev/null || iptables -I INPUT 3 -j OPANEL_USER
+  ip6tables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null || ip6tables -I INPUT 1 -j OPANEL_BLOCKLIST
+  ip6tables -C INPUT -j OPANEL_INPUT 2>/dev/null || ip6tables -I INPUT 2 -j OPANEL_INPUT
+  ip6tables -C INPUT -j OPANEL_USER 2>/dev/null || ip6tables -I INPUT 3 -j OPANEL_USER
+}
+
+iptables_add_default_allowances() {
+  local port p
+  port="$(env_get PANEL_PORT)"
+  port="${port:-$DEFAULT_PANEL_PORT}"
+  for p in 22 80 443 465 587 "$port"; do
+    require_port "$p"
+    iptables -A OPANEL_INPUT -p tcp --dport "$p" -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null \
+      || iptables -A OPANEL_INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null \
+      || true
+    ip6tables -A OPANEL_INPUT -p tcp --dport "$p" -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null \
+      || ip6tables -A OPANEL_INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null \
+      || true
+  done
+  iptables -A OPANEL_INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+  iptables -A OPANEL_INPUT -i lo -j ACCEPT 2>/dev/null || true
+  iptables -A OPANEL_INPUT -p icmp -j ACCEPT 2>/dev/null || true
+  ip6tables -A OPANEL_INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+  ip6tables -A OPANEL_INPUT -i lo -j ACCEPT 2>/dev/null || true
+  ip6tables -A OPANEL_INPUT -p ipv6-icmp -j ACCEPT 2>/dev/null || true
+}
+
+run_managed_iptables_command() {
+  local binary="$1" op="${2:-}" chain="${3:-}" proto="" port="" network="" target=""
+  local -a argv
+  shift || true
+  [[ $# -ge 2 ]] || deny "usage: ${binary}-run <-A|-D> OPANEL_USER ..."
+  op="$1"; chain="$2"; shift 2
+  [[ "$op" == "-A" || "$op" == "-D" ]] || deny "unsupported ${binary} operation: $op"
+  [[ "$chain" == "OPANEL_USER" ]] || deny "unsupported ${binary} chain: $chain"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -p)
+        [[ $# -ge 2 ]] || deny "missing protocol"
+        proto="$2"; require_proto "$proto"; shift 2
+        ;;
+      --dport)
+        [[ $# -ge 2 ]] || deny "missing port"
+        port="$2"; require_port "$port"; shift 2
+        ;;
+      -s)
+        [[ $# -ge 2 ]] || deny "missing source network"
+        network="$2"; require_ip_or_cidr "$network"; shift 2
+        ;;
+      -j)
+        [[ $# -ge 2 ]] || deny "missing target"
+        target="$2"
+        [[ "$target" == "ACCEPT" || "$target" == "DROP" ]] || deny "unsupported target: $target"
+        shift 2
+        ;;
+      *)
+        deny "unsupported ${binary} argument: $1"
+        ;;
+    esac
+  done
+  [[ -n "$target" ]] || deny "missing target"
+  if [[ -n "$port" && -z "$proto" ]]; then
+    deny "port rule requires protocol"
+  fi
+  if [[ "$binary" == "ip6tables" && -n "$network" && "$network" != *:* ]]; then
+    return 0
+  fi
+  if [[ "$binary" == "iptables" && -n "$network" && "$network" == *:* ]]; then
+    return 0
+  fi
+  iptables_ensure_opanel_chains
+  argv=("$binary" "$op" "$chain")
+  [[ -n "$proto" ]] && argv+=("-p" "$proto")
+  [[ -n "$port" ]] && argv+=("--dport" "$port")
+  [[ -n "$network" ]] && argv+=("-s" "$network")
+  argv+=("-j" "$target")
+  "${argv[@]}"
+}
+
+run_managed_ipset_command() {
+  [[ $# -ge 1 ]] || deny "usage: ipset-run <create|flush|add|destroy|list> ..."
+  case "$1" in
+    create)
+      [[ $# -ge 3 ]] || deny "usage: ipset-run create <set> <type> ..."
+      [[ "$2" == "$BLOCKLIST_IPSET_V4" || "$2" == "$BLOCKLIST_IPSET_V6" ]] || deny "unsupported ipset: $2"
+      exec ipset "$@"
+      ;;
+    flush|destroy|list)
+      [[ $# -eq 2 ]] || deny "usage: ipset-run $1 <set>"
+      [[ "$2" == "$BLOCKLIST_IPSET_V4" || "$2" == "$BLOCKLIST_IPSET_V6" ]] || deny "unsupported ipset: $2"
+      exec ipset "$@"
+      ;;
+    add)
+      [[ $# -ge 3 ]] || deny "usage: ipset-run add <set> <network> ..."
+      [[ "$2" == "$BLOCKLIST_IPSET_V4" || "$2" == "$BLOCKLIST_IPSET_V6" ]] || deny "unsupported ipset: $2"
+      require_ip_or_cidr "$3"
+      exec ipset "$@"
+      ;;
+    *)
+      deny "unsupported ipset operation: $1"
+      ;;
+  esac
 }
 
 require_time_hhmm() {
@@ -761,21 +889,26 @@ TIMER
 firewall_blocklist_apply() {
   ensure_ols_conf_dir_writable
   install -d -o root -g root -m 0755 "$BLOCKLIST_DIR"
-  # Ensure the ipset exists; recreate from the blocklist file if present
-  if ipset list "$BLOCKLIST_IPSET_NAME" >/dev/null 2>&1; then
-    ipset flush "$BLOCKLIST_IPSET_NAME" 2>/dev/null || true
-  else
-    ipset create "$BLOCKLIST_IPSET_NAME" hash:net family inet 2>/dev/null || true
-  fi
+  ipset create "$BLOCKLIST_IPSET_V4" hash:net family inet -exist 2>/dev/null || true
+  ipset create "$BLOCKLIST_IPSET_V6" hash:net family inet6 -exist 2>/dev/null || true
+  ipset flush "$BLOCKLIST_IPSET_V4" 2>/dev/null || true
+  ipset flush "$BLOCKLIST_IPSET_V6" 2>/dev/null || true
   if [[ -s "${BLOCKLIST_DIR}/blocklist.set" ]]; then
     while IFS= read -r net; do
       [[ -n "$net" ]] || continue
-      ipset add "$BLOCKLIST_IPSET_NAME" "$net" 2>/dev/null || true
+      if [[ "$net" == *:* ]]; then
+        ipset add "$BLOCKLIST_IPSET_V6" "$net" 2>/dev/null || true
+      else
+        ipset add "$BLOCKLIST_IPSET_V4" "$net" 2>/dev/null || true
+      fi
     done <"${BLOCKLIST_DIR}/blocklist.set"
   fi
-  # Ensure the iptables rule references the ipset
-  if ! iptables -C OPANEL_BLOCKLIST -m set --match-set "$BLOCKLIST_IPSET_NAME" src -j DROP 2>/dev/null; then
-    iptables -I OPANEL_BLOCKLIST 1 -m set --match-set "$BLOCKLIST_IPSET_NAME" src -j DROP 2>/dev/null || true
+  if ! iptables -C OPANEL_BLOCKLIST -m set --match-set "$BLOCKLIST_IPSET_V4" src -j DROP 2>/dev/null; then
+    iptables -I OPANEL_BLOCKLIST 1 -m set --match-set "$BLOCKLIST_IPSET_V4" src -j DROP 2>/dev/null || true
+  fi
+  ip6tables -N OPANEL_BLOCKLIST 2>/dev/null || true
+  if ! ip6tables -C OPANEL_BLOCKLIST -m set --match-set "$BLOCKLIST_IPSET_V6" src -j DROP 2>/dev/null; then
+    ip6tables -I OPANEL_BLOCKLIST 1 -m set --match-set "$BLOCKLIST_IPSET_V6" src -j DROP 2>/dev/null || true
   fi
 }
 
@@ -820,13 +953,11 @@ firewall_blocklist_status() {
   [[ -f "${BLOCKLIST_DIR}/blocklist.set" ]] && echo "  ${BLOCKLIST_DIR}/blocklist.set" || echo "  missing"
   echo ""
   echo "ipset:"
-  if ipset list "$BLOCKLIST_IPSET_NAME" >/dev/null 2>&1; then
-    local total
-    total="$(ipset list "$BLOCKLIST_IPSET_NAME" 2>/dev/null | grep -c '^[0-9]' || echo 0)"
-    echo "  ${total} network(s) in set ${BLOCKLIST_IPSET_NAME}"
-  else
-    echo "  set not created"
-  fi
+  local total4 total6
+  total4="$(ipset list "$BLOCKLIST_IPSET_V4" 2>/dev/null | grep -Ec '^[0-9]' || true)"
+  total6="$(ipset list "$BLOCKLIST_IPSET_V6" 2>/dev/null | grep -Ec '^[0-9a-fA-F:]+/' || true)"
+  echo "  ${BLOCKLIST_IPSET_V4}: ${total4:-0} network(s)"
+  echo "  ${BLOCKLIST_IPSET_V6}: ${total6:-0} network(s)"
   echo ""
   echo "Timer:"
   systemctl is-enabled opanel-firewall-blocklist.timer 2>/dev/null || true
@@ -834,10 +965,8 @@ firewall_blocklist_status() {
 }
 
 firewall_blocklist_clear_rules() {
-  # Flush the ipset; the iptables rule referencing it will simply match nothing
-  if ipset list "$BLOCKLIST_IPSET_NAME" >/dev/null 2>&1; then
-    ipset flush "$BLOCKLIST_IPSET_NAME" 2>/dev/null || true
-  fi
+  ipset flush "$BLOCKLIST_IPSET_V4" 2>/dev/null || true
+  ipset flush "$BLOCKLIST_IPSET_V6" 2>/dev/null || true
 }
 
 firewall_blocklist_run() {
@@ -882,7 +1011,7 @@ with open(sys.argv[2], "w", encoding="utf-8") as handle:
 
 with open(sys.argv[3], "w", encoding="utf-8") as handle:
     handle.write("# Managed by opanel. Generated from URL IP blocklists.\n")
-    handle.write("# Loaded into the opanel-blocklist ipset.\n")
+    handle.write("# Loaded into opanel_blocklist4/opanel_blocklist6 ipsets.\n")
     for value in networks:
         handle.write(value + "\n")
 PY
@@ -2247,23 +2376,22 @@ case "$cmd" in
     echo "=== OPANEL_BLOCKLIST ==="
     iptables -L OPANEL_BLOCKLIST -n --line-numbers 2>/dev/null || echo "  (chain not found)"
     echo ""
-    echo "=== ipset: ${BLOCKLIST_IPSET_NAME} ==="
-    if ipset list "$BLOCKLIST_IPSET_NAME" >/dev/null 2>&1; then
-      total="$(ipset list "$BLOCKLIST_IPSET_NAME" 2>/dev/null | grep -c '^[0-9]' || echo 0)"
-      echo "  ${total} network(s)"
-    else
-      echo "  set not created"
-    fi
+    echo "=== ipsets ==="
+    total="$(ipset list "$BLOCKLIST_IPSET_V4" 2>/dev/null | grep -Ec '^[0-9]' || true)"
+    echo "  ${BLOCKLIST_IPSET_V4}: ${total:-0} network(s)"
+    total="$(ipset list "$BLOCKLIST_IPSET_V6" 2>/dev/null | grep -Ec '^[0-9a-fA-F:]+/' || true)"
+    echo "  ${BLOCKLIST_IPSET_V6}: ${total:-0} network(s)"
     ;;
   iptables-enable|ufw-enable)
-    # Ensure the OPANEL chains exist and are referenced from INPUT/OUTPUT
-    iptables -N OPANEL_INPUT 2>/dev/null || true
-    iptables -N OPANEL_USER 2>/dev/null || true
-    iptables -N OPANEL_BLOCKLIST 2>/dev/null || true
-    iptables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null || iptables -I INPUT 1 -j OPANEL_BLOCKLIST
-    iptables -C INPUT -j OPANEL_INPUT 2>/dev/null || iptables -I INPUT 2 -j OPANEL_INPUT
-    iptables -C INPUT -j OPANEL_USER 2>/dev/null || iptables -I INPUT 3 -j OPANEL_USER
+    iptables -P INPUT ACCEPT 2>/dev/null || true
+    ip6tables -P INPUT ACCEPT 2>/dev/null || true
+    iptables_flush_managed_chains
+    iptables_insert_managed_jumps
+    iptables_add_default_allowances
     firewall_blocklist_apply 2>/dev/null || true
+    install -d -o root -g root -m 0755 /etc/iptables
+    iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
+    ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
     echo "opanel iptables chains enabled"
     ;;
   iptables-disable|ufw-disable)
@@ -2271,11 +2399,31 @@ case "$cmd" in
     iptables -D INPUT -j OPANEL_BLOCKLIST 2>/dev/null || true
     iptables -D INPUT -j OPANEL_INPUT 2>/dev/null || true
     iptables -D INPUT -j OPANEL_USER 2>/dev/null || true
+    ip6tables -D INPUT -j OPANEL_BLOCKLIST 2>/dev/null || true
+    ip6tables -D INPUT -j OPANEL_INPUT 2>/dev/null || true
+    ip6tables -D INPUT -j OPANEL_USER 2>/dev/null || true
+    iptables -P INPUT ACCEPT 2>/dev/null || true
+    ip6tables -P INPUT ACCEPT 2>/dev/null || true
+    install -d -o root -g root -m 0755 /etc/iptables
+    iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
+    ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
     echo "opanel iptables chains disconnected from INPUT"
     ;;
   iptables-reload|ufw-reload)
     firewall_blocklist_apply 2>/dev/null || true
+    install -d -o root -g root -m 0755 /etc/iptables
+    iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
+    ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
     echo "opanel iptables rules reloaded"
+    ;;
+  iptables-run)
+    run_managed_iptables_command iptables "$@"
+    ;;
+  ip6tables-run)
+    run_managed_iptables_command ip6tables "$@"
+    ;;
+  ipset-run)
+    run_managed_ipset_command "$@"
     ;;
   iptables-allow-port|ufw-allow-port)
     [[ $# -eq 2 ]] || deny "usage: iptables-allow-port <port> <proto>"
@@ -2305,22 +2453,22 @@ case "$cmd" in
     ;;
 
   # ---- firewall blocklist -----------------------------------------------
-  firewall-blocklist-status|blocklist-status|nginx-blocklist-status|ufw-blocklist-status)
+  firewall-blocklist-status|iptables-blocklist-status|blocklist-status|nginx-blocklist-status|ufw-blocklist-status)
     firewall_blocklist_status
     ;;
-  firewall-blocklist-timer-install|blocklist-timer-install|nginx-blocklist-timer-install|ufw-blocklist-timer-install)
+  firewall-blocklist-timer-install|iptables-blocklist-timer-install|blocklist-timer-install|nginx-blocklist-timer-install|ufw-blocklist-timer-install)
     firewall_blocklist_write_timer
     echo "Blocklist timer installed"
     ;;
-  firewall-blocklist-add|blocklist-add|nginx-blocklist-add|ufw-blocklist-add)
+  firewall-blocklist-add|iptables-blocklist-add|blocklist-add|nginx-blocklist-add|ufw-blocklist-add)
     [[ $# -eq 1 ]] || deny "usage: firewall-blocklist-add <url>"
     firewall_blocklist_add_url "$1"
     ;;
-  firewall-blocklist-delete|blocklist-delete|nginx-blocklist-delete|ufw-blocklist-delete)
+  firewall-blocklist-delete|iptables-blocklist-delete|blocklist-delete|nginx-blocklist-delete|ufw-blocklist-delete)
     [[ $# -eq 1 ]] || deny "usage: firewall-blocklist-delete <url>"
     firewall_blocklist_delete_url "$1"
     ;;
-  firewall-blocklist-run|blocklist-run|nginx-blocklist-run|ufw-blocklist-run)
+  firewall-blocklist-run|iptables-blocklist-run|blocklist-run|nginx-blocklist-run|ufw-blocklist-run)
     [[ $# -eq 0 ]] || deny "usage: firewall-blocklist-run"
     firewall_blocklist_run
     ;;

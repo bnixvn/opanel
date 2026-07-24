@@ -345,41 +345,17 @@ trap finish_update_script EXIT
 # secondary safety net for non-fatal paths that call `|| true`/return codes.
 trap 'update_progress "${progress_percent:-0}" "failed" "Update failed at phase: ${progress_phase:-unknown}" 2>/dev/null || true' ERR
 
-ufw_delete_opanel_rules() {
-  local pattern="$1" number
-  command -v ufw >/dev/null 2>&1 || return 0
-  while read -r number; do
-    [[ -n "$number" ]] || continue
-    ufw --force delete "$number" >/dev/null 2>&1 || true
-  done < <(
-    ufw status numbered 2>/dev/null \
-      | awk -v pattern="$pattern" '
-          index($0, "opanel:PanelZone") {
-            line = $0
-            if (!match(line, /^\[[[:space:]]*[0-9]+\]/)) {
-              next
-            }
-            number = substr(line, RSTART, RLENGTH)
-            gsub(/[^0-9]/, "", number)
-            sub(/^\[[[:space:]]*[0-9]+\][[:space:]]*/, "", line)
-            split(line, parts, /[[:space:]]+ALLOW[[:space:]]+/)
-            target = parts[1]
-            if (target == pattern || target == pattern " (v6)") {
-              print number
-            }
-          }
-        ' \
-      | sort -rn
-  )
-}
-
-ufw_panel_allow_port() {
+iptables_panel_allow_port() {
   local port="$1"
   [[ "$port" =~ ^[0-9]+$ ]] || return 0
-  ufw_delete_opanel_rules "${port}/tcp"
-  ufw insert 1 allow "${port}/tcp" comment "opanel:PanelZone" >/dev/null 2>&1 \
-    || ufw insert 1 allow "${port}/tcp" >/dev/null 2>&1 \
-    || ufw allow "${port}/tcp" >/dev/null 2>&1 \
+  if [[ -x /usr/local/sbin/opanel-helper ]] && id -u opanel >/dev/null 2>&1; then
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-panel-allow-port "$port" >/dev/null 2>&1 || true
+    return 0
+  fi
+  iptables -N OPANEL_INPUT 2>/dev/null || true
+  while iptables -D OPANEL_INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null; do :; done
+  iptables -I OPANEL_INPUT 1 -p tcp --dport "$port" -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null \
+    || iptables -I OPANEL_INPUT 1 -p tcp --dport "$port" -j ACCEPT 2>/dev/null \
     || true
 }
 
@@ -664,11 +640,11 @@ Persistent=true
 WantedBy=timers.target
 SERVICE
   systemctl daemon-reload
-  if command -v ufw >/dev/null 2>&1; then
-    for default_port in 80 443 465 587 "${panel_port}"; do
-      ufw_panel_allow_port "$default_port"
-    done
-  fi
+  for default_port in 80 443 465 587 "${panel_port}"; do
+    iptables_panel_allow_port "$default_port"
+  done
+  install -d -o root -g root -m 0755 /etc/iptables
+  iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
   rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
   rm -f /etc/nginx/sites-enabled/opanel.conf /etc/nginx/sites-available/opanel.conf 2>/dev/null || true
   write_tools_nginx_config

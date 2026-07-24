@@ -13,6 +13,10 @@ from app.services.shell import CommandResult, shell
 PORT_RE = re.compile(r"^[0-9]{1,5}$")
 PROTOCOLS = {"tcp", "udp"}
 DEFAULT_PROTECTED_PORTS = {22, 80, 443, 465, 587}
+UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(.+?)\s{2,}(ALLOW|DENY|REJECT|LIMIT)\s+(IN|OUT)\s+(.+)$", re.I)
+IPTABLES_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(\S+)\s+(\S+)\s+--\s+(\S+)\s+(\S+)\s+(.+)$", re.I)
+PORT_SPEC_RE = re.compile(r"^(\d{1,5})/(tcp|udp)(?:\s+\(v6\))?$", re.I)
+ZONE_COMMENT_RE = re.compile(r"(?:opanel|bpanel):(PanelZone|UserZone)", re.I)
 
 CHAIN_INPUT = "OPANEL_INPUT"
 CHAIN_USER = "OPANEL_USER"
@@ -54,6 +58,107 @@ def _validate_network(network: str) -> str:
     except ValueError as exc:
         raise ValueError("IP must be a valid IPv4/IPv6 address or CIDR network") from exc
     return str(parsed)
+
+
+def _strip_inline_comment(value: str) -> str:
+    return re.sub(r"\s+#.*$", "", value).strip()
+
+
+def _zone_from_values(*values: str) -> str | None:
+    joined = " ".join(values)
+    match = ZONE_COMMENT_RE.search(joined)
+    if not match:
+        return None
+    return PANEL_ZONE if match.group(1).lower() == PANEL_ZONE.lower() else USER_ZONE
+
+
+def _classify_rule_zone(action: str, rule_type: str, port: str, comment_zone: str | None, protected_ports: set[int]) -> tuple[str, bool]:
+    if comment_zone:
+        return comment_zone, comment_zone == PANEL_ZONE
+    is_protected = False
+    if rule_type == "port" and action == "ALLOW" and port:
+        try:
+            is_protected = int(port) in protected_ports
+        except ValueError:
+            pass
+    return (PANEL_ZONE if is_protected else USER_ZONE), is_protected
+
+
+def _parse_numbered_output(output: str) -> list[dict]:
+    protected_ports = set(DEFAULT_PROTECTED_PORTS)
+    try:
+        protected_ports.add(int(settings.panel_port or 2222))
+    except (TypeError, ValueError):
+        pass
+
+    result: list[dict] = []
+    for raw_line in (output or "").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("["):
+            continue
+
+        ufw_match = UFW_NUMBERED_RULE_RE.match(line)
+        if ufw_match:
+            number = int(ufw_match.group(1))
+            to_field = _strip_inline_comment(ufw_match.group(2))
+            action = ufw_match.group(3).upper()
+            direction = ufw_match.group(4).upper()
+            from_field = _strip_inline_comment(ufw_match.group(5))
+            port_match = PORT_SPEC_RE.match(to_field)
+            if port_match:
+                port, protocol = port_match.group(1), port_match.group(2).lower()
+                rule_type = "port"
+                display_to = f"{port}/{protocol}"
+            else:
+                port, protocol = "", "tcp"
+                rule_type = "ip"
+                display_to = "Anywhere" if to_field.lower() == "anywhere" else to_field
+            comment_zone = _zone_from_values(line)
+            zone, is_protected = _classify_rule_zone(action, rule_type, port, comment_zone, protected_ports)
+            result.append({
+                "id": number,
+                "number": number,
+                "to": display_to,
+                "action": action,
+                "direction": direction,
+                "from": from_field or "Anywhere",
+                "zone": zone,
+                "protected": is_protected,
+            })
+            continue
+
+        iptables_match = IPTABLES_NUMBERED_RULE_RE.match(line)
+        if iptables_match:
+            number = int(iptables_match.group(1))
+            target = iptables_match.group(2).upper()
+            protocol = iptables_match.group(3).lower()
+            source = _strip_inline_comment(iptables_match.group(4))
+            extra = iptables_match.group(6)
+            port_match = re.search(r"(?:dpt|dpts):(\d+)", extra)
+            port = port_match.group(1) if port_match else ""
+            rule_type = "port" if port else "ip"
+            if target == "ACCEPT":
+                action = "ALLOW"
+            elif target in {"DROP", "REJECT"}:
+                action = "DENY"
+            elif target == "LIMIT":
+                action = "LIMIT"
+            else:
+                action = target
+            comment_zone = _zone_from_values(line, extra)
+            zone, is_protected = _classify_rule_zone(action, rule_type, port, comment_zone, protected_ports)
+            result.append({
+                "id": number,
+                "number": number,
+                "to": f"{port}/{protocol}" if port else "Anywhere",
+                "action": action,
+                "direction": "IN",
+                "from": source or "Anywhere",
+                "zone": zone,
+                "protected": is_protected,
+            })
+
+    return result
 
 
 def _panel_port() -> int:
@@ -152,6 +257,9 @@ def is_enabled() -> bool:
 def parse_numbered_rules(output: str) -> list[dict]:
     """Parse persistent rules into unified list with zone/protected metadata."""
     rules = _read_rules()
+    parsed_output = _parse_numbered_output(output)
+    if parsed_output:
+        return parsed_output
     result = []
     protected_ports = set(DEFAULT_PROTECTED_PORTS)
     try:

@@ -912,69 +912,74 @@ setup_openlitespeed() {
 
 setup_firewall() {
   local default_port seen_ssh_ports ssh_port
-  # Initialize iptables chains for opanel
-  # Create the OPANEL_INPUT chain if it doesn't exist
-  iptables -N OPANEL_INPUT 2>/dev/null || iptables -F OPANEL_INPUT
-  iptables -N OPANEL_USER 2>/dev/null || iptables -F OPANEL_USER
-  iptables -N OPANEL_BLOCKLIST 2>/dev/null || iptables -F OPANEL_BLOCKLIST
+  fw() {
+    timeout 15 "$@" 2>/dev/null
+  }
 
-  # Create ipset for blocklists
-  ipset create opanel_blocklist4 hash:net family inet 2>/dev/null || ipset flush opanel_blocklist4 2>/dev/null || true
-  ipset create opanel_blocklist6 hash:net family inet6 2>/dev/null || ipset flush opanel_blocklist6 2>/dev/null || true
+  # Keep INPUT permissive during install. The panel manages OPANEL_* chains and
+  # user rules; setting DROP here can lock out SSH if a distro has unusual SSH
+  # socket/config state.
+  fw iptables -P INPUT ACCEPT || true
+  fw ip6tables -P INPUT ACCEPT || true
+  fw iptables -P OUTPUT ACCEPT || true
+  fw ip6tables -P OUTPUT ACCEPT || true
 
-  # Default policies
-  iptables -P INPUT DROP
-  iptables -P FORWARD DROP
-  iptables -P OUTPUT ACCEPT
+  fw iptables -N OPANEL_INPUT || fw iptables -F OPANEL_INPUT || true
+  fw iptables -N OPANEL_USER || fw iptables -F OPANEL_USER || true
+  fw iptables -N OPANEL_BLOCKLIST || fw iptables -F OPANEL_BLOCKLIST || true
+  fw ip6tables -N OPANEL_INPUT || fw ip6tables -F OPANEL_INPUT || true
+  fw ip6tables -N OPANEL_USER || fw ip6tables -F OPANEL_USER || true
+  fw ip6tables -N OPANEL_BLOCKLIST || fw ip6tables -F OPANEL_BLOCKLIST || true
 
-  # Allow loopback
-  iptables -A INPUT -i lo -j ACCEPT
+  fw ipset create opanel_blocklist4 hash:net family inet -exist || true
+  fw ipset create opanel_blocklist6 hash:net family inet6 -exist || true
 
-  # Allow established/related
-  iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+  fw iptables -C INPUT -j OPANEL_BLOCKLIST || fw iptables -I INPUT 1 -j OPANEL_BLOCKLIST || true
+  fw iptables -C INPUT -j OPANEL_INPUT || fw iptables -I INPUT 2 -j OPANEL_INPUT || true
+  fw iptables -C INPUT -j OPANEL_USER || fw iptables -I INPUT 3 -j OPANEL_USER || true
+  fw ip6tables -C INPUT -j OPANEL_BLOCKLIST || fw ip6tables -I INPUT 1 -j OPANEL_BLOCKLIST || true
+  fw ip6tables -C INPUT -j OPANEL_INPUT || fw ip6tables -I INPUT 2 -j OPANEL_INPUT || true
+  fw ip6tables -C INPUT -j OPANEL_USER || fw ip6tables -I INPUT 3 -j OPANEL_USER || true
 
-  # Jump to OPANEL chains from INPUT
-  iptables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null || iptables -A INPUT -j OPANEL_BLOCKLIST
-  iptables -C INPUT -j OPANEL_INPUT 2>/dev/null || iptables -A INPUT -j OPANEL_INPUT
-  iptables -C INPUT -j OPANEL_USER 2>/dev/null || iptables -A INPUT -j OPANEL_USER
+  fw iptables -A OPANEL_INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT || true
+  fw iptables -A OPANEL_INPUT -i lo -j ACCEPT || true
+  fw ip6tables -A OPANEL_INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT || true
+  fw ip6tables -A OPANEL_INPUT -i lo -j ACCEPT || true
 
-  # Block ipset entries
-  iptables -A OPANEL_BLOCKLIST -m set --match-set opanel_blocklist4 src -j DROP 2>/dev/null || true
-  ip6tables -N OPANEL_BLOCKLIST 2>/dev/null || ip6tables -F OPANEL_BLOCKLIST 2>/dev/null || true
-  ip6tables -A OPANEL_BLOCKLIST -m set --match-set opanel_blocklist6 src -j DROP 2>/dev/null || true
+  fw iptables -A OPANEL_BLOCKLIST -m set --match-set opanel_blocklist4 src -j DROP || true
+  fw ip6tables -A OPANEL_BLOCKLIST -m set --match-set opanel_blocklist6 src -j DROP || true
 
-  # Allow SSH (port 22)
-  iptables -A OPANEL_INPUT -p tcp --dport 22 -j ACCEPT
+  fw iptables -A OPANEL_INPUT -p tcp --dport 22 -j ACCEPT || true
+  fw ip6tables -A OPANEL_INPUT -p tcp --dport 22 -j ACCEPT || true
   seen_ssh_ports="$(detect_ssh_ports)"
   while read -r ssh_port; do
     [[ -n "$ssh_port" ]] || continue
     [[ "$ssh_port" == "22" ]] && continue
-    iptables -A OPANEL_INPUT -p tcp --dport "$ssh_port" -j ACCEPT
+    fw iptables -A OPANEL_INPUT -p tcp --dport "$ssh_port" -j ACCEPT || true
+    fw ip6tables -A OPANEL_INPUT -p tcp --dport "$ssh_port" -j ACCEPT || true
   done <<<"$seen_ssh_ports"
 
-  # Allow HTTP and HTTPS
-  iptables -A OPANEL_INPUT -p tcp --dport 80 -j ACCEPT
-  iptables -A OPANEL_INPUT -p tcp --dport 443 -j ACCEPT
+  fw iptables -A OPANEL_INPUT -p tcp --dport 80 -j ACCEPT || true
+  fw iptables -A OPANEL_INPUT -p tcp --dport 443 -j ACCEPT || true
+  fw ip6tables -A OPANEL_INPUT -p tcp --dport 80 -j ACCEPT || true
+  fw ip6tables -A OPANEL_INPUT -p tcp --dport 443 -j ACCEPT || true
 
-  # Allow SMTP ports
   for default_port in 465 587 "${PANEL_PORT}"; do
     [[ "$default_port" =~ ^[0-9]+$ ]] || continue
-    iptables -A OPANEL_INPUT -p tcp --dport "$default_port" -j ACCEPT
+    fw iptables -A OPANEL_INPUT -p tcp --dport "$default_port" -j ACCEPT || true
+    fw ip6tables -A OPANEL_INPUT -p tcp --dport "$default_port" -j ACCEPT || true
   done
 
-  # Allow ICMP (ping)
-  iptables -A OPANEL_INPUT -p icmp -j ACCEPT
+  fw iptables -A OPANEL_INPUT -p icmp -j ACCEPT || true
+  fw ip6tables -A OPANEL_INPUT -p ipv6-icmp -j ACCEPT || true
 
-  # Save rules for persistence
   install -d -o root -g root -m 0755 /var/lib/opanel/firewall
-  iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
-  ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || true
-
-  # Remove UFW if installed (clean migration)
-  if dpkg -s ufw >/dev/null 2>&1; then
-    ufw --force disable 2>/dev/null || true
-    DEBIAN_FRONTEND=noninteractive timeout 30 apt-get remove -y ufw 2>/dev/null || dpkg --purge --force-depends ufw 2>/dev/null || true
-  fi
+  install -d -o root -g root -m 0755 /etc/iptables
+  timeout 15 iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
+  timeout 15 ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
+  systemctl enable netfilter-persistent >/dev/null 2>&1 || true
+  systemctl enable opanel-firewall-blocklist.timer >/dev/null 2>&1 || true
+  command -v ufw >/dev/null 2>&1 && timeout 15 ufw --force disable >/dev/null 2>&1 || true
 }
 
 setup_ssl() {

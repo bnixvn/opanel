@@ -83,7 +83,7 @@ def _parse_cron_line(index: int, line: str) -> dict:
     parts = line.split(maxsplit=5)
     schedule = " ".join(parts[:5]) if len(parts) >= 5 else ""
     command = parts[5] if len(parts) >= 6 else ""
-    command = re.sub(r"\s+#\s*opanel:[^\s]+\s*$", "", command).strip()
+    command = re.sub(r"\s+#\s*opanel:[^\s]+\s*$", "", command, flags=re.IGNORECASE).strip()
     if command.startswith("cd ") and " && " in command:
         command = command.split(" && ", 1)[1].strip()
     command = command.replace(" --allow-root", "").strip()
