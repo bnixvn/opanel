@@ -67,6 +67,16 @@ WORDPRESS_CSP = (
     "upgrade-insecure-requests"
 )
 
+SECURITY_HEADERS = (
+    "X-Frame-Options: SAMEORIGIN\n"
+    "X-Content-Type-Options: nosniff\n"
+    "Referrer-Policy: strict-origin-when-cross-origin\n"
+    "Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), "
+    "encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), "
+    "microphone=(), midi=(), payment=(), usb=()"
+)
+HSTS_HEADER = "Strict-Transport-Security: max-age=31536000; includeSubDomains"
+
 # ---------------------------------------------------------------------------
 # Jinja2 renderer
 # ---------------------------------------------------------------------------
@@ -444,6 +454,8 @@ def _build_context(
         "access_log": str(_log_path(safe_domain, "access")),
         "error_log": str(_log_path(safe_domain, "error")),
         "acme_webroot": ACME_WEBROOT,
+        "security_headers": SECURITY_HEADERS,
+        "hsts_header": HSTS_HEADER if has_ssl else "",
         "csp_header": WORDPRESS_CSP if checked_app == "wordpress" else "",
     }
 

@@ -127,6 +127,8 @@ END_RULES
     }
 {% if csp_header %}
     extraHeaders <<<END_HEADERS
+{% if hsts_header %}{{ hsts_header }}
+{% endif %}{{ security_headers }}
 Content-Security-Policy: {{ csp_header }}
 END_HEADERS
 {% endif %}

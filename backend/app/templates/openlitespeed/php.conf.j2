@@ -119,6 +119,10 @@ context / {
         enable              1
         inherit             1
     }
+    extraHeaders <<<END_HEADERS
+{% if hsts_header %}{{ hsts_header }}
+{% endif %}{{ security_headers }}
+END_HEADERS
 }
 
 {% for redirect in redirects %}
