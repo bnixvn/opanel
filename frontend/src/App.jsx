@@ -2077,11 +2077,11 @@ function App() {
   }
 
   async function enableFirewall() {
-    if (!confirm('Enable UFW firewall now? Make sure SSH and web ports are allowed.')) return;
+    if (!confirm('Enable iptables firewall now? Make sure SSH and web ports are allowed.')) return;
     await runFirewallAction('/firewall/enable', { method: 'POST' }, 'Enabling firewall...');
   }
   async function disableFirewall() {
-    if (!confirm('Disable UFW firewall?')) return;
+    if (!confirm('Disable iptables firewall?')) return;
     await runFirewallAction('/firewall/disable', { method: 'POST' }, 'Disabling firewall...');
   }
   async function reloadFirewall() { await runFirewallAction('/firewall/reload', { method: 'POST' }, 'Reloading firewall...'); }
@@ -2094,7 +2094,7 @@ function App() {
   async function deleteFirewallRule(numberOverride = firewallDeleteNumber) {
     const ruleNumber = String(numberOverride || '').trim();
     if (!ruleNumber) return;
-    if (!confirm(`Delete UFW rule #${ruleNumber}?`)) return;
+    if (!confirm(`Delete firewall rule #${ruleNumber}?`)) return;
     await runFirewallAction(`/firewall/rules/${encodeURIComponent(ruleNumber)}`, { method: 'DELETE' }, 'Deleting rule...');
     setFirewallDeleteNumber('');
   }
@@ -3236,10 +3236,11 @@ function App() {
     const firewallText = firewallStatus?.stdout || firewallStatus?.stderr || 'Click Refresh to load status.';
     const blocklistText = firewallBlocklists?.stdout || firewallBlocklists?.stderr || 'No blocklist status loaded.';
     const blocklistUrls = parseFirewallBlocklistUrls(blocklistText);
+    const openPorts = Array.isArray(firewallStatus?.open_ports) ? firewallStatus.open_ports : [];
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>Firewall (UFW)</h2><p className="hint">Keep SSH and web ports allowed before enabling.</p></div>
+          <div><h2>Firewall (iptables)</h2><p className="hint">Keep SSH and web ports allowed before enabling.</p></div>
         </div>
         <div className="actions">
           <button disabled={!!loading} onClick={loadFirewall}><RefreshCw size={14}/> Refresh</button>
@@ -3247,8 +3248,17 @@ function App() {
           <button disabled={!!loading} onClick={disableFirewall}>Disable</button>
           <button disabled={!!loading} onClick={reloadFirewall}>Reload</button>
         </div>
+        <div className="info-box firewall-open-ports">
+          <strong>Open ports</strong>
+          {openPorts.length > 0 ? <div className="firewall-port-list">
+            {openPorts.map(item => <span className="firewall-port-chip" key={`${item.protocol}-${item.port}-${item.zone}-${item.rule || ''}`}>
+              <code>{item.port}/{String(item.protocol || 'tcp').toUpperCase()}</code>
+              <small>{item.zone || 'UserZone'}{item.source && item.source !== 'Anywhere' ? ` from ${item.source}` : ''}</small>
+            </span>)}
+          </div> : <p className="hint">No open port rules found in OPANEL chains.</p>}
+        </div>
         <div className="info-box firewall-status">
-          <strong>UFW status</strong>
+          <strong>iptables status</strong>
           <pre>{firewallText}</pre>
           <div className="firewall-delete-inline">
             <label><span>Delete UserZone #</span><input value={firewallDeleteNumber} onChange={e => setFirewallDeleteNumber(e.target.value)} placeholder="12" inputMode="numeric" /></label>
@@ -3284,7 +3294,7 @@ function App() {
       </section>
       <section className="section">
         <div className="section-title">
-          <div><h2>Blocklist URLs</h2><p className="hint">TXT files are fetched daily at 01:00 and enforced by the webserver, so large lists do not create thousands of UFW rules.</p></div>
+          <div><h2>Blocklist URLs</h2><p className="hint">TXT files are fetched daily at 01:00 and enforced by ipset, so large lists do not create thousands of firewall rules.</p></div>
           <button disabled={!!loading} onClick={loadFirewallBlocklists}><RefreshCw size={14}/> Refresh</button>
         </div>
         <div className="firewall-form firewall-blocklist-form">

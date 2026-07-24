@@ -19,7 +19,9 @@ def _result(result):
 
 def _status_result(result):
     data = _result(result)
-    data["rules"] = firewall.parse_numbered_rules(result.stdout)
+    rules = firewall.parse_numbered_rules(result.stdout)
+    data["rules"] = rules
+    data["open_ports"] = firewall.open_ports_from_rules(rules)
     data["enabled"] = firewall.is_enabled()
     return data
 

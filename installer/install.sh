@@ -220,6 +220,14 @@ install_base_packages() {
   apt-get install -y software-properties-common ca-certificates curl gnupg git composer mariadb-server mariadb-client redis-server openssh-server python3 python3-pip python3-venv certbot tar zip unzip openssl iptables iptables-persistent ipset acl phpmyadmin
   systemctl enable --now mariadb redis-server
   systemctl enable --now ssh 2>/dev/null || systemctl enable --now sshd 2>/dev/null || true
+  remove_ufw_legacy
+}
+
+remove_ufw_legacy() {
+  systemctl disable --now ufw >/dev/null 2>&1 || true
+  command -v ufw >/dev/null 2>&1 && timeout 15 ufw --force disable >/dev/null 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive apt-get purge -y ufw >/dev/null 2>&1 || true
+  rm -rf /etc/ufw /var/lib/ufw 2>/dev/null || true
 }
 
 install_nodejs() {
@@ -991,7 +999,7 @@ setup_firewall() {
   timeout 15 ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
   systemctl enable netfilter-persistent >/dev/null 2>&1 || true
   systemctl enable opanel-firewall-blocklist.timer >/dev/null 2>&1 || true
-  command -v ufw >/dev/null 2>&1 && timeout 15 ufw --force disable >/dev/null 2>&1 || true
+  remove_ufw_legacy
 }
 
 setup_ssl() {

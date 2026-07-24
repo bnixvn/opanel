@@ -13,8 +13,8 @@ from app.services.shell import CommandResult, shell
 PORT_RE = re.compile(r"^[0-9]{1,5}$")
 PROTOCOLS = {"tcp", "udp"}
 DEFAULT_PROTECTED_PORTS = {22, 80, 443, 465, 587}
-UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(.+?)\s{2,}(ALLOW|DENY|REJECT|LIMIT)\s+(IN|OUT)\s+(.+)$", re.I)
-IPTABLES_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(\S+)\s+(\S+)\s+--\s+(\S+)\s+(\S+)\s+(.+)$", re.I)
+LEGACY_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(.+?)\s{2,}(ALLOW|DENY|REJECT|LIMIT)\s+(IN|OUT)\s+(.+)$", re.I)
+IPTABLES_NUMBERED_RULE_RE = re.compile(r"^(?:\[\s*)?(\d+)(?:\])?\s+(\S+)\s+(\S+)\s+--\s+(\S+)\s+(\S+)\s*(.*)$", re.I)
 PORT_SPEC_RE = re.compile(r"^(\d{1,5})/(tcp|udp)(?:\s+\(v6\))?$", re.I)
 ZONE_COMMENT_RE = re.compile(r"(?:opanel|bpanel):(PanelZone|UserZone)", re.I)
 
@@ -84,6 +84,69 @@ def _classify_rule_zone(action: str, rule_type: str, port: str, comment_zone: st
     return (PANEL_ZONE if is_protected else USER_ZONE), is_protected
 
 
+def _display_source(value: str) -> str:
+    value = (value or "").strip()
+    if not value or value in {"0.0.0.0/0", "::/0", "0/0"}:
+        return "Anywhere"
+    return value
+
+
+def _port_list_from_extra(extra: str) -> list[str]:
+    ports: list[str] = []
+
+    def add(token: str) -> None:
+        token = token.strip()
+        if re.match(r"^\d{1,5}(?::\d{1,5})?$", token) and token not in ports:
+            ports.append(token)
+
+    for match in re.finditer(r"\bdpt:(\d{1,5})\b", extra or "", re.I):
+        add(match.group(1))
+    for match in re.finditer(r"\bdpts:([0-9:]+)\b", extra or "", re.I):
+        add(match.group(1))
+    for match in re.finditer(r"\bmultiport\s+dports\s+([0-9:,]+)", extra or "", re.I):
+        for token in match.group(1).split(","):
+            add(token)
+    return ports
+
+
+def _ports_from_to_field(to_value: str) -> tuple[list[str], str]:
+    match = re.match(r"^([0-9:,]+)/(tcp|udp)$", (to_value or "").strip(), re.I)
+    if not match:
+        return [], ""
+    return [token for token in match.group(1).split(",") if token], match.group(2).lower()
+
+
+def open_ports_from_rules(rules: list[dict]) -> list[dict]:
+    ports: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for rule in rules:
+        if (rule.get("action") or "").upper() != "ALLOW":
+            continue
+        rule_ports, protocol = _ports_from_to_field(str(rule.get("to") or ""))
+        if not rule_ports:
+            continue
+        zone = rule.get("zone") or USER_ZONE
+        for port in rule_ports:
+            key = (port, protocol, zone)
+            if key in seen:
+                continue
+            seen.add(key)
+            ports.append({
+                "port": port,
+                "protocol": protocol,
+                "zone": zone,
+                "protected": bool(rule.get("protected")),
+                "rule": rule.get("number") or rule.get("id"),
+                "source": _display_source(str(rule.get("from") or "")),
+            })
+    return sorted(ports, key=lambda item: (
+        item["protocol"],
+        int(item["port"].split(":", 1)[0]) if item["port"].split(":", 1)[0].isdigit() else 999999,
+        item["port"],
+        item["zone"],
+    ))
+
+
 def _parse_numbered_output(output: str) -> list[dict]:
     protected_ports = set(DEFAULT_PROTECTED_PORTS)
     try:
@@ -94,16 +157,16 @@ def _parse_numbered_output(output: str) -> list[dict]:
     result: list[dict] = []
     for raw_line in (output or "").splitlines():
         line = raw_line.strip()
-        if not line.startswith("["):
+        if not line:
             continue
 
-        ufw_match = UFW_NUMBERED_RULE_RE.match(line)
-        if ufw_match:
-            number = int(ufw_match.group(1))
-            to_field = _strip_inline_comment(ufw_match.group(2))
-            action = ufw_match.group(3).upper()
-            direction = ufw_match.group(4).upper()
-            from_field = _strip_inline_comment(ufw_match.group(5))
+        legacy_match = LEGACY_NUMBERED_RULE_RE.match(line)
+        if legacy_match:
+            number = int(legacy_match.group(1))
+            to_field = _strip_inline_comment(legacy_match.group(2))
+            action = legacy_match.group(3).upper()
+            direction = legacy_match.group(4).upper()
+            from_field = _strip_inline_comment(legacy_match.group(5))
             port_match = PORT_SPEC_RE.match(to_field)
             if port_match:
                 port, protocol = port_match.group(1), port_match.group(2).lower()
@@ -121,7 +184,7 @@ def _parse_numbered_output(output: str) -> list[dict]:
                 "to": display_to,
                 "action": action,
                 "direction": direction,
-                "from": from_field or "Anywhere",
+                "from": _display_source(from_field),
                 "zone": zone,
                 "protected": is_protected,
             })
@@ -134,8 +197,8 @@ def _parse_numbered_output(output: str) -> list[dict]:
             protocol = iptables_match.group(3).lower()
             source = _strip_inline_comment(iptables_match.group(4))
             extra = iptables_match.group(6)
-            port_match = re.search(r"(?:dpt|dpts):(\d+)", extra)
-            port = port_match.group(1) if port_match else ""
+            ports = _port_list_from_extra(extra)
+            port = ",".join(ports)
             rule_type = "port" if port else "ip"
             if target == "ACCEPT":
                 action = "ALLOW"
@@ -153,7 +216,7 @@ def _parse_numbered_output(output: str) -> list[dict]:
                 "to": f"{port}/{protocol}" if port else "Anywhere",
                 "action": action,
                 "direction": "IN",
-                "from": source or "Anywhere",
+                "from": _display_source(source),
                 "zone": zone,
                 "protected": is_protected,
             })

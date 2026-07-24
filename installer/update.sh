@@ -487,6 +487,13 @@ ensure_terminal_tools() {
   fi
 }
 
+remove_ufw_legacy() {
+  systemctl disable --now ufw >/dev/null 2>&1 || true
+  command -v ufw >/dev/null 2>&1 && timeout 15 ufw --force disable >/dev/null 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive apt-get purge -y ufw >/dev/null 2>&1 || true
+  rm -rf /etc/ufw /var/lib/ufw 2>/dev/null || true
+}
+
 harden_existing_panel_users() {
   local user home_dir site_dir
   getent group opanel-sftp >/dev/null || return 0
@@ -921,10 +928,9 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
   fi
 fi
 
-if [[ -f "$SOURCE_DIR/installer/rescue-ufw-blocklist.sh" ]]; then
-  log "Refreshing UFW blocklist rescue command"
-  install -m 0755 -o root -g root "$SOURCE_DIR/installer/rescue-ufw-blocklist.sh" /usr/local/sbin/opanel-rescue-ufw-blocklist
-fi
+log "Removing legacy UFW firewall package"
+remove_ufw_legacy
+rm -f /usr/local/sbin/opanel-rescue-ufw-blocklist
 
 if [[ -f "$SOURCE_DIR/change_IP.sh" ]]; then
   log "Refreshing panel IP change command"

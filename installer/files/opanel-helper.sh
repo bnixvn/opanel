@@ -2600,7 +2600,7 @@ case "$cmd" in
     ;;
 
   # ---- firewall (iptables) ---------------------------------------------
-  iptables-status|ufw-status)
+  iptables-status)
     echo "Chains: OPANEL_INPUT, OPANEL_USER, OPANEL_BLOCKLIST"
     echo ""
     echo "=== OPANEL_INPUT ==="
@@ -2618,7 +2618,16 @@ case "$cmd" in
     total="$(ipset list "$BLOCKLIST_IPSET_V6" 2>/dev/null | grep -Ec '^[0-9a-fA-F:]+/' || true)"
     echo "  ${BLOCKLIST_IPSET_V6}: ${total:-0} network(s)"
     ;;
-  iptables-enable|ufw-enable)
+  iptables-check-enabled)
+    if iptables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null && \
+       iptables -C INPUT -j OPANEL_INPUT 2>/dev/null && \
+       iptables -C INPUT -j OPANEL_USER 2>/dev/null; then
+      echo yes
+    else
+      echo no
+    fi
+    ;;
+  iptables-enable)
     iptables -P INPUT ACCEPT 2>/dev/null || true
     ip6tables -P INPUT ACCEPT 2>/dev/null || true
     iptables_flush_managed_chains
@@ -2630,7 +2639,7 @@ case "$cmd" in
     ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
     echo "opanel iptables chains enabled"
     ;;
-  iptables-disable|ufw-disable)
+  iptables-disable)
     # Remove chain references from INPUT (rules inside chains are preserved)
     iptables -D INPUT -j OPANEL_BLOCKLIST 2>/dev/null || true
     iptables -D INPUT -j OPANEL_INPUT 2>/dev/null || true
@@ -2645,7 +2654,7 @@ case "$cmd" in
     ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
     echo "opanel iptables chains disconnected from INPUT"
     ;;
-  iptables-reload|ufw-reload)
+  iptables-reload)
     firewall_blocklist_apply 2>/dev/null || true
     install -d -o root -g root -m 0755 /etc/iptables
     iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
@@ -2661,26 +2670,26 @@ case "$cmd" in
   ipset-run)
     run_managed_ipset_command "$@"
     ;;
-  iptables-allow-port|ufw-allow-port)
+  iptables-allow-port)
     [[ $# -eq 2 ]] || deny "usage: iptables-allow-port <port> <proto>"
     require_port "$1"; require_proto "$2"
     iptables -A OPANEL_USER -p "$2" --dport "$1" -j ACCEPT -m comment --comment "opanel:UserZone" 2>/dev/null \
       || iptables -A OPANEL_USER -p "$2" --dport "$1" -j ACCEPT 2>/dev/null \
       || true
     ;;
-  iptables-panel-allow-port|ufw-panel-allow-port)
+  iptables-panel-allow-port)
     [[ $# -eq 1 ]] || deny "usage: iptables-panel-allow-port <port>"
     allow_panel_port "$1"
     ;;
-  iptables-allow-ip|ufw-allow-ip)
+  iptables-allow-ip)
     [[ $# -ge 1 && $# -le 3 ]] || deny "usage: iptables-allow-ip <ip> [port] [proto]"
     run_ip_rule allow "$1" "${2:-}" "${3:-tcp}"
     ;;
-  iptables-deny-ip|ufw-deny-ip)
+  iptables-deny-ip)
     [[ $# -ge 1 && $# -le 3 ]] || deny "usage: iptables-deny-ip <ip> [port] [proto]"
     run_ip_rule deny "$1" "${2:-}" "${3:-tcp}"
     ;;
-  iptables-delete|ufw-delete)
+  iptables-delete)
     [[ $# -eq 1 && "$1" =~ ^[0-9]+$ ]] || deny "usage: iptables-delete <rule-number>"
     iptables -D OPANEL_USER "$1" 2>/dev/null \
       || iptables -D OPANEL_INPUT "$1" 2>/dev/null \
@@ -2689,22 +2698,22 @@ case "$cmd" in
     ;;
 
   # ---- firewall blocklist -----------------------------------------------
-  firewall-blocklist-status|iptables-blocklist-status|blocklist-status|nginx-blocklist-status|ufw-blocklist-status)
+  firewall-blocklist-status|iptables-blocklist-status|blocklist-status|nginx-blocklist-status)
     firewall_blocklist_status
     ;;
-  firewall-blocklist-timer-install|iptables-blocklist-timer-install|blocklist-timer-install|nginx-blocklist-timer-install|ufw-blocklist-timer-install)
+  firewall-blocklist-timer-install|iptables-blocklist-timer-install|blocklist-timer-install|nginx-blocklist-timer-install)
     firewall_blocklist_write_timer
     echo "Blocklist timer installed"
     ;;
-  firewall-blocklist-add|iptables-blocklist-add|blocklist-add|nginx-blocklist-add|ufw-blocklist-add)
+  firewall-blocklist-add|iptables-blocklist-add|blocklist-add|nginx-blocklist-add)
     [[ $# -eq 1 ]] || deny "usage: firewall-blocklist-add <url>"
     firewall_blocklist_add_url "$1"
     ;;
-  firewall-blocklist-delete|iptables-blocklist-delete|blocklist-delete|nginx-blocklist-delete|ufw-blocklist-delete)
+  firewall-blocklist-delete|iptables-blocklist-delete|blocklist-delete|nginx-blocklist-delete)
     [[ $# -eq 1 ]] || deny "usage: firewall-blocklist-delete <url>"
     firewall_blocklist_delete_url "$1"
     ;;
-  firewall-blocklist-run|iptables-blocklist-run|blocklist-run|nginx-blocklist-run|ufw-blocklist-run)
+  firewall-blocklist-run|iptables-blocklist-run|blocklist-run|nginx-blocklist-run)
     [[ $# -eq 0 ]] || deny "usage: firewall-blocklist-run"
     firewall_blocklist_run
     ;;

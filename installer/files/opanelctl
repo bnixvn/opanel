@@ -132,54 +132,21 @@ INFO
   chmod 600 /root/login.txt
 }
 
-delete_opanel_ufw_rules() {
-  local pattern="$1" number
-  command -v ufw >/dev/null 2>&1 || return 0
-  while read -r number; do
-    [[ -n "$number" ]] || continue
-    ufw --force delete "$number" >/dev/null 2>&1 || true
-  done < <(
-    ufw status numbered 2>/dev/null \
-      | awk -v pattern="$pattern" '
-          index($0, "opanel:PanelZone") {
-            line = $0
-            if (!match(line, /^\[[[:space:]]*[0-9]+\]/)) {
-              next
-            }
-            number = substr(line, RSTART, RLENGTH)
-            gsub(/[^0-9]/, "", number)
-            sub(/^\[[[:space:]]*[0-9]+\][[:space:]]*/, "", line)
-            split(line, parts, /[[:space:]]+ALLOW[[:space:]]+/)
-            target = parts[1]
-            if (target == pattern || target == pattern " (v6)") {
-              print number
-            }
-          }
-        ' \
-      | sort -rn
-  )
-}
-
 allow_panel_port() {
   local port="$1"
-  if command -v ufw >/dev/null 2>&1; then
-    delete_opanel_ufw_rules "${port}/tcp"
-    ufw insert 1 allow "${port}/tcp" comment "opanel:PanelZone" >/dev/null 2>&1 \
-      || ufw insert 1 allow "${port}/tcp" >/dev/null 2>&1 \
-      || ufw allow "${port}/tcp" >/dev/null 2>&1 \
-      || true
+  validate_port "$port"
+  if [[ -x /usr/local/sbin/opanel-helper ]] && id -u opanel >/dev/null 2>&1; then
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-panel-allow-port "$port" >/dev/null 2>&1 || true
   fi
 }
 
 allow_panel_app() {
   local app="$1"
-  if command -v ufw >/dev/null 2>&1; then
-    delete_opanel_ufw_rules "$app"
-    ufw insert 1 allow "$app" comment "opanel:PanelZone" >/dev/null 2>&1 \
-      || ufw insert 1 allow "$app" >/dev/null 2>&1 \
-      || ufw allow "$app" >/dev/null 2>&1 \
-      || true
-  fi
+  [[ "$app" == "OpenSSH" ]] || return 0
+  while read -r ssh_port; do
+    [[ -n "$ssh_port" ]] || continue
+    allow_panel_port "$ssh_port"
+  done <<<"$(detect_ssh_ports)"
 }
 
 close_old_panel_port() {
@@ -188,9 +155,6 @@ close_old_panel_port() {
   case "$old_port" in
     22|80|443|465|587) return 0 ;;
   esac
-  if command -v ufw >/dev/null 2>&1; then
-    delete_opanel_ufw_rules "${old_port}/tcp"
-  fi
 }
 
 refresh_phpmyadmin_api_base() {
@@ -549,8 +513,8 @@ show_status() {
   echo "OpenLiteSpeed: $(systemctl is-active lsws 2>/dev/null || echo unknown)"
   echo "MariaDB: $(systemctl is-active mariadb 2>/dev/null || echo unknown)"
   echo "Redis: $(systemctl is-active redis-server 2>/dev/null || echo unknown)"
-  if command -v ufw >/dev/null 2>&1; then
-    echo "UFW: $(ufw status 2>/dev/null | head -n 1)"
+  if [[ -x /usr/local/sbin/opanel-helper ]] && id -u opanel >/dev/null 2>&1; then
+    echo "Firewall: $(sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-check-enabled 2>/dev/null || echo unknown)"
   fi
 }
 
@@ -610,8 +574,8 @@ repair_firewall() {
     esac
     allow_panel_port "$port"
   done
-  if command -v ufw >/dev/null 2>&1; then
-    ufw status numbered || true
+  if [[ -x /usr/local/sbin/opanel-helper ]] && id -u opanel >/dev/null 2>&1; then
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-status || true
   fi
   echo "Firewall rescue rules refreshed."
 }
