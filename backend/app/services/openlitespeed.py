@@ -470,25 +470,36 @@ def rewrite_vhost(
     """Render and write a vhost config to disk, then restart OLS."""
     content = render_vhost(domain, root_path, **kwargs)
     safe_domain = _safe_domain(domain)
-    vhost_dir = _vhost_dir(safe_domain)
-    vhost_dir.mkdir(parents=True, exist_ok=True)
-    conf_path = _vhost_conf_path(safe_domain)
-    conf_path.write_text(content, encoding="utf-8")
-    # Validate and reload OLS
-    test_result = shell.privileged("ols-vhost-reload", check=False, fallback=[
-        "bash", "-lc",
-        f"/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || /usr/local/lsws/bin/openlitespeed restart 2>/dev/null || true",
-    ])
+    shell.privileged(
+        "ols-vhost-write",
+        helper_args=[safe_domain],
+        input=content,
+        fallback=[
+            "bash", "-lc",
+            "mkdir -p /usr/local/lsws/conf/opanel/vhosts/$1 && "
+            "cat > /usr/local/lsws/conf/opanel/vhosts/$1/vhost.conf && "
+            "(/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)",
+            "opanel-ols-vhost-write",
+            safe_domain,
+        ],
+    )
     return content
-
 
 def remove_vhost(domain: str) -> None:
     """Remove a vhost config directory."""
     safe_domain = _safe_domain(domain)
-    vhost_dir = _vhost_dir(safe_domain)
-    if vhost_dir.exists():
-        import shutil
-        shutil.rmtree(vhost_dir)
+    shell.privileged(
+        "ols-vhost-delete",
+        helper_args=[safe_domain],
+        check=False,
+        fallback=[
+            "bash", "-lc",
+            "rm -rf /usr/local/lsws/conf/opanel/vhosts/$1 && "
+            "(/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)",
+            "opanel-ols-vhost-delete",
+            safe_domain,
+        ],
+    )
 
 
 def get_vhost_config(domain: str) -> str | None:

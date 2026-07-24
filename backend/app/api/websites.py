@@ -300,7 +300,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             _ensure_default_waf_file(payload.domain)
-            openlitespeed.write_vhost(
+            openlitespeed.rewrite_vhost(
                 payload.domain,
                 root_path,
                 app_type="wordpress",
@@ -325,7 +325,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
                 _write_placeholder_page(payload.domain, root_path, linux_user, payload.php_version)
                 site_users.fix_site_path(str(public), linux_user)
             _ensure_default_waf_file(payload.domain)
-            openlitespeed.write_vhost(
+            openlitespeed.rewrite_vhost(
                 payload.domain,
                 root_path,
                 app_type=app_type_value,

@@ -1996,6 +1996,14 @@ delete_site_php_pools() {
       systemctl reload "php${php_version}-fpm" 2>/dev/null || true
     done
   done
+  for dir in /usr/local/lsws/lsphp*/etc/php.d; do
+    [[ -d "$dir" ]] || continue
+    for pool_file in "$dir"/$glob.conf; do
+      [[ -f "$pool_file" ]] || continue
+      rm -f "$pool_file"
+    done
+  done
+  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
 }
 
 ensure_php_pool() {
@@ -2004,11 +2012,15 @@ ensure_php_pool() {
   require_linux_user "$user"
   require_php_version "$php_version"
   target=$(readlink -m "$target") || deny "cannot resolve $target"
-  local pool_suffix="${php_version//./_}"
+  local pool_suffix="lsphp${php_version//./}"
+  local lsphp_version="${php_version//./}"
   local site_hash
   site_hash="$(printf '%s' "$target" | sha256sum | awk '{print substr($1, 1, 12)}')"
   local pool_name="opanel-${user}-${site_hash}-${pool_suffix}"
-  local pool_file="/etc/php/${php_version}/fpm/pool.d/${pool_name}.conf"
+  local lsphp_dir="/usr/local/lsws/lsphp${lsphp_version}"
+  [[ -x "${lsphp_dir}/bin/lsphp" ]] || deny "LSPHP ${php_version} is not installed"
+  local pool_dir="${lsphp_dir}/etc/php.d"
+  local pool_file="${pool_dir}/${pool_name}.conf"
   # Per-user dirs for sessions/uploads. Sharing /tmp across pools lets one
   # site read another's session files (mode 0600 helps but only inside the
   # same uid; uploads land world-writable on tmpfs). Using 0700 dirs owned
@@ -2017,30 +2029,27 @@ ensure_php_pool() {
   local sess_dir="/var/lib/php/sessions/${user}"
   local upload_dir="/var/lib/php/uploads/${user}"
   ensure_php_runtime_dirs "$user"
+  install -d -o root -g root -m 0755 "$pool_dir"
   calculate_php_fpm_pool_tuning "$pool_file"
   cat >"$pool_file" <<POOL
-[${pool_name}]
-user = ${user}
-group = ${user}
-listen = /run/php/${pool_name}.sock
-listen.owner = www-data
-listen.group = www-data
-listen.mode = 0660
 ; opanel auto-tunes these values from RAM, CPU and managed pool count.
 ; Optional overrides: opanel_PHP_FPM_WORKER_MB, opanel_PHP_FPM_MAX_CHILDREN,
 ; opanel_PHP_FPM_IDLE_TIMEOUT, opanel_PHP_FPM_MAX_REQUESTS,
 ; opanel_PHP_FPM_REQUEST_TERMINATE_TIMEOUT.
-pm = ${PHP_FPM_PM_MODE}
-pm.max_children = ${PHP_FPM_MAX_CHILDREN}
-pm.process_idle_timeout = ${PHP_FPM_PROCESS_IDLE_TIMEOUT}s
-pm.max_requests = ${PHP_FPM_MAX_REQUESTS}
-request_terminate_timeout = ${PHP_FPM_REQUEST_TERMINATE_TIMEOUT}s
-chdir = /
-php_admin_value[open_basedir] = ${target}:${sess_dir}:${upload_dir}:/usr/share/php
-php_admin_value[upload_tmp_dir] = ${upload_dir}
-php_admin_value[session.save_path] = ${sess_dir}
+; OLS starts this site as an LSAPI external app from the vhost config.
+user = ${user}
+group = ${user}
+LSAPI_CHILDREN = ${PHP_FPM_MAX_CHILDREN}
+LSAPI_MAX_IDLE = ${PHP_FPM_PROCESS_IDLE_TIMEOUT}
+LSAPI_MAX_REQS = ${PHP_FPM_MAX_REQUESTS}
+LSAPI_MAX_PROCESS_TIME = ${PHP_FPM_REQUEST_TERMINATE_TIMEOUT}
+open_basedir = ${target}:${sess_dir}:${upload_dir}:/usr/share/php
+upload_tmp_dir = ${upload_dir}
+session.save_path = ${sess_dir}
 POOL
-  systemctl reload "php${php_version}-fpm"
+  chown root:root "$pool_file"
+  chmod 0644 "$pool_file"
+  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
 }
 
 ensure_php_runtime_dirs() {
@@ -2203,6 +2212,26 @@ case "$cmd" in
 
   waf-install)
     install_waf_engine
+    ;;
+
+  ols-vhost-write)
+    [[ $# -eq 1 ]] || deny "usage: ols-vhost-write <domain>"
+    safe_domain="$1"
+    require_domain "$safe_domain"
+    install -d -o root -g opanel -m 2775 "$OLS_VHOSTS_DIR/$safe_domain"
+    cat >"$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
+    chown -R root:opanel "$OLS_VHOSTS_DIR/$safe_domain"
+    chmod 2775 "$OLS_VHOSTS_DIR/$safe_domain"
+    chmod 0644 "$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
+    /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+    ;;
+
+  ols-vhost-delete)
+    [[ $# -eq 1 ]] || deny "usage: ols-vhost-delete <domain>"
+    safe_domain="$1"
+    require_domain "$safe_domain"
+    rm -rf "$OLS_VHOSTS_DIR/$safe_domain"
+    /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
     ;;
 
   # ---- ClamAV malware scanning (optional) -------------------------------
