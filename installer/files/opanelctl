@@ -525,7 +525,7 @@ show_status() {
   port="$(env_get PANEL_PORT)"; port="${port:-$DEFAULT_PANEL_PORT}"
   cert="$(env_get PANEL_SSL_CERT)"; key="$(env_get PANEL_SSL_KEY)"
   scheme="http"
-  if [[ -n "$cert" && -n "$key" && -f "$cert" && -f "$key" ]]; then
+  if [[ "$(env_get PANEL_URL)" == https://* && -n "$cert" && -n "$key" && -f "$cert" && -f "$key" ]]; then
     scheme="https"
   fi
   health_url="${scheme}://127.0.0.1:${port}/api/health"

@@ -217,7 +217,23 @@ is_ipv4() {
 }
 
 is_domain() {
-  [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]
+  ! is_ipv4 "$1" && [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]
+}
+
+panel_url_scheme() {
+  local url
+  url="$(env_get PANEL_URL)"
+  case "$url" in
+    https://*) echo "https" ;;
+    *) echo "http" ;;
+  esac
+}
+
+panel_tls_enabled() {
+  local cert key
+  [[ "$(panel_url_scheme)" == "https" ]] || return 1
+  cert="$(env_get PANEL_SSL_CERT)"; key="$(env_get PANEL_SSL_KEY)"
+  [[ -n "$cert" && -n "$key" && -f "$cert" && -f "$key" ]]
 }
 
 require_panel_scheme() {
@@ -430,13 +446,12 @@ schedule_panel_restart() {
 }
 
 refresh_tools_ols() {
-  local port cert key domain host api_scheme tools_scheme pma_secure php_version
+  local port domain host api_scheme tools_scheme pma_secure php_version
   port="$(env_get PANEL_PORT)"; port="${port:-$DEFAULT_PANEL_PORT}"
-  cert="$(env_get PANEL_SSL_CERT)"; key="$(env_get PANEL_SSL_KEY)"
   domain="$(env_get PANEL_DOMAIN)"; host="${domain:-$(detect_ip)}"
   php_version="${PHP_DEFAULT:-8.4}"
   api_scheme="http"; tools_scheme="http"; pma_secure="false"
-  if [[ -n "$cert" && -n "$key" && -f "$cert" && -f "$key" ]]; then
+  if panel_tls_enabled; then
     api_scheme="https"; tools_scheme="https"; pma_secure="true"
   fi
   ensure_ols_conf_dir_writable
@@ -1229,6 +1244,8 @@ TIMER
 copy_panel_live_certificate() {
   local domain="$1"
   [[ -n "$domain" ]] || return 0
+  is_domain "$domain" || return 0
+  [[ "$(panel_url_scheme)" == "https" ]] || return 0
   [[ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" && -f "/etc/letsencrypt/live/${domain}/privkey.pem" ]] || return 0
   install -d -o root -g opanel -m 0750 /etc/opanel
   install -m 0640 -o root -g opanel "/etc/letsencrypt/live/${domain}/fullchain.pem" /etc/opanel/panel-fullchain.pem

@@ -261,6 +261,8 @@ PANEL_SSL_KEY=
 FRONTEND_DIST=/opt/opanel/frontend/dist
 ```
 
+When `PANEL_URL` starts with `http://`, keep `PANEL_SSL_CERT` and `PANEL_SSL_KEY` empty. The API only starts TLS on port `2222` when `PANEL_URL` starts with `https://` and the panel certificate/key exist. Use a real panel domain for panel SSL; website SSL certificates are managed separately and must not be reused for the IP-based panel URL.
+
 The backend refuses to start in production with `COMMAND_DRY_RUN=true` or `ALLOWED_ORIGINS=*`. SECRET_KEY must be at least 32 chars in production.
 
 ## Service commands

@@ -183,6 +183,7 @@ ask_panel_url() {
   if [[ "$PANEL_DOMAIN" == "localhost" || "$PANEL_DOMAIN" == "127.0.0.1" || "$PANEL_DOMAIN" =~ ^[0-9.]+$ ]]; then
     ENABLE_SSL="no"
     PANEL_URL="http://${PANEL_DOMAIN}:${PANEL_PORT}"
+    PANEL_DOMAIN=""
   elif [[ "$ENABLE_SSL" == "auto" ]]; then
     if ! is_domain_name "$PANEL_DOMAIN"; then
       fail "Invalid panel domain: $PANEL_DOMAIN"
@@ -620,7 +621,7 @@ setup_systemd() {
 set -euo pipefail
 cd ${APP_DIR}/backend
 args=(app.main:app --host 0.0.0.0 --port "\${PANEL_PORT:-2222}" --proxy-headers --forwarded-allow-ips "127.0.0.1")
-if [[ -n "\${PANEL_SSL_CERT:-}" && -n "\${PANEL_SSL_KEY:-}" && -f "\${PANEL_SSL_CERT}" && -f "\${PANEL_SSL_KEY}" ]]; then
+if [[ "\${PANEL_URL:-}" == https://* && -n "\${PANEL_SSL_CERT:-}" && -n "\${PANEL_SSL_KEY:-}" && -f "\${PANEL_SSL_CERT}" && -f "\${PANEL_SSL_KEY}" ]]; then
   args+=(--ssl-certfile "\${PANEL_SSL_CERT}" --ssl-keyfile "\${PANEL_SSL_KEY}")
 fi
 exec ${APP_DIR}/backend/.venv/bin/uvicorn "\${args[@]}"
@@ -725,7 +726,7 @@ SERVICE
 
 write_tools_vhost_config() {
   local api_scheme="http" tools_scheme="http" pma_secure="false"
-  if [[ -n "${PANEL_SSL_CERT:-}" && -n "${PANEL_SSL_KEY:-}" && -f "${PANEL_SSL_CERT}" && -f "${PANEL_SSL_KEY}" ]]; then
+  if [[ "${PANEL_URL:-}" == https://* && -n "${PANEL_SSL_CERT:-}" && -n "${PANEL_SSL_KEY:-}" && -f "${PANEL_SSL_CERT}" && -f "${PANEL_SSL_KEY}" ]]; then
     api_scheme="https"
     tools_scheme="https"
     pma_secure="true"

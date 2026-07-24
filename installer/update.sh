@@ -162,6 +162,32 @@ env_get() {
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$file"
 }
 
+is_ipv4() {
+  local value="$1" part
+  local -a parts
+  [[ "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r -a parts <<<"$value"
+  for part in "${parts[@]}"; do
+    (( 10#$part >= 0 && 10#$part <= 255 )) || return 1
+  done
+}
+
+is_domain_name() {
+  local value="$1"
+  ! is_ipv4 "$value" && [[ "$value" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]
+}
+
+env_set() {
+  local file="$APP_DIR/backend/.env" key="$1" value="$2" escaped
+  [[ -f "$file" ]] || return 0
+  escaped="$(printf '%s' "$value" | sed -e 's/[&|]/\\&/g')"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${escaped}|" "$file"
+  else
+    printf '%s=%s\n' "$key" "$value" >>"$file"
+  fi
+}
+
 env_set_default() {
   local file="$APP_DIR/backend/.env" key="$1" value="$2"
   if ! grep -q "^${key}=" "$file"; then
@@ -374,8 +400,9 @@ remove_filebrowser_runtime() {
 }
 
 write_tools_nginx_config() {
-  local panel_port panel_domain panel_cert panel_key php_version server_ip host api_scheme tools_scheme pma_secure ssl_block
+  local panel_port panel_url panel_domain panel_cert panel_key php_version server_ip host api_scheme tools_scheme pma_secure ssl_block
   panel_port="$(env_get PANEL_PORT)"; panel_port="${panel_port:-2222}"
+  panel_url="$(env_get PANEL_URL)"
   panel_domain="$(env_get PANEL_DOMAIN)"
   panel_cert="$(env_get PANEL_SSL_CERT)"
   panel_key="$(env_get PANEL_SSL_KEY)"
@@ -383,7 +410,7 @@ write_tools_nginx_config() {
   server_ip="$(detect_server_ip)"
   host="${panel_domain:-$server_ip}"
   api_scheme="http"; tools_scheme="http"; pma_secure="false"; ssl_block=""
-  if [[ -n "$panel_cert" && -n "$panel_key" && -f "$panel_cert" && -f "$panel_key" ]]; then
+  if [[ "$panel_url" == https://* && -n "$panel_cert" && -n "$panel_key" && -f "$panel_cert" && -f "$panel_key" ]]; then
     api_scheme="https"; tools_scheme="https"; pma_secure="true"
     printf -v ssl_block '\n    listen 443 ssl http2 default_server;\n    ssl_certificate %s;\n    ssl_certificate_key %s;' "$panel_cert" "$panel_key"
   fi
@@ -509,7 +536,7 @@ harden_existing_panel_users() {
 install_panel_runtime() {
   local env_file="$APP_DIR/backend/.env"
   [[ -f "$env_file" ]] || return 0
-  local panel_port panel_url server_ip sshd_config sshd_backup
+  local panel_port panel_url panel_domain server_ip sshd_config sshd_backup
   panel_port="$(env_get PANEL_PORT)"
   panel_port="${panel_port:-2222}"
   server_ip="$(detect_server_ip)"
@@ -526,6 +553,14 @@ install_panel_runtime() {
   env_set_default RATE_LIMIT_BACKEND "redis"
   if [[ -z "$(env_get ALLOWED_ORIGINS)" ]]; then
     env_set_default ALLOWED_ORIGINS "$panel_url"
+  fi
+  panel_domain="$(env_get PANEL_DOMAIN)"
+  if [[ -n "$panel_domain" ]] && ! is_domain_name "$panel_domain"; then
+    env_set PANEL_DOMAIN ""
+  fi
+  if [[ "$panel_url" != https://* ]]; then
+    env_set PANEL_SSL_CERT ""
+    env_set PANEL_SSL_KEY ""
   fi
 
   remove_filebrowser_runtime
@@ -582,7 +617,7 @@ SSHD
 set -euo pipefail
 cd ${APP_DIR}/backend
 args=(app.main:app --host 0.0.0.0 --port "\${PANEL_PORT:-2222}" --proxy-headers --forwarded-allow-ips "127.0.0.1")
-if [[ -n "\${PANEL_SSL_CERT:-}" && -n "\${PANEL_SSL_KEY:-}" && -f "\${PANEL_SSL_CERT}" && -f "\${PANEL_SSL_KEY}" ]]; then
+if [[ "\${PANEL_URL:-}" == https://* && -n "\${PANEL_SSL_CERT:-}" && -n "\${PANEL_SSL_KEY:-}" && -f "\${PANEL_SSL_CERT}" && -f "\${PANEL_SSL_KEY}" ]]; then
   args+=(--ssl-certfile "\${PANEL_SSL_CERT}" --ssl-keyfile "\${PANEL_SSL_KEY}")
 fi
 exec ${APP_DIR}/backend/.venv/bin/uvicorn "\${args[@]}"
@@ -650,7 +685,7 @@ SERVICE
   write_tools_nginx_config
   if [[ -f /usr/share/phpmyadmin/opanel-signon.php ]]; then
     local scheme="http"
-    if [[ -n "$(env_get PANEL_SSL_CERT)" && -n "$(env_get PANEL_SSL_KEY)" ]]; then
+    if [[ "$(env_get PANEL_URL)" == https://* && -n "$(env_get PANEL_SSL_CERT)" && -n "$(env_get PANEL_SSL_KEY)" ]]; then
       scheme="https"
     fi
     sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${scheme}://127.0.0.1:${panel_port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php || true
@@ -658,11 +693,14 @@ SERVICE
 }
 
 panel_healthcheck() {
-  local port
+  local port url
   port="$(env_get PANEL_PORT)"
   port="${port:-2222}"
-  curl -kfsS --connect-timeout 2 --max-time 5 "https://127.0.0.1:${port}/api/health" >/dev/null 2>&1 \
-    || curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${port}/api/health" >/dev/null 2>&1
+  url="http://127.0.0.1:${port}/api/health"
+  if [[ "$(env_get PANEL_URL)" == https://* ]]; then
+    url="https://127.0.0.1:${port}/api/health"
+  fi
+  curl -kfsS --connect-timeout 2 --max-time 5 "$url" >/dev/null 2>&1
 }
 
 refresh_opanel_mariadb_grants() {
