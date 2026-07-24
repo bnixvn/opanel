@@ -8,7 +8,7 @@ from app.services.shell import shell
 
 LINUX_USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{2,31}$")
 DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
-PHP_VERSION_RE = re.compile(r"^(?:5\.6|7\.4|8\.[0-5])$")
+PHP_VERSION_RE = re.compile(r"^8\.[1-5]$")
 HOME_ROOT = Path("/home")
 PUBLIC_DIR = "public_html"
 RESERVED_LINUX_USERS = {

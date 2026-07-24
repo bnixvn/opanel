@@ -26,7 +26,7 @@ const HTTP_FLOOD_DEFAULTS = {
   access_limit_burst: 100,
   connection_limit: 60,
 };
-const PHP_VERSION_ORDER = ['5.6', '7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5'];
+const PHP_VERSION_ORDER = ['8.1', '8.2', '8.3', '8.4', '8.5'];
 const NGINX_REWRITE_MODES = [
   { value: 'none', label: 'None / static PHP' },
   { value: 'front_controller', label: 'PHP front controller' },
@@ -419,7 +419,7 @@ function App() {
   const [editingUser, setEditingUser] = useState(null);
   const [editingUserForm, setEditingUserForm] = useState({ email: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
   const [phpConfig, setPhpConfig] = useState({ php_version: '8.3', display_errors: 'Off', max_execution_time: 300, max_input_time: 600, max_input_vars: 10000, memory_limit: '512M', post_max_size: '1024M', upload_max_filesize: '1024M' });
-  const [phpVersions, setPhpVersions] = useState({ installed: ['8.3', '8.4'], supported: ['5.6', '7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5'] });
+  const [phpVersions, setPhpVersions] = useState({ installed: ['8.3', '8.4'], supported: ['8.1', '8.2', '8.3', '8.4', '8.5'] });
   const [phpTuning, setPhpTuning] = useState(null);
   const [firewallStatus, setFirewallStatus] = useState(null);
   const [firewallPort, setFirewallPort] = useState('80');
