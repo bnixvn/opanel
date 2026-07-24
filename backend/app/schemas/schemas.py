@@ -8,7 +8,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 
 
 DOMAIN_RE = re.compile(r"^(?!-)([a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,}$")
-SUPPORTED_PHP_VERSIONS = {"8.1", "8.2", "8.3", "8.4", "8.5"}
+SUPPORTED_PHP_VERSIONS = {"7.4", "8.1", "8.2", "8.3", "8.4", "8.5"}
 SUPPORTED_APP_TYPES = {"wordpress", "php", "static"}
 SUPPORTED_NGINX_REWRITE_MODES = {"none", "front_controller", "laravel", "codeigniter", "seohburl"}
 SUPPORTED_WEBSERVER_REWRITE_MODES = SUPPORTED_NGINX_REWRITE_MODES  # alias — same modes apply to OLS

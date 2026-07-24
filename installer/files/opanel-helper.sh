@@ -634,6 +634,30 @@ install_clamav_engine() {
   echo "ClamAV installed and clamav-daemon enabled."
 }
 
+ensure_litespeed_php74_repo() {
+  install -d -o root -g root -m 0755 /etc/apt/preferences.d /etc/apt/sources.list.d
+  cat >/etc/apt/sources.list.d/opanel-lsphp74-jammy.list <<'EOF'
+deb http://hk.archive.ubuntu.com/ubuntu jammy main universe multiverse restricted
+deb http://hk.archive.ubuntu.com/ubuntu jammy-updates main universe multiverse restricted
+deb http://security.ubuntu.com/ubuntu jammy-security main universe multiverse restricted
+deb [trusted=yes] http://rpms.litespeedtech.com/debian/ jammy main
+EOF
+  cat >/etc/apt/preferences.d/opanel-lsphp74-jammy.pref <<'EOF'
+Package: *
+Pin: release n=jammy
+Pin-Priority: 50
+
+Package: lsphp74*
+Pin: release n=jammy
+Pin-Priority: 990
+
+Package: libicu70 mime-support libmagickcore-6.q16-6 libmagickwand-6.q16-6 libtiff5
+Pin: release n=jammy*
+Pin-Priority: 990
+EOF
+  apt-get update --allow-releaseinfo-change
+}
+
 install_php_version() {
   local version="$1" lsphp_ver ini_dir
   export DEBIAN_FRONTEND=noninteractive
@@ -642,7 +666,9 @@ install_php_version() {
   if [[ -x "/usr/local/lsws/lsphp${lsphp_ver}/bin/lsphp" ]]; then
     echo "LSPHP $version is already installed; ensuring opanel extension set..."
   fi
-  if ! apt-cache show "lsphp${lsphp_ver}" >/dev/null 2>&1; then
+  if [[ "$version" == "7.4" ]]; then
+    ensure_litespeed_php74_repo
+  elif ! apt-cache show "lsphp${lsphp_ver}" >/dev/null 2>&1; then
     echo "Refreshing LiteSpeed package metadata for LSPHP $version..."
     curl -fsSL --connect-timeout 15 --max-time 120 https://repo.litespeed.sh | bash
     apt-get update --allow-releaseinfo-change
@@ -748,7 +774,9 @@ install_ioncube_loader() {
 validate_php_config_file() {
   local file="$1" line key value
   while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ -z "$line" ]] && continue
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" || "$line" == \;* ]] && continue
     case "$line" in *$'\r'*) deny "PHP config contains a carriage return" ;; esac
     [[ "$line" == *"="* ]] || deny "invalid PHP config line: $line"
     key="$(printf '%s' "${line%%=*}" | xargs)"
@@ -767,6 +795,18 @@ validate_php_config_file() {
       max_input_vars)
         [[ "$value" =~ ^[0-9]{1,7}$ ]] || deny "invalid integer value for $key"
         (( 10#$value >= 100 && 10#$value <= 1000000 )) || deny "max_input_vars out of range"
+        ;;
+      opcache.enable|opcache.validate_timestamps|opcache.save_comments)
+        [[ "$value" == "0" || "$value" == "1" ]] || deny "invalid boolean value for $key"
+        ;;
+      opcache.memory_consumption|opcache.interned_strings_buffer|opcache.max_accelerated_files|opcache.revalidate_freq|lsapi_children|lsapi_max_idle|lsapi_max_idle_children|lsapi_max_process_time)
+        [[ "$value" =~ ^[0-9]{1,7}$ ]] || deny "invalid integer value for $key"
+        ;;
+      opcache.jit)
+        [[ "$value" =~ ^[A-Za-z0-9_-]{0,32}$ ]] || deny "invalid opcache.jit value"
+        ;;
+      opcache.jit_buffer_size)
+        [[ "$value" =~ ^[0-9]{1,6}M?$ ]] || deny "invalid opcache.jit_buffer_size value"
         ;;
       *)
         deny "unsupported PHP config directive: $key"
@@ -1246,7 +1286,7 @@ require_proto() {
 }
 
 require_php_version() {
-  [[ "$1" =~ ^(5\.6|7\.4|8\.0|8\.1|8\.2|8\.3|8\.4|8\.5)$ ]] || deny "invalid PHP version: $1"
+  [[ "$1" =~ ^(7\.4|8\.1|8\.2|8\.3|8\.4|8\.5)$ ]] || deny "invalid PHP version: $1"
 }
 
 require_linux_user() {

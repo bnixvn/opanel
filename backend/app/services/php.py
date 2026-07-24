@@ -4,7 +4,7 @@ from app.core.config import settings
 from app.schemas.schemas import PhpConfigUpdate
 from app.services.shell import shell
 
-SUPPORTED_PHP_VERSIONS = ("8.1", "8.2", "8.3", "8.4", "8.5")
+SUPPORTED_PHP_VERSIONS = ("7.4", "8.1", "8.2", "8.3", "8.4", "8.5")
 
 
 def _safe_ini_value(value: str) -> str:
@@ -301,21 +301,22 @@ def apply_php_tuning(php_version: str | None = None) -> dict:
         if settings.command_dry_run:
             targets.append(str(target))
             continue
-        ini_dir.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        shell.privileged(
+            "php-config-write",
+            helper_args=[ver],
+            input=content,
+            fallback=[
+                "bash",
+                "-lc",
+                "cat > /usr/local/lsws/lsphp$2/etc/php.d/99-opanel.ini && /usr/local/lsws/bin/lswsctrl restart",
+                "opanel-php-tuning-write",
+                ver,
+                lsphp_ver,
+            ],
+        )
         targets.append(str(target))
 
-    # Restart OLS to pick up new config
-    if not settings.command_dry_run:
-        result = shell.privileged(
-            "systemctl",
-            helper_args=["lsws", "restart"],
-            check=False,
-            fallback=["systemctl", "restart", "lsws"],
-        )
-        cfg["restart_returncode"] = result.returncode
-    else:
-        cfg["restart_returncode"] = 0
+    cfg["restart_returncode"] = 0
 
     cfg["applied_to"] = targets
     return cfg
