@@ -277,7 +277,10 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
         raise HTTPException(status_code=400, detail="admin_email and admin_password are required when install_wordpress is true")
 
     if install_wp:
-        db_info = mariadb.create_database(payload.domain)
+        try:
+            db_info = mariadb.create_database(payload.domain)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=f"Could not create MariaDB database: {exc}") from exc
         try:
             linux_user = site_users.ensure_site_runtime(payload.domain, root_path, payload.php_version, linux_user)
             root_path = wordpress.install_wordpress(

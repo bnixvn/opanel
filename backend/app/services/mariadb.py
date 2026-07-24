@@ -38,9 +38,13 @@ def _quote_identifier(value: str) -> str:
 
 def _mysql_args(extra: list = None) -> list:
     args = ["mysql"]
-    home_cnf = Path.home() / ".my.cnf"
-    if home_cnf.exists():
-        args.append(f"--defaults-file={home_cnf}")
+    default_files = [
+        Path.home() / ".my.cnf",
+        Path("/opt/opanel/.my.cnf"),
+    ]
+    defaults_file = next((path for path in default_files if path.exists()), None)
+    if defaults_file:
+        args.append(f"--defaults-file={defaults_file}")
     if extra:
         args.extend(extra)
     return args
@@ -101,9 +105,13 @@ def change_database_password(db_user: str, db_password: str):
 
 def export_database(db_name: str, output_file: str):
     args = ["mysqldump"]
-    home_cnf = Path.home() / ".my.cnf"
-    if home_cnf.exists():
-        args.append(f"--defaults-file={home_cnf}")
+    default_files = [
+        Path.home() / ".my.cnf",
+        Path("/opt/opanel/.my.cnf"),
+    ]
+    defaults_file = next((path for path in default_files if path.exists()), None)
+    if defaults_file:
+        args.append(f"--defaults-file={defaults_file}")
     args.extend([_validate_identifier(db_name), "--result-file", output_file])
     return shell.run(args, sensitive=True)
 

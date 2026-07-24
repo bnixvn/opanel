@@ -484,10 +484,12 @@ setup_panel_user() {
   mariadb_password="$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-32)"
   mariadb -e "
     CREATE USER IF NOT EXISTS 'opanel'@'localhost' IDENTIFIED BY '${mariadb_password}';
+    ALTER USER 'opanel'@'localhost' IDENTIFIED BY '${mariadb_password}';
     GRANT ALL PRIVILEGES ON *.* TO 'opanel'@'localhost' WITH GRANT OPTION;
     FLUSH PRIVILEGES;
   " 2>/dev/null || mysql -e "
     CREATE USER IF NOT EXISTS 'opanel'@'localhost' IDENTIFIED BY '${mariadb_password}';
+    ALTER USER 'opanel'@'localhost' IDENTIFIED BY '${mariadb_password}';
     GRANT ALL PRIVILEGES ON *.* TO 'opanel'@'localhost' WITH GRANT OPTION;
     FLUSH PRIVILEGES;
   "
