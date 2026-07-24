@@ -208,7 +208,7 @@ ask_panel_url() {
 install_base_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update --allow-releaseinfo-change
-  apt-get install -y software-properties-common ca-certificates curl gnupg git composer mariadb-server redis-server openssh-server python3 python3-pip python3-venv certbot tar zip unzip openssl iptables iptables-persistent ipset acl
+  apt-get install -y software-properties-common ca-certificates curl gnupg git composer mariadb-server mariadb-client redis-server openssh-server python3 python3-pip python3-venv certbot tar zip unzip openssl iptables iptables-persistent ipset acl phpmyadmin
   systemctl enable --now mariadb redis-server
   systemctl enable --now ssh 2>/dev/null || systemctl enable --now sshd 2>/dev/null || true
 }
@@ -773,6 +773,12 @@ OLS
 
 
 setup_phpmyadmin_sso() {
+  # phpMyAdmin must be installed first
+  if [[ ! -d /usr/share/phpmyadmin ]]; then
+    log "phpMyAdmin not found — skipping SSO setup"
+    return 0
+  fi
+
   local blowfish_secret
   blowfish_secret="$(openssl rand -hex 32)"
   local pma_host pma_scheme pma_secure
