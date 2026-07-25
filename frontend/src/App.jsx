@@ -2238,7 +2238,7 @@ function App() {
   }
 
   async function runPanelUpdate() {
-    if (!confirm('Update opanel from GitHub now? The API may restart and this page will reload when done.')) return;
+    if (!confirm('Update opanel from GitHub main now? The API may restart and this page will reload when done.')) return;
     setPanelUpdating(true);
     setShowUpdateLog(true);
     setPanelUpdateLog([]);
@@ -3396,33 +3396,32 @@ function App() {
     if (!isAdmin) return <section className="section"><h2>Updates</h2><p className="hint">No permission.</p></section>;
     const statusText = updatesStatus?.stdout || updatesStatus?.stderr || 'Click View logs to load update logs.';
     const panelUpdate = updatesStatus?.panel || {};
-    const updateKnown = typeof panelUpdate.update_available === 'boolean';
-    const updateAvailable = panelUpdate.update_available === true;
-    const panelBadge = updateAvailable ? 'Update available' : updateKnown ? 'Up to date' : 'Unknown';
-    const panelBadgeClass = updateAvailable ? 'badge bad' : updateKnown ? 'badge ok' : 'badge';
+    const panelBadge = panelUpdate.latest_commit ? 'Tracking main' : 'Unknown';
+    const panelBadgeClass = panelUpdate.latest_commit ? 'badge ok' : 'badge';
     const currentPanelVersion = panelUpdate.current_version || appVersion || 'unknown';
-    const latestPanelVersion = panelUpdate.latest_version || 'unknown';
+    const latestPanelRef = panelUpdate.latest_commit ? panelUpdate.latest_commit.slice(0, 12) : 'unknown';
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>Updates</h2><p className="hint">OS packages use apt; panel updates use <code>opanel-update</code>.</p></div>
+          <div><h2>Updates</h2><p className="hint">OS packages use apt; panel updates pull from GitHub <code>main</code>.</p></div>
           <button className="secondary-light" disabled={!!loading} onClick={toggleUpdateLog}>{showUpdateLog ? <X size={14}/> : <FileText size={14}/>} {showUpdateLog ? 'Hide logs' : 'View logs'}</button>
         </div>
         <div className="info-box update-version-box">
-          <div className="update-version-head"><strong>Panel release</strong><span className={panelBadgeClass}>{panelBadge}</span></div>
+          <div className="update-version-head"><strong>Panel source</strong><span className={panelBadgeClass}>{panelBadge}</span></div>
           <div className="update-version-grid">
             <span>Current <strong>v{currentPanelVersion}</strong></span>
-            <span>Latest <strong>{latestPanelVersion === 'unknown' ? 'unknown' : `v${latestPanelVersion}`}</strong></span>
+            <span>Branch <strong>{panelUpdate.update_branch || 'main'}</strong></span>
+            <span>Latest commit <strong>{latestPanelRef}</strong></span>
             <span>Checked <strong>{panelUpdate.last_checked_at || 'never'}</strong></span>
             <span>State file <strong>{panelUpdate.state_file || '/var/lib/opanel/update-status.json'}</strong></span>
           </div>
-          {panelUpdate.check_error && <p className="hint">Release check failed: {panelUpdate.check_error}</p>}
+          {panelUpdate.check_error && <p className="hint">Main branch check failed: {panelUpdate.check_error}</p>}
           {panelUpdate.last_update_status && <p className="hint">Last update: {panelUpdate.last_update_status}{panelUpdate.last_update_ref ? ` (${panelUpdate.last_update_ref})` : ''}{panelUpdate.last_update_finished_at ? ` at ${panelUpdate.last_update_finished_at}` : ''}</p>}
         </div>
         <div className="actions">
-          <button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={14}/> Check releases</button>
+          <button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={14}/> Refresh status</button>
           <button disabled={!!loading || osUpdating} onClick={runOsUpdate}><RefreshCw size={14} className={osUpdating ? 'spin' : ''}/> {osUpdating ? 'Updating OS...' : 'Update OS now'}</button>
-          <button disabled={!!loading || panelUpdating || !updateAvailable} onClick={runPanelUpdate}><RotateCcw size={14} className={panelUpdating ? 'spin' : ''}/> {panelUpdating ? 'Updating panel...' : 'Update panel now'}</button>
+          <button disabled={!!loading || panelUpdating} onClick={runPanelUpdate}><RotateCcw size={14} className={panelUpdating ? 'spin' : ''}/> {panelUpdating ? 'Updating panel...' : 'Update panel now'}</button>
         </div>
         {showUpdateLog && <div className="info-box firewall-status update-log-box">
           <div className="update-log-head"><strong>Update logs</strong><button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={13}/> Refresh</button></div>

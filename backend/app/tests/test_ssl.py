@@ -179,7 +179,9 @@ def test_panel_ssl_webroot_is_served_by_tools_vhost():
     assert "context /.well-known/acme-challenge/ {" in helper
     assert "location                /var/www/opanel-acme/.well-known/acme-challenge/" in helper
     assert "virtualHost opanel_tools {" in helper
-    assert "map                      opanel_tools" in helper
+    assert 'lines.append(f"    map                      opanel_tools {host}")' in helper
+    assert "map                      opanel_tools {', '.join(tools_hosts)}" not in helper
+    assert helper.index('lines.append(f"    map                      opanel_tools {host}")') < helper.index('lines.append(f"    map                      {domain}')
     assert '"$OLS_HTTPD_CONF" "$OLS_VHOSTS_DIR" "$ENV_FILE"' in helper
     assert "00-opanel-tools.conf" in installer
     assert "context /.well-known/acme-challenge/ {" in installer
@@ -191,6 +193,15 @@ def test_installer_panel_ssl_uses_helper_webroot_flow():
     assert "certbot certonly --standalone" not in installer
     assert "--pre-hook \"/usr/local/lsws/bin/lswsctrl stop || true\"" not in installer
     assert "--post-hook \"/usr/local/lsws/bin/lswsctrl start || true\"" not in installer
+
+
+def test_panel_update_defaults_to_main_branch():
+    update_script = (PROJECT_ROOT / "installer" / "update.sh").read_text(encoding="utf-8")
+    helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    assert 'UPDATE_CHANNEL="${UPDATE_CHANNEL-branch}"' in update_script
+    assert "Update to the newest matching release tag (default)." not in update_script
+    assert "Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-branch}" in helper
+    assert 'UPDATE_CHANNEL="${UPDATE_CHANNEL:-branch}"' in helper
 
 
 def test_opanelctl_panel_ssl_delegates_to_helper_webroot_flow():

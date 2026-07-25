@@ -199,12 +199,13 @@ def listener_block(name: str, address: str, secure: bool, include_ssl_sites: boo
             "    enableSpdy              16",
             "    enableQuic              1",
         ])
+    if include_tools_vhost and not secure:
+        for host in tools_hosts:
+            lines.append(f"    map                      opanel_tools {host}")
     for domain, hosts, has_ssl in sites:
         if include_ssl_sites and not has_ssl:
             continue
         lines.append(f"    map                      {domain} {', '.join(hosts)}")
-    if include_tools_vhost and not secure:
-        lines.append(f"    map                      opanel_tools {', '.join(tools_hosts)}")
     lines.append("}")
     lines.append("")
     return lines
@@ -628,7 +629,7 @@ Environment=SOURCE_DIR=${SOURCE_DIR}
 Environment=APP_DIR=${APP_DIR}
 Environment=REPO_URL=${REPO_URL:-https://github.com/bnixvn/opanel.git}
 Environment=GIT_REMOTE=${GIT_REMOTE:-origin}
-Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-release}
+Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-branch}
 Environment=BRANCH=${BRANCH:-main}
 Environment=RELEASE_TAG=${RELEASE_TAG:-}
 Environment=RELEASE_PATTERN=${RELEASE_PATTERN:-v[0-9]*.[0-9]*.[0-9]*}
@@ -668,7 +669,7 @@ run_panel_update() {
       --property="Environment=APP_DIR=${APP_DIR}" \
       --property="Environment=REPO_URL=${REPO_URL:-https://github.com/bnixvn/opanel.git}" \
       --property="Environment=GIT_REMOTE=${GIT_REMOTE:-origin}" \
-      --property="Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-release}" \
+      --property="Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-branch}" \
       --property="Environment=BRANCH=${BRANCH:-main}" \
       --property="Environment=RELEASE_TAG=${RELEASE_TAG:-}" \
       --property="Environment=RELEASE_PATTERN=${RELEASE_PATTERN:-v[0-9]*.[0-9]*.[0-9]*}" \
@@ -683,7 +684,7 @@ run_panel_update() {
     APP_DIR="$APP_DIR" \
     REPO_URL="${REPO_URL:-https://github.com/bnixvn/opanel.git}" \
     GIT_REMOTE="${GIT_REMOTE:-origin}" \
-    UPDATE_CHANNEL="${UPDATE_CHANNEL:-release}" \
+    UPDATE_CHANNEL="${UPDATE_CHANNEL:-branch}" \
     BRANCH="${BRANCH:-main}" \
     RELEASE_TAG="${RELEASE_TAG:-}" \
     RELEASE_PATTERN="${RELEASE_PATTERN:-v[0-9]*.[0-9]*.[0-9]*}" \

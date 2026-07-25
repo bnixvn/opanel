@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import subprocess
 import time
 from pathlib import Path
@@ -10,23 +9,13 @@ from app.services.shell import shell
 
 
 REPO_URL = os.environ.get("opanel_REPO_URL", "https://github.com/bnixvn/opanel.git")
+UPDATE_BRANCH = os.environ.get("opanel_UPDATE_BRANCH", "main")
 UPDATE_STATE_FILE = Path(os.environ.get("opanel_UPDATE_STATE_FILE", "/var/lib/opanel/update-status.json"))
-SEMVER_TAG_RE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 STATUS_CACHE_SECONDS = 300
 
 
 def _utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _semver_tuple(value: str):
-    value = (value or "").strip()
-    if value.startswith("v"):
-        value = value[1:]
-    parts = value.split(".")
-    if len(parts) != 3 or not all(part.isdigit() for part in parts):
-        return None
-    return tuple(int(part) for part in parts)
 
 
 def _read_update_state() -> dict:
@@ -49,47 +38,46 @@ def _write_update_state(state: dict) -> None:
         return
 
 
-def _latest_release_from_git() -> tuple[str, str]:
+def _latest_branch_ref_from_git() -> tuple[str, str]:
     completed = subprocess.run(
-        ["git", "ls-remote", "--tags", "--refs", REPO_URL, "refs/tags/v*"],
+        ["git", "ls-remote", "--heads", REPO_URL, f"refs/heads/{UPDATE_BRANCH}"],
         capture_output=True,
         text=True,
         check=False,
         timeout=12,
     )
     if completed.returncode != 0:
-        raise RuntimeError((completed.stderr or completed.stdout or "Could not read release tags").strip())
-    candidates = []
-    for line in completed.stdout.splitlines():
-        ref = line.rsplit("/", 1)[-1].strip()
-        match = SEMVER_TAG_RE.match(ref)
-        if match:
-            candidates.append((tuple(int(part) for part in match.groups()), ref))
-    if not candidates:
-        raise RuntimeError("No release tags found")
-    _, latest_tag = max(candidates, key=lambda item: item[0])
-    return latest_tag, latest_tag[1:]
+        raise RuntimeError((completed.stderr or completed.stdout or f"Could not read {UPDATE_BRANCH} branch").strip())
+    first_line = completed.stdout.splitlines()[0] if completed.stdout.splitlines() else ""
+    commit = first_line.split(None, 1)[0] if first_line else ""
+    if not commit:
+        raise RuntimeError(f"No {UPDATE_BRANCH} branch found")
+    return f"origin/{UPDATE_BRANCH}", commit
 
 
 def panel_release_status(force_refresh: bool = False) -> dict:
     state = _read_update_state()
     now = _utc_now()
     current_version = APP_VERSION
-    current_tuple = _semver_tuple(current_version)
-    latest_version = state.get("latest_version") or ""
-    latest_tag = state.get("latest_tag") or (f"v{latest_version}" if latest_version else "")
+    latest_version = state.get("latest_version") or current_version
+    latest_tag = state.get("latest_tag") or f"origin/{UPDATE_BRANCH}"
+    latest_commit = state.get("latest_commit") or ""
     check_error = ""
 
     checked_at = float(state.get("last_checked_epoch") or 0)
-    should_refresh = force_refresh or not latest_version or (time.time() - checked_at > STATUS_CACHE_SECONDS)
+    should_refresh = force_refresh or not latest_commit or (time.time() - checked_at > STATUS_CACHE_SECONDS)
     if should_refresh:
         try:
-            latest_tag, latest_version = _latest_release_from_git()
+            latest_tag, latest_commit = _latest_branch_ref_from_git()
+            latest_version = current_version
             state.update(
                 {
                     "current_version": current_version,
                     "latest_tag": latest_tag,
                     "latest_version": latest_version,
+                    "latest_commit": latest_commit,
+                    "update_channel": "branch",
+                    "update_branch": UPDATE_BRANCH,
                     "last_checked_at": now,
                     "last_checked_epoch": time.time(),
                     "check_error": "",
@@ -100,6 +88,10 @@ def panel_release_status(force_refresh: bool = False) -> dict:
             state.update(
                 {
                     "current_version": current_version,
+                    "latest_tag": latest_tag,
+                    "latest_version": latest_version,
+                    "update_channel": "branch",
+                    "update_branch": UPDATE_BRANCH,
                     "last_checked_at": now,
                     "last_checked_epoch": time.time(),
                     "check_error": check_error,
@@ -109,18 +101,17 @@ def panel_release_status(force_refresh: bool = False) -> dict:
     else:
         state["current_version"] = current_version
 
-    latest_tuple = _semver_tuple(latest_version)
-    update_available = None
-    if current_tuple and latest_tuple:
-        update_available = latest_tuple > current_tuple
-    elif not check_error:
+    if not check_error:
         check_error = state.get("check_error") or ""
 
     return {
         "current_version": current_version,
         "latest_version": latest_version,
         "latest_tag": latest_tag,
-        "update_available": update_available,
+        "latest_commit": latest_commit,
+        "update_channel": "branch",
+        "update_branch": UPDATE_BRANCH,
+        "update_available": None,
         "last_checked_at": state.get("last_checked_at") or "",
         "last_update_started_at": state.get("last_update_started_at") or "",
         "last_update_finished_at": state.get("last_update_finished_at") or "",
@@ -223,7 +214,7 @@ def run_panel_update():
     result = shell.privileged(
         "updates-panel-run",
         check=False,
-        fallback=["bash", "installer/update.sh"],
+        fallback=["bash", "installer/update.sh", "--branch", "main"],
     )
     if result.returncode != 0:
         state = _read_update_state()

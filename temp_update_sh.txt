@@ -20,12 +20,12 @@ fail() { echo "ERROR: $1" >&2; exit 1; }
 usage() {
   cat <<'USAGE'
 Usage:
-  sudo bash installer/update.sh [--release]
+  sudo bash installer/update.sh
   sudo bash installer/update.sh --tag v1.0.4
   sudo bash installer/update.sh --branch main
 
 Options:
-  --release          Update to the newest matching release tag (default).
+  --release          Update to the newest matching release tag.
   --tag TAG          Pin an exact release tag.
   --branch NAME      Update from a remote branch.
   --channel MODE     Set update mode: release, tag, or branch.
@@ -39,8 +39,9 @@ Environment:
   RELEASE_TAG, RELEASE_PATTERN, RELEASE_ZIP_URL, SKIP_PULL.
 
 Notes:
-  The release channel selects the newest matching release tag and downloads a
-  zip archive. Use --tag or UPDATE_CHANNEL=tag with RELEASE_TAG to pin a tag.
+  The branch channel is the default and pulls GitHub main. The release channel
+  selects the newest matching release tag and downloads a zip archive. Use
+  --tag or UPDATE_CHANNEL=tag with RELEASE_TAG to pin a tag.
   Use RELEASE_ZIP_URL with {tag} only for non-GitHub archive URLs.
 USAGE
 }
@@ -94,7 +95,7 @@ fi
 
 REPO_URL="${REPO_URL:-https://github.com/bnixvn/opanel.git}"
 GIT_REMOTE="${GIT_REMOTE-origin}"                 # remote name in the local checkout
-UPDATE_CHANNEL="${UPDATE_CHANNEL-release}"        # release, branch, or tag
+UPDATE_CHANNEL="${UPDATE_CHANNEL-branch}"         # branch, release, or tag
 BRANCH="${BRANCH-main}"                           # used when UPDATE_CHANNEL=branch
 RELEASE_TAG="${RELEASE_TAG-}"                     # used when UPDATE_CHANNEL=tag
 RELEASE_PATTERN="${RELEASE_PATTERN:-v[0-9]*.[0-9]*.[0-9]*}"
