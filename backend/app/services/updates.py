@@ -9,7 +9,7 @@ from app.core.version import APP_VERSION
 from app.services.shell import shell
 
 
-REPO_URL = os.environ.get("opanel_REPO_URL", "https://github.com/BNIX-VN/opanel.git")
+REPO_URL = os.environ.get("opanel_REPO_URL", "https://github.com/bnixvn/opanel.git")
 UPDATE_STATE_FILE = Path(os.environ.get("opanel_UPDATE_STATE_FILE", "/var/lib/opanel/update-status.json"))
 SEMVER_TAG_RE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 STATUS_CACHE_SECONDS = 300

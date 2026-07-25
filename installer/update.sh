@@ -92,7 +92,7 @@ else
   SOURCE_DIR="${SOURCE_DIR:-$DEFAULT_SOURCE_DIR}"
 fi
 
-REPO_URL="${REPO_URL:-https://github.com/BNIX-VN/opanel.git}"
+REPO_URL="${REPO_URL:-https://github.com/bnixvn/opanel.git}"
 GIT_REMOTE="${GIT_REMOTE-origin}"                 # remote name in the local checkout
 UPDATE_CHANNEL="${UPDATE_CHANNEL-release}"        # release, branch, or tag
 BRANCH="${BRANCH-main}"                           # used when UPDATE_CHANNEL=branch

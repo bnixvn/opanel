@@ -626,7 +626,7 @@ Wants=network-online.target
 Type=oneshot
 Environment=SOURCE_DIR=${SOURCE_DIR}
 Environment=APP_DIR=${APP_DIR}
-Environment=REPO_URL=${REPO_URL:-https://github.com/BNIX-VN/opanel.git}
+Environment=REPO_URL=${REPO_URL:-https://github.com/bnixvn/opanel.git}
 Environment=GIT_REMOTE=${GIT_REMOTE:-origin}
 Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-release}
 Environment=BRANCH=${BRANCH:-main}
@@ -666,7 +666,7 @@ run_panel_update() {
       --description="Update opanel from GitHub" \
       --property="Environment=SOURCE_DIR=${SOURCE_DIR}" \
       --property="Environment=APP_DIR=${APP_DIR}" \
-      --property="Environment=REPO_URL=${REPO_URL:-https://github.com/BNIX-VN/opanel.git}" \
+      --property="Environment=REPO_URL=${REPO_URL:-https://github.com/bnixvn/opanel.git}" \
       --property="Environment=GIT_REMOTE=${GIT_REMOTE:-origin}" \
       --property="Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-release}" \
       --property="Environment=BRANCH=${BRANCH:-main}" \
@@ -681,7 +681,7 @@ run_panel_update() {
   nohup env \
     SOURCE_DIR="$SOURCE_DIR" \
     APP_DIR="$APP_DIR" \
-    REPO_URL="${REPO_URL:-https://github.com/BNIX-VN/opanel.git}" \
+    REPO_URL="${REPO_URL:-https://github.com/bnixvn/opanel.git}" \
     GIT_REMOTE="${GIT_REMOTE:-origin}" \
     UPDATE_CHANNEL="${UPDATE_CHANNEL:-release}" \
     BRANCH="${BRANCH:-main}" \
