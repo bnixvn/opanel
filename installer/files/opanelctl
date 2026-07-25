@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # OPanel SSH rescue menu.
 
 set -euo pipefail
@@ -170,6 +170,15 @@ refresh_tools_nginx() {
   fi
 }
 
+run_helper() {
+  [[ -x /usr/local/sbin/opanel-helper ]] || fail "opanel-helper is not installed"
+  if id -u opanel >/dev/null 2>&1; then
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper "$@"
+  else
+    /usr/local/sbin/opanel-helper "$@"
+  fi
+}
+
 set_panel_url() {
   ensure_env_file
   local current_port current_domain domain host port scheme url cert key
@@ -231,34 +240,15 @@ install_panel_ssl() {
   fi
   [[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || fail "Invalid email"
 
-  echo "Issuing certificate for $domain. OpenLiteSpeed may be stopped briefly for port 80 validation."
-  certbot certonly --standalone \
-    -d "$domain" \
-    --email "$email" \
-    --agree-tos \
-    --non-interactive \
-    --pre-hook "/usr/local/lsws/bin/lswsctrl stop || true" \
-    --post-hook "/usr/local/lsws/bin/lswsctrl start || true" \
-    --deploy-hook "install -d -o root -g opanel -m 0750 /etc/opanel && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/fullchain.pem /etc/opanel/panel-fullchain.pem && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/privkey.pem /etc/opanel/panel-privkey.pem && systemctl restart opanel-api || true"
-
-  install -d -o root -g opanel -m 0750 /etc/opanel
-  install -m 0640 -o root -g opanel "/etc/letsencrypt/live/${domain}/fullchain.pem" /etc/opanel/panel-fullchain.pem
-  install -m 0640 -o root -g opanel "/etc/letsencrypt/live/${domain}/privkey.pem" /etc/opanel/panel-privkey.pem
-
   port="$(env_get PANEL_PORT)"
   port="${port:-$DEFAULT_PANEL_PORT}"
   url="https://${domain}:${port}"
-  env_set PANEL_DOMAIN "$domain"
-  env_set PANEL_SSL_CERT "/etc/opanel/panel-fullchain.pem"
-  env_set PANEL_SSL_KEY "/etc/opanel/panel-privkey.pem"
-  env_set PANEL_URL "$url"
-  env_set ALLOWED_ORIGINS "$url"
-  env_set SSL_EMAIL "$email"
-  allow_panel_port "$port"
+
+  echo "Issuing certificate for $domain using the shared ACME webroot."
+  run_helper panel-ssl-install "$domain" "$port" "$email"
   write_login_info
   refresh_phpmyadmin_api_base "https" "$port"
   refresh_tools_nginx
-  restart_panel
   echo "Panel SSL enabled: $url"
 }
 
@@ -351,6 +341,7 @@ try:
             app_type=app_type,
             php_version=website.php_version,
             custom_directives=website.nginx_custom or "",
+            linux_user=website.linux_user,
             lsphp_socket_override=site_users.site_lsphp_socket(website.linux_user, website.root_path, runtime_php_version),
             waf_enabled=website.waf_enabled,
             http_flood_enabled=website.http_flood_enabled,

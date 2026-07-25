@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from cryptography import x509
@@ -7,6 +8,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from app.services import nginx, ssl
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _cert_pair(domain="example.test", *, days=30, key=None, aliases=None):
@@ -159,3 +162,40 @@ def test_issue_ssl_uses_opanel_acme_webroot(monkeypatch):
     fallback = " ".join(captured["kwargs"]["fallback"])
     assert "/var/www/opanel-acme" in fallback
     assert "/var/www/opanel/acme" not in fallback
+
+
+def test_panel_ssl_helper_uses_webroot_flow():
+    helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    assert "panel-ssl-install)" in helper
+    assert "certbot_args=(certonly --webroot -w /var/www/opanel-acme" in helper
+    assert "certbot_args=(certonly --standalone" not in helper
+    assert "--pre-hook \"/usr/local/lsws/bin/lswsctrl stop || true\"" not in helper
+    assert "--post-hook \"/usr/local/lsws/bin/lswsctrl start || true\"" not in helper
+
+
+def test_panel_ssl_webroot_is_served_by_tools_vhost():
+    helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    installer = (PROJECT_ROOT / "installer" / "install.sh").read_text(encoding="utf-8")
+    assert "context /.well-known/acme-challenge/ {" in helper
+    assert "location                /var/www/opanel-acme/.well-known/acme-challenge/" in helper
+    assert "virtualHost opanel_tools {" in helper
+    assert "map                      opanel_tools" in helper
+    assert '"$OLS_HTTPD_CONF" "$OLS_VHOSTS_DIR" "$ENV_FILE"' in helper
+    assert "00-opanel-tools.conf" in installer
+    assert "context /.well-known/acme-challenge/ {" in installer
+
+
+def test_installer_panel_ssl_uses_helper_webroot_flow():
+    installer = (PROJECT_ROOT / "installer" / "install.sh").read_text(encoding="utf-8")
+    assert "opanel-helper panel-ssl-install" in installer
+    assert "certbot certonly --standalone" not in installer
+    assert "--pre-hook \"/usr/local/lsws/bin/lswsctrl stop || true\"" not in installer
+    assert "--post-hook \"/usr/local/lsws/bin/lswsctrl start || true\"" not in installer
+
+
+def test_opanelctl_panel_ssl_delegates_to_helper_webroot_flow():
+    opanelctl = (PROJECT_ROOT / "installer" / "files" / "opanelctl").read_text(encoding="utf-8-sig")
+    assert "run_helper panel-ssl-install" in opanelctl
+    assert "certbot certonly --standalone" not in opanelctl
+    assert "--pre-hook \"/usr/local/lsws/bin/lswsctrl stop || true\"" not in opanelctl
+    assert "--post-hook \"/usr/local/lsws/bin/lswsctrl start || true\"" not in opanelctl

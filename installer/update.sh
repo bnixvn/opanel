@@ -1033,6 +1033,7 @@ with SessionLocal() as db:
                 app_type=app_type,
                 php_version=website.php_version,
                 custom_directives=website.nginx_custom or "",
+                linux_user=website.linux_user,
                 lsphp_socket_override=site_users.site_lsphp_socket(website.linux_user, website.root_path, runtime_php_version),
                 waf_enabled=website.waf_enabled,
                 http_flood_enabled=website.http_flood_enabled,

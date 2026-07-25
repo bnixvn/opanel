@@ -480,9 +480,11 @@ setup_panel_user() {
   # Allow opanel to write into OLS vhost directory.
   install -d -o root -g opanel -m 2775 /usr/local/lsws/conf/opanel/vhosts
   install -d -o root -g opanel -m 2775 /usr/local/lsws/conf/opanel/custom
+  install -d -o www-data -g opanel-sites -m 2775 /var/log/openlitespeed
   # setgid so new files inherit the opanel group; allows future writes.
   chmod g+s /usr/local/lsws/conf/opanel/vhosts || true
   chmod g+s /usr/local/lsws/conf/opanel/custom 2>/dev/null || true
+  chmod g+s /var/log/openlitespeed 2>/dev/null || true
 
   # Make the panel data dirs writable by opanel.
   install -d -o opanel -g opanel -m 0750 "$APP_DIR"
@@ -746,11 +748,18 @@ write_tools_vhost_config() {
   local vhosts_dir="/usr/local/lsws/conf/opanel/vhosts"
   install -d -o root -g opanel -m 2775 "$vhosts_dir"
 
-  cat >"${vhosts_dir}/tools.conf" <<OLS
+  cat >"${vhosts_dir}/00-opanel-tools.conf" <<OLS
 # OPanel tools vhost (phpMyAdmin)
 docRoot                   /usr/share/phpmyadmin/
 vhDomain                  *
 vhAliases                 *
+
+context /.well-known/acme-challenge/ {
+  type                    static
+  location                /var/www/opanel-acme/.well-known/acme-challenge/
+  allowBrowse             1
+  addDefaultCharset       off
+}
 
 context / {
   type                    NULL
@@ -781,8 +790,8 @@ vhssl  {
   certFile                ${PANEL_SSL_CERT:-/dev/null}
 }
 OLS
-  chown root:opanel "${vhosts_dir}/tools.conf"
-  chmod 0664 "${vhosts_dir}/tools.conf"
+  chown root:opanel "${vhosts_dir}/00-opanel-tools.conf"
+  chmod 0664 "${vhosts_dir}/00-opanel-tools.conf"
 
   local host
   host="${PANEL_DOMAIN:-$SERVER_IP}"
@@ -1008,28 +1017,9 @@ setup_ssl() {
     return 0
   fi
 
-  certbot certonly --standalone \
-    -d "$PANEL_DOMAIN" \
-    --email "$SSL_EMAIL" \
-    --agree-tos \
-    --non-interactive \
-    --pre-hook "/usr/local/lsws/bin/lswsctrl stop || true" \
-    --post-hook "/usr/local/lsws/bin/lswsctrl start || true" \
-    --deploy-hook "install -d -o root -g opanel -m 0750 /etc/opanel && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem /etc/opanel/panel-fullchain.pem && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem /etc/opanel/panel-privkey.pem && systemctl restart opanel-api || true"
-  install -d -o root -g opanel -m 0750 /etc/opanel
-  install -m 0640 -o root -g opanel "/etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem" /etc/opanel/panel-fullchain.pem
-  install -m 0640 -o root -g opanel "/etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem" /etc/opanel/panel-privkey.pem
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper panel-ssl-install "$PANEL_DOMAIN" "$PANEL_PORT" "$SSL_EMAIL"
   PANEL_SSL_CERT=/etc/opanel/panel-fullchain.pem
   PANEL_SSL_KEY=/etc/opanel/panel-privkey.pem
-  sed -i \
-    -e "s#^PANEL_SSL_CERT=.*#PANEL_SSL_CERT=/etc/opanel/panel-fullchain.pem#" \
-    -e "s#^PANEL_SSL_KEY=.*#PANEL_SSL_KEY=/etc/opanel/panel-privkey.pem#" \
-    -e "s#^PANEL_URL=.*#PANEL_URL=${PANEL_URL}#" \
-    -e "s#^ALLOWED_ORIGINS=.*#ALLOWED_ORIGINS=${PANEL_URL}#" \
-    "${APP_DIR}/backend/.env"
-  write_tools_vhost_config
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
-  systemctl restart opanel-api
   for _ in {1..20}; do
     if curl -kfsS --connect-timeout 2 --max-time 5 "https://127.0.0.1:${PANEL_PORT}/api/health" >/dev/null 2>&1; then
       return 0

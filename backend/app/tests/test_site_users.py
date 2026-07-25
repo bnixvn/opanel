@@ -164,6 +164,20 @@ def test_mariadb_is_auto_tuned_for_vps_size():
     assert "opanel_MARIADB_BUFFER_POOL_SIZE" in helper
 
 
+def test_openlitespeed_site_runtime_uses_site_user_and_writable_logs():
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    opanelctl = (PROJECT_ROOT / "installer" / "files" / "opanelctl").read_bytes()
+
+    assert not opanelctl.startswith(b"\xef\xbb\xbf")
+    assert "ensure_sites_group" in helper
+    assert 'install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /var/log/openlitespeed' in helper
+    assert "chmod g+s /var/log/openlitespeed" in helper
+    assert '"    setUIDMode               2",' in helper
+    assert "install -d -o www-data -g opanel-sites -m 2775 /var/log/openlitespeed" in install_script
+    assert "chmod g+s /var/log/openlitespeed" in install_script
+
+
 def test_manual_ssl_helper_installs_private_key_outside_web_root():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
     assert "install_manual_ssl()" in helper

@@ -10,6 +10,8 @@ import pytest
 from app.models.entities import Website
 from app.services import file_manager
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
 
 def _website(root):
     return Website(domain="example.test", owner_id=1, root_path=str(root), linux_user=None)
@@ -49,6 +51,12 @@ def test_upload_file_with_linux_user_uses_install_helper_and_normalizes(tmp_path
         {"check": True, "fallback": ["chown", "-R", "siteuser:siteuser", str(public / "index.php")]},
     )
     assert not Path(calls[0][1][3]).exists()
+
+
+def test_site_file_install_checks_staged_owner_against_opanel_lowercase():
+    helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    assert '[[ "$(stat -c \'%U\' -- "$staged")" == "opanel" ]]' in helper
+    assert 'staged upload must be owned by opanel' in helper
 
 
 def test_copy_entries_with_linux_user_runs_as_site_user_then_normalizes(tmp_path, monkeypatch):

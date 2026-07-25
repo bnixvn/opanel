@@ -50,8 +50,11 @@ ensure_opanel_data_dir() {
 }
 
 ensure_ols_conf_dir_writable() {
+  ensure_sites_group
   install -d -o root -g root -m 0755 "$BLOCKLIST_DIR"
+  install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /var/log/openlitespeed
   install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /tmp/lshttpd
+  chmod g+s /var/log/openlitespeed 2>/dev/null || true
   chmod g+s /tmp/lshttpd 2>/dev/null || true
   if getent group opanel >/dev/null 2>&1; then
     install -d -o root -g opanel -m 2775 "$OLS_VHOSTS_DIR"
@@ -74,14 +77,39 @@ ols_sync_main_config() {
   ensure_ols_conf_dir_writable
   install -d -o root -g root -m 0755 /usr/local/lsws/conf/opanel
   ols_disable_conflicting_apache
-  python3 - "$OLS_HTTPD_CONF" "$OLS_VHOSTS_DIR" <<'PY'
+  python3 - "$OLS_HTTPD_CONF" "$OLS_VHOSTS_DIR" "$ENV_FILE" <<'PY'
 import pathlib
 import re
 import sys
 
 conf = pathlib.Path(sys.argv[1])
 vhosts_dir = pathlib.Path(sys.argv[2])
+env_file = pathlib.Path(sys.argv[3])
+tools_conf_name = "00-opanel-tools.conf"
+tools_conf = vhosts_dir / tools_conf_name
 domain_re = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+ipv4_re = re.compile(r"^(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])(?:\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){3}$")
+
+def env_get(key: str) -> str:
+    if not env_file.is_file():
+        return ""
+    prefix = f"{key}="
+    for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix):].strip()
+    return ""
+
+def normalized_host(value: str) -> str:
+    value = value.strip().lower()
+    if not value:
+        return ""
+    value = re.sub(r"^https?://", "", value)
+    value = value.split("/", 1)[0]
+    if ":" in value:
+        value = value.rsplit(":", 1)[0]
+    if domain_re.fullmatch(value) or ipv4_re.fullmatch(value):
+        return value
+    return ""
 
 if conf.exists():
     text = conf.read_text(encoding="utf-8", errors="replace")
@@ -127,7 +155,27 @@ if vhosts_dir.is_dir():
             has_ssl = cert_path.is_file() and key_path.is_file()
         sites.append((domain, hosts, has_ssl))
 
+panel_hosts = []
+for raw_host in (env_get("PANEL_DOMAIN"), env_get("PANEL_URL")):
+    host = normalized_host(raw_host)
+    if host and host not in panel_hosts:
+        panel_hosts.append(host)
+site_hosts = {host for _domain, hosts, _has_ssl in sites for host in hosts}
+tools_hosts = [host for host in panel_hosts if host not in site_hosts]
+include_tools_vhost = tools_conf.is_file() and bool(tools_hosts)
+
 managed = ["# OPanel managed vhosts BEGIN"]
+if include_tools_vhost:
+    managed.extend([
+        "virtualHost opanel_tools {",
+        "    vhRoot                   conf/opanel/vhosts/",
+        "    allowSymbolLink          1",
+        "    enableScript             1",
+        "    restrained               1",
+        f"    configFile               conf/opanel/vhosts/{tools_conf_name}",
+        "}",
+        "",
+    ])
 for domain, _hosts, _has_ssl in sites:
     managed.extend([
         f"virtualHost {domain} {{",
@@ -135,6 +183,7 @@ for domain, _hosts, _has_ssl in sites:
         "    allowSymbolLink          1",
         "    enableScript             1",
         "    restrained               1",
+        "    setUIDMode               2",
         f"    configFile               conf/opanel/vhosts/{domain}/vhost.conf",
         "}",
         "",
@@ -154,6 +203,8 @@ def listener_block(name: str, address: str, secure: bool, include_ssl_sites: boo
         if include_ssl_sites and not has_ssl:
             continue
         lines.append(f"    map                      {domain} {', '.join(hosts)}")
+    if include_tools_vhost and not secure:
+        lines.append(f"    map                      opanel_tools {', '.join(tools_hosts)}")
     lines.append("}")
     lines.append("")
     return lines
@@ -460,6 +511,13 @@ refresh_tools_ols() {
 docRoot                   /usr/share/phpmyadmin/
 vhDomain                  ${host}
 enableIpGeo               0
+
+context /.well-known/acme-challenge/ {
+  type                    static
+  location                /var/www/opanel-acme/.well-known/acme-challenge/
+  allowBrowse             1
+  addDefaultCharset       off
+}
 
 context /phpmyadmin/ {
   type                    null
@@ -2510,12 +2568,14 @@ case "$cmd" in
     domain="$1"; port="$2"; email="${3:-}"
     require_domain "$domain"
     require_port "$port"
-    certbot_args=(certonly --standalone
-      -d "$domain" \
+    env_set PANEL_DOMAIN "$domain"
+    env_set PANEL_PORT "$port"
+    install -d -o root -g opanel -m 0755 /var/www/opanel-acme/.well-known/acme-challenge
+    refresh_tools_ols
+    certbot_args=(certonly --webroot -w /var/www/opanel-acme
+      --cert-name "$domain" \
       --agree-tos \
       --non-interactive \
-      --pre-hook "/usr/local/lsws/bin/lswsctrl stop || true" \
-      --post-hook "/usr/local/lsws/bin/lswsctrl start || true" \
       --deploy-hook "install -d -o root -g opanel -m 0750 /etc/opanel && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/fullchain.pem /etc/opanel/panel-fullchain.pem && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/privkey.pem /etc/opanel/panel-privkey.pem")
     if [[ -n "$email" ]]; then
       require_email "$email"
@@ -2523,16 +2583,11 @@ case "$cmd" in
     else
       certbot_args+=(--register-unsafely-without-email)
     fi
+    certbot_args+=(--expand -d "$domain")
     certbot "${certbot_args[@]}"
-    install -d -o root -g opanel -m 0750 /etc/opanel
-    install -m 0640 -o root -g opanel "/etc/letsencrypt/live/${domain}/fullchain.pem" /etc/opanel/panel-fullchain.pem
-    install -m 0640 -o root -g opanel "/etc/letsencrypt/live/${domain}/privkey.pem" /etc/opanel/panel-privkey.pem
-    env_set PANEL_DOMAIN "$domain"
-    env_set PANEL_PORT "$port"
-    env_set PANEL_SSL_CERT "/etc/opanel/panel-fullchain.pem"
-    env_set PANEL_SSL_KEY "/etc/opanel/panel-privkey.pem"
     env_set PANEL_URL "https://${domain}:${port}"
     env_set ALLOWED_ORIGINS "https://${domain}:${port}"
+    copy_panel_live_certificate "$domain"
     if [[ -n "$email" ]]; then
       env_set SSL_EMAIL "$email"
     fi
@@ -2810,7 +2865,7 @@ case "$cmd" in
     [[ ! -L "$staged_arg" ]] || deny "staged upload cannot be a symlink"
     staged=$(readlink -e -- "$staged_arg") || deny "staged upload not found"
     [[ "$staged" == /tmp/opanel-upload-* && -f "$staged" ]] || deny "invalid staged upload"
-    [[ "$(stat -c '%U' -- "$staged")" == "OPanel" ]] || deny "staged upload must be owned by opanel"
+    [[ "$(stat -c '%U' -- "$staged")" == "opanel" ]] || deny "staged upload must be owned by opanel"
     parent=$(dirname -- "$target")
     runuser -u "$user" -- mkdir -p -- "$parent"
     harden_site_dir_path "$root_target" "$parent" "$user"
