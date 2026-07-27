@@ -1211,6 +1211,7 @@ firewall_blocklist_apply() {
   if ! ip6tables -C OPANEL_BLOCKLIST -m set --match-set "$BLOCKLIST_IPSET_V6" src -j DROP 2>/dev/null; then
     ip6tables -I OPANEL_BLOCKLIST 1 -m set --match-set "$BLOCKLIST_IPSET_V6" src -j DROP 2>/dev/null || true
   fi
+  ensure_firewall_rule_store >/dev/null 2>&1 || true
 }
 
 write_http_flood_ols_conf() {
