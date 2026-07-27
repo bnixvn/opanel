@@ -101,6 +101,8 @@ def test_vhost_uses_waf_site_rules_path():
     )
 
     assert "modsecurity_rules_file  /usr/local/lsws/conf/opanel/waf/sites/example.test.conf" in rendered
+    assert "modsecurity           on" in rendered
+    assert "modsecurity           1" not in rendered
 
 
 def test_vhost_ignores_custom_directives():

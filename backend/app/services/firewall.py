@@ -251,6 +251,11 @@ def _panel_port() -> int:
 # Persistent rule store
 # ---------------------------------------------------------------------------
 def _ensure_rules_dir() -> None:
+    shell.privileged(
+        "iptables-rules-store-ensure",
+        check=False,
+        fallback=["bash", "-lc", "mkdir -p /var/lib/opanel/firewall"],
+    )
     RULES_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 

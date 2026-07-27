@@ -396,6 +396,36 @@ write_modsec_main_conf() {
 # write_http_flood_nginx_conf removed — OLS handles per-vhost connection limits
 # via the openlitespeed.py service module (config written into vhost templates).
 
+ensure_ols_modsecurity_enabled() {
+  [[ -f /usr/local/lsws/modules/mod_security.so ]] || return 1
+  python3 - /usr/local/lsws/conf/httpd_config.conf <<'PY'
+import pathlib
+import re
+import sys
+
+conf = pathlib.Path(sys.argv[1])
+if conf.exists():
+    text = conf.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+else:
+    text = ""
+text = re.sub(r"(?ms)^# OPANEL managed ModSecurity BEGIN\n.*?^# OPANEL managed ModSecurity END\n?", "", text)
+block = (
+    "# OPANEL managed ModSecurity BEGIN\n"
+    "module mod_security {\n"
+    "    ls_enabled              1\n"
+    "}\n"
+    "# OPANEL managed ModSecurity END\n\n"
+)
+marker = "# OPanel managed vhosts BEGIN"
+pos = text.find(marker)
+if pos >= 0:
+    text = text[:pos] + block + text[pos:]
+else:
+    text = text.rstrip() + "\n\n" + block
+conf.write_text(text, encoding="utf-8")
+PY
+}
+
 write_waf_default_rules() {
   local modsec_dir="/usr/local/lsws/conf/opanel/waf"
   install -d -o root -g root -m 0755 "$modsec_dir"
@@ -433,6 +463,7 @@ install_waf_engine() {
     sed -i -E 's/^SecRuleEngine .*/SecRuleEngine On/' /etc/modsecurity/modsecurity.conf
   fi
   write_modsec_main_conf
+  ensure_ols_modsecurity_enabled
   /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
 }
 
@@ -1004,7 +1035,7 @@ setup_firewall() {
   fw iptables -A OPANEL_INPUT -p icmp -j ACCEPT || true
   fw ip6tables -A OPANEL_INPUT -p ipv6-icmp -j ACCEPT || true
 
-  install -d -o root -g root -m 0755 /var/lib/opanel/firewall
+  install -d -o opanel -g opanel -m 0750 /var/lib/opanel/firewall
   install -d -o root -g root -m 0755 /etc/iptables
   timeout 15 iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
   timeout 15 ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true

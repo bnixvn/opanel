@@ -1,5 +1,7 @@
 import pytest
+from fastapi import HTTPException
 
+from app.api import firewall as firewall_api
 from app.services import firewall
 from app.services.shell import CommandResult
 
@@ -36,6 +38,33 @@ def test_delete_blocklist_url_uses_privileged_helper(monkeypatch):
     assert calls[0][0] == "iptables-blocklist-delete"
     assert calls[0][1] == ["https://example.test/list.txt"]
     assert calls[0][2]["check"] is False
+
+
+def test_firewall_api_result_raises_clear_error_on_command_failure():
+    with pytest.raises(HTTPException) as exc:
+        firewall_api._result(CommandResult("iptables-deny-ip", 1, "", "permission denied"))
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "permission denied"
+
+
+def test_block_ip_ensures_rule_store_before_writing(monkeypatch, tmp_path):
+    calls = []
+    rules_file = tmp_path / "firewall" / "rules.json"
+
+    def fake_privileged(helper_command, helper_args=None, **kwargs):
+        calls.append((helper_command, helper_args, kwargs))
+        return CommandResult(helper_command, 0, "", "")
+
+    monkeypatch.setattr(firewall, "RULES_FILE", rules_file)
+    monkeypatch.setattr(firewall.shell, "privileged", fake_privileged)
+
+    result = firewall.block_ip("198.51.100.10")
+
+    assert result.returncode == 0
+    assert calls[0][0] == "iptables-rules-store-ensure"
+    assert any(call[0] == "iptables-run" for call in calls)
+    assert rules_file.exists()
 
 
 def test_blocklist_url_requires_http_url():

@@ -758,6 +758,7 @@ ensure_panel_runtime_ownership() {
   [[ -f "$APP_DIR/.my.cnf" ]] && chown opanel:opanel "$APP_DIR/.my.cnf" 2>/dev/null || true
   [[ -f "$APP_DIR/.my.cnf" ]] && chmod 0600 "$APP_DIR/.my.cnf" 2>/dev/null || true
   [[ -d /var/lib/opanel ]] && chown opanel:opanel /var/lib/opanel 2>/dev/null || true
+  [[ -d /var/lib/opanel/firewall ]] && chown -R opanel:opanel /var/lib/opanel/firewall 2>/dev/null || true
   [[ -d /var/lib/opanel/assets ]] && chown -R opanel:opanel /var/lib/opanel/assets 2>/dev/null || true
   [[ -f "$APP_DIR/backend/.env" ]] && chmod 0640 "$APP_DIR/backend/.env"
 }

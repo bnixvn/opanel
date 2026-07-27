@@ -56,7 +56,7 @@ END_RULES
 {% if waf_enabled %}
 # OPANEL WAF BEGIN
 module mod_security {
-    modsecurity           1
+    modsecurity           on
     modsecurity_rules_file  {{ waf_rules_file }}
 }
 # OPANEL WAF END

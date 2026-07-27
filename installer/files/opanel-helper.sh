@@ -73,10 +73,41 @@ ols_disable_conflicting_apache() {
   fi
 }
 
+ensure_ols_modsecurity_enabled() {
+  [[ -f /usr/local/lsws/modules/mod_security.so ]] || return 1
+  python3 - "$OLS_HTTPD_CONF" <<'PY'
+import pathlib
+import re
+import sys
+
+conf = pathlib.Path(sys.argv[1])
+if conf.exists():
+    text = conf.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+else:
+    text = ""
+text = re.sub(r"(?ms)^# OPANEL managed ModSecurity BEGIN\n.*?^# OPANEL managed ModSecurity END\n?", "", text)
+block = (
+    "# OPANEL managed ModSecurity BEGIN\n"
+    "module mod_security {\n"
+    "    ls_enabled              1\n"
+    "}\n"
+    "# OPANEL managed ModSecurity END\n\n"
+)
+marker = "# OPanel managed vhosts BEGIN"
+pos = text.find(marker)
+if pos >= 0:
+    text = text[:pos] + block + text[pos:]
+else:
+    text = text.rstrip() + "\n\n" + block
+conf.write_text(text, encoding="utf-8")
+PY
+}
+
 ols_sync_main_config() {
   ensure_ols_conf_dir_writable
   install -d -o root -g root -m 0755 /usr/local/lsws/conf/opanel
   ols_disable_conflicting_apache
+  ensure_ols_modsecurity_enabled >/dev/null 2>&1 || true
   python3 - "$OLS_HTTPD_CONF" "$OLS_VHOSTS_DIR" "$ENV_FILE" <<'PY'
 import pathlib
 import re
@@ -714,6 +745,14 @@ write_modsec_main_conf() {
   } >/usr/local/lsws/conf/opanel/waf/opanel-main.conf
 }
 
+ensure_firewall_rule_store() {
+  install -d -o opanel -g opanel -m 0750 "$opanel_DATA_DIR/firewall"
+  if [[ -f "$opanel_DATA_DIR/firewall/rules.json" ]]; then
+    chown opanel:opanel "$opanel_DATA_DIR/firewall/rules.json" 2>/dev/null || true
+    chmod 0640 "$opanel_DATA_DIR/firewall/rules.json" 2>/dev/null || true
+  fi
+}
+
 write_waf_default_rules() {
   install -d -o root -g root -m 0755 /usr/local/lsws/conf/opanel/waf
   cat >/usr/local/lsws/conf/opanel/waf/opanel-default.conf <<'RULES'
@@ -780,11 +819,16 @@ save_waf_site_rules() {
 
 install_waf_engine() {
   export DEBIAN_FRONTEND=noninteractive
-  if ! dpkg -s modsecurity-crs >/dev/null 2>&1; then
+  if ! dpkg -s ols-modsecurity >/dev/null 2>&1; then
     apt-get update --allow-releaseinfo-change
-    apt-get install -y modsecurity-crs libmodsecurity3 || \
-      apt-get install -y libmodsecurity3
+    apt-get install -y ols-modsecurity modsecurity-crs libmodsecurity3 2>/dev/null || \
+      apt-get install -y ols-modsecurity libmodsecurity3 2>/dev/null || \
+      deny "Could not install ols-modsecurity"
+  elif ! dpkg -s modsecurity-crs >/dev/null 2>&1; then
+    apt-get update --allow-releaseinfo-change
+    apt-get install -y modsecurity-crs libmodsecurity3 2>/dev/null || true
   fi
+  [[ -f /usr/local/lsws/modules/mod_security.so ]] || deny "OpenLiteSpeed mod_security.so is missing"
   install -d -o root -g root -m 0755 /usr/local/lsws/conf/opanel/waf /usr/local/lsws/conf/opanel/waf/sites
   write_waf_default_rules
   touch /usr/local/lsws/conf/opanel/waf/opanel-custom.conf
@@ -795,6 +839,8 @@ install_waf_engine() {
     sed -i -E 's/^SecRuleEngine .*/SecRuleEngine On/' /etc/modsecurity/modsecurity.conf
   fi
   write_modsec_main_conf
+  ensure_ols_modsecurity_enabled
+  ols_sync_main_config
   /usr/local/lsws/bin/lswsctrl restart
   echo "WAF engine installed with opanel lightweight WordPress/Laravel/PHP rules."
 }
@@ -2683,6 +2729,10 @@ case "$cmd" in
     else
       echo no
     fi
+    ;;
+  iptables-rules-store-ensure)
+    ensure_firewall_rule_store
+    echo "opanel firewall rule store ready"
     ;;
   iptables-enable)
     iptables -P INPUT ACCEPT 2>/dev/null || true

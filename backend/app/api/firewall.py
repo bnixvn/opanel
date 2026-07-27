@@ -14,6 +14,8 @@ def _require_admin(current_user: User) -> None:
 
 
 def _result(result):
+    if result.returncode != 0:
+        raise HTTPException(status_code=400, detail=(result.stderr or result.stdout or "Command failed").strip())
     return result.__dict__
 
 
