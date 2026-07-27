@@ -1163,6 +1163,10 @@ firewall_blocklist_apply() {
   local v4_target="$v4_new" v6_target="$v6_new"
   ensure_ols_conf_dir_writable
   install -d -o root -g root -m 0755 "$BLOCKLIST_DIR"
+  iptables -N OPANEL_BLOCKLIST 2>/dev/null || true
+  ip6tables -N OPANEL_BLOCKLIST 2>/dev/null || true
+  iptables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null || iptables -I INPUT 1 -j OPANEL_BLOCKLIST 2>/dev/null || true
+  ip6tables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null || ip6tables -I INPUT 1 -j OPANEL_BLOCKLIST 2>/dev/null || true
   if [[ -s "${BLOCKLIST_DIR}/blocklist.set" ]]; then
     v4_count="$(awk 'NF && $0 !~ /^[[:space:]]*#/ && index($0, ":") == 0 { count++ } END { print count + 0 }' "${BLOCKLIST_DIR}/blocklist.set")"
     v6_count="$(awk 'NF && $0 !~ /^[[:space:]]*#/ && index($0, ":") > 0 { count++ } END { print count + 0 }' "${BLOCKLIST_DIR}/blocklist.set")"
@@ -1207,7 +1211,6 @@ firewall_blocklist_apply() {
   if ! iptables -C OPANEL_BLOCKLIST -m set --match-set "$BLOCKLIST_IPSET_V4" src -j DROP 2>/dev/null; then
     iptables -I OPANEL_BLOCKLIST 1 -m set --match-set "$BLOCKLIST_IPSET_V4" src -j DROP 2>/dev/null || true
   fi
-  ip6tables -N OPANEL_BLOCKLIST 2>/dev/null || true
   if ! ip6tables -C OPANEL_BLOCKLIST -m set --match-set "$BLOCKLIST_IPSET_V6" src -j DROP 2>/dev/null; then
     ip6tables -I OPANEL_BLOCKLIST 1 -m set --match-set "$BLOCKLIST_IPSET_V6" src -j DROP 2>/dev/null || true
   fi

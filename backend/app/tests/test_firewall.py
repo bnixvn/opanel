@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from fastapi import HTTPException
 
@@ -73,6 +75,19 @@ def test_blocklist_url_requires_http_url():
 
     with pytest.raises(ValueError, match="URL must start"):
         firewall.delete_blocklist_url("file:///tmp/list.txt")
+
+
+def test_helper_blocklist_apply_ensures_iptables_jump():
+    helper = Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh"
+    content = helper.read_text(encoding="utf-8")
+    start = content.index("firewall_blocklist_apply()")
+    end = content.index("write_http_flood_ols_conf()", start)
+    block = content[start:end]
+
+    assert "iptables -N OPANEL_BLOCKLIST" in block
+    assert "iptables -C INPUT -j OPANEL_BLOCKLIST" in block
+    assert "ip6tables -C INPUT -j OPANEL_BLOCKLIST" in block
+    assert "--match-set \"$BLOCKLIST_IPSET_V4\" src -j DROP" in block
 
 
 def test_parse_iptables_status_and_open_ports(monkeypatch):
