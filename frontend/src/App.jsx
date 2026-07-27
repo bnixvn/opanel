@@ -456,6 +456,7 @@ function App() {
   const [wafSiteConfig, setWafSiteConfig] = useState(null);
   const [wafAccessLogs, setWafAccessLogs] = useState({ entries: [], total: 0, domains: [], limit: 50, offset: 0, paths: {} });
   const [wafAccessFilters, setWafAccessFilters] = useState({ domain: '', verdict: '', q: '', limit: 50, offset: 0 });
+  const [wafAccessAutoRefresh, setWafAccessAutoRefresh] = useState(0);
   const [httpFloodForm, setHttpFloodForm] = useState({ http_flood_enabled: false, ...HTTP_FLOOD_DEFAULTS });
   const [assignUserId, setAssignUserId] = useState('');
   const [assignWebsiteId, setAssignWebsiteId] = useState('');
@@ -597,6 +598,7 @@ function App() {
     setWafSiteConfig(null);
     setWafAccessLogs({ entries: [], total: 0, domains: [], limit: 50, offset: 0, paths: {} });
     setWafAccessFilters({ domain: '', verdict: '', q: '', limit: 50, offset: 0 });
+    setWafAccessAutoRefresh(0);
     wafAccessDefaultedRef.current = false;
     setLogViewer(null);
     setNginxCustomEditing(null);
@@ -2433,6 +2435,23 @@ function App() {
     loadWebsiteWafConfig(websites[0].id, false);
   }, [isAuthenticated, page, selectedWafWebsiteId, websites.length]);
 
+  useEffect(() => {
+    if (!isAuthenticated || !isAdmin || page !== 'wafLogs' || !wafAccessAutoRefresh) return undefined;
+    const timer = window.setInterval(() => {
+      loadWafAccessLogs({ ...wafAccessFilters, offset: 0 }, false);
+    }, wafAccessAutoRefresh * 1000);
+    return () => window.clearInterval(timer);
+  }, [
+    isAuthenticated,
+    isAdmin,
+    page,
+    wafAccessAutoRefresh,
+    wafAccessFilters.domain,
+    wafAccessFilters.verdict,
+    wafAccessFilters.q,
+    wafAccessFilters.limit,
+  ]);
+
   useEffect(() => { setMobileMenuOpen(false); }, [page]);
 
   useEffect(() => {
@@ -3473,12 +3492,18 @@ function App() {
             </select>
             <select value={wafAccessFilters.verdict} onChange={e => setWafAccessFilter('verdict', e.target.value)}>
               <option value="">All verdicts</option>
-              <option value="block">Blocked</option>
-              <option value="allow">Allowed</option>
+              <option value="block">Block</option>
+              <option value="allow">Allow</option>
             </select>
             <input value={wafAccessFilters.q} onChange={e => setWafAccessFilter('q', e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadWafAccessLogs(); }} placeholder="Filter logs" />
             <select value={limit} onChange={e => loadWafAccessLogs({ ...wafAccessFilters, limit: Number(e.target.value), offset: 0 })}>
               {[25, 50, 100, 250, 500].map(size => <option key={size} value={size}>{size} / page</option>)}
+            </select>
+            <select value={wafAccessAutoRefresh} onChange={e => setWafAccessAutoRefresh(Number(e.target.value))} title="Auto refresh">
+              <option value={0}>Auto refresh off</option>
+              <option value={5}>Refresh 5s</option>
+              <option value={10}>Refresh 10s</option>
+              <option value={30}>Refresh 30s</option>
             </select>
             <button onClick={() => loadWafAccessLogs({ ...wafAccessFilters, offset: 0 })} disabled={!!loading}><Search size={14}/> Apply</button>
           </div>
@@ -3499,7 +3524,7 @@ function App() {
             </thead>
             <tbody>
               {entries.map((entry, index) => <tr key={`${entry.domain}-${entry.timestamp}-${entry.ip}-${entry.path}-${index}`}>
-                <td><span className={`verdict-pill ${entry.verdict === 'block' ? 'block' : 'allow'}`}>{entry.verdict}</span></td>
+                <td><span className={`verdict-pill ${entry.verdict === 'block' ? 'block' : 'allow'}`}>{entry.verdict === 'block' ? 'Block' : 'Allow'}</span></td>
                 <td><span>{entry.time || entry.timestamp || '-'}</span><small>{formatLogDuration(entry.duration_ms)}</small></td>
                 <td><span>{entry.site || entry.domain}</span><small>{entry.domain}</small></td>
                 <td>{entry.method || '-'}</td>
