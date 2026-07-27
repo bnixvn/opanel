@@ -146,7 +146,7 @@ END_RULES
 
 {# HTTP flood protection via rewrite-level throttling #}
 {% if http_flood_enabled %}
-{{ rewrite_block }}
+{{ http_flood_block }}
 {% endif %}
 
 {# LSCache for WordPress #}
@@ -163,7 +163,3 @@ RewriteRule ^wp-content/cache/ - [L]
 RewriteRule ^wp-admin/ - [L]
 END_RULES
 }
-
-{% if custom_directives %}
-{{ custom_directives }}
-{% endif %}

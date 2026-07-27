@@ -372,7 +372,7 @@ INI
 # configure_fastcgi_cache removed — OLS handles caching internally via LSCache module.
 
 write_modsec_base_conf() {
-  local modsec_dir="/usr/local/lsws/conf/opanel/modsec"
+  local modsec_dir="/usr/local/lsws/conf/opanel/waf"
   install -d -o root -g root -m 0755 "$modsec_dir" "${modsec_dir}/sites"
   {
     [[ -f /etc/modsecurity/modsecurity.conf ]] && echo "Include /etc/modsecurity/modsecurity.conf"
@@ -384,7 +384,7 @@ write_modsec_base_conf() {
 write_modsec_main_conf() {
   write_waf_default_rules
   write_modsec_base_conf
-  local modsec_dir="/usr/local/lsws/conf/opanel/modsec"
+  local modsec_dir="/usr/local/lsws/conf/opanel/waf"
   touch "${modsec_dir}/opanel-custom.conf"
   {
     echo "Include ${modsec_dir}/opanel-base.conf"
@@ -397,7 +397,7 @@ write_modsec_main_conf() {
 # via the openlitespeed.py service module (config written into vhost templates).
 
 write_waf_default_rules() {
-  local modsec_dir="/usr/local/lsws/conf/opanel/modsec"
+  local modsec_dir="/usr/local/lsws/conf/opanel/waf"
   install -d -o root -g root -m 0755 "$modsec_dir"
   cat >"${modsec_dir}/opanel-default.conf" <<'RULES'
 # OPanel default WAF rules: lightweight WordPress, Laravel, and PHP probes only.
@@ -407,6 +407,7 @@ SecRule REQUEST_URI "@rx (?i)(?:/(?:c99|r57|shell|cmd|wso)\.php(?:$|[?])|/vendor
 SecRule REQUEST_URI "@rx (?i)(?:/\.env(?:\.|$)|/artisan(?:$|[?])|/server\.php(?:$|[?])|/storage/logs/[^?]*\.log(?:$|[?])|/bootstrap/cache/[^?]*\.php(?:$|[?]))" "id:1001201,phase:1,deny,status:403,log,msg:'opanel blocked Laravel sensitive path'"
 SecRule REQUEST_URI "@rx (?i)(?:/_ignition/execute-solution(?:$|[?]))" "id:1001202,phase:1,deny,status:403,log,msg:'opanel blocked Laravel Ignition RCE probe'"
 SecRule REQUEST_URI "@rx (?i)(?:/wp-config\.php(?:\.|$|[?])|/wp-content/(?:uploads|cache|upgrade)/[^?]*\.php(?:$|[?])|/wp-admin/includes/[^?]*\.php(?:$|[?])|/wp-includes/[^?]*\.php(?:$|[?]))" "id:1001101,phase:1,deny,status:403,log,msg:'opanel blocked WordPress sensitive path'"
+SecRule REQUEST_URI "@rx (?i)(?:/xmlrpc\.php(?:$|[?]))" "id:1001102,phase:1,deny,status:403,log,msg:'opanel blocked WordPress XML-RPC access'"
 SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'opanel blocked WordPress author enumeration'"
 SecRule REQUEST_URI "@rx (?i)(?:/wp-admin/install\.php(?:$|[?])|/wp-admin/setup-config\.php(?:$|[?]))" "id:1001104,phase:1,deny,status:403,log,msg:'opanel blocked WordPress installer probe'"
 RULES
@@ -414,7 +415,7 @@ RULES
 
 install_waf_engine() {
   export DEBIAN_FRONTEND=noninteractive
-  local modsec_dir="/usr/local/lsws/conf/opanel/modsec"
+  local modsec_dir="/usr/local/lsws/conf/opanel/waf"
   # ols-modsecurity is installed by install_openlitespeed()
   if ! dpkg -s ols-modsecurity >/dev/null 2>&1; then
     apt-get update --allow-releaseinfo-change

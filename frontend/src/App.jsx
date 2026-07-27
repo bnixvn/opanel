@@ -1258,37 +1258,20 @@ function App() {
     setLogViewer(null);
     setTerminalViewer(null);
     setWebsiteSettingsForm(websiteConfigForm(site));
-    const data = await request(`/websites/${site.id}/nginx-custom`, {}, 'Loading Custom Directives...');
-    if (data !== null) {
-      setNginxCustomEditing({
-        id: site.id,
-        domain: site.domain,
-        site,
-        mode: 'custom',
-        content: data?.nginx_custom || '',
-      });
-    }
+    setNginxCustomEditing({
+      id: site.id,
+      domain: site.domain,
+      site,
+      mode: 'settings',
+      content: '',
+    });
   }
 
   async function viewFullNginxConfig() {
     if (!nginxCustomEditing) return;
     const data = await request(`/websites/${nginxCustomEditing.id}/nginx-config`, {}, 'Loading VHost Config...');
     if (data !== null) {
-      setNginxCustomEditing(prev => ({ ...prev, mode: 'full', customContent: prev?.content || '', content: data?.nginx_config || '' }));
-    }
-  }
-
-  async function saveNginxCustom() {
-    if (!nginxCustomEditing) return;
-    if (nginxCustomEditing.mode === 'full') return;
-    const data = await request(`/websites/${nginxCustomEditing.id}/nginx-custom`, {
-      method: 'PUT',
-      body: JSON.stringify({ nginx_custom: nginxCustomEditing.content }),
-    }, 'Applying Custom Directives and reloading...');
-    if (data) {
-      setNotice(`Updated Custom Directives for ${nginxCustomEditing.domain}`);
-      setNginxCustomEditing(null);
-      refreshAll();
+      setNginxCustomEditing(prev => ({ ...prev, mode: 'full', content: data?.nginx_config || '' }));
     }
   }
 
@@ -1319,20 +1302,6 @@ function App() {
       setNotice(`Updated settings for ${nginxCustomEditing.domain}.`);
       setWebsiteSettingsForm(websiteConfigForm(data));
       setNginxCustomEditing(prev => prev ? ({ ...prev, site: data }) : prev);
-      await refreshAll();
-    }
-  }
-
-  async function resetNginxDefault() {
-    if (!nginxCustomEditing) return;
-    if (!confirm(`Clear Custom Directives for ${nginxCustomEditing.domain}?`)) return;
-    const data = await request(`/websites/${nginxCustomEditing.id}/nginx-custom`, {
-      method: 'PUT',
-      body: JSON.stringify({ nginx_custom: '' }),
-    }, 'Clearing Custom Directives...');
-    if (data) {
-      setNotice(`Cleared Custom Directives for ${nginxCustomEditing.domain}.`);
-      setNginxCustomEditing(null);
       await refreshAll();
     }
   }
@@ -2585,11 +2554,11 @@ function App() {
           <h2>{fullConfig ? 'VHost Config' : 'Website settings'} - {nginxCustomEditing.domain}</h2>
           <p className="hint">{fullConfig
             ? 'This is read-only. opanel manages the main vhost template.'
-            : 'Managed settings rewrite the main vhost safely. Custom directives are still stored as a separate include.'}</p>
+            : 'Managed settings rewrite the main vhost safely.'}</p>
         </div>
         <div className="actions">
           {!fullConfig && isAdmin && <button className="secondary-light" disabled={!!loading} onClick={viewFullNginxConfig}><FileText size={14}/> View all</button>}
-          {fullConfig && <button className="secondary-light" disabled={!!loading} onClick={() => setNginxCustomEditing(prev => ({ ...prev, mode: 'custom', content: prev?.customContent ?? prev?.content ?? '' }))}><SettingsIcon size={14}/> Settings</button>}
+          {fullConfig && <button className="secondary-light" disabled={!!loading} onClick={() => setNginxCustomEditing(prev => ({ ...prev, mode: 'settings', content: '' }))}><SettingsIcon size={14}/> Settings</button>}
           <button className="secondary-light" onClick={() => setNginxCustomEditing(null)}><X size={14}/> Close</button>
         </div>
       </div>
@@ -2658,23 +2627,17 @@ function App() {
           <button className="secondary-light" disabled={!!loading || !(aliasDrafts[nginxCustomEditing.id] || '').trim()} onClick={() => addWebsiteAlias(settingsSite)}><Plus size={14}/> Add domain</button>
         </div>
       </div>}
-      <div className="custom-nginx-block">
-        {!fullConfig && <h3>Custom Directives</h3>}
+      {fullConfig && <div className="custom-nginx-block">
         <textarea
           className="code-editor"
           value={nginxCustomEditing.content}
-          onChange={e => setNginxCustomEditing(prev => ({ ...prev, content: e.target.value, customContent: e.target.value }))}
-          placeholder={fullConfig
-            ? `server {\n    listen 80;\n    server_name ${nginxCustomEditing.domain};\n}`
-            : `# Optional extra directives only. Use Webserver rewrite above for location / routing.`}
+          placeholder={`docRoot                   /home/site/${nginxCustomEditing.domain}/public_html`}
           spellCheck={false}
-          rows={fullConfig ? 18 : 10}
-          readOnly={fullConfig}
+          rows={18}
+          readOnly
         />
-      </div>
+      </div>}
       <div className="actions">
-        {!fullConfig && <button disabled={!!loading} onClick={saveNginxCustom}>Save and reload webserver</button>}
-        {!fullConfig && <button className="secondary-light" disabled={!!loading} onClick={resetNginxDefault}><RotateCcw size={14}/> Reset custom</button>}
         <button className="secondary-light" disabled={!!loading} onClick={() => setNginxCustomEditing(null)}>{fullConfig ? 'Close' : 'Cancel'}</button>
       </div>
     </section>;
@@ -2773,7 +2736,6 @@ function App() {
               <span>Type <strong>{site.app_type || 'wordpress'}</strong></span>
               <span>PHP <strong>{site.php_version}</strong></span>
               {site.app_type === 'php' && site.nginx_rewrite_mode && site.nginx_rewrite_mode !== 'none' && <span>Rewrite <strong>{site.nginx_rewrite_mode}</strong></span>}
-              {site.nginx_custom && <span className="badge ok">Custom Directives</span>}
               {site.waf_enabled && <span className="badge ok">WAF</span>}
               {site.http_flood_enabled && <span className="badge ok">HTTP Flood</span>}
               {(site.aliases || []).length > 0 && <span>Domains <strong>{(site.aliases || []).length + 1}</strong></span>}

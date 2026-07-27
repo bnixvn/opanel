@@ -178,7 +178,7 @@ def _rewrite_website_vhost(website: Website, **overrides) -> str:
     rewrite_kwargs = {
         "app_type": app_type,
         "php_version": php_version,
-        "custom_directives": overrides.pop("custom_directives", website.nginx_custom or ""),
+        "custom_directives": "",
         "linux_user": linux_user,
         "lsphp_socket_override": lsphp_socket_override,
         "waf_enabled": overrides.pop("waf_enabled", website.waf_enabled),
@@ -585,12 +585,7 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         website.owner_id = payload.owner_id
     if payload.nginx_custom is not None:
-        try:
-            openlitespeed.update_custom_block(website.domain, payload.nginx_custom)
-        except (RuntimeError, ValueError, FileNotFoundError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        website.nginx_custom = payload.nginx_custom
-        website.nginx_config_mode = "managed"
+        raise HTTPException(status_code=400, detail="Custom OpenLiteSpeed directives are disabled. Use managed website settings.")
     if payload.nginx_rewrite_mode is not None and payload.nginx_rewrite_mode != _website_rewrite_mode(website):
         app_type = website.app_type or "wordpress"
         next_rewrite_mode = "front_controller" if app_type == "wordpress" else "none" if app_type == "static" else payload.nginx_rewrite_mode
@@ -666,7 +661,7 @@ def get_website_webserver_config(website_id: int, db: Session = Depends(get_db),
 def set_website_webserver_config(website_id: int, payload: WebsiteNginxConfig, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     raise HTTPException(
         status_code=405,
-        detail="The main vhost is managed by opanel. Use Custom Directives instead.",
+        detail="The main vhost is managed by opanel. Use managed website settings.",
     )
 
 
@@ -767,16 +762,7 @@ def set_website_webserver_custom(website_id: int, payload: WebsiteNginxCustom, r
         raise HTTPException(status_code=404, detail="Website not found")
     if website.owner_id != current_user.id:
         ensure_role(current_user.role, Role.admin)
-    try:
-        openlitespeed.update_custom_block(website.domain, payload.nginx_custom)
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    website.nginx_custom = payload.nginx_custom
-    website.nginx_config_mode = "managed"
-    db.commit()
-    db.refresh(website)
-    log_action(db, current_user.id, "update_webserver_custom", website.domain, request=request)
-    return website
+    raise HTTPException(status_code=405, detail="Custom OpenLiteSpeed directives are disabled. Use managed website settings.")
 
 
 @router.delete("/{website_id}")

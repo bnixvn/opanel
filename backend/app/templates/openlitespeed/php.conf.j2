@@ -136,9 +136,5 @@ END_RULES
 {% endfor %}
 
 {% if http_flood_enabled %}
-{{ rewrite_block }}
-{% endif %}
-
-{% if custom_directives %}
-{{ custom_directives }}
+{{ http_flood_block }}
 {% endif %}

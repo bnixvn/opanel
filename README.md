@@ -6,7 +6,7 @@ Lightweight hosting management panel for Ubuntu 24.04, powered by **OpenLiteSpee
 
 - Dashboard resource monitoring for CPU, RAM, disk, and network throughput
 - WordPress one-click installer (default LSPHP 8.4, with 8.3 installed) with WP-CLI
-- WordPress and PHP sites with editable OpenLiteSpeed vhost configs
+- WordPress and PHP sites with managed OpenLiteSpeed vhost settings
 - `.htaccess` fully supported (`allowOverride all` in all vhost templates)
 - Panel users map to Linux/SFTP users; website source lives in `/home/<panel-user>/<domain>/public_html`
 - Admin quick-login for creating sites as a selected user, plus one-owner assignment per website
@@ -179,7 +179,7 @@ If the browser still shows the old UI, do a hard refresh (Ctrl + Shift + R) or o
 OPanel uses **OpenLiteSpeed** as the webserver:
 
 - Vhost configs stored in `/usr/local/lsws/conf/opanel/vhosts/`
-- Custom directives supported per-site via the panel UI
+- Per-site vhosts are managed by OPanel; raw custom directives are disabled
 - LSPHP replaces PHP-FPM — socket at `/tmp/lshttpd/{app_name}.sock`
 - LSCache built-in for WordPress sites
 - ModSecurity/WAF per-site toggle with HTTP flood protection

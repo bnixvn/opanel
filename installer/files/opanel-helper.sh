@@ -724,6 +724,7 @@ SecRule REQUEST_URI "@rx (?i)(?:/(?:c99|r57|shell|cmd|wso)\.php(?:$|[?])|/vendor
 SecRule REQUEST_URI "@rx (?i)(?:/\.env(?:\.|$)|/artisan(?:$|[?])|/server\.php(?:$|[?])|/storage/logs/[^?]*\.log(?:$|[?])|/bootstrap/cache/[^?]*\.php(?:$|[?]))" "id:1001201,phase:1,deny,status:403,log,msg:'opanel blocked Laravel sensitive path'"
 SecRule REQUEST_URI "@rx (?i)(?:/_ignition/execute-solution(?:$|[?]))" "id:1001202,phase:1,deny,status:403,log,msg:'opanel blocked Laravel Ignition RCE probe'"
 SecRule REQUEST_URI "@rx (?i)(?:/wp-config\.php(?:\.|$|[?])|/wp-content/(?:uploads|cache|upgrade)/[^?]*\.php(?:$|[?])|/wp-admin/includes/[^?]*\.php(?:$|[?])|/wp-includes/[^?]*\.php(?:$|[?]))" "id:1001101,phase:1,deny,status:403,log,msg:'opanel blocked WordPress sensitive path'"
+SecRule REQUEST_URI "@rx (?i)(?:/xmlrpc\.php(?:$|[?]))" "id:1001102,phase:1,deny,status:403,log,msg:'opanel blocked WordPress XML-RPC access'"
 SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'opanel blocked WordPress author enumeration'"
 SecRule REQUEST_URI "@rx (?i)(?:/wp-admin/install\.php(?:$|[?])|/wp-admin/setup-config\.php(?:$|[?]))" "id:1001104,phase:1,deny,status:403,log,msg:'opanel blocked WordPress installer probe'"
 RULES
@@ -1517,11 +1518,11 @@ read_site_log() {
   require_domain "$domain"
   [[ "$kind" == "access" || "$kind" == "error" ]] || deny "invalid log kind: $kind"
   require_tail_lines "$lines"
-  path="/var/log/opanel/${domain}.${kind}.log"
+  path="/var/log/openlitespeed/${domain}.${kind}.log"
   resolved=$(readlink -m "$path") || deny "cannot resolve log path"
   case "$resolved" in
-    /var/log/opanel/*) ;;
-    *) deny "log path outside /var/log/opanel: $resolved" ;;
+    /var/log/openlitespeed/*) ;;
+    *) deny "log path outside /var/log/openlitespeed: $resolved" ;;
   esac
   echo "opanel_LOG_PATH=$resolved" >&2
   if [[ ! -f "$resolved" ]]; then

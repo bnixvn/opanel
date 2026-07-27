@@ -24,6 +24,7 @@ def test_render_site_rules_only_includes_selected_wordpress_rule():
     content = waf.render_site_rules("example.com", ["wordpress-sensitive-files"])
 
     assert "id:1001101" in content
+    assert "id:1001102" not in content
     assert "id:1001201" not in content
     assert "id:1001301" not in content
 
@@ -33,6 +34,14 @@ def test_render_site_rules_includes_laravel_and_php_rules():
 
     assert "id:1001201" in content
     assert "id:1001301" in content
+
+
+def test_wordpress_xmlrpc_rule_blocks_xmlrpc():
+    content = waf.render_site_rules("example.com", ["wordpress-xmlrpc-author-scan"])
+
+    assert "id:1001102" in content
+    assert "/xmlrpc\\.php" in content
+    assert "id:1001103" in content
 
 
 def test_default_rules_do_not_scan_request_body_or_headers():

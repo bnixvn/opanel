@@ -27,7 +27,7 @@ from app.services.shell import shell
 OLS_CONF_ROOT = Path("/usr/local/lsws/conf")
 OPANEL_CONF_DIR = OLS_CONF_ROOT / "opanel"
 OPANEL_VHOSTS_DIR = OPANEL_CONF_DIR / "vhosts"
-OPANEL_MODSEC_DIR = OPANEL_CONF_DIR / "modsec"
+OPANEL_MODSEC_DIR = OPANEL_CONF_DIR / "waf"
 OPANEL_CUSTOM_DIR = OPANEL_CONF_DIR / "custom"
 OPANEL_SSL_DIR = OPANEL_CONF_DIR / "ssl" / "sites"
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "openlitespeed"
@@ -176,6 +176,16 @@ def _check_log_kind(kind: str) -> str:
     return value
 
 
+def _check_tail_lines(lines: int) -> int:
+    try:
+        value = int(lines)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Log lines must be a number") from exc
+    if value < 1 or value > 5000:
+        raise ValueError("Log lines must be between 1 and 5000")
+    return value
+
+
 def _effective_document_root(document_root: str, rewrite_mode: str) -> str:
     safe_root = site_users.validate_document_root(document_root)
     if rewrite_mode in {"laravel", "codeigniter"} and safe_root.rstrip("/") == "public_html":
@@ -243,7 +253,7 @@ def _http_flood_rate(config: dict) -> str:
 # ---------------------------------------------------------------------------
 def waf_rules_file(domain: str) -> str:
     safe_domain = _safe_domain(domain)
-    return str(OPANEL_MODSEC_DIR / "sites" / f"{safe_domain}.conf")
+    return (OPANEL_MODSEC_DIR / "sites" / f"{safe_domain}.conf").as_posix()
 
 
 # ---------------------------------------------------------------------------
@@ -425,6 +435,7 @@ def _build_context(
         lsphp_socket = lsphp_socket_override or f"/tmp/lshttpd/{lsphp_app}.sock"
 
     rewrite_block = REWRITE_RULES.get(checked_rewrite, "")
+    safe_http_flood_config = validate_http_flood_config(http_flood_config)
 
     return {
         "domain": safe_domain,
@@ -437,7 +448,7 @@ def _build_context(
         "lsphp_socket": lsphp_socket,
         "rewrite_mode": checked_rewrite,
         "rewrite_block": rewrite_block,
-        "custom_directives": validate_custom_directives(custom_directives),
+        "custom_directives": "",
         "ssl_enabled": ssl_enabled,
         "has_ssl": has_ssl,
         "ssl_cert_path": ssl_cert_path or "",
@@ -448,11 +459,12 @@ def _build_context(
         "waf_enabled": waf_enabled,
         "waf_rules_file": waf_rules_file(safe_domain) if waf_enabled else "",
         "http_flood_enabled": http_flood_enabled,
-        "http_flood_config": http_flood_config or {},
+        "http_flood_config": safe_http_flood_config,
+        "http_flood_block": _http_flood_rewrites(safe_domain, safe_http_flood_config) if http_flood_enabled else "",
         "http_flood_zone": http_flood_zone_name(safe_domain) if http_flood_enabled else "",
         "linux_user": linux_user or "www-data",
-        "access_log": str(_log_path(safe_domain, "access")),
-        "error_log": str(_log_path(safe_domain, "error")),
+        "access_log": _log_path(safe_domain, "access").as_posix(),
+        "error_log": _log_path(safe_domain, "error").as_posix(),
         "acme_webroot": ACME_WEBROOT,
         "security_headers": SECURITY_HEADERS,
         "hsts_header": HSTS_HEADER if has_ssl else "",
@@ -565,6 +577,123 @@ def get_vhost_config(domain: str) -> str | None:
     return None
 
 
+def read_vhost_config(domain: str) -> str:
+    """Read the current vhost config for a domain."""
+    content = get_vhost_config(domain)
+    if content is None:
+        raise FileNotFoundError(str(_vhost_conf_path(domain)))
+    return content
+
+
+def _first_match(pattern: str, content: str) -> str | None:
+    match = re.search(pattern, content)
+    return match.group(1).strip() if match else None
+
+
+def _config_document_root(content: str) -> tuple[str, str]:
+    doc_root = _first_match(r"(?m)^\s*docRoot\s+(.+?)\s*$", content)
+    if not doc_root:
+        return "", "public_html"
+    normalized = doc_root.rstrip("/")
+    for marker in ("/public_html/public", "/public_html"):
+        if normalized.endswith(marker):
+            return normalized[: -len(marker)], marker.lstrip("/")
+    parent, _, child = normalized.rpartition("/")
+    return parent or normalized, child or "public_html"
+
+
+def _rewrite_mode_from_config(content: str, app_type: str) -> str:
+    if app_type == "wordpress":
+        return "front_controller"
+    if app_type == "static":
+        return "none"
+    if "index.php/$1" in content:
+        return "codeigniter"
+    if "index.php?_url_=$1" in content:
+        return "seohburl"
+    if "RewriteRule ^(.*)$ index.php [QSA,L]" in content:
+        return "laravel" if "/public_html/public" in content else "front_controller"
+    return "none"
+
+
+def _php_version_from_config(content: str) -> str | None:
+    digits = _first_match(r"(?m)^\s*path\s+/usr/local/lsws/lsphp([0-9]+)/bin/lsphp\s*$", content)
+    if not digits or len(digits) < 2:
+        return None
+    return f"{digits[:-1]}.{digits[-1]}"
+
+
+def _redirects_from_config(content: str, domain: str) -> list[dict]:
+    redirects: list[dict] = []
+    pattern = re.compile(
+        r"RewriteCond\s+%\{HTTP_HOST\}\s+\^\(www\\\.\)\?(.+?)\$\s+\[NC\]\s*\n"
+        r"RewriteRule\s+\^\(\.\*\)\$\s+(.+?)\$1\s+\[R=([0-9]+),L\]",
+        re.MULTILINE,
+    )
+    for match in pattern.finditer(content):
+        source = match.group(1).replace(r"\.", ".").strip()
+        target = match.group(2).strip()
+        code = int(match.group(3))
+        if source and source != domain:
+            redirects.append({"source": source, "target": target, "code": code})
+    return redirects
+
+
+def _rewrite_existing_vhost(domain: str, **overrides) -> str:
+    safe_domain = _safe_domain(domain)
+    existing = read_vhost_config(safe_domain)
+    root_path, document_root = _config_document_root(existing)
+    php_version = _php_version_from_config(existing)
+    if "# Static site: no PHP processor needed" in existing:
+        app_type = "static"
+    else:
+        app_type = "wordpress" if "wp-admin" in existing or "wp-content" in existing else "php"
+    kwargs = {
+        "app_type": app_type,
+        "php_version": php_version or ("8.4" if app_type != "static" else None),
+        "document_root": document_root,
+        "rewrite_mode": _rewrite_mode_from_config(existing, app_type),
+        "custom_directives": "",
+        "aliases": re.findall(r"(?m)^\s*vhAliases\s+(.+?)\s*$", existing),
+        "redirects": _redirects_from_config(existing, safe_domain),
+        "waf_enabled": "# OPANEL WAF BEGIN" in existing,
+        "http_flood_enabled": "# OPANEL HTTP FLOOD BEGIN" in existing,
+        "http_flood_config": {},
+        "linux_user": _first_match(r"(?m)^\s*extUser\s+(.+?)\s*$", existing) or "www-data",
+    }
+    cert_path = _first_match(r"(?m)^\s*certFile\s+(.+?)\s*$", existing)
+    key_path = _first_match(r"(?m)^\s*keyFile\s+(.+?)\s*$", existing)
+    ca_path = _first_match(r"(?m)^\s*CACertFile\s+(.+?)\s*$", existing)
+    if cert_path and key_path:
+        kwargs.update({
+            "ssl_cert_path": cert_path,
+            "ssl_key_path": key_path,
+            "ssl_ca_path": ca_path,
+        })
+    kwargs.update(overrides)
+    return rewrite_vhost(safe_domain, root_path or f"/home/admin/{safe_domain}", **kwargs)
+
+
+def update_waf_block(domain: str, enabled: bool) -> str:
+    """Compatibility API: re-render an OLS vhost with WAF toggled."""
+    return _rewrite_existing_vhost(domain, waf_enabled=bool(enabled))
+
+
+def update_http_flood_block(domain: str, enabled: bool, config: dict | str | None = None) -> str:
+    """Compatibility API: re-render an OLS vhost with HTTP flood settings."""
+    return _rewrite_existing_vhost(
+        domain,
+        http_flood_enabled=bool(enabled),
+        http_flood_config=validate_http_flood_config(config),
+    )
+
+
+def update_custom_block(domain: str, custom_directives: str) -> str:
+    """Per-domain custom OLS directives are disabled; rewrite without them."""
+    validate_custom_directives(custom_directives)
+    return _rewrite_existing_vhost(domain, custom_directives="")
+
+
 def sync_http_flood_zones(websites):
     """Compatibility no-op: OLS flood rules are rendered per vhost."""
     return shell.run(["true"], check=False)
@@ -621,7 +750,7 @@ LSCACHE_REWRITE = (
 def ssl_paths(domain: str) -> dict[str, str]:
     """Return managed SSL paths for a domain."""
     safe_domain = _safe_domain(domain)
-    base = str(OPANEL_SSL_DIR / safe_domain)
+    base = (OPANEL_SSL_DIR / safe_domain).as_posix()
     return {
         "cert": f"{base}/cert.crt",
         "key": f"{base}/privkey.key",
@@ -670,6 +799,30 @@ def read_log(domain: str, kind: str = "access", lines: int = 200) -> str:
         return result.stdout
     except FileNotFoundError:
         return ""
+
+
+def read_site_log(domain: str, kind: str = "access", lines: int = 200) -> dict:
+    safe_domain = _safe_domain(domain)
+    safe_kind = _check_log_kind(kind)
+    safe_lines = _check_tail_lines(lines)
+    path = _log_path(safe_domain, safe_kind)
+    result = shell.privileged(
+        "site-log-read",
+        helper_args=[safe_domain, safe_kind, str(safe_lines)],
+        check=False,
+        fallback=["tail", "-n", str(safe_lines), str(path)],
+    )
+    missing = "opanel_LOG_MISSING=1" in (result.stderr or "")
+    if result.returncode != 0 and not missing:
+        raise RuntimeError((result.stderr or result.stdout or "Cannot read log file").strip())
+    return {
+        "domain": safe_domain,
+        "kind": safe_kind,
+        "path": str(path),
+        "lines": safe_lines,
+        "content": result.stdout or "",
+        "exists": not missing,
+    }
 
 
 # ---------------------------------------------------------------------------

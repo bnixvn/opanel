@@ -56,9 +56,10 @@ DEFAULT_RULES = [
     {
         "id": "wordpress-xmlrpc-author-scan",
         "category": "WordPress",
-        "title": "WordPress author scans",
-        "description": "Blocks ?author= enumeration scans while leaving XML-RPC compatibility to site policy.",
-        "rules": """SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'opanel blocked WordPress author enumeration'""",
+        "title": "WordPress XML-RPC and author scans",
+        "description": "Blocks XML-RPC access and ?author= enumeration scans.",
+        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/xmlrpc\\.php(?:$|[?]))" "id:1001102,phase:1,deny,status:403,log,msg:'opanel blocked WordPress XML-RPC access'"
+SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'opanel blocked WordPress author enumeration'""",
     },
     {
         "id": "wordpress-install-upgrade",
@@ -203,12 +204,14 @@ def site_config(website: Website) -> dict:
     from app.services import openlitespeed as webserver
 
     enabled = website_enabled_rule_ids(website)
+    http_flood_config = webserver.http_flood_config_for_website(website)
     return {
         "website_id": website.id,
         "domain": website.domain,
         "waf_enabled": bool(website.waf_enabled),
         "http_flood_enabled": bool(getattr(website, "http_flood_enabled", False)),
-        "http_flood_config": webserver.http_flood_zone_name(website.domain),
+        "http_flood_config": http_flood_config,
+        "http_flood_zone": webserver.http_flood_zone_name(website.domain),
         "rules_file": site_rules_file(website.domain),
         "default_rules": [
             {

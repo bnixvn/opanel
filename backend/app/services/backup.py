@@ -489,7 +489,7 @@ def restore_user_backup(backup_file: str, db) -> dict:
                 root_path,
                 app_type=app_type,
                 php_version=php_version,
-                custom_directives=website.nginx_custom or "",
+                custom_directives="",
                 linux_user=linux_user,
                 lsphp_socket_override=site_users.site_lsphp_socket(linux_user, root_path, runtime_php_version),
                 waf_enabled=website.waf_enabled,
