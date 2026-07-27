@@ -456,7 +456,7 @@ function App() {
   const [wafSiteConfig, setWafSiteConfig] = useState(null);
   const [wafAccessLogs, setWafAccessLogs] = useState({ entries: [], total: 0, domains: [], limit: 50, offset: 0, paths: {} });
   const [wafAccessFilters, setWafAccessFilters] = useState({ domain: '', verdict: '', q: '', limit: 50, offset: 0 });
-  const [wafAccessAutoRefresh, setWafAccessAutoRefresh] = useState(0);
+  const [wafAccessAutoRefresh, setWafAccessAutoRefresh] = useState(5);
   const [httpFloodForm, setHttpFloodForm] = useState({ http_flood_enabled: false, ...HTTP_FLOOD_DEFAULTS });
   const [assignUserId, setAssignUserId] = useState('');
   const [assignWebsiteId, setAssignWebsiteId] = useState('');
@@ -486,7 +486,7 @@ function App() {
   const [panelUpdating, setPanelUpdating] = useState(false);
   const [panelUpdateLog, setPanelUpdateLog] = useState([]);
   const panelUpdateInterval = useRef(null);
-  const wafAccessDefaultedRef = useRef(false);
+  const wafAccessFiltersRef = useRef(wafAccessFilters);
   const [osAutoUpdate, setOsAutoUpdate] = useState({ enabled: true, mode: 'security', auto_reboot: false });
   const [panelAutoUpdate, setPanelAutoUpdate] = useState({ enabled: true, time: '03:30' });
   const noticeTimer = useRef(null);
@@ -598,8 +598,7 @@ function App() {
     setWafSiteConfig(null);
     setWafAccessLogs({ entries: [], total: 0, domains: [], limit: 50, offset: 0, paths: {} });
     setWafAccessFilters({ domain: '', verdict: '', q: '', limit: 50, offset: 0 });
-    setWafAccessAutoRefresh(0);
-    wafAccessDefaultedRef.current = false;
+    setWafAccessAutoRefresh(5);
     setLogViewer(null);
     setNginxCustomEditing(null);
     setTerminalViewer(null);
@@ -861,13 +860,6 @@ function App() {
   useEffect(() => {
     if (!panelSslEmail && currentUser?.email) setPanelSslEmail(currentUser.email);
   }, [currentUser?.email, panelSslEmail]);
-
-  useEffect(() => {
-    if (!wafAccessDefaultedRef.current && !wafAccessFilters.domain && websites[0]?.domain) {
-      wafAccessDefaultedRef.current = true;
-      setWafAccessFilters(prev => ({ ...prev, domain: websites[0].domain }));
-    }
-  }, [websites, wafAccessFilters.domain]);
 
   async function refreshAll() {
     const refreshedUser = await loadCurrentUser();
@@ -2379,10 +2371,30 @@ function App() {
   }, [isAuthenticated, page]);
 
   useEffect(() => {
-    if (isAuthenticated && isAdmin && page === 'wafLogs') {
-      loadWafAccessLogs(wafAccessFilters, false);
+    if (!isAuthenticated || !isAdmin || page !== 'wafLogs') {
+      wafAccessFiltersRef.current = wafAccessFilters;
+      return undefined;
     }
-  }, [isAuthenticated, isAdmin, page, wafAccessFilters.domain, wafAccessFilters.verdict, wafAccessFilters.limit]);
+    const prev = wafAccessFiltersRef.current;
+    const qChanged = prev.q !== wafAccessFilters.q;
+    const otherChanged =
+      prev.domain !== wafAccessFilters.domain ||
+      prev.verdict !== wafAccessFilters.verdict ||
+      prev.limit !== wafAccessFilters.limit;
+    const timer = window.setTimeout(() => {
+      loadWafAccessLogs({ ...wafAccessFilters, offset: 0 }, false);
+    }, qChanged && !otherChanged ? 200 : 0);
+    wafAccessFiltersRef.current = wafAccessFilters;
+    return () => window.clearTimeout(timer);
+  }, [
+    isAuthenticated,
+    isAdmin,
+    page,
+    wafAccessFilters.domain,
+    wafAccessFilters.verdict,
+    wafAccessFilters.q,
+    wafAccessFilters.limit,
+  ]);
 
   useEffect(() => {
     if (!currentSite) return;
@@ -3487,7 +3499,7 @@ function App() {
           </div>
           <div className="access-log-filters">
             <select value={wafAccessFilters.domain} onChange={e => setWafAccessFilter('domain', e.target.value)}>
-              <option value="">All domains</option>
+              <option value="">All websites</option>
               {domains.map(domain => <option key={domain} value={domain}>{domain}</option>)}
             </select>
             <select value={wafAccessFilters.verdict} onChange={e => setWafAccessFilter('verdict', e.target.value)}>
@@ -3495,8 +3507,8 @@ function App() {
               <option value="block">Block</option>
               <option value="allow">Allow</option>
             </select>
-            <input value={wafAccessFilters.q} onChange={e => setWafAccessFilter('q', e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadWafAccessLogs(); }} placeholder="Filter logs" />
-            <select value={limit} onChange={e => loadWafAccessLogs({ ...wafAccessFilters, limit: Number(e.target.value), offset: 0 })}>
+            <input value={wafAccessFilters.q} onChange={e => setWafAccessFilter('q', e.target.value)} placeholder="Filter logs" />
+            <select value={limit} onChange={e => setWafAccessFilter('limit', Number(e.target.value))}>
               {[25, 50, 100, 250, 500].map(size => <option key={size} value={size}>{size} / page</option>)}
             </select>
             <select value={wafAccessAutoRefresh} onChange={e => setWafAccessAutoRefresh(Number(e.target.value))} title="Auto refresh">
@@ -3505,7 +3517,6 @@ function App() {
               <option value={10}>Refresh 10s</option>
               <option value={30}>Refresh 30s</option>
             </select>
-            <button onClick={() => loadWafAccessLogs({ ...wafAccessFilters, offset: 0 })} disabled={!!loading}><Search size={14}/> Apply</button>
           </div>
         </div>
         <div className="access-log-table-wrap">

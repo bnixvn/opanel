@@ -939,7 +939,7 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
 .access-log-title strong{font-size:15px;color:#020617;white-space:nowrap}
 .access-log-title span{display:inline-flex;align-items:center;height:28px;padding:0 9px;border:1px solid #dbe4f0;border-radius:999px;color:#64748b;background:#fff;font-size:12px;white-space:nowrap}
 .access-log-title button{height:36px;min-height:36px;padding:0 11px}
-.access-log-filters{display:grid;grid-template-columns:minmax(160px,210px) minmax(130px,170px) minmax(200px,1fr) minmax(118px,136px) minmax(150px,170px) auto;gap:8px;align-items:center}
+.access-log-filters{display:grid;grid-template-columns:minmax(160px,210px) minmax(130px,170px) minmax(200px,1fr) minmax(118px,136px) minmax(150px,170px);gap:8px;align-items:center}
 .access-log-filters input,.access-log-filters select{height:36px;min-height:36px;border-color:#d7e1ee;border-radius:7px;background:#fff}
 .access-log-filters button{height:36px;min-height:36px;padding:0 12px}
 .access-log-table-wrap{width:100%;overflow:auto;border-top:1px solid #dbe4f0}
