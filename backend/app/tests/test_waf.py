@@ -44,6 +44,15 @@ def test_wordpress_xmlrpc_rule_blocks_xmlrpc():
     assert "id:1001103" in content
 
 
+def test_wordpress_wp2shell_rules_block_batch_paths():
+    content = waf.render_site_rules("example.com", ["wordpress-wp2shell"])
+
+    assert "id:1000001" in content
+    assert "id:1000002" in content
+    assert "/wp-json/batch/v1" in content
+    assert "/batch/v1" in content
+
+
 def test_default_rules_do_not_scan_request_body_or_headers():
     content = waf.render_site_rules("example.com", [rule["id"] for rule in waf.DEFAULT_RULES])
 
@@ -75,6 +84,15 @@ def test_parse_access_log_line_marks_200_as_allowed():
 
     assert entry["verdict"] == "allow"
     assert entry["reason"] == "Allowed"
+
+
+def test_parse_access_log_line_marks_wp2shell_paths_as_blocked():
+    line = '198.51.100.23 - - [27/Jul/2026:10:40:12 +0000] "POST /wp-json/batch/v1 HTTP/1.1" 403 0 "-" "Mozilla/5.0"'
+
+    entry = waf.parse_access_log_line(line, "example.com")
+
+    assert entry["verdict"] == "block"
+    assert entry["reason"] == "Block wp2shell Path"
 
 
 def test_access_log_report_filters_and_paginates(monkeypatch):

@@ -81,6 +81,14 @@ SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'
         "description": "Blocks direct access to WordPress installation scripts after deployment.",
         "rules": """SecRule REQUEST_URI "@rx (?i)(?:/wp-admin/install\\.php(?:$|[?])|/wp-admin/setup-config\\.php(?:$|[?]))" "id:1001104,phase:1,deny,status:403,log,msg:'opanel blocked WordPress installer probe'""",
     },
+    {
+        "id": "wordpress-wp2shell",
+        "category": "WordPress",
+        "title": "WordPress wp2shell probes",
+        "description": "Blocks the wp2shell batch API paths used by the published exploit chain.",
+        "rules": """SecRule REQUEST_URI "@contains /wp-json/batch/v1" "id:1000001,phase:2,deny,status:403,msg:'Block wp2shell Path'"
+SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:403,msg:'Block wp2shell Query'""",
+    },
 ]
 
 LEGACY_RULE_ID_MAP = {
@@ -96,6 +104,8 @@ RULE_REASON_BY_ID = {
     "1001102": "Block WordPress XML-RPC",
     "1001103": "Block WordPress author enumeration",
     "1001104": "Block WordPress installer probe",
+    "1000001": "Block wp2shell Path",
+    "1000002": "Block wp2shell Query",
     "1001201": "Block Laravel sensitive path",
     "1001202": "Block Laravel Ignition RCE probe",
     "1001301": "Block PHP sensitive file probe",
@@ -107,6 +117,8 @@ PATH_REASON_RULES = [
     (re.compile(r"(?i)(?:^|/)xmlrpc\.php(?:$|[?])"), "Block WordPress XML-RPC"),
     (re.compile(r"(?i)(?:^|/)wp-config\.php(?:\.|$|[?])"), "Block WordPress sensitive path"),
     (re.compile(r"(?i)(?:^|/)wp-admin/(?:install|setup-config)\.php(?:$|[?])"), "Block WordPress installer probe"),
+    (re.compile(r"(?i)(?:^|/)wp-json/batch/v1(?:$|[?])"), "Block wp2shell Path"),
+    (re.compile(r"(?i)(?:[?&]rest_route=/batch/v1(?:$|&))"), "Block wp2shell Query"),
     (re.compile(r"(?i)(?:[?&]author=\d+(?:$|&))"), "Block WordPress author enumeration"),
     (re.compile(r"(?i)(?:^|/)\.env(?:\.|$|[?])|(?:^|/)\.user\.ini(?:\.|$)|(?:^|/)\.git/"), "Block PHP sensitive file probe"),
     (re.compile(r"(?i)(?:\.\./|\.\.\\|%2e%2e%2f|%252e%252e%252f)"), "Block PHP path traversal"),
