@@ -89,6 +89,7 @@ text = re.sub(r"(?ms)^# OPANEL managed ModSecurity BEGIN\n.*?^# OPANEL managed M
 block = (
     "# OPANEL managed ModSecurity BEGIN\n"
     "module mod_security {\n"
+    "    modsecurity             on\n"
     "    ls_enabled              1\n"
     "}\n"
     "# OPANEL managed ModSecurity END\n\n"
@@ -1300,6 +1301,16 @@ for raw in open(sys.argv[1], encoding="utf-8", errors="ignore"):
     try:
         value = str(ipaddress.ip_network(line, strict=False))
     except ValueError:
+        continue
+    network = ipaddress.ip_network(value, strict=False)
+    if (
+        network.is_loopback
+        or network.is_private
+        or network.is_link_local
+        or network.is_multicast
+        or network.is_reserved
+        or network.is_unspecified
+    ):
         continue
     if value not in seen:
         seen.add(value)

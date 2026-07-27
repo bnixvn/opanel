@@ -412,6 +412,7 @@ text = re.sub(r"(?ms)^# OPANEL managed ModSecurity BEGIN\n.*?^# OPANEL managed M
 block = (
     "# OPANEL managed ModSecurity BEGIN\n"
     "module mod_security {\n"
+    "    modsecurity             on\n"
     "    ls_enabled              1\n"
     "}\n"
     "# OPANEL managed ModSecurity END\n\n"
