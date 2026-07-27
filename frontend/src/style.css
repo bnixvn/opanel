@@ -924,3 +924,58 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
   .user-edit-actions button{width:100%}
   pre{font-size:12px}
 }
+
+/* WAF access logs */
+.danger-light{background:#fff;color:#dc2626;border:1px solid #fecaca}
+.danger-light:hover:not(:disabled){background:#fef2f2;color:#b91c1c;border-color:#fca5a5}
+.icon-only{width:36px;height:36px;min-height:36px;padding:0}
+.access-log-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.access-log-hero .eyebrow{margin:0 0 4px;color:#475569;font-size:12px;text-transform:uppercase;letter-spacing:0}
+.access-log-hero h1{margin:0;font-size:28px;line-height:1.15;color:#0f172a}
+.access-log-hero-actions{display:flex;gap:8px;align-items:center}
+.access-log-section{border-radius:8px;padding:14px 14px 0;overflow:hidden}
+.access-log-toolbar{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:14px;align-items:center;margin-bottom:12px}
+.access-log-title{display:flex;align-items:center;gap:8px;min-width:0}
+.access-log-title strong{font-size:15px;color:#020617;white-space:nowrap}
+.access-log-title span{display:inline-flex;align-items:center;height:28px;padding:0 9px;border:1px solid #dbe4f0;border-radius:999px;color:#64748b;background:#fff;font-size:12px;white-space:nowrap}
+.access-log-title button{height:36px;min-height:36px;padding:0 11px}
+.access-log-filters{display:grid;grid-template-columns:minmax(170px,220px) minmax(150px,220px) minmax(220px,1fr) minmax(120px,140px) auto;gap:8px;align-items:center}
+.access-log-filters input,.access-log-filters select{height:36px;min-height:36px;border-color:#d7e1ee;border-radius:7px;background:#fff}
+.access-log-filters button{height:36px;min-height:36px;padding:0 12px}
+.access-log-table-wrap{width:100%;overflow:auto;border-top:1px solid #dbe4f0}
+.access-log-table{width:100%;min-width:1120px;border-collapse:collapse;table-layout:fixed;background:#fff}
+.access-log-table th{height:42px;padding:10px;text-align:left;color:#475569;font-size:12px;text-transform:uppercase;font-weight:700;border-bottom:1px solid #dbe4f0;background:#fbfdff}
+.access-log-table td{padding:14px 10px;vertical-align:top;border-bottom:1px solid #dbe4f0;color:#020617;font-size:14px;line-height:1.35}
+.access-log-table th:nth-child(1),.access-log-table td:nth-child(1){width:84px}
+.access-log-table th:nth-child(2),.access-log-table td:nth-child(2){width:168px}
+.access-log-table th:nth-child(3),.access-log-table td:nth-child(3){width:150px}
+.access-log-table th:nth-child(4),.access-log-table td:nth-child(4){width:88px}
+.access-log-table th:nth-child(5),.access-log-table td:nth-child(5){width:440px}
+.access-log-table th:nth-child(6),.access-log-table td:nth-child(6){width:160px}
+.access-log-table th:nth-child(7),.access-log-table td:nth-child(7){width:280px}
+.access-log-table th:nth-child(8),.access-log-table td:nth-child(8){width:76px;text-align:left}
+.access-log-table td small{display:block;margin-top:3px;color:#475569;font-size:12px;line-height:1.25}
+.access-log-path{display:block;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.verdict-pill{display:inline-flex;align-items:center;height:24px;padding:0 9px;border-radius:999px;font-size:12px;line-height:1;font-weight:500;text-transform:lowercase}
+.verdict-pill.allow{background:#dcfce7;color:#15803d;border:1px solid #86efac}
+.verdict-pill.block{background:#fef2f2;color:#dc2626;border:1px solid #fecaca}
+.access-log-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;color:#64748b;font-size:13px}
+.access-log-footer .actions{justify-content:flex-end}
+@media(max-width:1180px){
+  .access-log-toolbar{grid-template-columns:1fr}
+  .access-log-filters{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .access-log-filters input{grid-column:1/-1}
+}
+@media(max-width:700px){
+  .access-log-hero{align-items:center;margin-bottom:12px}
+  .access-log-hero h1{font-size:23px}
+  .access-log-section{padding:12px 12px 0}
+  .access-log-title{flex-wrap:wrap}
+  .access-log-title strong{width:100%}
+  .access-log-filters{grid-template-columns:1fr}
+  .access-log-filters input{grid-column:auto}
+  .access-log-table{min-width:920px}
+  .access-log-table th:nth-child(5),.access-log-table td:nth-child(5){width:340px}
+  .access-log-footer{display:grid;grid-template-columns:1fr}
+  .access-log-footer .actions{display:grid;grid-template-columns:1fr 1fr}
+}

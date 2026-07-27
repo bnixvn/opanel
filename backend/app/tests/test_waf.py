@@ -54,3 +54,45 @@ def test_default_rules_do_not_scan_request_body_or_headers():
 def test_unknown_rule_ids_are_rejected():
     with pytest.raises(ValueError, match="Unknown WAF rule"):
         waf.validate_enabled_rule_ids(["joomla-sensitive-files"])
+
+
+def test_parse_access_log_line_marks_xmlrpc_403_as_blocked():
+    line = '36.67.165.162 - - [27/Jul/2026:02:03:54 +0000] "POST /xmlrpc.php HTTP/1.1" 403 441 "-" "Jetpack by WordPress.com"'
+
+    entry = waf.parse_access_log_line(line, "example.com")
+
+    assert entry["verdict"] == "block"
+    assert entry["method"] == "POST"
+    assert entry["path"] == "/xmlrpc.php"
+    assert entry["status"] == 403
+    assert entry["reason"] == "Block WordPress XML-RPC"
+
+
+def test_parse_access_log_line_marks_200_as_allowed():
+    line = '47.82.49.89 - - [27/Jul/2026:10:39:39 +0000] "GET / HTTP/1.1" 200 1200 "-" "Mozilla/5.0"'
+
+    entry = waf.parse_access_log_line(line, "example.com")
+
+    assert entry["verdict"] == "allow"
+    assert entry["reason"] == "Allowed"
+
+
+def test_access_log_report_filters_and_paginates(monkeypatch):
+    payload = "\n".join([
+        "opanel_LOG_PATH=example.com\t/var/log/openlitespeed/example.com.access.log",
+        'example.com\t47.82.49.89 - - [27/Jul/2026:10:39:39 +0000] "GET / HTTP/1.1" 200 1200 "-" "Mozilla/5.0"',
+        'example.com\t36.67.165.162 - - [27/Jul/2026:10:39:40 +0000] "POST /xmlrpc.php HTTP/1.1" 403 441 "-" "Jetpack by WordPress.com"',
+    ])
+
+    def fake_privileged(command, helper_args=None, check=False, fallback=None, **kwargs):
+        assert command == "waf-access-log-read"
+        assert helper_args == ["5000", "example.com"]
+        return waf.CommandResult(command, 0, payload, "")
+
+    monkeypatch.setattr(waf.shell, "privileged", fake_privileged)
+
+    report = waf.access_log_report(["example.com"], domain="example.com", verdict="block", limit=10)
+
+    assert report["total"] == 1
+    assert report["entries"][0]["path"] == "/xmlrpc.php"
+    assert report["entries"][0]["reason"] == "Block WordPress XML-RPC"

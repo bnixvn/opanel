@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -49,6 +49,42 @@ def get_waf_rules(current_user: User = Depends(get_current_user)):
         "default_rule_definitions": waf.default_rule_definitions(),
         "custom_rules": custom_rules.stdout,
     }
+
+
+@router.get("/access-logs")
+def get_waf_access_logs(
+    domain: str = "",
+    verdict: str = Query(default="", pattern="^(|allow|block)$"),
+    q: str = "",
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    lines: int = Query(default=5000, ge=1, le=20000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    domains = [website.domain for website in db.query(Website).order_by(Website.domain.asc()).all()]
+    try:
+        return waf.access_log_report(domains, domain=domain, verdict=verdict, query=q, limit=limit, offset=offset, lines=lines)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/access-logs")
+def clear_waf_access_logs(
+    domain: str = "",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    domains = [website.domain for website in db.query(Website).order_by(Website.domain.asc()).all()]
+    try:
+        result = waf.clear_access_logs(domains, domain=domain)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result.returncode != 0:
+        raise HTTPException(status_code=400, detail=(result.stderr or result.stdout or "Could not clear WAF access logs").strip())
+    return {**result.__dict__, "message": (result.stdout or "WAF access logs cleared.").strip()}
 
 
 @router.get("/websites/{website_id}")

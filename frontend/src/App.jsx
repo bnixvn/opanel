@@ -12,7 +12,7 @@ import 'ace-builds/src-noconflict/mode-php';
 import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
-import { Archive, Check, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, MoveRight, Network, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap } from 'lucide-react';
+import { Archive, Check, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, MoveRight, Network, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import './style.css';
 import './brand.css';
@@ -34,7 +34,7 @@ const NGINX_REWRITE_MODES = [
   { value: 'codeigniter', label: 'CodeIgniter' },
   { value: 'seohburl', label: 'SEO HB URL' },
 ];
-const SETTINGS_PAGE_KEYS = ['settings', 'security', 'php', 'firewall', 'waf', 'updates', 'services'];
+const SETTINGS_PAGE_KEYS = ['settings', 'security', 'php', 'firewall', 'waf', 'wafLogs', 'updates', 'services'];
 const PAGE_ROUTES = {
   dashboard: '/',
   websites: '/website',
@@ -49,6 +49,7 @@ const PAGE_ROUTES = {
   php: '/php',
   firewall: '/firewall',
   waf: '/waf',
+  wafLogs: '/waf-logs',
   updates: '/updates',
   services: '/services',
 };
@@ -125,6 +126,22 @@ function aceModeName(mode) {
   if (mode === 'YAML') return 'yaml';
   if (mode === 'Config') return 'ini'; // .env, .htaccess, .ini, .conf -> Ace's ini mode
   return 'text';
+}
+
+function formatLogCount(value = 0) {
+  const count = Number(value) || 0;
+  if (count >= 1000) return `${(count / 1000).toFixed(count >= 10000 ? 0 : 1)}k`;
+  return String(count);
+}
+
+function formatLogDuration(value = 0) {
+  const duration = Number(value);
+  return `${Number.isFinite(duration) ? duration : 0} ms`;
+}
+
+function csvEscape(value) {
+  const text = String(value ?? '');
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 function formatApiError(detail, fallback = 'Request failed.') {
@@ -437,6 +454,8 @@ function App() {
   const [wafCustomRules, setWafCustomRules] = useState('');
   const [selectedWafWebsiteId, setSelectedWafWebsiteId] = useState('');
   const [wafSiteConfig, setWafSiteConfig] = useState(null);
+  const [wafAccessLogs, setWafAccessLogs] = useState({ entries: [], total: 0, domains: [], limit: 50, offset: 0, paths: {} });
+  const [wafAccessFilters, setWafAccessFilters] = useState({ domain: '', verdict: '', q: '', limit: 50, offset: 0 });
   const [httpFloodForm, setHttpFloodForm] = useState({ http_flood_enabled: false, ...HTTP_FLOOD_DEFAULTS });
   const [assignUserId, setAssignUserId] = useState('');
   const [assignWebsiteId, setAssignWebsiteId] = useState('');
@@ -466,6 +485,7 @@ function App() {
   const [panelUpdating, setPanelUpdating] = useState(false);
   const [panelUpdateLog, setPanelUpdateLog] = useState([]);
   const panelUpdateInterval = useRef(null);
+  const wafAccessDefaultedRef = useRef(false);
   const [osAutoUpdate, setOsAutoUpdate] = useState({ enabled: true, mode: 'security', auto_reboot: false });
   const [panelAutoUpdate, setPanelAutoUpdate] = useState({ enabled: true, time: '03:30' });
   const noticeTimer = useRef(null);
@@ -575,6 +595,9 @@ function App() {
     setWafCustomRules('');
     setSelectedWafWebsiteId('');
     setWafSiteConfig(null);
+    setWafAccessLogs({ entries: [], total: 0, domains: [], limit: 50, offset: 0, paths: {} });
+    setWafAccessFilters({ domain: '', verdict: '', q: '', limit: 50, offset: 0 });
+    wafAccessDefaultedRef.current = false;
     setLogViewer(null);
     setNginxCustomEditing(null);
     setTerminalViewer(null);
@@ -836,6 +859,13 @@ function App() {
   useEffect(() => {
     if (!panelSslEmail && currentUser?.email) setPanelSslEmail(currentUser.email);
   }, [currentUser?.email, panelSslEmail]);
+
+  useEffect(() => {
+    if (!wafAccessDefaultedRef.current && !wafAccessFilters.domain && websites[0]?.domain) {
+      wafAccessDefaultedRef.current = true;
+      setWafAccessFilters(prev => ({ ...prev, domain: websites[0].domain }));
+    }
+  }, [websites, wafAccessFilters.domain]);
 
   async function refreshAll() {
     const refreshedUser = await loadCurrentUser();
@@ -2183,6 +2213,53 @@ function App() {
     }
   }
 
+  function setWafAccessFilter(key, value) {
+    setWafAccessFilters(prev => ({ ...prev, [key]: value, offset: 0 }));
+  }
+
+  async function loadWafAccessLogs(nextFilters = wafAccessFilters, showLoading = true) {
+    const filters = { ...wafAccessFilters, ...nextFilters };
+    const params = new URLSearchParams();
+    if (filters.domain) params.set('domain', filters.domain);
+    if (filters.verdict) params.set('verdict', filters.verdict);
+    if (filters.q) params.set('q', filters.q);
+    params.set('limit', String(filters.limit || 50));
+    params.set('offset', String(filters.offset || 0));
+    const data = await request(`/waf/access-logs?${params.toString()}`, {}, showLoading ? 'Loading access logs...' : '');
+    if (data) {
+      setWafAccessFilters(filters);
+      setWafAccessLogs(data);
+    }
+  }
+
+  function exportWafAccessLogs() {
+    const rows = wafAccessLogs.entries || [];
+    const header = ['verdict', 'time', 'site', 'method', 'path', 'ip', 'reason', 'status', 'user_agent'];
+    const csv = [
+      header.join(','),
+      ...rows.map(row => header.map(key => csvEscape(row[key])).join(',')),
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `opanel-access-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function clearWafAccessLogs() {
+    const domainLabel = wafAccessFilters.domain || 'all domains';
+    if (!confirm(`Clear WAF access logs for ${domainLabel}?`)) return;
+    const params = new URLSearchParams();
+    if (wafAccessFilters.domain) params.set('domain', wafAccessFilters.domain);
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const data = await request(`/waf/access-logs${suffix}`, { method: 'DELETE' }, 'Clearing access logs...');
+    if (data) await loadWafAccessLogs({ ...wafAccessFilters, offset: 0 }, false);
+  }
+
   async function loadUpdates(force = false) {
     const data = await request(`/updates/status${force ? '?refresh=true' : ''}`, {}, 'Loading update status...');
     if (data) setUpdatesStatus(data);
@@ -2300,6 +2377,12 @@ function App() {
   }, [isAuthenticated, page]);
 
   useEffect(() => {
+    if (isAuthenticated && isAdmin && page === 'wafLogs') {
+      loadWafAccessLogs(wafAccessFilters, false);
+    }
+  }, [isAuthenticated, isAdmin, page, wafAccessFilters.domain, wafAccessFilters.verdict, wafAccessFilters.limit]);
+
+  useEffect(() => {
     if (!currentSite) return;
     setSslMode(currentSite.ssl_mode === 'manual' ? 'manual' : 'letsencrypt');
     setManualSslForm({ certificate: '', private_key: '', ca_bundle: '' });
@@ -2377,6 +2460,7 @@ function App() {
     ...(isAdmin ? [['php', 'PHP config', Code2]] : []),
     ...(isAdmin ? [['firewall', 'Firewall', Shield]] : []),
     ...(isAdmin ? [['waf', 'WAF', Shield]] : []),
+    ...(isAdmin ? [['wafLogs', 'Access Logs', FileText]] : []),
     ...(isAdmin ? [['updates', 'Updates', RefreshCw]] : []),
     ['services', 'Services Status', Server],
   ];
@@ -3354,6 +3438,91 @@ function App() {
     </>;
   }
 
+  function renderWafAccessLogs() {
+    if (!isAdmin) return <section className="section"><h2>Access Logs</h2><p className="hint">No permission.</p></section>;
+    const entries = wafAccessLogs.entries || [];
+    const total = Number(wafAccessLogs.total || 0);
+    const limit = Number(wafAccessFilters.limit || wafAccessLogs.limit || 50);
+    const offset = Number(wafAccessFilters.offset || wafAccessLogs.offset || 0);
+    const currentPage = Math.floor(offset / limit) + 1;
+    const pageCount = Math.max(1, Math.ceil(total / limit));
+    const domains = wafAccessLogs.domains?.length ? wafAccessLogs.domains : websites.map(site => site.domain);
+    return <>
+      <section className="access-log-hero">
+        <div>
+          <p className="eyebrow">Protected Traffic</p>
+          <h1>Access Logs</h1>
+        </div>
+        <div className="access-log-hero-actions">
+          <button className="secondary-light icon-only" onClick={() => loadWafAccessLogs()} disabled={!!loading} aria-label="Refresh logs" title="Refresh logs"><RefreshCw size={16}/></button>
+          <button className="secondary-light icon-only" onClick={() => navigateToPage('waf')} aria-label="Open WAF settings" title="Open WAF settings"><ExternalLink size={16}/></button>
+        </div>
+      </section>
+      <section className="section access-log-section">
+        <div className="access-log-toolbar">
+          <div className="access-log-title">
+            <strong>Access Logs</strong>
+            <span>{formatLogCount(total)} entries</span>
+            <button className="secondary-light" onClick={exportWafAccessLogs} disabled={!entries.length}><Download size={14}/> Export</button>
+            <button className="danger-light" onClick={clearWafAccessLogs} disabled={!!loading || total === 0}><Trash2 size={14}/> Clear</button>
+          </div>
+          <div className="access-log-filters">
+            <select value={wafAccessFilters.domain} onChange={e => setWafAccessFilter('domain', e.target.value)}>
+              <option value="">All domains</option>
+              {domains.map(domain => <option key={domain} value={domain}>{domain}</option>)}
+            </select>
+            <select value={wafAccessFilters.verdict} onChange={e => setWafAccessFilter('verdict', e.target.value)}>
+              <option value="">All verdicts</option>
+              <option value="block">Blocked</option>
+              <option value="allow">Allowed</option>
+            </select>
+            <input value={wafAccessFilters.q} onChange={e => setWafAccessFilter('q', e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadWafAccessLogs(); }} placeholder="Filter logs" />
+            <select value={limit} onChange={e => loadWafAccessLogs({ ...wafAccessFilters, limit: Number(e.target.value), offset: 0 })}>
+              {[25, 50, 100, 250, 500].map(size => <option key={size} value={size}>{size} / page</option>)}
+            </select>
+            <button onClick={() => loadWafAccessLogs({ ...wafAccessFilters, offset: 0 })} disabled={!!loading}><Search size={14}/> Apply</button>
+          </div>
+        </div>
+        <div className="access-log-table-wrap">
+          <table className="access-log-table">
+            <thead>
+              <tr>
+                <th>Verdict</th>
+                <th>Time</th>
+                <th>Site</th>
+                <th>Method</th>
+                <th>Path</th>
+                <th>IP</th>
+                <th>Reason</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry, index) => <tr key={`${entry.domain}-${entry.timestamp}-${entry.ip}-${entry.path}-${index}`}>
+                <td><span className={`verdict-pill ${entry.verdict === 'block' ? 'block' : 'allow'}`}>{entry.verdict}</span></td>
+                <td><span>{entry.time || entry.timestamp || '-'}</span><small>{formatLogDuration(entry.duration_ms)}</small></td>
+                <td><span>{entry.site || entry.domain}</span><small>{entry.domain}</small></td>
+                <td>{entry.method || '-'}</td>
+                <td><span className="access-log-path">{entry.path || '-'}</span></td>
+                <td><span>{entry.ip || '-'}</span><small>{entry.country || ''}</small></td>
+                <td>{entry.reason || (entry.verdict === 'block' ? 'Blocked' : 'Allowed')}</td>
+                <td>{entry.status || '-'}</td>
+              </tr>)}
+            </tbody>
+          </table>
+          {entries.length === 0 && <EmptyState icon={Shield} message="No access log entries match the current filters." />}
+        </div>
+        <div className="access-log-footer">
+          <span>Page {currentPage} of {pageCount}</span>
+          <div className="actions">
+            <button className="secondary-light" disabled={offset <= 0 || !!loading} onClick={() => loadWafAccessLogs({ ...wafAccessFilters, offset: Math.max(0, offset - limit) })}>Previous</button>
+            <button className="secondary-light" disabled={offset + limit >= total || !!loading} onClick={() => loadWafAccessLogs({ ...wafAccessFilters, offset: offset + limit })}>Next</button>
+          </div>
+        </div>
+      </section>
+    </>;
+  }
+
   function renderUpdates() {
     if (!isAdmin) return <section className="section"><h2>Updates</h2><p className="hint">No permission.</p></section>;
     const statusText = updatesStatus?.stdout || updatesStatus?.stderr || 'Click View logs to load update logs.';
@@ -3749,6 +3918,7 @@ function App() {
     if (page === 'php') return renderPhpConfig();
     if (page === 'firewall') return renderFirewall();
     if (page === 'waf') return renderWaf();
+    if (page === 'wafLogs') return renderWafAccessLogs();
     if (page === 'updates') return renderUpdates();
     if (page === 'services') return renderServices();
     if (page === 'settings') return renderPanelSettings();

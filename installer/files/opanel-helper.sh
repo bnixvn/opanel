@@ -1590,6 +1590,44 @@ read_site_log() {
   tail -n "$lines" -- "$resolved"
 }
 
+read_waf_access_logs() {
+  local lines="$1" domain path resolved
+  shift
+  require_tail_lines "$lines"
+  [[ $# -ge 1 ]] || deny "usage: waf-access-log-read <lines> <domain>..."
+  for domain in "$@"; do
+    require_domain "$domain"
+    path="/var/log/openlitespeed/${domain}.access.log"
+    resolved=$(readlink -m "$path") || deny "cannot resolve log path"
+    case "$resolved" in
+      /var/log/openlitespeed/*) ;;
+      *) deny "log path outside /var/log/openlitespeed: $resolved" ;;
+    esac
+    printf 'opanel_LOG_PATH=%s\t%s\n' "$domain" "$resolved"
+    if [[ -f "$resolved" ]]; then
+      tail -n "$lines" -- "$resolved" | sed "s/^/${domain}\t/"
+    fi
+  done
+}
+
+clear_waf_access_logs() {
+  local domain path resolved
+  [[ $# -ge 1 ]] || deny "usage: waf-access-log-clear <domain>..."
+  for domain in "$@"; do
+    require_domain "$domain"
+    path="/var/log/openlitespeed/${domain}.access.log"
+    resolved=$(readlink -m "$path") || deny "cannot resolve log path"
+    case "$resolved" in
+      /var/log/openlitespeed/*) ;;
+      *) deny "log path outside /var/log/openlitespeed: $resolved" ;;
+    esac
+    if [[ -f "$resolved" ]]; then
+      : >"$resolved"
+    fi
+  done
+  echo "WAF access logs cleared"
+}
+
 require_managed_path() {
   local path="$1" user="${2:-}"
   local resolved first_part relative domain_part
@@ -3217,6 +3255,16 @@ PY
   site-log-read)
     [[ $# -eq 3 ]] || deny "usage: site-log-read <domain> <access|error> <lines>"
     read_site_log "$1" "$2" "$3"
+    ;;
+
+  waf-access-log-read)
+    [[ $# -ge 2 ]] || deny "usage: waf-access-log-read <lines> <domain>..."
+    read_waf_access_logs "$@"
+    ;;
+
+  waf-access-log-clear)
+    [[ $# -ge 1 ]] || deny "usage: waf-access-log-clear <domain>..."
+    clear_waf_access_logs "$@"
     ;;
 
   # ---- WP-CLI as www-data ----------------------------------------------

@@ -1,6 +1,8 @@
 import json
 import re
+from datetime import datetime, timezone
 from typing import Iterable
+from urllib.parse import unquote
 
 from app.models.entities import Website
 from app.services.shell import CommandResult, shell
@@ -9,6 +11,17 @@ from app.services.shell import CommandResult, shell
 DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 MAX_CUSTOM_BYTES = 64 * 1024
 MAX_SITE_RULE_BYTES = 160 * 1024
+MAX_ACCESS_LOG_LINES = 20000
+MAX_ACCESS_LOG_LIMIT = 500
+
+ACCESS_LOG_RE = re.compile(
+    r'^(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
+    r'"(?P<request>[^"]*)" (?P<status>\d{3}) (?P<size>\S+) '
+    r'"(?P<referer>[^"]*)" "(?P<user_agent>[^"]*)"(?: (?P<extra>.*))?$'
+)
+MODSEC_MSG_RE = re.compile(r'(?:\[msg\s+"(?P<msg1>[^"]+)"\]|msg:\'(?P<msg2>[^\']+)\')')
+MODSEC_ID_RE = re.compile(r'(?:\[id\s+"(?P<id1>\d+)"\]|id:(?P<id2>\d+))')
+BLOCK_STATUSES = {401, 403, 406, 429}
 
 DEFAULT_RULES = [
     {
@@ -78,6 +91,30 @@ LEGACY_RULE_ID_MAP = {
     "general-xss": None,
 }
 
+RULE_REASON_BY_ID = {
+    "1001101": "Block WordPress sensitive path",
+    "1001102": "Block WordPress XML-RPC",
+    "1001103": "Block WordPress author enumeration",
+    "1001104": "Block WordPress installer probe",
+    "1001201": "Block Laravel sensitive path",
+    "1001202": "Block Laravel Ignition RCE probe",
+    "1001301": "Block PHP sensitive file probe",
+    "1001302": "Block PHP path traversal",
+    "1001303": "Block PHP runtime probe",
+}
+
+PATH_REASON_RULES = [
+    (re.compile(r"(?i)(?:^|/)xmlrpc\.php(?:$|[?])"), "Block WordPress XML-RPC"),
+    (re.compile(r"(?i)(?:^|/)wp-config\.php(?:\.|$|[?])"), "Block WordPress sensitive path"),
+    (re.compile(r"(?i)(?:^|/)wp-admin/(?:install|setup-config)\.php(?:$|[?])"), "Block WordPress installer probe"),
+    (re.compile(r"(?i)(?:[?&]author=\d+(?:$|&))"), "Block WordPress author enumeration"),
+    (re.compile(r"(?i)(?:^|/)\.env(?:\.|$|[?])|(?:^|/)\.user\.ini(?:\.|$)|(?:^|/)\.git/"), "Block PHP sensitive file probe"),
+    (re.compile(r"(?i)(?:\.\./|\.\.\\|%2e%2e%2f|%252e%252e%252f)"), "Block PHP path traversal"),
+    (re.compile(r"(?i)(?:^|/)(?:c99|r57|shell|cmd|wso)\.php(?:$|[?])|/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin\.php"), "Block PHP runtime probe"),
+    (re.compile(r"(?i)(?:^|/)artisan(?:$|[?])|(?:^|/)server\.php(?:$|[?])|/storage/logs/[^?]*\.log(?:$|[?])"), "Block Laravel sensitive path"),
+    (re.compile(r"(?i)(?:^|/)_ignition/execute-solution(?:$|[?])"), "Block Laravel Ignition RCE probe"),
+]
+
 
 def _rule_ids() -> set[str]:
     return {rule["id"] for rule in DEFAULT_RULES}
@@ -97,6 +134,153 @@ def _validate_custom_rules(content: str) -> str:
     if len(value.encode("utf-8")) > MAX_CUSTOM_BYTES:
         raise ValueError("WAF custom rules must be 64 KB or smaller")
     return value.replace("\r\n", "\n").strip()
+
+
+def _validate_access_log_options(limit: int, offset: int, lines: int) -> tuple[int, int, int]:
+    try:
+        safe_limit = int(limit)
+        safe_offset = int(offset)
+        safe_lines = int(lines)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Access log options must be numbers") from exc
+    safe_limit = max(1, min(MAX_ACCESS_LOG_LIMIT, safe_limit))
+    safe_offset = max(0, safe_offset)
+    safe_lines = max(1, min(MAX_ACCESS_LOG_LINES, safe_lines))
+    return safe_limit, safe_offset, safe_lines
+
+
+def _request_parts(request: str) -> tuple[str, str, str]:
+    parts = (request or "").split()
+    if len(parts) >= 3:
+        return parts[0], parts[1], parts[2]
+    if len(parts) == 2:
+        return parts[0], parts[1], ""
+    if len(parts) == 1:
+        return "", parts[0], ""
+    return "", "", ""
+
+
+def _parse_access_time(value: str) -> tuple[str, str]:
+    try:
+        parsed = datetime.strptime(value, "%d/%b/%Y:%H:%M:%S %z")
+    except ValueError:
+        return "", value
+    return parsed.astimezone(timezone.utc).isoformat(), parsed.strftime("%b %d, %I:%M:%S %p")
+
+
+def _parse_log_payload(stdout: str) -> tuple[dict[str, str], str]:
+    paths: dict[str, str] = {}
+    content_lines = []
+    for line in (stdout or "").splitlines():
+        if line.startswith("opanel_LOG_PATH="):
+            _, _, rest = line.partition("=")
+            domain, _, path = rest.partition("\t")
+            if domain and path:
+                paths[domain] = path
+            continue
+        content_lines.append(line)
+    return paths, "\n".join(content_lines)
+
+
+def _parse_modsec_reasons(log_text: str) -> dict[tuple[str, str], str]:
+    reasons: dict[tuple[str, str], str] = {}
+    for line in (log_text or "").splitlines():
+        if "mod_security" not in line.lower() and "modsecurity" not in line.lower() and "[id " not in line and "id:" not in line:
+            continue
+        request_match = re.search(r'(?:REQUEST_URI|uri|URI|request)[:= ]+"?([^"\s]+)', line, re.IGNORECASE)
+        ip_match = re.search(r'\[client\s+(?P<ip>[^\]:]+)', line)
+        if not request_match:
+            continue
+        raw_path = request_match.group(1)
+        rule_id_match = MODSEC_ID_RE.search(line)
+        msg_match = MODSEC_MSG_RE.search(line)
+        rule_id = ""
+        if rule_id_match:
+            rule_id = rule_id_match.group("id1") or rule_id_match.group("id2") or ""
+        message = ""
+        if msg_match:
+            message = msg_match.group("msg1") or msg_match.group("msg2") or ""
+        reason = RULE_REASON_BY_ID.get(rule_id) or message
+        if not reason:
+            continue
+        key_ip = ip_match.group("ip") if ip_match else ""
+        reasons[(key_ip, raw_path)] = reason
+        reasons[("", raw_path)] = reason
+    return reasons
+
+
+def _infer_block_reason(path: str, status: int, modsec_reasons: dict[tuple[str, str], str], ip: str = "") -> str:
+    if status not in BLOCK_STATUSES:
+        return "Allowed"
+    for candidate in (path, unquote(path or "")):
+        reason = modsec_reasons.get((ip, candidate)) or modsec_reasons.get(("", candidate))
+        if reason:
+            return reason
+        for pattern, label in PATH_REASON_RULES:
+            if pattern.search(candidate or ""):
+                return label
+    if status == 429:
+        return "Rate limited"
+    return "Blocked"
+
+
+def parse_access_log_line(line: str, domain: str, modsec_reasons: dict[tuple[str, str], str] | None = None) -> dict | None:
+    match = ACCESS_LOG_RE.match(line.strip())
+    if not match:
+        return None
+    method, path, protocol = _request_parts(match.group("request"))
+    try:
+        status = int(match.group("status"))
+    except (TypeError, ValueError):
+        status = 0
+    iso_time, display_time = _parse_access_time(match.group("time"))
+    modsec_reasons = modsec_reasons or {}
+    verdict = "block" if status in BLOCK_STATUSES else "allow"
+    return {
+        "domain": domain,
+        "site": domain,
+        "verdict": verdict,
+        "timestamp": iso_time,
+        "time": display_time,
+        "ip": match.group("ip"),
+        "method": method,
+        "path": path,
+        "protocol": protocol,
+        "status": status,
+        "bytes": 0 if match.group("size") == "-" else match.group("size"),
+        "duration_ms": 0,
+        "reason": _infer_block_reason(path, status, modsec_reasons, match.group("ip")),
+        "user_agent": match.group("user_agent") or "",
+        "referer": "" if match.group("referer") == "-" else match.group("referer"),
+    }
+
+
+def _entry_matches(entry: dict, domain: str, verdict: str, query: str) -> bool:
+    if domain and entry.get("domain") != domain:
+        return False
+    if verdict and entry.get("verdict") != verdict:
+        return False
+    if not query:
+        return True
+    haystack = " ".join(
+        str(entry.get(key, ""))
+        for key in ("domain", "verdict", "ip", "method", "path", "status", "reason", "user_agent", "referer")
+    ).lower()
+    return query.lower() in haystack
+
+
+def _domains_for_log(website_domains: Iterable[str], domain: str = "") -> list[str]:
+    allowed = []
+    for item in website_domains:
+        safe = _validate_domain(str(item))
+        if safe not in allowed:
+            allowed.append(safe)
+    if domain:
+        safe_domain = _validate_domain(domain)
+        if safe_domain not in allowed:
+            raise ValueError("Domain is not managed by opanel")
+        return [safe_domain]
+    return allowed
 
 
 def _parse_enabled_rule_ids(value: str | None) -> set[str]:
@@ -232,6 +416,73 @@ def save_website_config(website: Website, enabled_rule_ids: Iterable[str], custo
     website.waf_default_rules = json.dumps(selected, ensure_ascii=True)
     website.waf_custom_rules = custom
     return sync_site_rules(website.domain, selected, custom)
+
+
+def access_log_report(
+    website_domains: Iterable[str],
+    domain: str = "",
+    verdict: str = "",
+    query: str = "",
+    limit: int = 50,
+    offset: int = 0,
+    lines: int = 5000,
+) -> dict:
+    if verdict not in {"", "allow", "block"}:
+        raise ValueError("Verdict must be allow, block, or empty")
+    safe_limit, safe_offset, safe_lines = _validate_access_log_options(limit, offset, lines)
+    domains = _domains_for_log(website_domains, domain)
+    paths: dict[str, str] = {}
+    if not domains:
+        return {
+            "entries": [],
+            "total": 0,
+            "limit": safe_limit,
+            "offset": safe_offset,
+            "domains": [],
+            "paths": {},
+            "lines": safe_lines,
+        }
+    result = shell.privileged(
+        "waf-access-log-read",
+        helper_args=[str(safe_lines), *domains],
+        check=False,
+        fallback=["bash", "-lc", "lines=\"$1\"; shift; for domain in \"$@\"; do path=\"/var/log/openlitespeed/${domain}.access.log\"; echo \"opanel_LOG_PATH=${domain}\t${path}\"; [ -f \"$path\" ] && tail -n \"$lines\" -- \"$path\" | sed \"s/^/${domain}\\t/\"; done", "opanel-waf-access-log-read", str(safe_lines), *domains],
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "Cannot read WAF access logs").strip())
+    paths, payload = _parse_log_payload(result.stdout)
+    modsec_reasons = _parse_modsec_reasons(result.stderr or "")
+    entries = []
+    for raw_line in payload.splitlines():
+        line_domain, sep, line = raw_line.partition("\t")
+        if not sep or line_domain not in domains:
+            continue
+        entry = parse_access_log_line(line, line_domain, modsec_reasons)
+        if entry and _entry_matches(entry, domain, verdict, query.strip()):
+            entries.append(entry)
+    entries.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+    total = len(entries)
+    return {
+        "entries": entries[safe_offset:safe_offset + safe_limit],
+        "total": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "domains": domains,
+        "paths": paths,
+        "lines": safe_lines,
+    }
+
+
+def clear_access_logs(website_domains: Iterable[str], domain: str = "") -> CommandResult:
+    domains = _domains_for_log(website_domains, domain)
+    if not domains:
+        return CommandResult("waf-access-log-clear", 0, "No WAF access logs to clear.", "")
+    return shell.privileged(
+        "waf-access-log-clear",
+        helper_args=domains,
+        check=False,
+        fallback=["bash", "-lc", "for domain in \"$@\"; do path=\"/var/log/openlitespeed/${domain}.access.log\"; [ -f \"$path\" ] && : >\"$path\"; done; echo WAF access logs cleared", "opanel-waf-access-log-clear", *domains],
+    )
 
 
 def status():
