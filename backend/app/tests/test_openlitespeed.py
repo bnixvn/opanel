@@ -46,6 +46,17 @@ def test_wordpress_vhost_runs_lsphp_as_site_user():
     assert "extGroup              siteuser" in rendered
 
 
+def test_wordpress_vhost_blocks_xmlrpc_before_php():
+    rendered = openlitespeed.render_vhost(
+        "example.test",
+        "/home/siteuser/example.test",
+        app_type="wordpress",
+        php_version="8.4",
+    )
+
+    assert "RewriteRule ^xmlrpc\\.php$ - [F,L]" in rendered
+
+
 def test_wordpress_vhost_includes_security_headers_when_ssl_is_enabled():
     rendered = openlitespeed.render_vhost(
         "example.test",
