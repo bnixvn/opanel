@@ -12,7 +12,7 @@ import 'ace-builds/src-noconflict/mode-php';
 import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
-import { Archive, Check, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, MoveRight, Network, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink } from 'lucide-react';
+import { Archive, Check, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, MoveRight, Network, PackageOpen, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import './style.css';
 import './brand.css';
@@ -1579,6 +1579,38 @@ function App() {
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
 
+  function isExtractableArchive(item) {
+    if (!item || item.is_dir) return false;
+    const name = String(item.name || item.path || '').toLowerCase();
+    return name.endsWith('.zip') || name.endsWith('.tar.gz') || name.endsWith('.tgz');
+  }
+
+  async function extractArchive(item) {
+    if (!isExtractableArchive(item) || !selectedWebsiteId) return;
+    const defaultDestination = parentFilePath(item.path);
+    const destination = prompt('Extract to folder:', defaultDestination);
+    if (destination === null) return;
+    const destinationPath = destination.trim();
+    const data = await request('/maintenance/files/extract', {
+      method: 'POST',
+      body: JSON.stringify({
+        website_id: Number(selectedWebsiteId),
+        archive_path: item.path,
+        destination_path: destinationPath,
+      }),
+    }, 'Starting extraction...');
+    if (data?.job_id) {
+      upsertFileJob(data);
+      setSelectedFilePaths([]);
+    }
+  }
+
+  async function extractSelectedArchive() {
+    if (selectedFilePaths.length !== 1) return;
+    const item = files.find(file => file.path === selectedFilePaths[0]);
+    await extractArchive(item);
+  }
+
   function upsertFileJob(job) {
     if (!job?.job_id) return;
     setFileJobs(prev => [job, ...prev.filter(item => item.job_id !== job.job_id)].slice(0, 6));
@@ -2988,6 +3020,9 @@ function App() {
   function renderFiles() {
     const allSelected = files.length > 0 && selectedFilePaths.length === files.length;
     const visibleFileJobs = fileJobs.filter(job => String(job.website_id) === String(selectedWebsiteId)).slice(0, 4);
+    const selectedArchive = selectedFilePaths.length === 1
+      ? files.find(item => item.path === selectedFilePaths[0] && isExtractableArchive(item))
+      : null;
     return <section className="section">
       <div className="section-title">
         <div><h2>File manager</h2></div>
@@ -3021,6 +3056,7 @@ function App() {
               <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={copySelectedFiles}><Copy size={14}/> Copy</button>
               <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={moveSelectedFiles}><MoveRight size={14}/> Move</button>
               <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={archiveSelectedFiles}><Archive size={14}/> Archive</button>
+              <button disabled={!selectedArchive || !!loading} onClick={extractSelectedArchive}><PackageOpen size={14}/> Extract</button>
               <button className="danger" disabled={selectedFilePaths.length === 0 || !!loading} onClick={deleteSelectedFiles}><Trash2 size={14}/> Delete</button>
             </div>
             {visibleFileJobs.length > 0 && <div className="file-job-list">
@@ -3046,6 +3082,7 @@ function App() {
               <span className="file-size">{item.is_dir ? 'Folder' : formatBytes(item.size)}</span>
               <div className="file-row-actions">
                 {!item.is_dir && <button className="mini secondary-light" disabled={!!loading} onClick={() => downloadFile(item.path)}><Download size={13}/></button>}
+                {isExtractableArchive(item) && <button className="mini secondary-light" disabled={!!loading} onClick={() => extractArchive(item)}><PackageOpen size={13}/> Extract</button>}
                 <button className="mini secondary-light" disabled={!!loading} onClick={() => renameFileItem(item)}>Rename</button>
               </div>
             </div>)}
