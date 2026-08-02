@@ -576,7 +576,7 @@ install_panel_runtime() {
     _pcert="$(env_get PANEL_SSL_CERT)"; _pkey="$(env_get PANEL_SSL_KEY)"
     if [[ -z "$_pcert" || -z "$_pkey" || ! -f "$_pcert" || ! -f "$_pkey" ]]; then
       log "SSL cert missing for $panel_domain — requesting Let's Encrypt certificate"
-      opanel-helper panel-ssl-install "$panel_domain" "$panel_port" "$(env_get SSL_EMAIL)" || \
+      sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper panel-ssl-install "$panel_domain" "$panel_port" "$(env_get SSL_EMAIL)" || \
         echo "WARNING: certbot failed; panel will use self-signed cert"
     fi
   fi
@@ -702,7 +702,8 @@ SERVICE
   rm -f /etc/nginx/sites-enabled/opanel.conf /etc/nginx/sites-available/opanel.conf 2>/dev/null || true
   # Refresh tools vhost (phpMyAdmin) via OLS helper — handles phpmyadmin
   # signon config, phpIniOverride, SSL, and OLS main config sync.
-  opanel-helper refresh-tools 2>/dev/null || write_tools_nginx_config
+  # Must invoke as 'opanel' user (helper enforces caller identity).
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper refresh-tools 2>/dev/null || write_tools_nginx_config
 }
 
 panel_healthcheck() {
