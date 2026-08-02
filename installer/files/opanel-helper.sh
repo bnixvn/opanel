@@ -609,6 +609,9 @@ for link in phpmyadmin.rglob('*'):
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   [[ -n "$host" ]] && sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
+  # OLS PHP runs as www-data:opanel-sites – group is opanel-sites (not www-data),
+  # so group-readable (640) won't work.  Must be world-readable (644).
+  chmod 644 /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
   ols_sync_main_config
   restart_openlitespeed 2>/dev/null || true
 }

@@ -963,7 +963,7 @@ PHP
   sed -i "s#__opanel_PMA_COOKIE_SECURE__#${pma_secure}#" /usr/share/phpmyadmin/opanel-signon.php
 
   chown root:www-data /etc/phpmyadmin/conf.d/opanel-signon.php
-  chmod 640 /etc/phpmyadmin/conf.d/opanel-signon.php
+  chmod 644 /etc/phpmyadmin/conf.d/opanel-signon.php
   chmod 644 /usr/share/phpmyadmin/opanel-signon.php
 }
 
