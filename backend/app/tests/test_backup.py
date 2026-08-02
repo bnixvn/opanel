@@ -20,19 +20,7 @@ def _site_backup(backup_root: Path) -> Path:
     return archive_path
 
 
-def test_normalized_site_backup_strips_prefix_and_database(tmp_path):
-    archive_path = _site_backup(tmp_path / "backups")
-
-    normalized = backup._normalized_site_backup(archive_path)
-    try:
-        with tarfile.open(normalized, "r:gz") as archive:
-            assert archive.getnames() == ["public_html/index.html"]
-            assert archive.extractfile("public_html/index.html").read() == b"restored"
-    finally:
-        normalized.unlink(missing_ok=True)
-
-
-def test_restore_backup_for_site_user_uses_privileged_extract(tmp_path, monkeypatch):
+def test_restore_backup_for_site_user_uses_privileged_restore(tmp_path, monkeypatch):
     backup_root = tmp_path / "backups"
     archive_path = _site_backup(backup_root)
     site_root = tmp_path / "site"
@@ -55,12 +43,11 @@ def test_restore_backup_for_site_user_uses_privileged_extract(tmp_path, monkeypa
     restored = backup.restore_backup(website, str(archive_path))
 
     assert restored == str(site_root.resolve())
-    assert [call[0] for call in calls] == ["site-file-install", "site-archive-extract", "site-file-delete"]
-    assert calls[1][1][0:5] == ["siteuser", str(site_root), calls[0][1][2], ".", "tar.gz"]
-    assert not Path(calls[0][1][3]).exists()
+    assert [call[0] for call in calls] == ["site-backup-restore"]
+    assert calls[0][1][0:3] == ["siteuser", str(site_root), str(archive_path)]
 
 
-def test_restore_helper_can_delete_staged_archive():
+def test_restore_helper_validates_and_extracts_external_backup():
     helper = (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
-    assert "site-file-delete)" in helper
-    assert "refusing to delete through a symlink" in helper
+    assert "site-backup-restore)" in helper
+    assert "backup path escapes website root" in helper
