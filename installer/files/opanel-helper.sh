@@ -566,17 +566,13 @@ refresh_tools_ols() {
 docRoot                   /usr/share/phpmyadmin/
 vhDomain                  ${host}
 enableIpGeo               0
+allowSymbolLink           1
 
 context /.well-known/acme-challenge/ {
   type                    static
   location                /var/www/opanel-acme/.well-known/acme-challenge/
   allowBrowse             1
   addDefaultCharset       off
-}
-
-context /phpmyadmin/ {
-  type                    null
-  extraHeaders            X-Frame-Options SAMEORIGIN
 }
 
 rewrite  {
@@ -593,6 +589,23 @@ phpIniOverride  {
   php_value include_path .:/usr/share/php
 }
 OLS_VHOST
+  # Replace phpMyAdmin symlinks pointing outside docRoot with actual files
+  # so OLS can serve static assets (CSS, JS) without symlink restrictions
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import pathlib, shutil
+phpmyadmin = pathlib.Path('/usr/share/phpmyadmin')
+for link in phpmyadmin.rglob('*'):
+    if link.is_symlink():
+        target = link.resolve()
+        if target.exists() and not str(target).startswith(str(phpmyadmin)):
+            link.unlink()
+            if target.is_dir():
+                shutil.copytree(str(target), str(link), symlinks=False)
+            else:
+                shutil.copy2(str(target), str(link))
+" 2>/dev/null || true
+  fi
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   [[ -n "$host" ]] && sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
