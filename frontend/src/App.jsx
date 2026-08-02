@@ -3769,9 +3769,9 @@ function App() {
             <h2>Malware Scanner (ClamAV)</h2>
             <p className="hint">
               {mwActive ? <span className="badge ok">Active</span>
-                : mwEnabled && mwInstalled ? <span className="badge warn">Enabled ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â clamd not running</span>
+                : mwEnabled && mwInstalled ? <span className="badge warn">Enabled — clamd not running</span>
                 : mwEnabled && !mwInstalled ? <span className="badge warn">Installing ClamAV...</span>
-                : mwInstalled && !mwEnabled ? <span className="badge">Installed ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â scanning disabled</span>
+                : mwInstalled && !mwEnabled ? <span className="badge">Installed — scanning disabled</span>
                 : <span className="badge">Not installed</span>}
             </p>
           </div>
@@ -4034,7 +4034,7 @@ function App() {
   if (bootstrapping) {
     return <main className="login-page">
       <section className="login-card">
-        <div className="login-brand">{renderBrandMark('login-brand-mark')}<div><p className="eyebrow">{panelSettings.app_name || 'opanel'}</p><h1>LoadingÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦</h1></div></div>
+        <div className="login-brand">{renderBrandMark('login-brand-mark')}<div><p className="eyebrow">{panelSettings.app_name || 'opanel'}</p><h1>Loading…</h1></div></div>
       </section>
     </main>;
   }

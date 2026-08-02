@@ -564,6 +564,11 @@ context /phpmyadmin/ {
   type                    null
   extraHeaders            X-Frame-Options SAMEORIGIN
 }
+
+vhssl  {
+  keyFile                 ${PANEL_SSL_KEY:-/dev/null}
+  certFile                ${PANEL_SSL_CERT:-/dev/null}
+}
 OLS_VHOST
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
@@ -3001,6 +3006,93 @@ case "$cmd" in
     target=$(require_safe_path "$root_target" "$root_target/$rel_arg")
     [[ ! -L "$target" ]] || deny "refusing to delete through a symlink: $target"
     rm -f -- "$target"
+    ;;
+
+  site-backup-restore)
+    [[ $# -eq 5 ]] || deny "usage: site-backup-restore <site-user> <site-root> <backup-path> <max-items> <max-bytes>"
+    user="$1"; root_arg="$2"; archive_arg="$3"; max_items="$4"; max_bytes="$5"
+    require_linux_user "$user"
+    [[ "$max_items" =~ ^[0-9]+$ && "$max_bytes" =~ ^[0-9]+$ ]] || deny "invalid restore limits"
+    root_target=$(require_managed_path "$root_arg" "$user")
+    backup_root="$(env_get BACKUP_ROOT)"
+    [[ -n "$backup_root" ]] || backup_root="/var/backups/opanel"
+    backup_root=$(readlink -m "$backup_root") || deny "cannot resolve backup root"
+    archive_target=$(require_safe_path "$backup_root" "$archive_arg")
+    [[ -f "$archive_target" && ! -L "$archive_target" ]] || deny "backup archive not found"
+    python3 - "$archive_target" "$root_target" "$max_items" "$max_bytes" <<'PY'
+import os
+import shutil
+import sys
+import tarfile
+
+archive_path, destination, max_items, max_bytes = sys.argv[1:]
+max_items = int(max_items)
+max_bytes = int(max_bytes)
+destination = os.path.realpath(destination)
+
+
+def normalized_name(name, has_site_prefix):
+    if "\x00" in name:
+        raise ValueError("backup contains an unsafe path")
+    name = name.replace("\\", "/")
+    if name.startswith("database/"):
+        return None
+    if has_site_prefix:
+        if name == "site" or not name.startswith("site/"):
+            return None
+        name = name[len("site/"):]
+    parts = [part for part in name.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts) or name.startswith("/"):
+        raise ValueError("backup contains an unsafe path")
+    if ":" in parts[0]:
+        raise ValueError("backup contains an absolute path")
+    return os.path.join(*parts)
+
+
+with tarfile.open(archive_path, "r:gz") as archive:
+    members = archive.getmembers()
+    has_site_prefix = any(member.name == "site" or member.name.startswith("site/") for member in members)
+    selected = []
+    total = 0
+    for member in members:
+        name = normalized_name(member.name, has_site_prefix)
+        if name is None:
+            continue
+        if member.issym() or member.islnk() or member.isdev() or not (member.isdir() or member.isfile()):
+            raise ValueError("backup links and special files are not allowed")
+        target = os.path.abspath(os.path.join(destination, name))
+        resolved = os.path.realpath(target)
+        if os.path.commonpath((destination, resolved)) != destination:
+            raise ValueError("backup path escapes website root")
+        selected.append((member, target))
+        total += member.size if member.isfile() else 0
+        if max_items and len(selected) > max_items:
+            raise ValueError("backup has too many files")
+        if max_bytes and total > max_bytes:
+            raise ValueError("backup is too large")
+
+    for member, target in selected:
+        if member.isdir():
+            if os.path.islink(target):
+                raise ValueError("backup destination contains an unsafe symlink")
+            if os.path.lexists(target) and not os.path.isdir(target):
+                os.unlink(target)
+            os.makedirs(target, exist_ok=True)
+            continue
+        parent = os.path.dirname(target)
+        os.makedirs(parent, exist_ok=True)
+        if os.path.islink(target):
+            raise ValueError("backup destination contains an unsafe symlink")
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+        source = archive.extractfile(member)
+        if source is None:
+            raise ValueError("backup entry cannot be read")
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with source, os.fdopen(descriptor, "wb") as output:
+            shutil.copyfileobj(source, output, length=1024 * 1024)
+PY
+    fix_site_tree "$root_target" "$user"
     ;;
 
   site-archive-extract)

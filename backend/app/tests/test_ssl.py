@@ -187,6 +187,13 @@ def test_panel_ssl_webroot_is_served_by_tools_vhost():
     assert "context /.well-known/acme-challenge/ {" in installer
 
 
+def test_panel_ssl_tools_vhost_includes_cert_block():
+    helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    assert "vhssl  {" in helper
+    assert "keyFile                 \${PANEL_SSL_KEY:-/dev/null}" in helper
+    assert "certFile                \${PANEL_SSL_CERT:-/dev/null}" in helper
+
+
 def test_installer_panel_ssl_uses_helper_webroot_flow():
     installer = (PROJECT_ROOT / "installer" / "install.sh").read_text(encoding="utf-8")
     assert "opanel-helper panel-ssl-install" in installer
