@@ -579,9 +579,18 @@ context /phpmyadmin/ {
   extraHeaders            X-Frame-Options SAMEORIGIN
 }
 
+rewrite  {
+  enable                  1
+  rules                   rewriteRule ^/phpmyadmin/(.*)$ /$1 [L]
+}
+
 vhssl  {
   keyFile                 ${panel_key:-/dev/null}
   certFile                ${panel_cert:-/dev/null}
+}
+
+phpIniOverride  {
+  php_value include_path .:/usr/share/php
 }
 OLS_VHOST
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
