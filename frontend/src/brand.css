@@ -74,6 +74,7 @@ h1,h2{color:var(--brand-navy)}
 .firewall-rule-actions{display:inline-flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
 .backup-job.running,.backup-job.queued{border-color:#bfdbfe;background:#f8fbff}
 .backup-job.error{border-color:#fecaca;background:#fff7f7}
+.backup-job .backup-job-time{font-size:11px;color:var(--text-muted);font-variant-numeric:tabular-nums}
 
 input,select,textarea{
   border-color:var(--border);border-radius:var(--radius-sm);min-height:40px;background:var(--surface);color:var(--text);
@@ -116,6 +117,7 @@ button:disabled,.upload-button.disabled{background:#dbe7f7;color:#7a8ca4;border-
 .backup-tabs button:hover:not(:disabled){background:var(--surface);color:var(--text-secondary)}
 .backup-tabs button.active:hover:not(:disabled){background:var(--primary-hover);color:#fff}
 .backup-tab-panel{display:grid;gap:12px;min-width:0}
+.backup-logs-panel .backup-job-list{margin-top:0}
 .backup-panel-title{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--border)}
 .backup-panel-title h3,.backup-subtitle h3{margin:0 0 3px;color:var(--brand-navy);font-size:16px;line-height:1.2}
 .backup-panel-title>button{min-width:108px;height:38px;min-height:38px}

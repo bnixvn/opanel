@@ -1718,8 +1718,8 @@ function App() {
     if (data?.items) setBackups(data.items);
   }
 
-  async function loadBackupJobs() {
-    const data = await request('/maintenance/backup-jobs');
+  async function loadBackupJobs(showLoading = false) {
+    const data = await request('/maintenance/backup-jobs', {}, showLoading ? 'Loading backup logs...' : '');
     if (data?.jobs) {
       const hasActive = data.jobs.some(job => ['queued', 'running'].includes(job.status));
       setBackupJobs(prev => {
@@ -3102,14 +3102,33 @@ function App() {
     };
     const jobTitle = job => ({ site_backup: 'Website backup', user_backup: 'Full user backup', sftp_backup: 'SFTP backup' }[job.kind] || 'Backup task');
     const jobDetail = job => job.error || job.remote_file || job.backup_file || job.message || job.status;
+    const jobTimestamp = job => {
+      const stamp = job.finished_at || job.started_at || job.created_at || '';
+      if (!stamp) return 'No timestamp';
+      const date = new Date(stamp);
+      return Number.isNaN(date.getTime()) ? stamp : new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }).format(date).replace(',', '');
+    };
     const backupTabs = isAdmin
       ? [
         ['website', 'Backup website', Globe],
         ['user', 'Backup user', Users],
         ['schedule', 'Scheduled backups', Clock],
         ['destination', 'Backup Destination', Network],
+        ['logs', 'Backup logs', FileText],
       ]
-      : [['website', 'Backup website', Globe]];
+      : [
+        ['website', 'Backup website', Globe],
+        ['logs', 'Backup logs', FileText],
+      ];
     const activeBackupTab = backupTabs.some(([id]) => id === backupTab) ? backupTab : 'website';
 
     return <section className="section backups-page">
@@ -3124,12 +3143,24 @@ function App() {
           onClick={() => setBackupTab(id)}
         ><Icon size={14}/>{label}</button>)}
       </div>
-      {backupJobs.length > 0 && <div className="backup-job-list">
-        {backupJobs.map(job => <div className={`backup-job ${job.status}`} key={job.job_id}>
-          <Clock size={14}/>
-          <span><strong>{jobTitle(job)}</strong><small>{jobDetail(job)}</small></span>
-          <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'}>{job.status}</span>
-        </div>)}
+
+      {activeBackupTab === 'logs' && <div className="backup-tab-panel backup-logs-panel">
+        <div className="backup-panel-title">
+          <div><h3>Backup logs</h3><p className="hint">Recent queued, running, completed, and failed backup tasks.</p></div>
+          <button disabled={!!loading} onClick={() => loadBackupJobs(true)}><RefreshCw size={14}/> Refresh</button>
+        </div>
+        {backupJobs.length === 0 && <EmptyState icon={FileText} message="No backup logs found." />}
+        {backupJobs.length > 0 && <div className="backup-job-list">
+          {backupJobs.map(job => <div className={`backup-job ${job.status}`} key={job.job_id}>
+            <Clock size={14}/>
+            <span>
+              <strong>{jobTitle(job)}</strong>
+              <small>{jobDetail(job)}</small>
+              <small className="backup-job-time">{jobTimestamp(job)}</small>
+            </span>
+            <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'}>{job.status}</span>
+          </div>)}
+        </div>}
       </div>}
 
       {activeBackupTab === 'website' && <div className="backup-tab-panel">
