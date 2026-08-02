@@ -229,17 +229,30 @@ for domain, _hosts, _has_ssl in sites:
         "",
     ])
 
+# Read panel TLS cert from tools vhost for the HTTPS listener default
+_tools_cert = pathlib.Path("/etc/ssl/certs/ssl-cert-snakeoil.pem")
+_tools_key = pathlib.Path("/etc/ssl/private/ssl-cert-snakeoil.key")
+if tools_conf.is_file():
+    _tc = tools_conf.read_text(encoding="utf-8", errors="replace")
+    _cm = re.search(r"(?m)^\s*certFile\s+(.+?)\s*$", _tc)
+    _km = re.search(r"(?m)^\s*keyFile\s+(.+?)\s*$", _tc)
+    if _cm and _km:
+        _cp = pathlib.Path(_cm.group(1).strip())
+        _kp = pathlib.Path(_km.group(1).strip())
+        if _cp.is_file() and _kp.is_file():
+            _tools_cert, _tools_key = _cp, _kp
+
 def listener_block(name: str, address: str, secure: bool, include_ssl_sites: bool) -> list[str]:
     lines = [f"listener {name} {{", f"    address                  {address}", f"    secure                   {1 if secure else 0}"]
     if secure:
         lines.extend([
-            "    keyFile                 /etc/ssl/private/ssl-cert-snakeoil.key",
-            "    certFile                /etc/ssl/certs/ssl-cert-snakeoil.pem",
+            f"    keyFile                 {_tools_key}",
+            f"    certFile                {_tools_cert}",
             "    certChain               1",
             "    enableSpdy              16",
             "    enableQuic              1",
         ])
-    if include_tools_vhost and not secure:
+    if include_tools_vhost:
         for host in tools_hosts:
             lines.append(f"    map                      opanel_tools {host}")
     for domain, hosts, has_ssl in sites:
