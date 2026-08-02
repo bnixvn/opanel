@@ -511,14 +511,23 @@ show_status() {
 
 show_login_info() {
   ensure_env_file
+  local panel_url password
+  panel_url="$(env_get PANEL_URL)"
+  # Read password from /root/login.txt if available
   if [[ -f /root/login.txt ]]; then
-    cat /root/login.txt
-    return 0
+    password="$(sed -n 's/^Password: //p' /root/login.txt)"
   fi
-  echo "Panel URL: $(env_get PANEL_URL)"
+  echo "Panel URL: ${panel_url:-<not set>}"
   echo "User: admin"
-  echo "Password: <not available; run opanel change-admin-password>"
-  echo "Note: /root/login.txt is missing and database password hashes cannot be reversed."
+  echo "Password: ${password:-<not available; run opanel change-admin-password>}"
+  # Refresh /root/login.txt so it stays current
+  if [[ -n "$panel_url" ]]; then
+    cat > /root/login.txt <<EOF
+Panel URL: ${panel_url}
+User: admin
+Password: ${password:-<not available>}
+EOF
+  fi
 }
 
 restart_panel_command() {
@@ -573,12 +582,12 @@ repair_firewall() {
 
 run_panel_update() {
   [[ -x /usr/local/sbin/opanel-update ]] || fail "/usr/local/sbin/opanel-update not found"
-  read -rp "Update opanel to the latest vX.Y.Z release now? [y/N]: " confirm
+  read -rp "Update opanel to the latest version now? [y/N]: " confirm
   case "$confirm" in
     y|Y|yes|YES) ;;
     *) echo "Canceled."; return 0 ;;
   esac
-  /usr/local/sbin/opanel-update --release
+  /usr/local/sbin/opanel-update
 }
 
 change_panel_ip() {
