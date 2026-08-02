@@ -538,9 +538,10 @@ schedule_panel_restart() {
 }
 
 refresh_tools_ols() {
-  local port domain host api_scheme tools_scheme pma_secure php_version
+  local port domain host api_scheme tools_scheme pma_secure php_version panel_cert panel_key
   port="$(env_get PANEL_PORT)"; port="${port:-$DEFAULT_PANEL_PORT}"
   domain="$(env_get PANEL_DOMAIN)"; host="${domain:-$(detect_ip)}"
+  panel_cert="$(env_get PANEL_SSL_CERT)"; panel_key="$(env_get PANEL_SSL_KEY)"
   php_version="${PHP_DEFAULT:-8.4}"
   api_scheme="http"; tools_scheme="http"; pma_secure="false"
   if panel_tls_enabled; then
@@ -566,8 +567,8 @@ context /phpmyadmin/ {
 }
 
 vhssl  {
-  keyFile                 ${PANEL_SSL_KEY:-/dev/null}
-  certFile                ${PANEL_SSL_CERT:-/dev/null}
+  keyFile                 ${panel_key:-/dev/null}
+  certFile                ${panel_cert:-/dev/null}
 }
 OLS_VHOST
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true

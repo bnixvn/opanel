@@ -190,8 +190,10 @@ def test_panel_ssl_webroot_is_served_by_tools_vhost():
 def test_panel_ssl_tools_vhost_includes_cert_block():
     helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
     assert "vhssl  {" in helper
-    assert "keyFile                 \${PANEL_SSL_KEY:-/dev/null}" in helper
-    assert "certFile                \${PANEL_SSL_CERT:-/dev/null}" in helper
+    assert 'panel_cert="$(env_get PANEL_SSL_CERT)"' in helper
+    assert 'panel_key="$(env_get PANEL_SSL_KEY)"' in helper
+    assert "keyFile                 ${panel_key:-/dev/null}" in helper
+    assert "certFile                ${panel_cert:-/dev/null}" in helper
 
 
 def test_installer_panel_ssl_uses_helper_webroot_flow():
