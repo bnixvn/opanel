@@ -586,7 +586,12 @@ vhssl  {
 }
 
 phpIniOverride  {
-  php_value include_path .:/usr/share/php
+  php_value               include_path .:/usr/share/php
+  php_value               upload_max_filesize 1024M
+  php_value               post_max_size 1024M
+  php_value               memory_limit 512M
+  php_value               max_execution_time 300
+  php_value               max_input_time 600
 }
 OLS_VHOST
   # Replace phpMyAdmin symlinks pointing outside docRoot with actual files
@@ -976,7 +981,7 @@ install_php_version() {
   fi
   [[ ${#available_packages[@]} -gt 0 ]] || deny "No LSPHP package found for PHP ${version}"
   apt-get install -y "${available_packages[@]}" || { echo "Failed to install LSPHP $version"; return 1; }
-  ini_dir="/usr/local/lsws/lsphp${lsphp_ver}/etc/php.d"
+  ini_dir="/usr/local/lsws/lsphp${lsphp_ver}/etc/php/${version}/mods-available"
   install -d -o root -g root -m 0755 "$ini_dir"
   cat >"${ini_dir}/99-opanel.ini" <<INI
 upload_max_filesize = 1024M
