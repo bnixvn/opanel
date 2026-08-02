@@ -571,6 +571,16 @@ install_panel_runtime() {
     env_set PANEL_SSL_KEY ""
   fi
 
+  # Auto-issue Let's Encrypt cert if domain is set but cert files are missing
+  if [[ "$panel_url" == https://* && -n "$panel_domain" ]]; then
+    _pcert="$(env_get PANEL_SSL_CERT)"; _pkey="$(env_get PANEL_SSL_KEY)"
+    if [[ -z "$_pcert" || -z "$_pkey" || ! -f "$_pcert" || ! -f "$_pkey" ]]; then
+      log "SSL cert missing for $panel_domain — requesting Let's Encrypt certificate"
+      opanel-helper panel-ssl-install "$panel_domain" "$panel_port" "$(env_get SSL_EMAIL)" || \
+        echo "WARNING: certbot failed; panel will use self-signed cert"
+    fi
+  fi
+
   remove_filebrowser_runtime
 
   getent group opanel-sites >/dev/null || groupadd --system opanel-sites
