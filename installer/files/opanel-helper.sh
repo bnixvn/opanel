@@ -45,6 +45,14 @@ MARIADB_TUNING_CONF="/etc/mysql/mariadb.conf.d/90-opanel-tuning.cnf"
 
 deny() { echo "opanel-helper: $*" >&2; exit 1; }
 
+restart_openlitespeed() {
+  if systemctl cat lshttpd.service >/dev/null 2>&1; then
+    systemctl restart lshttpd.service
+  else
+    /usr/local/lsws/bin/lswsctrl restart
+  fi
+}
+
 ensure_opanel_data_dir() {
   install -d -o opanel -g opanel -m 0750 "$opanel_DATA_DIR"
 }
@@ -561,7 +569,7 @@ OLS_VHOST
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   [[ -n "$host" ]] && sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
   ols_sync_main_config
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+  restart_openlitespeed 2>/dev/null || true
 }
 
 configure_unattended_upgrades() {
@@ -787,7 +795,7 @@ save_waf_custom_rules() {
   install -m 0644 -o root -g root "$tmp" /usr/local/lsws/conf/opanel/waf/opanel-custom.conf
   rm -f "$tmp"
   write_modsec_main_conf
-  /usr/local/lsws/bin/lswsctrl restart
+  restart_openlitespeed
   echo "WAF custom rules saved"
 }
 
@@ -813,7 +821,7 @@ save_waf_site_rules() {
   fi
   install -m 0644 -o root -g root "$tmp" "$target"
   rm -f "$tmp"
-  /usr/local/lsws/bin/lswsctrl restart
+  restart_openlitespeed
   rm -f "$backup" 2>/dev/null || true
   echo "WAF site rules saved: ${domain}"
 }
@@ -842,7 +850,7 @@ install_waf_engine() {
   write_modsec_main_conf
   ensure_ols_modsecurity_enabled
   ols_sync_main_config
-  /usr/local/lsws/bin/lswsctrl restart
+  restart_openlitespeed
   echo "WAF engine installed with opanel lightweight WordPress/Laravel/PHP rules."
 }
 
@@ -939,7 +947,7 @@ INI
   chmod 0644 "${ini_dir}/99-opanel.ini"
   install_ioncube_loader "$version"
   # Enable and start OLS (which manages lsphp)
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+  restart_openlitespeed 2>/dev/null || true
   echo "LSPHP $version installed successfully"
 }
 
@@ -1061,7 +1069,7 @@ write_php_config() {
   chown root:root "$tmp"
   chmod 0644 "$tmp"
   mv -f -- "$tmp" "$target"
-  /usr/local/lsws/bin/lswsctrl restart
+  restart_openlitespeed
   echo "PHP ${version} config updated: ${target}"
 }
 
@@ -1238,7 +1246,7 @@ save_http_flood_zones() {
     deny "HTTP flood zones cannot contain NUL bytes"
   fi
   rm -f "$tmp"
-  /usr/local/lsws/bin/lswsctrl restart
+  restart_openlitespeed
   echo "HTTP flood zones saved"
 }
 
@@ -1476,7 +1484,7 @@ renew_ssl_soon() {
     if ! openssl x509 -checkend "$seconds" -noout -in "$cert" >/dev/null 2>&1; then
       echo "Renewing certificate: ${cert_name}"
       if certbot renew --cert-name "$cert_name" --quiet --force-renewal \
-        --deploy-hook "/usr/local/lsws/bin/lswsctrl restart || true; systemctl restart opanel-api || true"; then
+        --deploy-hook "systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart || true; systemctl restart opanel-api || true"; then
         renewed=$((renewed + 1))
       else
         echo "WARNING: could not renew ${cert_name}" >&2
@@ -1487,7 +1495,7 @@ renew_ssl_soon() {
   panel_domain="$(env_get PANEL_DOMAIN)"
   copy_panel_live_certificate "$panel_domain"
   if [[ "$renewed" -gt 0 ]]; then
-    /usr/local/lsws/bin/lswsctrl restart >/dev/null 2>&1 || true
+    restart_openlitespeed >/dev/null 2>&1 || true
     systemctl restart opanel-api >/dev/null 2>&1 || true
   fi
   echo "SSL auto-renew checked ${checked} certificate(s); renewed ${renewed} certificate(s) within ${days} day(s)."
@@ -1931,7 +1939,7 @@ delete_panel_user_runtime() {
       rm -f "$pool_file"
     done
   done
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+  restart_openlitespeed 2>/dev/null || true
   crontab -r -u "$user" 2>/dev/null || true
   pkill -u "$user" 2>/dev/null || true
   userdel "$user" 2>/dev/null || true
@@ -2141,7 +2149,7 @@ retune_php_fpm_pools() {
     count=$((count + 1))
   done
   shopt -u nullglob
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+  restart_openlitespeed 2>/dev/null || true
   echo "Retuned ${count} opanel PHP-FPM pool(s)."
 }
 
@@ -2313,7 +2321,7 @@ delete_site_php_pools() {
       rm -f "$pool_file"
     done
   done
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+  restart_openlitespeed 2>/dev/null || true
 }
 
 ensure_php_pool() {
@@ -2359,7 +2367,7 @@ session.save_path = ${sess_dir}
 POOL
   chown root:root "$pool_file"
   chmod 0644 "$pool_file"
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+  restart_openlitespeed 2>/dev/null || true
 }
 
 ensure_php_runtime_dirs() {
@@ -2423,18 +2431,18 @@ case "$cmd" in
 
   # ---- web server (OpenLiteSpeed) --------------------------------------
   ols-test|nginx-test)
-    /usr/local/lsws/bin/lswsctrl restart >/dev/null 2>&1 \
+    restart_openlitespeed >/dev/null 2>&1 \
       || deny "OpenLiteSpeed configuration test failed"
     echo "OpenLiteSpeed configuration OK"
     ;;
 
   ols-reload|nginx-reload)
     ols_sync_main_config
-    exec /usr/local/lsws/bin/lswsctrl restart
+    restart_openlitespeed
     ;;
   ols-sync-main)
     ols_sync_main_config
-    /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+    restart_openlitespeed 2>/dev/null || true
     echo "OpenLiteSpeed main config synced"
     ;;
   ols-custom-write|nginx-custom-write)
@@ -2543,7 +2551,7 @@ case "$cmd" in
     chmod 2775 "$OLS_VHOSTS_DIR/$safe_domain"
     chmod 0644 "$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
     ols_sync_main_config
-    /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+    restart_openlitespeed 2>/dev/null || true
     ;;
 
   ols-vhost-delete)
@@ -2552,7 +2560,7 @@ case "$cmd" in
     require_domain "$safe_domain"
     rm -rf "$OLS_VHOSTS_DIR/$safe_domain"
     ols_sync_main_config
-    /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+    restart_openlitespeed 2>/dev/null || true
     ;;
 
   # ---- ClamAV malware scanning (optional) -------------------------------
@@ -2587,7 +2595,7 @@ case "$cmd" in
 
   waf-update)
     write_modsec_main_conf
-    /usr/local/lsws/bin/lswsctrl restart
+    restart_openlitespeed
     echo "opanel lightweight WAF rules refreshed"
     ;;
 
@@ -2730,7 +2738,7 @@ case "$cmd" in
       args+=(--register-unsafely-without-email)
     fi
     certbot "${args[@]}"
-    /usr/local/lsws/bin/lswsctrl restart
+    restart_openlitespeed
     copy_panel_live_certificate "$domain"
     echo "SSL certificate issued for ${domain}"
     ;;
@@ -2980,6 +2988,19 @@ case "$cmd" in
     install -o "$user" -g "$user" -m 0644 -- "$staged" "$tmp"
     mv -f -- "$tmp" "$target"
     rm -f -- "$staged"
+    ;;
+
+  site-file-delete)
+    [[ $# -eq 3 ]] || deny "usage: site-file-delete <site-user> <site-root> <relative-path>"
+    user="$1"; root_arg="$2"; rel_arg="$3"
+    require_linux_user "$user"
+    root_target=$(require_managed_path "$root_arg" "$user")
+    case "$rel_arg" in
+      ""|"/"|/*|".."|"../"*|*"/.."|*"/../"*) deny "unsafe relative path: $rel_arg" ;;
+    esac
+    target=$(require_safe_path "$root_target" "$root_target/$rel_arg")
+    [[ ! -L "$target" ]] || deny "refusing to delete through a symlink: $target"
+    rm -f -- "$target"
     ;;
 
   site-archive-extract)

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from jinja2 import Environment, FileSystemLoader
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -37,10 +38,21 @@ def _cleanup_failed_site(root_path: str, linux_user: str | None, delete_files: b
             pass
 
 
+def _delete_website_reservation(db: Session, website_id: int) -> None:
+    try:
+        db.rollback()
+        website = db.get(Website, website_id)
+        if website is not None:
+            db.delete(website)
+            db.commit()
+    except Exception:
+        db.rollback()
+
+
 def _ensure_default_waf_file(domain: str) -> None:
     result = waf.sync_site_rules(domain, [rule["id"] for rule in waf.DEFAULT_RULES], "")
     if result.returncode != 0:
-        raise HTTPException(status_code=400, detail=_command_error(result))
+        raise RuntimeError(_command_error(result))
 
 
 def _sync_http_flood_zones(db: Session) -> None:
@@ -268,6 +280,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
         raise HTTPException(status_code=403, detail="Website limit reached")
 
     install_wp = payload.install_wordpress and payload.app_type == "wordpress"
+    app_type_value = "wordpress" if install_wp else ("php" if payload.app_type == "wordpress" else payload.app_type)
     create_estimate_bytes = storage_quota.WORDPRESS_SITE_ESTIMATE_BYTES if install_wp else storage_quota.STATIC_SITE_ESTIMATE_BYTES
     try:
         storage_quota.enforce_user_storage_quota(db, owner, incoming_bytes=create_estimate_bytes)
@@ -279,10 +292,30 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
     if install_wp and (not payload.admin_email or not payload.admin_password):
         raise HTTPException(status_code=400, detail="admin_email and admin_password are required when install_wordpress is true")
 
+    website = Website(
+        domain=payload.domain,
+        owner_id=owner_id,
+        root_path=root_path,
+        document_root="public_html",
+        linux_user=linux_user,
+        php_version=payload.php_version,
+        app_type=app_type_value,
+        nginx_rewrite_mode="front_controller" if app_type_value == "wordpress" else "none",
+        status="provisioning",
+    )
+    db.add(website)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Domain already exists") from exc
+    db.refresh(website)
+
     if install_wp:
         try:
             db_info = mariadb.create_database(payload.domain)
         except RuntimeError as exc:
+            _delete_website_reservation(db, website.id)
             raise HTTPException(status_code=400, detail=f"Could not create MariaDB database: {exc}") from exc
         try:
             linux_user = site_users.ensure_site_runtime(payload.domain, root_path, payload.php_version, linux_user)
@@ -300,6 +333,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
         except (RuntimeError, ValueError) as exc:
             mariadb.drop_database(db_info["db_name"], db_info["db_user"])
             _cleanup_failed_site(root_path, linux_user)
+            _delete_website_reservation(db, website.id)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             _ensure_default_waf_file(payload.domain)
@@ -316,10 +350,9 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
         except (RuntimeError, ValueError) as exc:
             mariadb.drop_database(db_info["db_name"], db_info["db_user"])
             _cleanup_failed_site(root_path, linux_user)
+            _delete_website_reservation(db, website.id)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        app_type_value = "wordpress"
     else:
-        app_type_value = "php" if payload.app_type == "wordpress" else payload.app_type
         runtime_php_version = payload.php_version if app_type_value in {"wordpress", "php"} else None
         try:
             linux_user = site_users.ensure_site_runtime(payload.domain, root_path, runtime_php_version, linux_user)
@@ -341,21 +374,13 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
             )
         except (RuntimeError, ValueError, OSError) as exc:
             _cleanup_failed_site(root_path, linux_user)
+            _delete_website_reservation(db, website.id)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         db_info = None
 
-    website = Website(
-        domain=payload.domain,
-        owner_id=owner_id,
-        root_path=root_path,
-        document_root="public_html",
-        linux_user=linux_user,
-        php_version=payload.php_version,
-        app_type=app_type_value,
-        nginx_rewrite_mode="front_controller" if app_type_value == "wordpress" else "none",
-        status="active",
-    )
-    db.add(website)
+    website.root_path = root_path
+    website.linux_user = linux_user
+    website.status = "active"
     db.commit()
     db.refresh(website)
     if db_info:

@@ -555,7 +555,7 @@ def restore_backup(payload: RestoreBackup, db: Session = Depends(get_db), curren
     website = get_owned_website(db, current_user, payload.website_id)
     try:
         path = backup.restore_backup(website, payload.backup_file)
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if website.linux_user:
         runtime_php_version = website.php_version if (website.app_type or "wordpress") in {"wordpress", "php"} else None

@@ -3,7 +3,7 @@ from io import StringIO
 import hashlib
 import json
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import posixpath
 import re
 import secrets
@@ -27,6 +27,8 @@ from app.services.shell import shell
 logger = logging.getLogger("opanel.backup")
 
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
+SITE_RESTORE_MAX_ITEMS = 200000
+SITE_RESTORE_MAX_BYTES = 20 * 1024 * 1024 * 1024
 BACKUP_MANIFEST = "manifest.json"
 PANEL_USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,64}$")
 
@@ -554,9 +556,77 @@ def save_uploaded_user_backup(filename: str, source_file) -> str:
     return str(target)
 
 
+def _normalized_site_backup(archive: Path) -> Path:
+    with tempfile.NamedTemporaryFile(prefix="opanel-upload-", suffix=".tar.gz", dir="/tmp", delete=False) as staged:
+        staged_path = Path(staged.name)
+    try:
+        with tarfile.open(archive, "r:gz") as source_tar, tarfile.open(staged_path, "w:gz") as target_tar:
+            members = list(source_tar.getmembers())
+            has_site_prefix = any(member.name == "site" or member.name.startswith("site/") for member in members)
+            for member in members:
+                name = member.name.replace("\\", "/")
+                if name == "database" or name.startswith("database/"):
+                    continue
+                if member.issym() or member.islnk() or member.isdev():
+                    raise ValueError("Backup archive contains unsupported links or devices")
+                if has_site_prefix:
+                    if name == "site" or not name.startswith("site/"):
+                        continue
+                    name = name[len("site/"):]
+                normalized = PurePosixPath(name)
+                if not name or normalized.is_absolute() or ".." in normalized.parts:
+                    raise ValueError("Backup archive contains unsafe paths")
+                member.name = normalized.as_posix()
+                source = source_tar.extractfile(member) if member.isfile() else None
+                target_tar.addfile(member, source)
+    except (OSError, tarfile.TarError) as exc:
+        staged_path.unlink(missing_ok=True)
+        raise ValueError("Backup archive cannot be read") from exc
+    except Exception:
+        staged_path.unlink(missing_ok=True)
+        raise
+    return staged_path
+
+
+def _restore_managed_site_backup(website: Website, archive: Path, destination: Path) -> str:
+    if settings.command_dry_run:
+        return str(destination)
+    staged_path = _normalized_site_backup(archive)
+    archive_name = f".opanel-restore-{secrets.token_hex(8)}.tar.gz"
+    try:
+        shell.privileged(
+            "site-file-install",
+            helper_args=[website.linux_user, website.root_path, archive_name, str(staged_path)],
+        )
+        shell.privileged(
+            "site-archive-extract",
+            helper_args=[
+                website.linux_user,
+                website.root_path,
+                archive_name,
+                ".",
+                "tar.gz",
+                str(SITE_RESTORE_MAX_ITEMS),
+                str(SITE_RESTORE_MAX_BYTES),
+            ],
+        )
+    finally:
+        shell.privileged(
+            "site-file-delete",
+            helper_args=[website.linux_user, website.root_path, archive_name],
+            check=False,
+            fallback=["rm", "-f", str(destination / archive_name)],
+        )
+        staged_path.unlink(missing_ok=True)
+    return str(destination)
+
+
 def restore_backup(website: Website, backup_file: str) -> str:
     archive = backup_path(website.domain, backup_file)
     destination = Path(website.root_path).resolve()
+
+    if website.linux_user:
+        return _restore_managed_site_backup(website, archive, destination)
 
     # Single-pass extraction with PEP 706 data filter (Python 3.12+).
     # The data filter rejects path traversal, absolute paths, and unsafe

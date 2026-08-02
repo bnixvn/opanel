@@ -1147,10 +1147,14 @@ systemctl restart opanel-api
 log "Reloading OpenLiteSpeed"
 update_progress 92 "restarting" "Restarting services and reloading OpenLiteSpeed"
 migrate_nginx_wordpress_csp_worker_src
+install -d -m 0755 /etc/systemd/system/lshttpd.service.d
+printf '%s\n' '[Service]' 'PIDFile=/run/openlitespeed.pid' 'KillMode=mixed' \
+  >/etc/systemd/system/lshttpd.service.d/10-opanel.conf
+systemctl daemon-reload
 if id -u opanel >/dev/null 2>&1; then
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper ols-sync-main >/dev/null 2>&1 || true
 fi
-/usr/local/lsws/bin/lswsctrl restart
+systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart
 
 # --- Health check ----------------------------------------------------------
 log "Health check"

@@ -41,7 +41,8 @@ def update_php_ini(payload: PhpConfigUpdate) -> str:
         fallback=[
             "bash",
             "-lc",
-            "cat > /usr/local/lsws/lsphp$2/etc/php.d/99-opanel.ini && /usr/local/lsws/bin/lswsctrl restart",
+            "cat > /usr/local/lsws/lsphp$2/etc/php.d/99-opanel.ini && "
+            "(systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart)",
             "opanel-php-config-write",
             php_version,
             lsphp_ver,
@@ -308,7 +309,8 @@ def apply_php_tuning(php_version: str | None = None) -> dict:
             fallback=[
                 "bash",
                 "-lc",
-                "cat > /usr/local/lsws/lsphp$2/etc/php.d/99-opanel.ini && /usr/local/lsws/bin/lswsctrl restart",
+                "cat > /usr/local/lsws/lsphp$2/etc/php.d/99-opanel.ini && "
+                "(systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart)",
                 "opanel-php-tuning-write",
                 ver,
                 lsphp_ver,

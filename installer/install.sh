@@ -258,6 +258,13 @@ install_openlitespeed() {
   apt-get install -y openlitespeed ${lsphp_packages} ols-modsecurity || \
     apt-get install -y openlitespeed ${lsphp_packages}
   systemctl disable --now apache2 2>/dev/null || true
+  install -d -m 0755 /etc/systemd/system/lshttpd.service.d
+  cat >/etc/systemd/system/lshttpd.service.d/10-opanel.conf <<'UNIT'
+[Service]
+PIDFile=/run/openlitespeed.pid
+KillMode=mixed
+UNIT
+  systemctl daemon-reload
   systemctl enable --now lsws || true
   # Install ionCube for each LSPHP version
   for version in $PHP_VERSIONS; do
@@ -366,7 +373,7 @@ INI
     ln -sfn "/usr/local/lsws/lsphp${default_ver_no_dot}/bin/php" /usr/local/bin/php
   fi
   # Restart OLS to pick up PHP config changes
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+  systemctl restart lshttpd.service 2>/dev/null || /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
 }
 
 # configure_fastcgi_cache removed — OLS handles caching internally via LSCache module.
@@ -465,7 +472,7 @@ install_waf_engine() {
   fi
   write_modsec_main_conf
   ensure_ols_modsecurity_enabled
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+  systemctl restart lshttpd.service 2>/dev/null || /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
 }
 
 install_wp_cli() {
@@ -970,7 +977,7 @@ setup_openlitespeed() {
 
   # Configure main OLS listener for port 80/443
   write_tools_vhost_config
-  /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+  systemctl restart lshttpd.service 2>/dev/null || /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
 }
 
 setup_firewall() {

@@ -545,7 +545,8 @@ def rewrite_vhost(
             "bash", "-lc",
             "mkdir -p /usr/local/lsws/conf/opanel/vhosts/$1 && "
             "cat > /usr/local/lsws/conf/opanel/vhosts/$1/vhost.conf && "
-            "(/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)",
+            "(systemctl restart lshttpd.service 2>/dev/null || "
+            "/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)",
             "opanel-ols-vhost-write",
             safe_domain,
         ],
@@ -562,7 +563,8 @@ def remove_vhost(domain: str) -> None:
         fallback=[
             "bash", "-lc",
             "rm -rf /usr/local/lsws/conf/opanel/vhosts/$1 && "
-            "(/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)",
+            "(systemctl restart lshttpd.service 2>/dev/null || "
+            "/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)",
             "opanel-ols-vhost-delete",
             safe_domain,
         ],
@@ -765,7 +767,8 @@ def test_config() -> bool:
     """Test OLS configuration validity."""
     result = shell.privileged("ols-config-test", check=False, fallback=[
         "bash", "-lc",
-        "/usr/local/lsws/bin/lswsctrl restart 2>&1 | grep -qi 'error' && exit 1 || exit 0",
+        "systemctl restart lshttpd.service 2>/dev/null || "
+        "/usr/local/lsws/bin/lswsctrl restart 2>/dev/null",
     ])
     return result.returncode == 0
 
@@ -774,7 +777,9 @@ def reload_service() -> None:
     """Reload OpenLiteSpeed."""
     shell.privileged("ols-reload", check=False, fallback=[
         "bash", "-lc",
-        "/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || /usr/local/lsws/bin/openlitespeed restart 2>/dev/null || true",
+        "systemctl restart lshttpd.service 2>/dev/null || "
+        "/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || "
+        "/usr/local/lsws/bin/openlitespeed restart 2>/dev/null || true",
     ])
 
 
