@@ -577,7 +577,7 @@ context /.well-known/acme-challenge/ {
 
 rewrite  {
   enable                  1
-  rules                   rewriteRule ^/phpmyadmin/(.*)$ /$1 [L]
+  rules                   rewriteRule ^/phpmyadmin/(.*)$ /\$1 [L]
 }
 
 vhssl  {
@@ -2493,6 +2493,11 @@ case "$cmd" in
     ols_sync_main_config
     restart_openlitespeed 2>/dev/null || true
     echo "OpenLiteSpeed main config synced"
+    ;;
+
+  refresh-tools)
+    refresh_tools_ols
+    echo "Tools vhost (phpMyAdmin) config refreshed"
     ;;
   ols-custom-write|nginx-custom-write)
     [[ $# -eq 1 ]] || deny "usage: ols-custom-write <domain>"

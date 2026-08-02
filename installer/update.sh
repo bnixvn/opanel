@@ -700,14 +700,9 @@ SERVICE
   iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
   rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
   rm -f /etc/nginx/sites-enabled/opanel.conf /etc/nginx/sites-available/opanel.conf 2>/dev/null || true
-  write_tools_nginx_config
-  if [[ -f /usr/share/phpmyadmin/opanel-signon.php ]]; then
-    local scheme="http"
-    if [[ "$(env_get PANEL_URL)" == https://* && -n "$(env_get PANEL_SSL_CERT)" && -n "$(env_get PANEL_SSL_KEY)" ]]; then
-      scheme="https"
-    fi
-    sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${scheme}://127.0.0.1:${panel_port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php || true
-  fi
+  # Refresh tools vhost (phpMyAdmin) via OLS helper — handles phpmyadmin
+  # signon config, phpIniOverride, SSL, and OLS main config sync.
+  opanel-helper refresh-tools 2>/dev/null || write_tools_nginx_config
 }
 
 panel_healthcheck() {

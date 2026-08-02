@@ -166,7 +166,7 @@ refresh_phpmyadmin_api_base() {
 
 refresh_tools_nginx() {
   if [[ -x /usr/local/sbin/opanel-helper ]] && id -u opanel >/dev/null 2>&1; then
-    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper ols-sync-main >/dev/null 2>&1 || true
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper refresh-tools >/dev/null 2>&1 || true
   fi
 }
 
