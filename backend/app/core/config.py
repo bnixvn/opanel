@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     command_dry_run: bool = True
     allowed_origins: str = Field(default="")
     backup_root: str = "/var/backups/opanel"
+    da_backup_dir: str = "/home/admin/opanel-backups/da"
     # Legacy field kept for migration; use webserver_vhosts_dir instead
     nginx_sites_available: str = "/usr/local/lsws/conf/opanel/vhosts"
     # OpenLiteSpeed paths

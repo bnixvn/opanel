@@ -415,6 +415,9 @@ function App() {
   const [sftpTargets, setSftpTargets] = useState([]);
   const [selectedSftpTargetId, setSelectedSftpTargetId] = useState('');
   const [newSftpTarget, setNewSftpTarget] = useState({ name: '', host: '', port: 22, username: '', password: '', private_key: '', remote_path: '/backups/opanel' });
+  const [daBackups, setDaBackups] = useState([]);
+  const [daBackupDir, setDaBackupDir] = useState('');
+  const [daImportJobs, setDaImportJobs] = useState([]);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState(() => standaloneEditor?.websiteId || '');
   const [sslMode, setSslMode] = useState('letsencrypt');
   const [manualSslForm, setManualSslForm] = useState({ certificate: '', private_key: '', ca_bundle: '' });
@@ -1949,6 +1952,104 @@ function App() {
     finally { setLoading(''); }
   }
 
+  async function loadDaBackups() {
+    try {
+      setError('');
+      const res = await fetch(`${API}/maintenance/da-backups`, { credentials: 'include' });
+      const data = await res.json();
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Failed to load DA backups.')); return; }
+      setDaBackups(data.items || []);
+      setDaBackupDir(data.directory || '');
+    } catch (err) { setError('Failed to load DA backups.'); }
+  }
+
+  async function loadDaImportJobs() {
+    try {
+      setError('');
+      const res = await fetch(`${API}/maintenance/da-import/jobs`, { credentials: 'include' });
+      const data = await res.json();
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; return; }
+      setDaImportJobs(data.jobs || []);
+    } catch {}
+  }
+
+  async function uploadDaBackups(selectedFiles) {
+    if (!selectedFiles || !selectedFiles.length) return;
+    try {
+      setError(''); setLoading('Uploading DA backups...');
+      const csrfToken = readCookie('opanel_csrf');
+      const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
+      const form = new FormData();
+      Array.from(selectedFiles).forEach(file => form.append('files', file));
+      const res = await fetch(`${API}/maintenance/da-backups/upload`, {
+        method: 'POST', credentials: 'include', headers, body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Upload failed.')); return; }
+      setNotice(`Uploaded ${data.items?.length || selectedFiles.length} DA backup(s).`);
+      await loadDaBackups();
+    } catch (err) { setError('DA backup upload failed.'); }
+    finally { setLoading(''); }
+  }
+
+  async function deleteDaBackup(backupFile) {
+    if (!confirm('Delete this DA backup?')) return;
+    try {
+      setError('');
+      const csrfToken = readCookie('opanel_csrf');
+      const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
+      const url = new URL(`${API}/maintenance/da-backups`, window.location.origin);
+      url.searchParams.set('backup_file', backupFile);
+      const res = await fetch(url, { method: 'DELETE', credentials: 'include', headers });
+      const data = await res.json();
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Delete failed.')); return; }
+      setNotice(`Deleted DA backup: ${data.deleted}`);
+      await loadDaBackups();
+    } catch (err) { setError('Failed to delete DA backup.'); }
+  }
+
+  async function startDaImport(backupFile) {
+    if (!confirm(`Import DirectAdmin backup "${backupFile}"?\n\nThis will create panel users, websites, databases, and configure OLS vhosts.`)) return;
+    try {
+      setError(''); setLoading('Importing DA backup...');
+      const csrfToken = readCookie('opanel_csrf');
+      const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
+      const url = new URL(`${API}/maintenance/da-import`, window.location.origin);
+      url.searchParams.set('backup_file', backupFile);
+      const res = await fetch(url, { method: 'POST', credentials: 'include', headers });
+      const data = await res.json();
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Import failed.')); return; }
+      setNotice(`DA import started: ${data.backup_file}`);
+      await loadDaImportJobs();
+      // Poll for completion
+      const pollJob = async () => {
+        let attempts = 0;
+        const maxAttempts = 120; // 2 minutes max
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const pollRes = await fetch(`${API}/maintenance/da-import/jobs/${data.job_id}`, { credentials: 'include' });
+          if (pollRes.ok) {
+            const job = await pollRes.json();
+            if (job.status === 'done') {
+              setNotice(`DA import complete: ${job.message}`);
+              await loadDaImportJobs();
+              await loadDaBackups();
+              return;
+            } else if (job.status === 'error') {
+              setError(`DA import failed: ${job.error || job.message}`);
+              await loadDaImportJobs();
+              return;
+            }
+          }
+          attempts++;
+        }
+        await loadDaImportJobs();
+      };
+      pollJob();
+    } catch (err) { setError('Failed to start DA import.'); }
+    finally { setLoading(''); }
+  }
+
   async function openPhpMyAdmin(databaseId) {
     try {
       setError(''); setLoading('Opening phpMyAdmin...');
@@ -2462,7 +2563,7 @@ function App() {
       if (!websites.length) refreshAll();
     }
     if (isAuthenticated && page === 'settings') loadPanelSettings();
-    if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); loadRestoreBackups(); }
+    if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); loadRestoreBackups(); loadDaBackups(); loadDaImportJobs(); }
   }, [isAuthenticated, page, currentUser?.role]);
 
   useEffect(() => {
@@ -3121,6 +3222,7 @@ function App() {
       ? [
         ['website', 'Backup website', Globe],
         ['user', 'Backup user', Users],
+        ['da-import', 'Import DA Backups', Download],
         ['schedule', 'Scheduled backups', Clock],
         ['destination', 'Backup Destination', Network],
         ['logs', 'Backup logs', FileText],
@@ -3242,6 +3344,48 @@ function App() {
           </div>)}
         </div>
 
+      </div>}
+
+      {isAdmin && activeBackupTab === 'da-import' && <div className="backup-tab-panel">
+        <div className="backup-panel-title">
+          <div><h3>Import DirectAdmin Backups</h3><p className="hint">Upload and import DirectAdmin user backups ({daBackupDir || '/home/admin/opanel-backups/da'}). Archives are extracted, users/websites/databases created, and OLS vhosts configured automatically.</p></div>
+          <div className="actions">
+            <button disabled={!!loading} onClick={() => { loadDaBackups(); loadDaImportJobs(); }}><RefreshCw size={14}/> Refresh</button>
+            <label className="upload-button">
+              <Upload size={14}/> Upload .tar.gz
+              <input type="file" multiple accept=".tar.gz,.tar.bz2,.tar.xz,.tar.zst,.tar,.tgz,.tbz2,.txz" onChange={e => { uploadDaBackups(e.target.files); e.target.value = ''; }} />
+            </label>
+          </div>
+        </div>
+
+        <h4 style={{margin: '1rem 0 0.5rem'}}>Archives</h4>
+        {daBackups.length === 0 && <EmptyState icon={Archive} message="No DA backup archives found. Upload a DirectAdmin backup to get started." />}
+        <div className="backup-list">
+          {daBackups.map(item => <div className="backup-item" key={item.filename}>
+            <span>{item.filename}<small>{(item.size / 1024 / 1024).toFixed(1)} MB</small></span>
+            <div className="actions">
+              <button disabled={!!loading} onClick={() => startDaImport(item.filename)}><RotateCcw size={14}/> Import</button>
+              <button className="danger" disabled={!!loading} onClick={() => deleteDaBackup(item.filename)}><Trash2 size={14}/></button>
+            </div>
+          </div>)}
+        </div>
+
+        {daImportJobs.length > 0 && <>
+          <h4 style={{margin: '1.5rem 0 0.5rem'}}>Import Jobs</h4>
+          <div className="backup-list">
+            {daImportJobs.map(job => <div className="backup-item" key={job.job_id}>
+              <span>
+                {job.backup_file}
+                <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'} style={{marginLeft: '0.5rem'}}>{job.status}</span>
+                <small>{job.message || '...'}</small>
+                {job.summary && <small style={{whiteSpace: 'pre-wrap'}}>
+                  Domains: {job.summary.imported_domains?.join(', ') || 'none'}{job.summary.databases?.length ? ` | DBs: ${job.summary.databases.length}` : ''}{job.summary.ssl_enabled_domains?.length ? ` | SSL: ${job.summary.ssl_enabled_domains.join(', ')}` : ''}
+                </small>}
+                {job.error && <small style={{color: 'var(--color-danger, #ef4444)'}}>{job.error}</small>}
+              </span>
+            </div>)}
+          </div>
+        </>}
       </div>}
 
       {isAdmin && activeBackupTab === 'schedule' && <div className="backup-tab-panel">

@@ -34,7 +34,7 @@ from app.schemas.schemas import (
     UserRestoreBackup,
     WpAction,
 )
-from app.services import backup, cron, file_manager, php, site_users, storage_quota, wordpress
+from app.services import backup, cron, da_import, file_manager, php, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -633,6 +633,164 @@ def delete_user_restore_backup(backup_file: str, request: Request, db: Session =
         raise HTTPException(status_code=404, detail="Backup not found") from exc
     log_action(db, current_user.id, "delete_user_restore_backup", "restore_folder", deleted, request=request)
     return {"deleted": deleted}
+
+
+# ---------------------------------------------------------------------------
+# DirectAdmin backup import
+# ---------------------------------------------------------------------------
+
+DA_IMPORT_JOB_LIMIT = 10
+_da_import_job_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="opanel-da-import")
+_da_import_jobs: dict[str, dict] = {}
+_da_import_jobs_lock = threading.Lock()
+
+
+def _public_da_import_job(job: dict) -> dict:
+    return {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "backup_file": job.get("backup_file", ""),
+        "message": job.get("message", ""),
+        "error": job.get("error", ""),
+        "summary": job.get("summary"),
+        "created_at": job.get("created_at", ""),
+        "started_at": job.get("started_at", ""),
+        "finished_at": job.get("finished_at", ""),
+    }
+
+
+def _set_da_import_job(job_id: str, **updates) -> None:
+    with _da_import_jobs_lock:
+        job = _da_import_jobs.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+
+
+def _remember_da_import_job(job: dict) -> dict:
+    with _da_import_jobs_lock:
+        _da_import_jobs[job["job_id"]] = job
+        if len(_da_import_jobs) > DA_IMPORT_JOB_LIMIT:
+            removable = [
+                (j.get("created_at", ""), jid)
+                for jid, j in _da_import_jobs.items()
+                if j.get("status") not in {"queued", "running"}
+            ]
+            removable.sort(key=lambda x: x[0])
+            for _, jid in removable[: len(_da_import_jobs) - DA_IMPORT_JOB_LIMIT]:
+                _da_import_jobs.pop(jid, None)
+    return _public_da_import_job(job)
+
+
+def _run_da_import_job(job_id: str, backup_file: str) -> None:
+    _set_da_import_job(job_id, status="running", started_at=datetime.utcnow().isoformat() + "Z",
+                       message="Starting DirectAdmin import...")
+    db = SessionLocal()
+    try:
+        summary = da_import.import_da_backup(backup_file, db)
+        _set_da_import_job(
+            job_id,
+            status="done",
+            summary=summary,
+            message=f"Imported {len(summary.get('imported_domains', []))} domain(s)",
+            finished_at=datetime.utcnow().isoformat() + "Z",
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("DA import job failed: job_id=%s file=%s", job_id, backup_file)
+        _set_da_import_job(
+            job_id,
+            status="error",
+            error=str(exc),
+            message="Import failed",
+            finished_at=datetime.utcnow().isoformat() + "Z",
+        )
+    finally:
+        db.close()
+
+
+@router.get("/da-backups")
+def list_da_backups(current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    return {"directory": da_import.da_backup_dir(), "items": da_import.list_da_backups()}
+
+
+@router.post("/da-backups/upload")
+def upload_da_backups(
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    if not files:
+        raise HTTPException(status_code=400, detail="No backup files uploaded")
+    items = []
+    for file in files:
+        try:
+            item = da_import.save_da_backup(file.filename or "backup.tar.gz", file.file)
+            items.append(item)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_action(db, current_user.id, "upload_da_backups", "da_backup_dir",
+               ", ".join(item["filename"] for item in items))
+    return {"directory": da_import.da_backup_dir(), "items": items}
+
+
+@router.delete("/da-backups")
+def delete_da_backup(backup_file: str, request: Request, db: Session = Depends(get_db),
+                     current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        deleted = da_import.delete_da_backup(backup_file)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Backup not found") from exc
+    log_action(db, current_user.id, "delete_da_backup", "da_backup_dir", deleted, request=request)
+    return {"deleted": deleted}
+
+
+@router.post("/da-import")
+def start_da_import(backup_file: str, request: Request, db: Session = Depends(get_db),
+                    current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    # Validate file exists
+    try:
+        da_import.list_da_backups()  # triggers dir check
+    except Exception:
+        pass
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "backup_file": backup_file,
+        "message": "Queued",
+        "error": "",
+        "summary": None,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "started_at": "",
+        "finished_at": "",
+    }
+    _remember_da_import_job(job)
+    _da_import_job_executor.submit(_run_da_import_job, job_id, backup_file)
+    log_action(db, current_user.id, "start_da_import", backup_file, request=request)
+    return _public_da_import_job(job)
+
+
+@router.get("/da-import/jobs")
+def list_da_import_jobs(current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    with _da_import_jobs_lock:
+        jobs = [_public_da_import_job(dict(j)) for j in _da_import_jobs.values()]
+    return {"jobs": sorted(jobs, key=lambda j: j.get("created_at", ""), reverse=True)}
+
+
+@router.get("/da-import/jobs/{job_id}")
+def get_da_import_job(job_id: str, current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    with _da_import_jobs_lock:
+        job = _da_import_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return _public_da_import_job(dict(job))
 
 
 @router.get("/user-backups/{user_id}")
