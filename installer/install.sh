@@ -217,7 +217,7 @@ install_base_packages() {
   echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
   echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
   apt-get update --allow-releaseinfo-change
-  apt-get install -y software-properties-common ca-certificates curl gnupg git composer mariadb-server mariadb-client redis-server openssh-server python3 python3-pip python3-venv certbot tar zip unzip openssl iptables iptables-persistent ipset acl phpmyadmin
+  apt-get install -y software-properties-common ca-certificates curl gnupg git composer mariadb-server mariadb-client redis-server openssh-server python3 python3-pip python3-venv certbot tar zip unzip openssl iptables iptables-persistent ipset acl phpmyadmin zstd
   systemctl enable --now mariadb redis-server
   systemctl enable --now ssh 2>/dev/null || systemctl enable --now sshd 2>/dev/null || true
   remove_ufw_legacy
@@ -529,6 +529,7 @@ setup_panel_user() {
   # Make the panel data dirs writable by opanel.
   install -d -o opanel -g opanel -m 0750 "$APP_DIR"
   install -d -o opanel -g opanel -m 0750 "$BACKUP_ROOT"
+  install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/da
 
   # MariaDB: create an admin user that opanel can use without password
   # (auth via a defaults-file in ~opanel/.my.cnf, mode 0600).

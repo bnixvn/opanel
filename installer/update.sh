@@ -481,6 +481,7 @@ ensure_terminal_tools() {
   command -v composer >/dev/null 2>&1 || missing+=(composer)
   command -v zip >/dev/null 2>&1 || missing+=(zip)
   command -v unzip >/dev/null 2>&1 || missing+=(unzip)
+  command -v zstd >/dev/null 2>&1 || missing+=(zstd)
   if [[ ${#missing[@]} -gt 0 ]]; then
     log "Installing terminal/file-manager tools: ${missing[*]}"
     DEBIAN_FRONTEND=noninteractive apt-get update --allow-releaseinfo-change
@@ -902,6 +903,12 @@ fi
 log "Installing direct panel runtime"
 update_progress 25 "syncing" "Syncing source into ${APP_DIR}"
 install_panel_runtime
+
+# Ensure DA backup import directory exists
+if id -u opanel >/dev/null 2>&1; then
+  log "Ensuring DirectAdmin backup import directory"
+  install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/da
+fi
 log "Configuring legacy FastCGI cache compatibility"
 configure_fastcgi_cache
 ensure_terminal_tools
@@ -1089,6 +1096,7 @@ python -m py_compile \
   app/services/file_manager.py \
   app/services/backup.py \
   app/services/backup_scheduler.py \
+  app/services/da_import.py \
   app/services/storage_quota.py \
   app/services/site_users.py \
   app/services/cron.py \
