@@ -17,6 +17,7 @@ Lightweight hosting management panel for Ubuntu 24.04, powered by **OpenLiteSpee
 - Let's Encrypt SSL via certbot (webroot mode)
 - Native file manager with upload, edit, archive, and extract support
 - Backups: archive site files + SQL, scheduled full-user backups, restore, upload, download
+- DirectAdmin backup import — upload `.tar.zst`/`.tar.gz` archives and import sites, databases, and configs
 - SFTP backup targets for off-server backup copies
 - iptables + ipset firewall manager with protected panel/web/mail defaults, blocklists, and user rules
 - Update controls for apt-based OS packages and OPanel source updates
@@ -109,6 +110,7 @@ After install, open the panel URL printed at the end of the installer. The admin
 |------|---------|
 | `/opt/opanel/` | Application source + frontend |
 | `/var/backups/opanel/` | Backup archives |
+| `/home/admin/opanel-backups/da/` | DirectAdmin backup import staging |
 | `/var/lib/opanel/` | Runtime data (firewall rules, etc.) |
 | `/usr/local/lsws/conf/opanel/` | OpenLiteSpeed vhost configs, SSL certs, ModSecurity rules |
 | `/usr/local/lsws/lsphp83/` | LSPHP 8.3 binaries and config |
@@ -154,22 +156,42 @@ Use this menu when the web panel is unavailable. It can show the saved login, sh
 
 ## Updating
 
+### Quick update (recommended)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/update.sh)
+```
+
+### With `opanel-update` (installed after first setup)
+
 ```bash
 opanel-update
 ```
 
-Or manually:
+### Pin a specific release
+
+```bash
+opanel-update --tag v1.0.46
+```
+
+Or via curl:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/update.sh) --tag v1.0.46
+```
+
+### Update from a branch
+
+```bash
+opanel-update --branch main
+```
+
+### Manual update
 
 ```bash
 cd /opt/opanel
 git pull
 bash installer/update.sh
-```
-
-To stay on a specific release:
-
-```bash
-opanel-update --tag v1.0.46
 ```
 
 If the browser still shows the old UI, do a hard refresh (Ctrl + Shift + R) or open in incognito.
