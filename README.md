@@ -80,7 +80,7 @@ chmod +x installer/install.sh installer/update.sh
 bash installer/install.sh
 ```
 
-To pin a specific tag, set `OPANEL_REF=v1.0.46` before running the script.
+To pin a specific tag, set `OPANEL_REF=v1.0.0` before running the script.
 
 ### What the installer does
 
@@ -171,13 +171,13 @@ opanel-update
 ### Pin a specific release
 
 ```bash
-opanel-update --tag v1.0.46
+opanel-update --tag v1.0.0
 ```
 
 Or via curl:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/update.sh) --tag v1.0.46
+bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/update.sh) --tag v1.0.0
 ```
 
 ### Update from a branch
