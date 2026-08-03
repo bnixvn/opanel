@@ -628,7 +628,6 @@ def _process_archive(
     password = secrets.token_urlsafe(16)
     hashed = hash_password(password)
     user = db.query(User).filter(User.username == username).first()
-    created_user = False
     if user is None:
         user = User(
             username=username,
@@ -641,7 +640,6 @@ def _process_archive(
         )
         db.add(user)
         db.flush()
-        created_user = True
         _log(f"  Created panel user: {username}")
     else:
         _log(f"  Using existing panel user: {username}")
@@ -814,6 +812,7 @@ def _process_archive(
     for key, sql_path in sql_files.items():
         if key in imported_sql_keys:
             continue
+        temp_sql = None
         try:
             temp_sql = _temporary_sql_file(sql_path)
             db_name = _normalize_db_identifier(key, key, set())
@@ -850,7 +849,6 @@ def _process_archive(
     for website in websites:
         try:
             import socket
-            import ipaddress
             server_ip = socket.gethostbyname(socket.gethostname())
             try:
                 domain_ip = socket.gethostbyname(website.domain)
@@ -859,11 +857,14 @@ def _process_archive(
             if domain_ip == server_ip:
                 try:
                     from app.services import ssl as ssl_service
-                    ssl_service.obtain_certificate(website)
-                    website.ssl_enabled = True
-                    db.commit()
-                    summary["ssl_enabled_domains"].append(website.domain)
-                    _log(f"    SSL enabled for {website.domain}")
+                    result = ssl_service.issue_ssl(website.domain, [])
+                    if result.returncode == 0:
+                        website.ssl_enabled = True
+                        db.commit()
+                        summary["ssl_enabled_domains"].append(website.domain)
+                        _log(f"    SSL enabled for {website.domain}")
+                    else:
+                        _log(f"    SSL skipped for {website.domain}: certbot returned {result.returncode}")
                 except Exception as exc:
                     _log(f"    SSL skipped for {website.domain}: {exc}")
         except Exception:
