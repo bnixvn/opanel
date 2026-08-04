@@ -269,6 +269,13 @@ def _discover_domains(root: Path) -> list[str]:
                 domain = _normalize_domain(item.name[:-5])
                 if domain and domain not in found:
                     found.append(domain)
+    # Also detect domains from nested archives in backup/ (newer DA format)
+    if backup_dir.exists():
+        for item in backup_dir.iterdir():
+            if item.is_file() and _is_archive(item):
+                domain = _normalize_domain(_strip_archive_suffix(item.name))
+                if domain and domain not in found:
+                    found.append(domain)
     domains_dir = root / "domains"
     if domains_dir.exists():
         for item in domains_dir.iterdir():
@@ -277,6 +284,43 @@ def _discover_domains(root: Path) -> list[str]:
                 if domain and domain not in found:
                     found.append(domain)
     return found
+
+
+def _extract_nested_domain_archives(root: Path) -> None:
+    """Extract nested domain archives found in backup/ directory.
+
+    Newer DirectAdmin backups store domain files as individual
+    .tar.gz/.tar.zst archives (e.g. backup/domain.com.tar.gz) instead
+    of extracted directories under domains/.
+    """
+    backup_dir = root / "backup"
+    if not backup_dir.exists():
+        return
+    domains_dir = root / "domains"
+    for item in sorted(backup_dir.iterdir()):
+        if not item.is_file() or not _is_archive(item):
+            continue
+        domain = _normalize_domain(_strip_archive_suffix(item.name))
+        if not domain:
+            continue
+        target_dir = domains_dir / domain
+        if target_dir.exists():
+            continue
+        _log(f"  Extracting nested domain archive: {item.name}")
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            _safe_extract_tar(item, target_dir)
+            # DA archives sometimes wrap content in a subdirectory; flatten if needed
+            sub_items = list(target_dir.iterdir())
+            if len(sub_items) == 1 and sub_items[0].is_dir():
+                inner = sub_items[0]
+                for child in sorted(inner.iterdir(), reverse=True):
+                    dest = target_dir / child.name
+                    shutil.move(str(child), str(dest))
+                inner.rmdir()
+        except Exception as exc:
+            _log(f"  WARNING: Failed to extract {item.name}: {exc}")
+            shutil.rmtree(target_dir, ignore_errors=True)
 
 
 def _source_for_domain(root: Path, domain: str) -> Optional[Path]:
@@ -601,6 +645,10 @@ def _process_archive(
 ) -> dict:
     """Import one DirectAdmin backup from its extracted staging directory."""
     root = _find_backup_root(extracted_dir)
+
+    # Extract nested domain archives for newer DA backup format
+    _extract_nested_domain_archives(root)
+
     domains = _discover_domains(root)
     username, email = _discover_username(root, archive_name)
 
