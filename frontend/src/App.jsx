@@ -3352,7 +3352,7 @@ function App() {
           <div className="actions">
             <button disabled={!!loading} onClick={() => { loadDaBackups(); loadDaImportJobs(); }}><RefreshCw size={14}/> Refresh</button>
             <label className="upload-button">
-              <Upload size={14}/> Upload .tar.gz
+              <Upload size={14}/> Upload archive
               <input type="file" multiple accept=".tar.gz,.tar.bz2,.tar.xz,.tar.zst,.tar,.tgz,.tbz2,.txz" onChange={e => { uploadDaBackups(e.target.files); e.target.value = ''; }} />
             </label>
           </div>

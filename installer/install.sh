@@ -318,7 +318,7 @@ install_ioncube_loader() {
   done
   # Also configure for LSPHP if target dir is provided
   if [[ -n "$ioncube_target_dir" && -d "$ioncube_target_dir" ]]; then
-    local lsphp_ini_dir="${ioncube_target_dir}/etc/php.d"
+    local lsphp_ini_dir="${ioncube_target_dir}/etc/php/${version}/mods-available"
     if [[ -d "$lsphp_ini_dir" ]]; then
       printf 'zend_extension=%s\n' "$target" >"${lsphp_ini_dir}/00-ioncube.ini"
       chown root:root "${lsphp_ini_dir}/00-ioncube.ini"
@@ -345,14 +345,13 @@ install_php() {
   for version in $PHP_VERSIONS; do
     local ver_no_dot="${version//./}"
     local lsphp_dir="/usr/local/lsws/lsphp${ver_no_dot}"
-    local ini_dir="${lsphp_dir}/etc/php.d"
+    local ini_dir="${lsphp_dir}/etc/php/${version}/mods-available"
 
     if [[ ! -d "$lsphp_dir" ]]; then
       echo "WARNING: LSPHP ${version} directory not found at ${lsphp_dir}, skipping ini config"
       continue
     fi
 
-    # Create OPanel override ini
     install -d -o root -g root -m 0755 "$ini_dir"
     cat >"${ini_dir}/99-opanel.ini" <<INI
 upload_max_filesize = 1024M
@@ -843,6 +842,27 @@ OLS
   if id -u opanel >/dev/null 2>&1 && [[ -x /usr/local/sbin/opanel-helper ]]; then
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper ols-sync-main >/dev/null 2>&1 || true
   fi
+  fix_phpmyadmin_permissions
+}
+
+
+fix_phpmyadmin_permissions() {
+  local file
+  for file in \
+    /etc/phpmyadmin/conf.d/opanel-signon.php \
+    /etc/phpmyadmin/config.inc.php \
+    /usr/share/phpmyadmin/opanel-signon.php; do
+    [[ -e "$file" ]] || continue
+    chgrp opanel-sites "$file" 2>/dev/null || true
+    chmod 0644 "$file" 2>/dev/null || true
+  done
+  for file in \
+    /etc/phpmyadmin/config-db.php \
+    /var/lib/phpmyadmin/blowfish_secret.inc.php; do
+    [[ -e "$file" ]] || continue
+    chgrp opanel-sites "$file" 2>/dev/null || true
+    chmod 0640 "$file" 2>/dev/null || true
+  done
 }
 
 
@@ -963,9 +983,10 @@ PHP
   sed -i "s#__opanel_API_BASE__#${api_scheme}://127.0.0.1:${PANEL_PORT}/api/databases/phpmyadmin-sso/#" /usr/share/phpmyadmin/opanel-signon.php
   sed -i "s#__opanel_PMA_COOKIE_SECURE__#${pma_secure}#" /usr/share/phpmyadmin/opanel-signon.php
 
-  chown root:www-data /etc/phpmyadmin/conf.d/opanel-signon.php
+  chown root:opanel-sites /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || chown root:www-data /etc/phpmyadmin/conf.d/opanel-signon.php
   chmod 644 /etc/phpmyadmin/conf.d/opanel-signon.php
   chmod 644 /usr/share/phpmyadmin/opanel-signon.php
+  fix_phpmyadmin_permissions
 }
 
 setup_openlitespeed() {

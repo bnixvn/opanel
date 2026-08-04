@@ -46,6 +46,7 @@ MARIADB_TUNING_CONF="/etc/mysql/mariadb.conf.d/90-opanel-tuning.cnf"
 deny() { echo "opanel-helper: $*" >&2; exit 1; }
 
 restart_openlitespeed() {
+  ensure_lshttpd_runtime_dir
   if systemctl cat lshttpd.service >/dev/null 2>&1; then
     systemctl restart lshttpd.service
   else
@@ -61,9 +62,8 @@ ensure_ols_conf_dir_writable() {
   ensure_sites_group
   install -d -o root -g root -m 0755 "$BLOCKLIST_DIR"
   install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /var/log/openlitespeed
-  install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /tmp/lshttpd
+  ensure_lshttpd_runtime_dir
   chmod g+s /var/log/openlitespeed 2>/dev/null || true
-  chmod g+s /tmp/lshttpd 2>/dev/null || true
   if getent group opanel >/dev/null 2>&1; then
     install -d -o root -g opanel -m 2775 "$OLS_VHOSTS_DIR"
     install -d -o root -g opanel -m 2775 "$OLS_CUSTOM_DIR"
@@ -73,6 +73,38 @@ ensure_ols_conf_dir_writable() {
     install -d -o root -g root -m 0755 "$OLS_VHOSTS_DIR"
     install -d -o root -g root -m 0755 "$OLS_CUSTOM_DIR"
   fi
+}
+
+ensure_lshttpd_runtime_dir() {
+  ensure_sites_group
+  install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /tmp/lshttpd /tmp/lshttpd/swap
+  chmod g+s /tmp/lshttpd 2>/dev/null || true
+  if [[ -d /tmp/lshttpd/swap ]]; then
+    chown -R www-data:"$opanel_SITES_GROUP" /tmp/lshttpd/swap 2>/dev/null || true
+    find /tmp/lshttpd/swap -type d -exec chmod 2775 {} + 2>/dev/null || true
+    find /tmp/lshttpd/swap -type f -exec chmod 0664 {} + 2>/dev/null || true
+  fi
+  chown www-data:"$opanel_SITES_GROUP" /tmp/lshttpd/lsphp*.sock /tmp/lshttpd/lsphp*.sock.pid 2>/dev/null || true
+  chmod 0664 /tmp/lshttpd/lsphp*.sock.pid 2>/dev/null || true
+}
+
+fix_phpmyadmin_permissions() {
+  local file
+  for file in \
+    /etc/phpmyadmin/conf.d/opanel-signon.php \
+    /etc/phpmyadmin/config.inc.php \
+    /usr/share/phpmyadmin/opanel-signon.php; do
+    [[ -e "$file" ]] || continue
+    chgrp "$opanel_SITES_GROUP" "$file" 2>/dev/null || true
+    chmod 0644 "$file" 2>/dev/null || true
+  done
+  for file in \
+    /etc/phpmyadmin/config-db.php \
+    /var/lib/phpmyadmin/blowfish_secret.inc.php; do
+    [[ -e "$file" ]] || continue
+    chgrp "$opanel_SITES_GROUP" "$file" 2>/dev/null || true
+    chmod 0640 "$file" 2>/dev/null || true
+  done
 }
 
 ols_disable_conflicting_apache() {
@@ -617,6 +649,7 @@ for link in phpmyadmin.rglob('*'):
   # OLS PHP runs as www-data:opanel-sites – group is opanel-sites (not www-data),
   # so group-readable (640) won't work.  Must be world-readable (644).
   chmod 644 /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
+  fix_phpmyadmin_permissions
   ols_sync_main_config
   restart_openlitespeed 2>/dev/null || true
 }
@@ -1038,7 +1071,7 @@ install_ioncube_loader() {
   install -m 0644 -o root -g root "$loader" "$target"
   rm -rf -- "$tmp"
 
-  for loader_ini_dir in /etc/php/"$version"/cli/conf.d /usr/local/lsws/lsphp${version//./}/etc/php.d; do
+  for loader_ini_dir in /etc/php/"$version"/cli/conf.d /usr/local/lsws/lsphp${version//./}/etc/php/"$version"/mods-available; do
     [[ -d "$loader_ini_dir" ]] || continue
     printf 'zend_extension=%s\n' "$target" >"${loader_ini_dir}/00-ioncube.ini"
     chown root:root "${loader_ini_dir}/00-ioncube.ini"
@@ -1047,7 +1080,7 @@ install_ioncube_loader() {
 
   if command -v "php${version}" >/dev/null 2>&1; then
     if ! "php${version}" -v 2>&1 | grep -qi 'ionCube'; then
-      rm -f /etc/php/"$version"/cli/conf.d/00-ioncube.ini /usr/local/lsws/lsphp${version//./}/etc/php.d/00-ioncube.ini
+      rm -f /etc/php/"$version"/cli/conf.d/00-ioncube.ini /usr/local/lsws/lsphp${version//./}/etc/php/"$version"/mods-available/00-ioncube.ini
       deny "ionCube Loader failed to load for PHP ${version}"
     fi
   fi
@@ -1075,9 +1108,9 @@ validate_php_config_file() {
         [[ "$value" =~ ^[0-9]{1,4}$ ]] || deny "invalid integer value for $key"
         (( 10#$value >= 1 && 10#$value <= 3600 )) || deny "$key out of range"
         ;;
-      max_input_vars)
+      max_input_vars|max_file_uploads)
         [[ "$value" =~ ^[0-9]{1,7}$ ]] || deny "invalid integer value for $key"
-        (( 10#$value >= 100 && 10#$value <= 1000000 )) || deny "max_input_vars out of range"
+        (( 10#$value >= 1 && 10#$value <= 1000000 )) || deny "$key out of range"
         ;;
       opcache.enable|opcache.validate_timestamps|opcache.save_comments)
         [[ "$value" == "0" || "$value" == "1" ]] || deny "invalid boolean value for $key"
@@ -1101,9 +1134,9 @@ validate_php_config_file() {
 write_php_config() {
   local version="$1" conf_dir target tmp size
   require_php_version "$version"
-  conf_dir="/usr/local/lsws/lsphp${version//./}/etc/php.d"
+  conf_dir="/usr/local/lsws/lsphp${version//./}/etc/php/${version}/mods-available"
   target="${conf_dir}/99-opanel.ini"
-  [[ -d "$conf_dir" ]] || deny "LSPHP config directory not found: $conf_dir"
+  install -d -o root -g root -m 0755 "$conf_dir"
   tmp="$(mktemp "${conf_dir}/.99-opanel.ini.XXXXXX")" || deny "cannot create temporary PHP config"
   if ! cat >"$tmp"; then
     rm -f -- "$tmp"

@@ -939,6 +939,8 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
       echo "  (warning: could not retune existing PHP-FPM pools; site refresh will retry later)"
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper mariadb-retune >/dev/null || \
       echo "  (warning: could not retune MariaDB; update will continue with existing settings)"
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper refresh-tools >/dev/null || \
+      echo "  (warning: could not refresh phpMyAdmin tools vhost; update will retry later)"
   else
     echo "  (opanel user not found; skipping helper refresh - run install.sh first)"
   fi
@@ -973,6 +975,12 @@ if id -u opanel >/dev/null 2>&1; then
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper blocklist-timer-install >/dev/null 2>&1 || true
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper blocklist-run >/dev/null 2>&1 || true
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper ols-sync-main >/dev/null 2>&1 || true
+  for php_ver in 8.3 8.4; do
+    if [[ -f "/usr/local/lsws/lsphp${php_ver//./}/etc/php.d/99-opanel.ini" ]]; then
+      sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper php-config-write "$php_ver" \
+        <"/usr/local/lsws/lsphp${php_ver//./}/etc/php.d/99-opanel.ini" >/dev/null || true
+    fi
+  done
 else
   echo "  (opanel user not found; skipping WAF install - run install.sh first)"
 fi

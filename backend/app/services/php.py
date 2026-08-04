@@ -7,6 +7,25 @@ from app.services.shell import shell
 SUPPORTED_PHP_VERSIONS = ("7.4", "8.1", "8.2", "8.3", "8.4", "8.5")
 
 
+def _lsphp_version(php_version: str) -> str:
+    return php_version.replace(".", "")
+
+
+def _lsphp_opanel_ini_path(php_version: str) -> Path:
+    lsphp_ver = _lsphp_version(php_version)
+    return Path(f"/usr/local/lsws/lsphp{lsphp_ver}/etc/php/{php_version}/mods-available/99-opanel.ini")
+
+
+def _legacy_lsphp_opanel_ini_path(php_version: str) -> Path:
+    lsphp_ver = _lsphp_version(php_version)
+    return Path(f"/usr/local/lsws/lsphp{lsphp_ver}/etc/php.d/99-opanel.ini")
+
+
+def _lsphp_litespeed_ini_path(php_version: str) -> Path:
+    lsphp_ver = _lsphp_version(php_version)
+    return Path(f"/usr/local/lsws/lsphp{lsphp_ver}/etc/php/{php_version}/litespeed/php.ini")
+
+
 def _safe_ini_value(value: str) -> str:
     if "\n" in value or "\r" in value or "\x00" in value:
         raise ValueError("Invalid PHP ini value")
@@ -27,11 +46,10 @@ def update_php_ini(payload: PhpConfigUpdate) -> str:
         f"max_execution_time = {int(payload.max_execution_time)}",
         f"max_input_time = {int(payload.max_input_time)}",
         f"max_input_vars = {int(payload.max_input_vars)}",
+        "max_file_uploads = 100",
         "",
     ])
-    # LSPHP config path: /usr/local/lsws/lsphp{ver}/etc/php.d/99-opanel.ini
-    lsphp_ver = php_version.replace(".", "")
-    target = Path(f"/usr/local/lsws/lsphp{lsphp_ver}/etc/php.d/99-opanel.ini")
+    target = _lsphp_opanel_ini_path(php_version)
     if settings.command_dry_run:
         return content
     shell.privileged(
@@ -41,11 +59,12 @@ def update_php_ini(payload: PhpConfigUpdate) -> str:
         fallback=[
             "bash",
             "-lc",
-            "cat > /usr/local/lsws/lsphp$2/etc/php.d/99-opanel.ini && "
+            "mkdir -p /usr/local/lsws/lsphp$2/etc/php/$1/mods-available && "
+            "cat > /usr/local/lsws/lsphp$2/etc/php/$1/mods-available/99-opanel.ini && "
             "(systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart)",
             "opanel-php-config-write",
             php_version,
-            lsphp_ver,
+            _lsphp_version(php_version),
         ],
     )
     return str(target)
@@ -59,6 +78,7 @@ PHP_CONFIG_KEYS = {
     "max_execution_time": "300",
     "max_input_time": "600",
     "max_input_vars": "10000",
+    "max_file_uploads": "100",
 }
 
 
@@ -87,10 +107,10 @@ def read_php_ini(php_version: str) -> dict:
         allowed = ", ".join(sorted(SUPPORTED_PHP_VERSIONS))
         raise ValueError(f"Unsupported PHP version. Allowed: {allowed}")
     values = dict(PHP_CONFIG_KEYS)
-    lsphp_ver = php_version.replace(".", "")
     for path in [
-        Path(f"/usr/local/lsws/lsphp{lsphp_ver}/etc/php.ini"),
-        Path(f"/usr/local/lsws/lsphp{lsphp_ver}/etc/php.d/99-opanel.ini"),
+        _lsphp_litespeed_ini_path(php_version),
+        _legacy_lsphp_opanel_ini_path(php_version),
+        _lsphp_opanel_ini_path(php_version),
     ]:
         if not path.exists():
             continue
@@ -105,6 +125,7 @@ def read_php_ini(php_version: str) -> dict:
     values["max_execution_time"] = int(values["max_execution_time"])
     values["max_input_time"] = int(values["max_input_time"])
     values["max_input_vars"] = int(values["max_input_vars"])
+    values["max_file_uploads"] = int(values["max_file_uploads"])
     return values
 
 
@@ -258,6 +279,7 @@ def render_php_ini(cfg: dict | None = None) -> str:
         f"max_execution_time    = {cfg['max_execution_time']}",
         f"max_input_time        = {cfg['max_input_time']}",
         f"max_input_vars        = {cfg['max_input_vars']}",
+        "max_file_uploads      = 100",
         f"upload_max_filesize   = {cfg['upload_max_filesize']}",
         f"post_max_size         = {cfg['post_max_size']}",
         f"display_errors        = {cfg['display_errors']}",
@@ -296,9 +318,7 @@ def apply_php_tuning(php_version: str | None = None) -> dict:
     versions = [php_version] if php_version else list_installed_php()
 
     for ver in versions:
-        lsphp_ver = ver.replace(".", "")
-        ini_dir = Path(f"/usr/local/lsws/lsphp{lsphp_ver}/etc/php.d")
-        target = ini_dir / "99-opanel.ini"
+        target = _lsphp_opanel_ini_path(ver)
         if settings.command_dry_run:
             targets.append(str(target))
             continue
@@ -309,11 +329,12 @@ def apply_php_tuning(php_version: str | None = None) -> dict:
             fallback=[
                 "bash",
                 "-lc",
-                "cat > /usr/local/lsws/lsphp$2/etc/php.d/99-opanel.ini && "
+                "mkdir -p /usr/local/lsws/lsphp$2/etc/php/$1/mods-available && "
+                "cat > /usr/local/lsws/lsphp$2/etc/php/$1/mods-available/99-opanel.ini && "
                 "(systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart)",
                 "opanel-php-tuning-write",
                 ver,
-                lsphp_ver,
+                _lsphp_version(ver),
             ],
         )
         targets.append(str(target))
@@ -326,8 +347,9 @@ def apply_php_tuning(php_version: str | None = None) -> dict:
 
 def read_php_tuning(php_version: str) -> dict | None:
     """Read current OPanel-generated PHP config + recommendation."""
-    lsphp_ver = php_version.replace(".", "")
-    target = Path(f"/usr/local/lsws/lsphp{lsphp_ver}/etc/php.d/99-opanel.ini")
+    target = _lsphp_opanel_ini_path(php_version)
+    if not target.exists():
+        target = _legacy_lsphp_opanel_ini_path(php_version)
     if not target.exists():
         return None
     return {

@@ -82,6 +82,27 @@ def _is_archive(path: Path) -> bool:
     return path.is_file() and any(name.endswith(suffix) for suffix in ARCHIVE_SUFFIXES)
 
 
+def _resolve_da_backup_path(backup_file: str) -> Path:
+    """Resolve a DA backup filename or path inside the configured backup dir."""
+    backup_dir = Path(settings.da_backup_dir).resolve()
+    raw = Path(backup_file or "")
+    if not raw.name:
+        raise FileNotFoundError("Backup not found")
+
+    if raw.is_absolute():
+        path = raw.resolve()
+    else:
+        if raw.name != str(raw):
+            raise FileNotFoundError("Backup not found")
+        path = (backup_dir / raw.name).resolve()
+
+    if backup_dir != path.parent:
+        raise FileNotFoundError("Backup not found")
+    if not path.exists() or not path.is_file() or not _is_archive(path):
+        raise FileNotFoundError("Backup not found")
+    return path
+
+
 def _read_key_values(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists() or not path.is_file():
@@ -172,7 +193,7 @@ def _safe_extract_tar(archive: Path, destination: Path) -> None:
         zstd = shutil.which("zstdcat") or shutil.which("zstd")
         if not zstd:
             raise DAImportError("zstd is required to extract .tar.zst backups. Install: apt install zstd")
-        args = [zstd, "-dc", str(archive)]
+        args = [zstd, str(archive)] if Path(zstd).name == "zstdcat" else [zstd, "-dc", str(archive)]
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         source_fd = proc.stdout
     else:
@@ -981,12 +1002,7 @@ def save_da_backup(filename: str, source_file) -> dict:
 
 def delete_da_backup(backup_file: str) -> str:
     """Delete a DA backup archive from the DA backup directory."""
-    backup_dir = Path(settings.da_backup_dir).resolve()
-    path = Path(backup_file).resolve()
-    if backup_dir not in path.parents:
-        raise FileNotFoundError("Backup not found")
-    if not path.exists() or not path.is_file():
-        raise FileNotFoundError("Backup not found")
+    path = _resolve_da_backup_path(backup_file)
     name = path.name
     path.unlink()
     return name
@@ -998,10 +1014,7 @@ def import_da_backup(backup_file: str, db) -> dict:
     Extracts the archive, discovers DA user/domains, creates panel user,
     websites, databases, configures OLS vhosts, and returns a summary.
     """
-    backup_dir = Path(settings.da_backup_dir).resolve()
-    path = Path(backup_file).resolve()
-    if backup_dir not in path.parents or not path.exists():
-        raise FileNotFoundError("Backup not found")
+    path = _resolve_da_backup_path(backup_file)
 
     archive_name = path.name
     _log(f"Starting DA import: {archive_name}")
