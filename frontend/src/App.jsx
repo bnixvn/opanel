@@ -523,6 +523,9 @@ function App() {
   const [editingPlan, setEditingPlan] = useState(null);
   const [editingPlanForm, setEditingPlanForm] = useState({ name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false, active: true });
   const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false });
+  // WordPress install
+  const [wpInstallTarget, setWpInstallTarget] = useState(null);
+  const [wpInstallForm, setWpInstallForm] = useState({ admin_user: 'admin', admin_email: '', admin_password: '', title: '' });
   const noticeTimer = useRef(null);
   const isAdmin = currentUser?.role === 'admin';
   const currentSite = websites.find(site => String(site.id) === String(selectedWebsiteId));
@@ -937,6 +940,7 @@ function App() {
       role: user.role || 'end_user',
       website_limit: user.website_limit ?? 5,
       storage_limit_mb: user.storage_limit_mb ?? 1024,
+      _password: '',
     });
   }
 
@@ -969,6 +973,20 @@ function App() {
       body: JSON.stringify(payload),
     }, `Updating ${editingUser.username}...`);
     if (data) {
+      // Change password if provided
+      if (editingUserForm._password && editingUserForm._password.length >= 12) {
+        const pwPayload = { password: editingUserForm._password };
+        if (editingUser.id === currentUser?.id) {
+          const currentPassword = prompt('Enter your current password to confirm:');
+          if (!currentPassword) { setNotice('User updated but password was not changed.'); cancelEditingUser(); await loadUsers(); return; }
+          pwPayload.current_password = currentPassword;
+          if (currentUser?.totp_enabled) {
+            const code = prompt('Enter your 2FA code:');
+            if (code) pwPayload.code = code.trim();
+          }
+        }
+        await request(`/users/${editingUser.id}/password`, { method: 'POST', body: JSON.stringify(pwPayload) }, `Changing password for ${editingUser.username}...`);
+      }
       setNotice(`Updated user ${data.username}.`);
       if (data.id === currentUser?.id) setCurrentUser(prev => ({ ...prev, ...data }));
       cancelEditingUser();
@@ -1109,6 +1127,25 @@ function App() {
   async function loadPlans() {
     const data = await request('/plans');
     if (Array.isArray(data)) setPlans(data);
+  }
+
+  // --- WordPress Install on existing site ---
+  function openWpInstall(site) {
+    setWpInstallTarget(site);
+    setWpInstallForm({ admin_user: 'admin', admin_email: currentUser?.email || '', admin_password: '', title: site.domain });
+  }
+
+  async function installWpOnSite() {
+    if (!wpInstallTarget) return;
+    if (!wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12) { setError('WP admin password must be at least 12 characters.'); return; }
+    const data = await request(`/maintenance/wordpress/${wpInstallTarget.id}/install`, {
+      method: 'POST', body: JSON.stringify(wpInstallForm),
+    }, `Installing WordPress on ${wpInstallTarget.domain}...`);
+    if (data?.message) {
+      setNotice(`${data.message}\nAdmin: ${data.admin_user} | Password: ${wpInstallForm.admin_password}`);
+      setWpInstallTarget(null);
+      refreshAll();
+    }
   }
 
   async function createPlan() {
@@ -3109,6 +3146,7 @@ function App() {
                 <button className="site-icon-button secondary-light" data-tooltip="Logs" title="Logs" aria-label={`View logs for ${site.domain}`} disabled={!!loading} onClick={() => openWebsiteLogs(site)}><FileText size={15}/></button>
                 <button className="site-icon-button secondary-light" data-tooltip="Terminal" title="Terminal" aria-label={`Open terminal for ${site.domain}`} disabled={!!loading} onClick={() => openWebsiteTerminal(site)}><TerminalIcon size={15}/></button>
                 <button className="site-icon-button secondary-light" data-tooltip="Settings" title="Settings" aria-label={`Edit settings for ${site.domain}`} disabled={!!loading} onClick={() => openNginxCustom(site)}><SettingsIcon size={15}/></button>
+                {site.app_type !== 'wordpress' && <button className="site-icon-button secondary-light" data-tooltip="Install WP" title="Install WordPress" aria-label={`Install WordPress on ${site.domain}`} disabled={!!loading} onClick={() => openWpInstall(site)}><Download size={15}/></button>}
                 <button className="site-icon-button danger" data-tooltip="Delete" title="Delete" aria-label={`Delete ${site.domain}`} disabled={!!loading} onClick={() => deleteWebsite(site.id)}><Trash2 size={15}/></button>
               </div>
             </div>
@@ -3947,14 +3985,6 @@ function App() {
           <button disabled={!!loading} onClick={saveOsAutoUpdate}>Save OS auto update</button>
         </div>
       </section>
-      <section className="section">
-        <h2>Auto Update Panel</h2>
-        <div className="firewall-form updates-panel-form">
-          <label><span>Enabled</span><select value={panelAutoUpdate.enabled ? 'on' : 'off'} onChange={e => setPanelAutoUpdate(prev => ({ ...prev, enabled: e.target.value === 'on' }))}><option value="on">On</option><option value="off">Off</option></select></label>
-          <label><span>Daily time</span><input value={panelAutoUpdate.time} onChange={e => setPanelAutoUpdate(prev => ({ ...prev, time: e.target.value }))} placeholder="03:30" /></label>
-          <button disabled={!!loading} onClick={savePanelAutoUpdate}>Save panel auto update</button>
-        </div>
-      </section>
     </>;
   }
 
@@ -4215,8 +4245,6 @@ function App() {
         {users.map(user => <div className="row user-row" key={user.id}>
           <div className="user-main"><strong>{user.username}</strong><small>{user.email}</small></div>
           <span className="badge">{roleLabel(user.role)}</span>
-          <span className={user.totp_enabled ? 'badge ok' : 'badge'}>{user.totp_enabled ? '2FA' : 'No 2FA'}</span>
-          <span className="user-metric"><Globe size={13}/>{user.website_limit} sites</span>
           <span className="user-metric"><HardDrive size={13}/>{storageUsageText(user)}</span>
           <div className="row-actions">
             <button className="mini secondary-light" disabled={!!loading} onClick={() => startEditingUser(user)}><Pencil size={14}/> Edit</button>
@@ -4238,7 +4266,8 @@ function App() {
                 <option value="end_user">End user</option><option value="admin">Admin</option>
               </select></label>
               <label><span>Website limit</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value }))} /></label>
-              <label><span>Storage limit (MB)</span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value }))} /></label>
+              <label><span>Disk limit (MB)</span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value }))} /></label>
+              <label><span>New password <small>(leave empty to keep)</small></span><input type="password" value={editingUserForm._password || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, _password: e.target.value }))} placeholder="Min 12 characters" /></label>
             </div>
             <div className="user-edit-actions">
               <button className="secondary-light" onClick={cancelEditingUser}>Cancel</button>
@@ -4272,18 +4301,17 @@ function App() {
           <button disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> Refresh</button>
         </div>
         <div className="token-create-form">
-          <label><span>Slug</span><input value={newPlan.slug} onChange={e => setNewPlan(prev => ({ ...prev, slug: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') }))} placeholder="starter" /></label>
-          <label><span>Name</span><input value={newPlan.name} onChange={e => setNewPlan(prev => ({ ...prev, name: e.target.value }))} placeholder="Starter Plan" /></label>
+          <label><span>Name</span><input value={newPlan.name} onChange={e => { const name = e.target.value; setNewPlan(prev => ({ ...prev, name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') })); }} placeholder="Starter" /></label>
           <label><span>Sites</span><input type="number" min="0" value={newPlan.website_limit} onChange={e => setNewPlan(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
-          <label><span>Storage MB</span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
-          <button disabled={!!loading || !newPlan.slug.trim() || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> Add</button>
+          <label><span>Disk (MB)</span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
+          <button disabled={!!loading || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> Add</button>
         </div>
         {plans.length === 0 && <p className="hint">No packages yet. Create one above.</p>}
         {plans.length > 0 && <div className="table">
           {plans.map(plan => <div className="row" key={plan.id}>
             <div className="token-info">
               <strong>{plan.name}</strong>
-              <small>Slug: {plan.slug} | {plan.website_limit} sites | {plan.storage_limit_mb} MB | PHP {plan.php_version} | {plan.app_type}{plan.auto_ssl ? ' | Auto SSL' : ''}</small>
+              <small>{plan.website_limit} site{plan.website_limit !== 1 ? 's' : ''} | {plan.storage_limit_mb >= 1024 ? `${(plan.storage_limit_mb/1024).toFixed(plan.storage_limit_mb % 1024 ? 1 : 0)} GB` : `${plan.storage_limit_mb} MB`}</small>
             </div>
             <span className={plan.active ? 'badge ok' : 'badge'}>{plan.active ? 'Active' : 'Inactive'}</span>
             <div className="row-actions">
@@ -4297,15 +4325,8 @@ function App() {
               </div>
               <div className="user-edit-grid">
                 <label><span>Name</span><input value={editingPlanForm.name} onChange={e => setEditingPlanForm(prev => ({ ...prev, name: e.target.value }))} /></label>
-                <label><span>Website limit</span><input type="number" min="0" value={editingPlanForm.website_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
-                <label><span>Storage (MB)</span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
-                <label><span>PHP Version</span><select value={editingPlanForm.php_version} onChange={e => setEditingPlanForm(prev => ({ ...prev, php_version: e.target.value }))}>
-                  {PHP_VERSION_ORDER.map(v => <option key={v} value={v}>{v}</option>)}
-                </select></label>
-                <label><span>App Type</span><select value={editingPlanForm.app_type} onChange={e => setEditingPlanForm(prev => ({ ...prev, app_type: e.target.value }))}>
-                  <option value="php">PHP</option><option value="wordpress">WordPress</option><option value="static">Static</option>
-                </select></label>
-                <label className="check-line"><input type="checkbox" checked={editingPlanForm.auto_ssl} onChange={e => setEditingPlanForm(prev => ({ ...prev, auto_ssl: e.target.checked }))} /> Auto SSL</label>
+                <label><span>Sites</span><input type="number" min="0" value={editingPlanForm.website_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
+                <label><span>Disk (MB)</span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
                 <label className="check-line"><input type="checkbox" checked={editingPlanForm.active} onChange={e => setEditingPlanForm(prev => ({ ...prev, active: e.target.checked }))} /> Active</label>
               </div>
               <div className="user-edit-actions">
@@ -4323,7 +4344,7 @@ function App() {
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>Add panel user</h2><p className="hint">Panel username is also the Linux user. Login as a user before creating websites for that account.</p></div>
+          <div><h2>Add panel user</h2><p className="hint">Panel username is also the Linux user. Select a package to auto-fill limits.</p></div>
         </div>
         <div className="user-create-card">
           <label><span>Username</span><input value={newUser.username} onChange={e => setNewUser(prev => ({ ...prev, username: e.target.value.toLowerCase() }))} placeholder="johndoe" /></label>
@@ -4332,8 +4353,20 @@ function App() {
           <label><span>Role</span><select value={newUser.role} onChange={e => setNewUser(prev => ({ ...prev, role: e.target.value }))}>
             <option value="end_user">End user</option><option value="admin">Admin</option>
           </select></label>
-          <label><span>Site limit</span><input type="number" value={newUser.website_limit} onChange={e => setNewUser(prev => ({ ...prev, website_limit: e.target.value }))} /></label>
-          <label><span>Storage MB</span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value }))} /></label>
+          <label><span>Package</span><select value={newUser._planId || ''} onChange={e => {
+            const planId = e.target.value;
+            const plan = plans.find(p => String(p.id) === planId);
+            if (plan) {
+              setNewUser(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb }));
+            } else {
+              setNewUser(prev => ({ ...prev, _planId: '' }));
+            }
+          }}>
+            <option value="">Custom</option>
+            {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} sites, {p.storage_limit_mb} MB)</option>)}
+          </select></label>
+          <label><span>Site limit</span><input type="number" value={newUser.website_limit} onChange={e => setNewUser(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
+          <label><span>Disk (MB)</span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
           <button disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> Create user</button>
         </div>
       </section>
@@ -4504,6 +4537,22 @@ function App() {
             {currentUser?.totp_enabled && <label><span>2FA code</span><input value={profileForm.code} onChange={e => setProfileForm(prev => ({ ...prev, code: e.target.value }))} placeholder="6-digit code" maxLength={6} /></label>}
             <button disabled={!!loading || !profileForm.password || profileForm.password.length < 12} onClick={changeMyPasswordFromProfile}><KeyRound size={14}/> Change password</button>
           </div>
+        </div>
+      </div>
+    </div>}
+    {wpInstallTarget && <div className="modal-overlay" onClick={() => setWpInstallTarget(null)}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Install WordPress on {wpInstallTarget.domain}</h3>
+          <button className="secondary-light" onClick={() => setWpInstallTarget(null)}><X size={16}/></button>
+        </div>
+        <div className="modal-body">
+          <p className="hint">Creates a database, downloads WordPress, configures vhost.</p>
+          <label><span>Site title</span><input value={wpInstallForm.title} onChange={e => setWpInstallForm(prev => ({ ...prev, title: e.target.value }))} /></label>
+          <label><span>Admin username</span><input value={wpInstallForm.admin_user} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_user: e.target.value }))} /></label>
+          <label><span>Admin email</span><input type="email" value={wpInstallForm.admin_email} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_email: e.target.value }))} /></label>
+          <label><span>Admin password</span><input type="password" value={wpInstallForm.admin_password} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_password: e.target.value }))} placeholder="Min 12 characters" /></label>
+          <button disabled={!!loading || !wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12} onClick={installWpOnSite} style={{marginTop:8}}><Download size={14}/> Install WordPress</button>
         </div>
       </div>
     </div>}

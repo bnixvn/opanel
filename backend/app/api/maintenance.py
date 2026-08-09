@@ -34,7 +34,7 @@ from app.schemas.schemas import (
     UserRestoreBackup,
     WpAction,
 )
-from app.services import backup, cron, da_import, file_manager, php, site_users, storage_quota, wordpress
+from app.services import backup, cron, da_import, file_manager, mariadb, openlitespeed, php, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -1126,6 +1126,68 @@ def fix_wordpress_permissions(website_id: int, db: Session = Depends(get_db), cu
     wordpress.fix_permissions(website.root_path, website.linux_user)
     log_action(db, current_user.id, "fix_permissions", website.domain, website.root_path)
     return {"message": f"Fixed permissions for {website.domain}", "root_path": website.root_path}
+
+class WpInstallRequest(BaseModel):
+    admin_user: str = "admin"
+    admin_email: str = ""
+    admin_password: str = ""
+    title: str = ""
+
+@router.post("/wordpress/{website_id}/install")
+def install_wordpress_on_site(website_id: int, payload: WpInstallRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Install WordPress on an existing website that doesn't have it yet."""
+    from pydantic import EmailStr
+    website = get_owned_website(db, current_user, website_id)
+    if not payload.admin_email:
+        payload.admin_email = f"admin@{website.domain}"
+    if not payload.admin_password or len(payload.admin_password) < 12:
+        raise HTTPException(status_code=400, detail="admin_password must be at least 12 characters")
+    if not payload.title:
+        payload.title = website.domain
+
+    # Check if WP already installed (wp-config.php exists)
+    from pathlib import Path
+    wp_config = Path(website.root_path) / (website.document_root or "public_html") / "wp-config.php"
+    if wp_config.exists():
+        raise HTTPException(status_code=400, detail="WordPress is already installed on this site")
+
+    # Create database
+    try:
+        db_info = mariadb.create_database(website.domain)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not create database: {exc}") from exc
+
+    # Install WordPress
+    try:
+        wordpress.install_wordpress(
+            website.domain, db_info, payload.title,
+            payload.admin_user, payload.admin_password, payload.admin_email,
+            website.php_version, website.linux_user, root_path=website.root_path,
+        )
+    except (RuntimeError, ValueError) as exc:
+        mariadb.drop_database(db_info["db_name"], db_info["db_user"])
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Update website app_type
+    website.app_type = "wordpress"
+    website.nginx_rewrite_mode = "front_controller"
+    db.commit()
+
+    # Rewrite vhost
+    try:
+        openlitespeed.rewrite_vhost(
+            website.domain, website.root_path,
+            app_type="wordpress", php_version=website.php_version,
+            linux_user=website.linux_user,
+            lsphp_socket_override=site_users.site_lsphp_socket(website.linux_user, website.root_path, website.php_version),
+            document_root=website.document_root or "public_html",
+            rewrite_mode="front_controller",
+        )
+    except (RuntimeError, ValueError):
+        pass
+
+    log_action(db, current_user.id, "install_wordpress", website.domain, request=request)
+    return {"message": f"WordPress installed on {website.domain}", "admin_user": payload.admin_user, "admin_password": payload.admin_password}
 
 
 @router.get("/files/jobs")
