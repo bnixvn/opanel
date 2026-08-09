@@ -1189,6 +1189,21 @@ def install_wordpress_on_site(website_id: int, payload: WpInstallRequest, reques
     log_action(db, current_user.id, "install_wordpress", website.domain, request=request)
     return {"message": f"WordPress installed on {website.domain}", "admin_user": payload.admin_user, "admin_password": payload.admin_password}
 
+@router.post("/wordpress/{website_id}/update-all")
+def update_wordpress_all(website_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Update WordPress core, plugins, and themes."""
+    website = get_owned_website(db, current_user, website_id)
+    doc_root = str(site_users.document_root(website.root_path, website.document_root or "public_html"))
+    results = {}
+    for action in ("core", "plugins", "themes"):
+        try:
+            result = wordpress.wp_update(doc_root, action, website.linux_user)
+            results[action] = (result.stdout or result.stderr or "").strip()
+        except (RuntimeError, ValueError) as exc:
+            results[action] = str(exc)
+    log_action(db, current_user.id, "update_wordpress_all", website.domain, request=request)
+    return {"message": f"WordPress updated on {website.domain}", "results": results}
+
 
 @router.get("/files/jobs")
 def list_file_jobs(website_id: int | None = Query(default=None), current_user: User = Depends(get_current_user)):

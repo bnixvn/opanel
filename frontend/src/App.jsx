@@ -523,8 +523,9 @@ function App() {
   const [editingPlan, setEditingPlan] = useState(null);
   const [editingPlanForm, setEditingPlanForm] = useState({ name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false, active: true });
   const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false });
-  // WordPress install
-  const [wpInstallTarget, setWpInstallTarget] = useState(null);
+  // WordPress manager
+  const [wpManagerSite, setWpManagerSite] = useState(null);
+  const [wpManagerMode, setWpManagerMode] = useState('install'); // 'install' | 'update'
   const [wpInstallForm, setWpInstallForm] = useState({ admin_user: 'admin', admin_email: '', admin_password: '', title: '' });
   const noticeTimer = useRef(null);
   const isAdmin = currentUser?.role === 'admin';
@@ -934,6 +935,7 @@ function App() {
   }
 
   function startEditingUser(user) {
+    const matchedPlan = plans.find(p => p.website_limit === user.website_limit && p.storage_limit_mb === user.storage_limit_mb);
     setEditingUser(user);
     setEditingUserForm({
       email: user.email || '',
@@ -941,6 +943,7 @@ function App() {
       website_limit: user.website_limit ?? 5,
       storage_limit_mb: user.storage_limit_mb ?? 1024,
       _password: '',
+      _planId: matchedPlan ? String(matchedPlan.id) : '',
     });
   }
 
@@ -1131,20 +1134,37 @@ function App() {
 
   // --- WordPress Install on existing site ---
   function openWpInstall(site) {
-    setWpInstallTarget(site);
+    setWpManagerSite(site);
+    setWpManagerMode('install');
     setWpInstallForm({ admin_user: 'admin', admin_email: currentUser?.email || '', admin_password: '', title: site.domain });
   }
 
+  function openWpUpdate(site) {
+    setWpManagerSite(site);
+    setWpManagerMode('update');
+  }
+
   async function installWpOnSite() {
-    if (!wpInstallTarget) return;
+    if (!wpManagerSite || wpManagerMode !== 'install') return;
     if (!wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12) { setError('WP admin password must be at least 12 characters.'); return; }
-    const data = await request(`/maintenance/wordpress/${wpInstallTarget.id}/install`, {
+    const data = await request(`/maintenance/wordpress/${wpManagerSite.id}/install`, {
       method: 'POST', body: JSON.stringify(wpInstallForm),
-    }, `Installing WordPress on ${wpInstallTarget.domain}...`);
+    }, `Installing WordPress on ${wpManagerSite.domain}...`);
     if (data?.message) {
       setNotice(`${data.message}\nAdmin: ${data.admin_user} | Password: ${wpInstallForm.admin_password}`);
-      setWpInstallTarget(null);
+      setWpManagerSite(null);
       refreshAll();
+    }
+  }
+
+  async function updateWpOnSite() {
+    if (!wpManagerSite || wpManagerMode !== 'update') return;
+    const data = await request(`/maintenance/wordpress/${wpManagerSite.id}/update-all`, {
+      method: 'POST',
+    }, `Updating WordPress on ${wpManagerSite.domain}...`);
+    if (data?.message) {
+      setNotice(data.message);
+      setWpManagerSite(null);
     }
   }
 
@@ -3147,6 +3167,7 @@ function App() {
                 <button className="site-icon-button secondary-light" data-tooltip="Terminal" title="Terminal" aria-label={`Open terminal for ${site.domain}`} disabled={!!loading} onClick={() => openWebsiteTerminal(site)}><TerminalIcon size={15}/></button>
                 <button className="site-icon-button secondary-light" data-tooltip="Settings" title="Settings" aria-label={`Edit settings for ${site.domain}`} disabled={!!loading} onClick={() => openNginxCustom(site)}><SettingsIcon size={15}/></button>
                 {site.app_type !== 'wordpress' && <button className="site-icon-button secondary-light" data-tooltip="Install WP" title="Install WordPress" aria-label={`Install WordPress on ${site.domain}`} disabled={!!loading} onClick={() => openWpInstall(site)}><Download size={15}/></button>}
+                {site.app_type === 'wordpress' && <button className="site-icon-button secondary-light" data-tooltip="Update WP" title="Update WordPress" aria-label={`Update WordPress on ${site.domain}`} disabled={!!loading} onClick={() => openWpUpdate(site)}><RefreshCw size={15}/></button>}
                 <button className="site-icon-button danger" data-tooltip="Delete" title="Delete" aria-label={`Delete ${site.domain}`} disabled={!!loading} onClick={() => deleteWebsite(site.id)}><Trash2 size={15}/></button>
               </div>
             </div>
@@ -3154,6 +3175,29 @@ function App() {
           {nginxCustomEditing?.id === site.id && renderNginxEditor()}
           {logViewer?.id === site.id && renderWebsiteLogViewer()}
           {terminalViewer?.id === site.id && renderWebsiteTerminal()}
+          {wpManagerSite?.id === site.id && <div className="wp-manager-panel">
+            <div className="user-edit-heading">
+              <strong>{wpManagerMode === 'install' ? `Install WordPress on ${site.domain}` : `Update WordPress on ${site.domain}`}</strong>
+              <button className="user-edit-close secondary-light" onClick={() => setWpManagerSite(null)}><X size={16}/></button>
+            </div>
+            {wpManagerMode === 'install' ? <div className="user-edit-grid">
+              <p className="hint">Creates a database, downloads WordPress, configures vhost.</p>
+              <label><span>Site title</span><input value={wpInstallForm.title} onChange={e => setWpInstallForm(prev => ({ ...prev, title: e.target.value }))} /></label>
+              <label><span>Admin username</span><input value={wpInstallForm.admin_user} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_user: e.target.value }))} /></label>
+              <label><span>Admin email</span><input type="email" value={wpInstallForm.admin_email} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_email: e.target.value }))} /></label>
+              <label><span>Admin password</span><input type="password" value={wpInstallForm.admin_password} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_password: e.target.value }))} placeholder="Min 12 characters" /></label>
+              <div className="user-edit-actions">
+                <button className="secondary-light" onClick={() => setWpManagerSite(null)}>Cancel</button>
+                <button disabled={!!loading || !wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12} onClick={installWpOnSite}><Download size={14}/> Install WordPress</button>
+              </div>
+            </div> : <div>
+              <p className="hint">Updates WordPress core, all plugins, and all themes to the latest version.</p>
+              <div className="user-edit-actions">
+                <button className="secondary-light" onClick={() => setWpManagerSite(null)}>Cancel</button>
+                <button disabled={!!loading} onClick={updateWpOnSite}><RefreshCw size={14}/> Update All</button>
+              </div>
+            </div>}
+          </div>}
           </div>)}
         </div>
       </section>
@@ -4265,8 +4309,17 @@ function App() {
               <label><span>Role</span><select value={editingUserForm.role} disabled={user.id === currentUser?.id} onChange={e => setEditingUserForm(prev => ({ ...prev, role: e.target.value }))}>
                 <option value="end_user">End user</option><option value="admin">Admin</option>
               </select></label>
-              <label><span>Website limit</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value }))} /></label>
-              <label><span>Disk limit (MB)</span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value }))} /></label>
+              <label><span>Package</span><select value={editingUserForm._planId || ''} onChange={e => {
+                const planId = e.target.value;
+                const plan = plans.find(p => String(p.id) === planId);
+                if (plan) setEditingUserForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb }));
+                else setEditingUserForm(prev => ({ ...prev, _planId: '' }));
+              }}>
+                <option value="">Custom</option>
+                {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} sites, {p.storage_limit_mb} MB)</option>)}
+              </select></label>
+              <label><span>Site limit</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
+              <label><span>Disk limit (MB)</span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
               <label><span>New password <small>(leave empty to keep)</small></span><input type="password" value={editingUserForm._password || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, _password: e.target.value }))} placeholder="Min 12 characters" /></label>
             </div>
             <div className="user-edit-actions">
@@ -4537,22 +4590,6 @@ function App() {
             {currentUser?.totp_enabled && <label><span>2FA code</span><input value={profileForm.code} onChange={e => setProfileForm(prev => ({ ...prev, code: e.target.value }))} placeholder="6-digit code" maxLength={6} /></label>}
             <button disabled={!!loading || !profileForm.password || profileForm.password.length < 12} onClick={changeMyPasswordFromProfile}><KeyRound size={14}/> Change password</button>
           </div>
-        </div>
-      </div>
-    </div>}
-    {wpInstallTarget && <div className="modal-overlay" onClick={() => setWpInstallTarget(null)}>
-      <div className="modal-card" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>Install WordPress on {wpInstallTarget.domain}</h3>
-          <button className="secondary-light" onClick={() => setWpInstallTarget(null)}><X size={16}/></button>
-        </div>
-        <div className="modal-body">
-          <p className="hint">Creates a database, downloads WordPress, configures vhost.</p>
-          <label><span>Site title</span><input value={wpInstallForm.title} onChange={e => setWpInstallForm(prev => ({ ...prev, title: e.target.value }))} /></label>
-          <label><span>Admin username</span><input value={wpInstallForm.admin_user} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_user: e.target.value }))} /></label>
-          <label><span>Admin email</span><input type="email" value={wpInstallForm.admin_email} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_email: e.target.value }))} /></label>
-          <label><span>Admin password</span><input type="password" value={wpInstallForm.admin_password} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_password: e.target.value }))} placeholder="Min 12 characters" /></label>
-          <button disabled={!!loading || !wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12} onClick={installWpOnSite} style={{marginTop:8}}><Download size={14}/> Install WordPress</button>
         </div>
       </div>
     </div>}

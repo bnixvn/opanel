@@ -1017,3 +1017,11 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
   .token-create-form{grid-template-columns:1fr}
   .profile-email-row{flex-direction:column}
 }
+
+/* WP Manager panel */
+.wp-manager-panel{background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px}
+.wp-manager-panel .hint{margin:0 0 12px}
+.wp-manager-panel .user-edit-grid{display:grid;gap:10px}
+.wp-manager-panel .user-edit-grid label{display:flex;flex-direction:column;gap:4px}
+.wp-manager-panel .user-edit-grid label span{font-size:12px;font-weight:500;color:var(--text-secondary)}
+.wp-manager-panel .user-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
