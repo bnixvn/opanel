@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import api_tokens, auth, databases, firewall, maintenance, panel_settings as panel_settings_api, provisioning, services, terminal, updates, users, waf, websites
+from app.api import api_tokens, auth, databases, firewall, maintenance, panel_settings as panel_settings_api, plans, provisioning, services, terminal, updates, users, waf, websites
 from app.core.config import settings
 from app.core.database import run_migrations
 from app.core.version import APP_VERSION
@@ -104,6 +104,7 @@ app.include_router(panel_settings_api.router, prefix="/api")
 app.include_router(terminal.router, prefix="/api")
 app.include_router(provisioning.router, prefix="/api")
 app.include_router(api_tokens.router, prefix="/api")
+app.include_router(plans.router, prefix="/api")
 
 
 @app.get("/api/health")

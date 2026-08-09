@@ -32,11 +32,48 @@ from app.services.shell import shell
 # ---------------------------------------------------------------------------
 
 def list_plans(db: Session) -> list[HostingPlan]:
-    return db.query(HostingPlan).filter(HostingPlan.active.is_(True)).order_by(HostingPlan.id).all()
+    return db.query(HostingPlan).order_by(HostingPlan.id).all()
 
 
 def get_plan(db: Session, plan_id: int) -> Optional[HostingPlan]:
-    return db.query(HostingPlan).filter(HostingPlan.id == plan_id, HostingPlan.active.is_(True)).first()
+    return db.query(HostingPlan).filter(HostingPlan.id == plan_id).first()
+
+
+def create_plan(db: Session, *, slug: str, name: str, website_limit: int = 1,
+                storage_limit_mb: int = 1024, php_version: str = "8.4",
+                app_type: str = "php", auto_ssl: bool = False) -> HostingPlan:
+    if db.query(HostingPlan).filter(HostingPlan.slug == slug).first():
+        raise ValueError(f"Plan slug '{slug}' already exists")
+    plan = HostingPlan(
+        slug=slug, name=name, website_limit=website_limit,
+        storage_limit_mb=storage_limit_mb, php_version=php_version,
+        app_type=app_type, auto_ssl=auto_ssl,
+    )
+    db.add(plan)
+    db.commit()
+    db.refresh(plan)
+    return plan
+
+
+def update_plan(db: Session, plan_id: int, **kwargs) -> HostingPlan:
+    plan = db.query(HostingPlan).filter(HostingPlan.id == plan_id).first()
+    if plan is None:
+        raise ValueError(f"Plan {plan_id} not found")
+    for key, value in kwargs.items():
+        if value is not None and hasattr(plan, key):
+            setattr(plan, key, value)
+    db.commit()
+    db.refresh(plan)
+    return plan
+
+
+def delete_plan(db: Session, plan_id: int) -> bool:
+    plan = db.query(HostingPlan).filter(HostingPlan.id == plan_id).first()
+    if plan is None:
+        return False
+    db.delete(plan)
+    db.commit()
+    return True
 
 
 # ---------------------------------------------------------------------------

@@ -196,6 +196,23 @@ function defaultPanelSslEmail(hostname = '') {
   return isHostnameDomain(host) ? `admin@${host}` : '';
 }
 
+function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => {}, () => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch {}
+  document.body.removeChild(ta);
+}
+
 function renderAceSelectionTextOverlay(editor, overlay) {
   if (!editor || !overlay) return;
   overlay.innerHTML = '';
@@ -501,6 +518,11 @@ function App() {
   const [profileForm, setProfileForm] = useState({ email: '', password: '', current_password: '', code: '' });
   // Users page tabs
   const [usersTab, setUsersTab] = useState('list');
+  // Hosting plans
+  const [plans, setPlans] = useState([]);
+  const [editingPlan, setEditingPlan] = useState(null);
+  const [editingPlanForm, setEditingPlanForm] = useState({ name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false, active: true });
+  const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false });
   const noticeTimer = useRef(null);
   const isAdmin = currentUser?.role === 'admin';
   const currentSite = websites.find(site => String(site.id) === String(selectedWebsiteId));
@@ -779,7 +801,7 @@ function App() {
     const hostnameChanged = hostname && hostname !== currentHostname;
 
     if (wantsSsl && (!hasSsl || hostnameChanged)) {
-      const sslEmail = String(panelSslEmail || defaultPanelSslEmail(hostname) || currentUser?.email || '').trim();
+      const sslEmail = String(currentUser?.email || panelSslEmail || defaultPanelSslEmail(hostname) || '').trim();
       const nameData = await request('/panel-settings', {
         method: 'PATCH',
         body: JSON.stringify({ app_name: panelSettingsForm.app_name }),
@@ -870,8 +892,8 @@ function App() {
   }, [panelSettings, appVersion]);
 
   useEffect(() => {
-    if (!panelSslEmail && currentUser?.email) setPanelSslEmail(currentUser.email);
-  }, [currentUser?.email, panelSslEmail]);
+    if (currentUser?.email) setPanelSslEmail(currentUser.email);
+  }, [currentUser?.email]);
 
   async function refreshAll() {
     const refreshedUser = await loadCurrentUser();
@@ -1081,6 +1103,39 @@ function App() {
   function openProfileModal() {
     setProfileForm({ email: currentUser?.email || '', password: '', current_password: '', code: '' });
     setShowProfileModal(true);
+  }
+
+  // --- Hosting Plans ---
+  async function loadPlans() {
+    const data = await request('/plans');
+    if (Array.isArray(data)) setPlans(data);
+  }
+
+  async function createPlan() {
+    if (!newPlan.slug.trim() || !newPlan.name.trim()) return;
+    const data = await request('/plans', { method: 'POST', body: JSON.stringify(newPlan) }, 'Creating plan...');
+    if (data?.id) {
+      setNotice(`Plan "${data.name}" created.`);
+      setNewPlan({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false });
+      loadPlans();
+    }
+  }
+
+  function startEditingPlan(plan) {
+    setEditingPlan(plan);
+    setEditingPlanForm({ name: plan.name, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, php_version: plan.php_version, app_type: plan.app_type, auto_ssl: plan.auto_ssl, active: plan.active });
+  }
+
+  async function updatePlan() {
+    if (!editingPlan) return;
+    const data = await request(`/plans/${editingPlan.id}`, { method: 'PATCH', body: JSON.stringify(editingPlanForm) }, 'Updating plan...');
+    if (data?.id) { setNotice('Plan updated.'); setEditingPlan(null); loadPlans(); }
+  }
+
+  async function deletePlanItem(plan) {
+    if (!confirm(`Delete plan "${plan.name}"?`)) return;
+    const data = await request(`/plans/${plan.id}`, { method: 'DELETE' }, 'Deleting plan...');
+    if (data?.ok) { setNotice('Plan deleted.'); setEditingPlan(null); loadPlans(); }
   }
 
   async function loadTwoFactorStatus() {
@@ -2612,7 +2667,7 @@ function App() {
   }, [isAuthenticated, page, selectedWebsiteId, selectedBackupUserId]);
 
   useEffect(() => {
-    if (isAuthenticated && page === 'users') loadUsers();
+    if (isAuthenticated && page === 'users') { loadUsers(); loadPlans(); }
     if (isAuthenticated && page === 'php') { loadPhpConfig(); loadPhpVersions(); }
     if (isAuthenticated && page === 'firewall') { loadFirewall(); loadFirewallBlocklists(); }
     if (isAuthenticated && page === 'waf') loadWafRules();
@@ -4107,7 +4162,7 @@ function App() {
           <p><strong>Token created!</strong> Copy it now — it will not be shown again.</p>
           <div className="token-copy-row">
             <code>{createdToken.token}</code>
-            <button className="mini" onClick={() => { navigator.clipboard.writeText(createdToken.token); setNotice('Copied to clipboard.'); }}><Copy size={14}/> Copy</button>
+            <button className="mini" onClick={() => { copyToClipboard(createdToken.token); setNotice('Copied to clipboard.'); }}><Copy size={14}/> Copy</button>
           </div>
           <button className="mini secondary-light" onClick={() => setCreatedToken(null)}>Dismiss</button>
         </div>}
@@ -4192,16 +4247,76 @@ function App() {
           </div>}
         </div>)}
       </div>
+      <div className="section" style={{marginTop:16}}>
+        <h2>Assign domain to user</h2>
+        <div className="assign-row">
+          <select value={assignWebsiteId} onChange={e => setAssignWebsiteId(e.target.value)}>
+            <option value="">Select domain</option>
+            {websites.map(site => <option key={site.id} value={site.id}>{site.domain}</option>)}
+          </select>
+          <select value={assignUserId} onChange={e => setAssignUserId(e.target.value)}>
+            <option value="">Select user</option>
+            {users.map(user => <option key={user.id} value={user.id}>{user.username} ({roleLabel(user.role)})</option>)}
+          </select>
+          <button disabled={!assignWebsiteId || !assignUserId || !!loading} onClick={assignDomainToUser}>Assign</button>
+        </div>
+      </div>
     </section>;
   }
 
   function renderUsersPackagesTab() {
-    return <section className="section">
-      <div className="section-title">
-        <div><h2>Hosting Packages</h2><p className="hint">Manage provisioning plans available to WHMCS and billing systems.</p></div>
-      </div>
-      <p className="hint">Package management will be available in a future update. Default plan: 5 websites, 1024 MB storage.</p>
-    </section>;
+    return <>
+      <section className="section">
+        <div className="section-title">
+          <div><h2>Hosting Packages</h2><p className="hint">Manage provisioning plans for WHMCS and billing systems.</p></div>
+          <button disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> Refresh</button>
+        </div>
+        <div className="token-create-form">
+          <label><span>Slug</span><input value={newPlan.slug} onChange={e => setNewPlan(prev => ({ ...prev, slug: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') }))} placeholder="starter" /></label>
+          <label><span>Name</span><input value={newPlan.name} onChange={e => setNewPlan(prev => ({ ...prev, name: e.target.value }))} placeholder="Starter Plan" /></label>
+          <label><span>Sites</span><input type="number" min="0" value={newPlan.website_limit} onChange={e => setNewPlan(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
+          <label><span>Storage MB</span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
+          <button disabled={!!loading || !newPlan.slug.trim() || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> Add</button>
+        </div>
+        {plans.length === 0 && <p className="hint">No packages yet. Create one above.</p>}
+        {plans.length > 0 && <div className="table">
+          {plans.map(plan => <div className="row" key={plan.id}>
+            <div className="token-info">
+              <strong>{plan.name}</strong>
+              <small>Slug: {plan.slug} | {plan.website_limit} sites | {plan.storage_limit_mb} MB | PHP {plan.php_version} | {plan.app_type}{plan.auto_ssl ? ' | Auto SSL' : ''}</small>
+            </div>
+            <span className={plan.active ? 'badge ok' : 'badge'}>{plan.active ? 'Active' : 'Inactive'}</span>
+            <div className="row-actions">
+              <button className="mini secondary-light" onClick={() => startEditingPlan(plan)}><Pencil size={14}/> Edit</button>
+              <button className="mini danger" onClick={() => deletePlanItem(plan)}><Trash2 size={14}/></button>
+            </div>
+            {editingPlan?.id === plan.id && <div className="user-edit-panel">
+              <div className="user-edit-heading">
+                <strong>Edit {plan.name}</strong>
+                <button className="user-edit-close secondary-light" onClick={() => setEditingPlan(null)}><X size={16}/></button>
+              </div>
+              <div className="user-edit-grid">
+                <label><span>Name</span><input value={editingPlanForm.name} onChange={e => setEditingPlanForm(prev => ({ ...prev, name: e.target.value }))} /></label>
+                <label><span>Website limit</span><input type="number" min="0" value={editingPlanForm.website_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
+                <label><span>Storage (MB)</span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
+                <label><span>PHP Version</span><select value={editingPlanForm.php_version} onChange={e => setEditingPlanForm(prev => ({ ...prev, php_version: e.target.value }))}>
+                  {PHP_VERSION_ORDER.map(v => <option key={v} value={v}>{v}</option>)}
+                </select></label>
+                <label><span>App Type</span><select value={editingPlanForm.app_type} onChange={e => setEditingPlanForm(prev => ({ ...prev, app_type: e.target.value }))}>
+                  <option value="php">PHP</option><option value="wordpress">WordPress</option><option value="static">Static</option>
+                </select></label>
+                <label className="check-line"><input type="checkbox" checked={editingPlanForm.auto_ssl} onChange={e => setEditingPlanForm(prev => ({ ...prev, auto_ssl: e.target.checked }))} /> Auto SSL</label>
+                <label className="check-line"><input type="checkbox" checked={editingPlanForm.active} onChange={e => setEditingPlanForm(prev => ({ ...prev, active: e.target.checked }))} /> Active</label>
+              </div>
+              <div className="user-edit-actions">
+                <button className="secondary-light" onClick={() => setEditingPlan(null)}>Cancel</button>
+                <button disabled={!!loading} onClick={updatePlan}><Save size={14}/> Save</button>
+              </div>
+            </div>}
+          </div>)}
+        </div>}
+      </section>
+    </>;
   }
 
   function renderUsersAddTab() {
@@ -4220,20 +4335,6 @@ function App() {
           <label><span>Site limit</span><input type="number" value={newUser.website_limit} onChange={e => setNewUser(prev => ({ ...prev, website_limit: e.target.value }))} /></label>
           <label><span>Storage MB</span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value }))} /></label>
           <button disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> Create user</button>
-        </div>
-      </section>
-      <section className="section">
-        <h2>Assign domain to user</h2>
-        <div className="assign-row">
-          <select value={assignWebsiteId} onChange={e => setAssignWebsiteId(e.target.value)}>
-            <option value="">Select domain</option>
-            {websites.map(site => <option key={site.id} value={site.id}>{site.domain}</option>)}
-          </select>
-          <select value={assignUserId} onChange={e => setAssignUserId(e.target.value)}>
-            <option value="">Select user</option>
-            {users.map(user => <option key={user.id} value={user.id}>{user.username} ({roleLabel(user.role)})</option>)}
-          </select>
-          <button disabled={!assignWebsiteId || !assignUserId || !!loading} onClick={assignDomainToUser}>Assign</button>
         </div>
       </section>
     </>;
