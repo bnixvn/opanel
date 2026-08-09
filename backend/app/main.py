@@ -167,8 +167,9 @@ def sso_login(token: str, request: Request, response: Response, db: Session = De
     user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
     if user is None:
         raise HTTPException(status_code=401, detail="User not found or inactive")
-    _issue_login_session(response, request, user)
-    return RedirectResponse(url="/", status_code=302)
+    redirect = RedirectResponse(url="/", status_code=302)
+    _issue_login_session(redirect, request, user)
+    return redirect
 
 @app.get("/{full_path:path}", include_in_schema=False)
 def serve_spa(full_path: str):
