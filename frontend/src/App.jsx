@@ -492,6 +492,15 @@ function App() {
   const wafAccessFiltersRef = useRef(wafAccessFilters);
   const [osAutoUpdate, setOsAutoUpdate] = useState({ enabled: true, mode: 'security', auto_reboot: false });
   const [panelAutoUpdate, setPanelAutoUpdate] = useState({ enabled: true, time: '03:30' });
+  // API Tokens
+  const [apiTokens, setApiTokens] = useState([]);
+  const [apiTokenForm, setApiTokenForm] = useState({ name: '', scopes: ['provisioning:read', 'provisioning:write'], expires_days: 365, ip_allowlist: '' });
+  const [createdToken, setCreatedToken] = useState(null);
+  // Profile modal
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileForm, setProfileForm] = useState({ email: '', password: '', current_password: '', code: '' });
+  // Users page tabs
+  const [usersTab, setUsersTab] = useState('list');
   const noticeTimer = useRef(null);
   const isAdmin = currentUser?.role === 'admin';
   const currentSite = websites.find(site => String(site.id) === String(selectedWebsiteId));
@@ -1022,6 +1031,57 @@ function App() {
   }
 
   async function changeMyPassword() { if (!currentUser) return; await changeUserPassword(currentUser); }
+
+  // --- API Tokens ---
+  async function loadApiTokens() {
+    const data = await request('/api-tokens');
+    if (Array.isArray(data)) setApiTokens(data);
+  }
+
+  async function createApiToken() {
+    if (!apiTokenForm.name.trim()) return;
+    setCreatedToken(null);
+    const data = await request('/api-tokens', { method: 'POST', body: JSON.stringify(apiTokenForm) }, 'Creating API token...');
+    if (data?.token) {
+      setCreatedToken(data);
+      setApiTokenForm({ name: '', scopes: ['provisioning:read', 'provisioning:write'], expires_days: 365, ip_allowlist: '' });
+      loadApiTokens();
+    }
+  }
+
+  async function revokeApiToken(token) {
+    if (!confirm(`Revoke token "${token.name}"? This cannot be undone.`)) return;
+    const data = await request(`/api-tokens/${token.id}`, { method: 'DELETE' }, 'Revoking token...');
+    if (data?.ok) { setNotice('Token revoked.'); loadApiTokens(); }
+  }
+
+  // --- Profile ---
+  async function updateMyEmail() {
+    if (!profileForm.email.trim()) return;
+    const data = await request('/users/me', { method: 'PATCH', body: JSON.stringify({ email: profileForm.email }) }, 'Updating email...');
+    if (data?.email) {
+      setCurrentUser(data);
+      setNotice('Email updated.');
+      setProfileForm(prev => ({ ...prev, email: data.email }));
+    }
+  }
+
+  async function changeMyPasswordFromProfile() {
+    if (!profileForm.password || profileForm.password.length < 12) { setError('Password must be at least 12 characters.'); return; }
+    const payload = { password: profileForm.password };
+    if (profileForm.current_password) payload.current_password = profileForm.current_password;
+    if (profileForm.code) payload.code = profileForm.code;
+    const data = await request(`/users/${currentUser.id}/password`, { method: 'POST', body: JSON.stringify(payload) }, 'Changing password...');
+    if (data?.message) {
+      setNotice(data.message);
+      setProfileForm(prev => ({ ...prev, password: '', current_password: '', code: '' }));
+    }
+  }
+
+  function openProfileModal() {
+    setProfileForm({ email: currentUser?.email || '', password: '', current_password: '', code: '' });
+    setShowProfileModal(true);
+  }
 
   async function loadTwoFactorStatus() {
     const data = await request('/auth/2fa/status');
@@ -2562,7 +2622,7 @@ function App() {
       if (isAdmin) { loadMalwareScanStatus(); loadMalwareScanJobs(); loadLatestMalwareScanJob(); }
       if (!websites.length) refreshAll();
     }
-    if (isAuthenticated && page === 'settings') loadPanelSettings();
+    if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); }
     if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); loadRestoreBackups(); loadDaBackups(); loadDaImportJobs(); }
   }, [isAuthenticated, page, currentUser?.role]);
 
@@ -4038,11 +4098,113 @@ function App() {
           </div>
         </div>
       </section>
+      <section className="section">
+        <div className="section-title">
+          <div><h2>API Tokens</h2><p className="hint">Provisioning tokens for WHMCS or external billing systems.</p></div>
+          <button disabled={!!loading} onClick={loadApiTokens}><RefreshCw size={14}/> Refresh</button>
+        </div>
+        {createdToken && <div className="token-created-notice">
+          <p><strong>Token created!</strong> Copy it now — it will not be shown again.</p>
+          <div className="token-copy-row">
+            <code>{createdToken.token}</code>
+            <button className="mini" onClick={() => { navigator.clipboard.writeText(createdToken.token); setNotice('Copied to clipboard.'); }}><Copy size={14}/> Copy</button>
+          </div>
+          <button className="mini secondary-light" onClick={() => setCreatedToken(null)}>Dismiss</button>
+        </div>}
+        <div className="token-create-form">
+          <label><span>Name</span><input value={apiTokenForm.name} onChange={e => setApiTokenForm(prev => ({ ...prev, name: e.target.value }))} placeholder="WHMCS Production" /></label>
+          <label><span>Expires (days)</span><input type="number" min="1" max="3650" value={apiTokenForm.expires_days} onChange={e => setApiTokenForm(prev => ({ ...prev, expires_days: parseInt(e.target.value) || 365 }))} /></label>
+          <label><span>IP allowlist</span><input value={apiTokenForm.ip_allowlist} onChange={e => setApiTokenForm(prev => ({ ...prev, ip_allowlist: e.target.value }))} placeholder="Optional, comma-separated" /></label>
+          <button disabled={!!loading || !apiTokenForm.name.trim()} onClick={createApiToken}><Plus size={14}/> Create token</button>
+        </div>
+        {apiTokens.length === 0 && <p className="hint">No API tokens yet.</p>}
+        {apiTokens.length > 0 && <div className="table">
+          {apiTokens.map(t => <div className="row" key={t.id}>
+            <div className="token-info">
+              <strong>{t.name}</strong>
+              <small>{t.scopes.join(', ')}</small>
+              <small>Prefix: {t.prefix}... | Created: {t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}{t.last_used_at ? ` | Last used: ${new Date(t.last_used_at).toLocaleDateString()}` : ''}</small>
+            </div>
+            <span className={t.revoked_at ? 'badge danger' : 'badge ok'}>{t.revoked_at ? 'Revoked' : 'Active'}</span>
+            {!t.revoked_at && <button className="mini danger" disabled={!!loading} onClick={() => revokeApiToken(t)}><Trash2 size={14}/> Revoke</button>}
+          </div>)}
+        </div>}
+      </section>
     </>;
   }
 
   function renderUsers() {
     if (!isAdmin) return <section className="section"><h2>Users</h2><p className="hint">No permission.</p></section>;
+    return <>
+      <section className="section">
+        <div className="section-title">
+          <div><h2>Panel Users</h2><p className="hint">Manage panel accounts, hosting packages, and create new users.</p></div>
+          <button disabled={!!loading} onClick={loadUsers}><RefreshCw size={14}/> Refresh</button>
+        </div>
+        <div className="tab-bar">
+          <button className={usersTab === 'list' ? 'tab active' : 'tab'} onClick={() => setUsersTab('list')}><Users size={14}/> List Users</button>
+          <button className={usersTab === 'packages' ? 'tab active' : 'tab'} onClick={() => setUsersTab('packages')}><PackageOpen size={14}/> Packages</button>
+          <button className={usersTab === 'add' ? 'tab active' : 'tab'} onClick={() => setUsersTab('add')}><Plus size={14}/> Add User</button>
+        </div>
+      </section>
+      {usersTab === 'list' && renderUsersListTab()}
+      {usersTab === 'packages' && renderUsersPackagesTab()}
+      {usersTab === 'add' && renderUsersAddTab()}
+    </>;
+  }
+
+  function renderUsersListTab() {
+    return <section className="section">
+      {users.length === 0 && <EmptyState icon={Users} message="No users found." />}
+      <div className="table">
+        {users.map(user => <div className="row user-row" key={user.id}>
+          <div className="user-main"><strong>{user.username}</strong><small>{user.email}</small></div>
+          <span className="badge">{roleLabel(user.role)}</span>
+          <span className={user.totp_enabled ? 'badge ok' : 'badge'}>{user.totp_enabled ? '2FA' : 'No 2FA'}</span>
+          <span className="user-metric"><Globe size={13}/>{user.website_limit} sites</span>
+          <span className="user-metric"><HardDrive size={13}/>{storageUsageText(user)}</span>
+          <div className="row-actions">
+            <button className="mini secondary-light" disabled={!!loading} onClick={() => startEditingUser(user)}><Pencil size={14}/> Edit</button>
+            <button className="mini secondary-light" disabled={!!loading} onClick={() => quickLoginUser(user)}><LogIn size={14}/> Login as</button>
+            {user.totp_enabled && user.id !== currentUser?.id && <button className="mini secondary-light" disabled={!!loading} onClick={() => resetUserTwoFactor(user)}>Reset 2FA</button>}
+            {user.id !== currentUser?.id && <button className="mini danger" disabled={!!loading} onClick={() => deletePanelUser(user)}><Trash2 size={14}/></button>}
+          </div>
+          {editingUser?.id === user.id && <div className="user-edit-panel">
+            <div className="user-edit-heading">
+              <div><strong>Edit {user.username}</strong><small>
+                {user.id === currentUser?.id ? 'Role is locked for the active admin session.' : 'Role changes sign the user out of existing sessions.'}
+                {editingUserForm.role === 'admin' ? ' Admin accounts bypass website and storage limits.' : ''}
+              </small></div>
+              <button className="user-edit-close secondary-light" onClick={cancelEditingUser} aria-label="Close user editor" title="Close user editor"><X size={16}/></button>
+            </div>
+            <div className="user-edit-grid">
+              <label><span>Email</span><input type="email" value={editingUserForm.email} onChange={e => setEditingUserForm(prev => ({ ...prev, email: e.target.value }))} /></label>
+              <label><span>Role</span><select value={editingUserForm.role} disabled={user.id === currentUser?.id} onChange={e => setEditingUserForm(prev => ({ ...prev, role: e.target.value }))}>
+                <option value="end_user">End user</option><option value="admin">Admin</option>
+              </select></label>
+              <label><span>Website limit</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value }))} /></label>
+              <label><span>Storage limit (MB)</span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value }))} /></label>
+            </div>
+            <div className="user-edit-actions">
+              <button className="secondary-light" onClick={cancelEditingUser}>Cancel</button>
+              <button disabled={!!loading || !editingUserForm.email.trim()} onClick={updatePanelUser}><Save size={14}/> Save changes</button>
+            </div>
+          </div>}
+        </div>)}
+      </div>
+    </section>;
+  }
+
+  function renderUsersPackagesTab() {
+    return <section className="section">
+      <div className="section-title">
+        <div><h2>Hosting Packages</h2><p className="hint">Manage provisioning plans available to WHMCS and billing systems.</p></div>
+      </div>
+      <p className="hint">Package management will be available in a future update. Default plan: 5 websites, 1024 MB storage.</p>
+    </section>;
+  }
+
+  function renderUsersAddTab() {
     return <>
       <section className="section">
         <div className="section-title">
@@ -4072,50 +4234,6 @@ function App() {
             {users.map(user => <option key={user.id} value={user.id}>{user.username} ({roleLabel(user.role)})</option>)}
           </select>
           <button disabled={!assignWebsiteId || !assignUserId || !!loading} onClick={assignDomainToUser}>Assign</button>
-        </div>
-      </section>
-      <section className="section">
-        <div className="section-title">
-          <h2>Panel user list</h2>
-          <button disabled={!!loading} onClick={loadUsers}><RefreshCw size={14}/> Refresh</button>
-        </div>
-        {users.length === 0 && <EmptyState icon={Users} message="No users found." />}
-        <div className="table">
-          {users.map(user => <div className="row user-row" key={user.id}>
-            <div className="user-main"><strong>{user.username}</strong><small>{user.email}</small></div>
-            <span className="badge">{roleLabel(user.role)}</span>
-            <span className={user.totp_enabled ? 'badge ok' : 'badge'}>{user.totp_enabled ? '2FA' : 'No 2FA'}</span>
-            <span className="user-metric"><Globe size={13}/>{user.website_limit} sites</span>
-            <span className="user-metric"><HardDrive size={13}/>{storageUsageText(user)}</span>
-            <div className="row-actions">
-              <button className="mini secondary-light" disabled={!!loading} onClick={() => startEditingUser(user)}><Pencil size={14}/> Edit</button>
-              <button className="mini secondary-light" disabled={!!loading} onClick={() => quickLoginUser(user)}><LogIn size={14}/> Login as</button>
-              <button className="mini secondary-light" disabled={!!loading} onClick={() => changeUserPassword(user)}><KeyRound size={14}/> Password</button>
-              {user.totp_enabled && user.id !== currentUser?.id && <button className="mini secondary-light" disabled={!!loading} onClick={() => resetUserTwoFactor(user)}>Reset 2FA</button>}
-              {user.id !== currentUser?.id && <button className="mini danger" disabled={!!loading} onClick={() => deletePanelUser(user)}><Trash2 size={14}/></button>}
-            </div>
-            {editingUser?.id === user.id && <div className="user-edit-panel">
-              <div className="user-edit-heading">
-                <div><strong>Edit {user.username}</strong><small>
-                  {user.id === currentUser?.id ? 'Role is locked for the active admin session.' : 'Role changes sign the user out of existing sessions.'}
-                  {editingUserForm.role === 'admin' ? ' Admin accounts bypass website and storage limits.' : ''}
-                </small></div>
-                <button className="user-edit-close secondary-light" onClick={cancelEditingUser} aria-label="Close user editor" title="Close user editor"><X size={16}/></button>
-              </div>
-              <div className="user-edit-grid">
-                <label><span>Email</span><input type="email" value={editingUserForm.email} onChange={e => setEditingUserForm(prev => ({ ...prev, email: e.target.value }))} /></label>
-                <label><span>Role</span><select value={editingUserForm.role} disabled={user.id === currentUser?.id} onChange={e => setEditingUserForm(prev => ({ ...prev, role: e.target.value }))}>
-                  <option value="end_user">End user</option><option value="admin">Admin</option>
-                </select></label>
-                <label><span>Website limit</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value }))} /></label>
-                <label><span>Storage limit (MB)</span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value }))} /></label>
-              </div>
-              <div className="user-edit-actions">
-                <button className="secondary-light" onClick={cancelEditingUser}>Cancel</button>
-                <button disabled={!!loading || !editingUserForm.email.trim()} onClick={updatePanelUser}><Save size={14}/> Save changes</button>
-              </div>
-            </div>}
-          </div>)}
         </div>
       </section>
     </>;
@@ -4252,7 +4370,7 @@ function App() {
           <div className="login logged-in">
             <div className="account-pill"><span>Logged in as</span><strong>{currentUser?.username || username}</strong></div>
             <div className="top-actions">
-              <button className="secondary compact-btn" onClick={changeMyPassword} aria-label="Change password" title="Change password"><KeyRound size={15}/><span className="btn-label">Password</span></button>
+              <button className="secondary compact-btn" onClick={openProfileModal} aria-label="Profile settings" title="Profile settings"><KeyRound size={15}/><span className="btn-label">Profile</span></button>
               <button className="secondary compact-btn" onClick={logout} aria-label="Logout" title="Logout"><LogOut size={15}/><span className="btn-label">Logout</span></button>
             </div>
           </div>
@@ -4263,6 +4381,31 @@ function App() {
         </div>
       </div>
     </section>
+    {showProfileModal && <div className="modal-overlay" onClick={() => setShowProfileModal(false)}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Profile Settings</h3>
+          <button className="secondary-light" onClick={() => setShowProfileModal(false)}><X size={16}/></button>
+        </div>
+        <div className="modal-body">
+          <div className="modal-section">
+            <h4>Email</h4>
+            <div className="profile-email-row">
+              <input type="email" value={profileForm.email} onChange={e => setProfileForm(prev => ({ ...prev, email: e.target.value }))} placeholder="admin@domain.com" />
+              <button disabled={!!loading || !profileForm.email.trim() || profileForm.email === currentUser?.email} onClick={updateMyEmail}><Save size={14}/> Save</button>
+            </div>
+            <p className="hint">Used for Let's Encrypt SSL notifications and panel communication.</p>
+          </div>
+          <div className="modal-section">
+            <h4>Change Password</h4>
+            <label><span>New password</span><input type="password" value={profileForm.password} onChange={e => setProfileForm(prev => ({ ...prev, password: e.target.value }))} placeholder="Min 12 characters" /></label>
+            <label><span>Current password</span><input type="password" value={profileForm.current_password} onChange={e => setProfileForm(prev => ({ ...prev, current_password: e.target.value }))} placeholder="Required to confirm" /></label>
+            {currentUser?.totp_enabled && <label><span>2FA code</span><input value={profileForm.code} onChange={e => setProfileForm(prev => ({ ...prev, code: e.target.value }))} placeholder="6-digit code" maxLength={6} /></label>}
+            <button disabled={!!loading || !profileForm.password || profileForm.password.length < 12} onClick={changeMyPasswordFromProfile}><KeyRound size={14}/> Change password</button>
+          </div>
+        </div>
+      </div>
+    </div>}
     {renderNotifications()}
   </main>;
 }

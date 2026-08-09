@@ -103,6 +103,18 @@ def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_c
 def me(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return _user_out(current_user, db)
 
+@router.patch("/me", response_model=UserOut)
+def update_me(payload: UserUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Let the current user update their own email."""
+    if payload.email is not None and payload.email != current_user.email:
+        if db.query(User).filter(User.email == payload.email, User.id != current_user.id).first():
+            raise HTTPException(status_code=409, detail="Email already in use")
+        current_user.email = payload.email
+        db.commit()
+        db.refresh(current_user)
+    log_action(db, current_user.id, "update_profile_email", current_user.username, request=request)
+    return _user_out(current_user, db)
+
 
 @router.patch("/{user_id}", response_model=UserOut)
 def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
