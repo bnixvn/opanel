@@ -6,7 +6,7 @@ and looked up. Scope checking is done at the dependency level.
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -33,7 +33,7 @@ def get_api_token(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API token")
     if token.revoked_at is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API token revoked")
-    if token.expires_at is not None and token.expires_at < datetime.now(timezone.utc):
+    if token.expires_at is not None and token.expires_at < datetime.utcnow():
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API token expired")
 
     # IP allowlist check
@@ -44,7 +44,7 @@ def get_api_token(
             # dependency chain, but we re-read it here for clarity.
             pass  # checked below via _check_ip
 
-    token.last_used_at = datetime.now(timezone.utc)
+    token.last_used_at = datetime.utcnow()
     db.commit()
     return token
 

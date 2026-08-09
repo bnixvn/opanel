@@ -6,7 +6,7 @@ Every public function is idempotent where the contract requires it.
 import hashlib
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -149,7 +149,7 @@ def _start_job(db: Session, external_id: str, action: str) -> ProvisioningJob:
         external_id=external_id,
         action=action,
         status="running",
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.utcnow(),
     )
     db.add(job)
     db.commit()
@@ -160,7 +160,7 @@ def _start_job(db: Session, external_id: str, action: str) -> ProvisioningJob:
 def _finish_job(db: Session, job: ProvisioningJob, status: str, error: Optional[str] = None) -> None:
     job.status = status
     job.error = error
-    job.finished_at = datetime.now(timezone.utc)
+    job.finished_at = datetime.utcnow()
     db.commit()
 
 
@@ -372,7 +372,7 @@ def suspend_account(db: Session, external_id: str, reason: str = "Suspended by W
             pass
 
     account.status = "suspended"
-    account.updated_at = datetime.now(timezone.utc)
+    account.updated_at = datetime.utcnow()
     _finish_job(db, job, "completed")
     db.commit()
     db.refresh(account)
@@ -412,7 +412,7 @@ def unsuspend_account(db: Session, external_id: str) -> HostingAccount:
             pass
 
     account.status = "active"
-    account.updated_at = datetime.now(timezone.utc)
+    account.updated_at = datetime.utcnow()
     _finish_job(db, job, "completed")
     db.commit()
     db.refresh(account)
@@ -453,7 +453,7 @@ def terminate_account(db: Session, external_id: str, backup: bool = True) -> boo
         db.commit()
 
     account.status = "terminated"
-    account.updated_at = datetime.now(timezone.utc)
+    account.updated_at = datetime.utcnow()
     _finish_job(db, job, "completed")
     db.commit()
     return True
@@ -510,7 +510,7 @@ def change_package(db: Session, external_id: str, package_id: int) -> HostingAcc
     user.website_limit = plan.website_limit
     user.storage_limit_mb = plan.storage_limit_mb
     account.plan_id = plan.id
-    account.updated_at = datetime.now(timezone.utc)
+    account.updated_at = datetime.utcnow()
 
     _finish_job(db, job, "completed")
     db.commit()
@@ -534,7 +534,7 @@ def create_sso_login(db: Session, external_id: str, panel_url: str) -> dict:
     # Generate one-time token
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=60)
+    expires_at = datetime.utcnow() + timedelta(seconds=60)
 
     sso = PanelSsoToken(
         user_id=user.id,
@@ -560,9 +560,9 @@ def consume_sso_token(db: Session, raw_token: str) -> Optional[int]:
     ).first()
     if sso is None:
         return None
-    if sso.expires_at < datetime.now(timezone.utc):
+    if sso.expires_at < datetime.utcnow():
         return None
-    sso.used_at = datetime.now(timezone.utc)
+    sso.used_at = datetime.utcnow()
     db.commit()
     return sso.user_id
 
@@ -579,7 +579,7 @@ def create_api_token(db: Session, name: str, scopes: list[str], expires_days: in
         name=name,
         token_hash=token_hash,
         scopes=json.dumps(scopes),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=expires_days),
+        expires_at=datetime.utcnow() + timedelta(days=expires_days),
         ip_allowlist=ip_allowlist or None,
     )
     db.add(token)
@@ -596,6 +596,6 @@ def revoke_api_token(db: Session, token_id: int) -> bool:
     token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
     if token is None:
         return False
-    token.revoked_at = datetime.now(timezone.utc)
+    token.revoked_at = datetime.utcnow()
     db.commit()
     return True
