@@ -963,7 +963,7 @@ class ProvisioningUsageOut(BaseModel):
 
 
 class ProvisioningLoginOut(BaseModel):
-    login_url: str
+    url: str
     expires_at: datetime
 
 

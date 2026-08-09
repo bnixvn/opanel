@@ -509,7 +509,7 @@ def create_sso_login(db: Session, external_id: str, panel_url: str) -> dict:
 
     base_url = panel_url.rstrip("/")
     return {
-        "login_url": f"{base_url}/sso/{raw_token}",
+        "url": f"{base_url}/sso/{raw_token}",
         "expires_at": expires_at.isoformat(),
     }
 
