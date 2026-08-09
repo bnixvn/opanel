@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 import json
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
@@ -857,3 +857,117 @@ class PhpConfigRestore(BaseModel):
 class WpAction(BaseModel):
     website_id: int
     action: str
+
+
+# --- Provisioning API schemas ---
+
+class ProvisioningAccountCreate(BaseModel):
+    external_id: str = Field(min_length=1, max_length=128)
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[a-z_][a-z0-9_-]{2,31}$")
+    password: str = Field(min_length=12, max_length=72)
+    domain: Optional[str] = None
+    package_id: int = Field(default=1, ge=1)
+    php_version: str = "8.4"
+    app_type: str = "php"
+    install_wordpress: bool = False
+    enable_ssl: bool = False
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, value: str) -> str:
+        if value in RESERVED_LINUX_USERNAMES:
+            raise ValueError("username is reserved by the system")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_linux_login_password(value)
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or value == "":
+            return None
+        value = value.strip().lower()
+        if not DOMAIN_RE.match(value):
+            raise ValueError("Invalid domain")
+        return value
+
+    @field_validator("php_version")
+    @classmethod
+    def validate_php(cls, value: str) -> str:
+        return _validate_php_version(value) or "8.4"
+
+    @field_validator("app_type")
+    @classmethod
+    def validate_app(cls, value: str) -> str:
+        return _validate_app_type(value) or "php"
+
+
+class ProvisioningSuspendRequest(BaseModel):
+    reason: str = "Suspended by WHMCS"
+
+
+class ProvisioningPasswordChange(BaseModel):
+    password: str = Field(min_length=12, max_length=72)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_linux_login_password(value)
+
+
+class ProvisioningPackageChange(BaseModel):
+    package_id: int = Field(ge=1)
+
+
+class ProvisioningPlanOut(BaseModel):
+    id: int
+    slug: str
+    name: str
+    website_limit: int
+    storage_limit_mb: int
+    php_version: str
+    app_type: str
+    auto_ssl: bool
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class ProvisioningAccountOut(BaseModel):
+    external_id: str
+    user_id: int
+    username: str
+    domain: Optional[str] = None
+    status: str
+    plan_id: Optional[int] = None
+    package_name: Optional[str] = None
+    service_label: Optional[str] = None
+    storage_used_bytes: int = 0
+    storage_limit_bytes: Optional[int] = None
+    website_count: int = 0
+    website_limit: int = 0
+    created_at: Optional[datetime] = None
+
+
+class ProvisioningUsageOut(BaseModel):
+    external_id: str
+    storage_used_bytes: int = 0
+    storage_limit_bytes: Optional[int] = None
+    storage_percent: float = 0.0
+    website_count: int = 0
+    website_limit: int = 0
+
+
+class ProvisioningLoginOut(BaseModel):
+    login_url: str
+    expires_at: datetime
+
+
+class ProvisioningEnvelope(BaseModel):
+    success: bool = True
+    data: Optional[Any] = None
+    error: Optional[str] = None

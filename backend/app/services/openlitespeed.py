@@ -570,6 +570,42 @@ def remove_vhost(domain: str) -> None:
         ],
     )
 
+def suspend_vhost(domain: str) -> None:
+    """Suspend a vhost by renaming its config to .conf.suspended and restarting OLS."""
+    safe_domain = _safe_domain(domain)
+    shell.privileged(
+        "ols-vhost-suspend",
+        helper_args=[safe_domain],
+        check=False,
+        fallback=[
+            "bash", "-lc",
+            "conf=/usr/local/lsws/conf/opanel/vhosts/$1/vhost.conf && "
+            "test -f $conf && mv $conf ${conf}.suspended && "
+            "(systemctl restart lshttpd.service 2>/dev/null || "
+            "/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)",
+            "opanel-ols-vhost-suspend",
+            safe_domain,
+        ],
+    )
+
+def restore_vhost(domain: str) -> None:
+    """Restore a suspended vhost by renaming .conf.suspended back to .conf."""
+    safe_domain = _safe_domain(domain)
+    shell.privileged(
+        "ols-vhost-restore",
+        helper_args=[safe_domain],
+        check=False,
+        fallback=[
+            "bash", "-lc",
+            "conf=/usr/local/lsws/conf/opanel/vhosts/$1/vhost.conf && "
+            "test -f ${conf}.suspended && mv ${conf}.suspended $conf && "
+            "(systemctl restart lshttpd.service 2>/dev/null || "
+            "/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)",
+            "opanel-ols-vhost-restore",
+            safe_domain,
+        ],
+    )
+
 
 def get_vhost_config(domain: str) -> str | None:
     """Read the current vhost config for a domain."""

@@ -174,3 +174,77 @@ class BackupSchedule(Base):
     last_status: Mapped[str] = mapped_column(String(32), default="pending")
     last_message: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ApiToken(Base):
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    scopes: Mapped[str] = mapped_column(Text, default="[]")
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    ip_allowlist: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class HostingPlan(Base):
+    __tablename__ = "hosting_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    website_limit: Mapped[int] = mapped_column(Integer, default=1)
+    storage_limit_mb: Mapped[int] = mapped_column(Integer, default=1024)
+    php_version: Mapped[str] = mapped_column(String(16), default="8.4")
+    app_type: Mapped[str] = mapped_column(String(32), default="php")
+    auto_ssl: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class HostingAccount(Base):
+    __tablename__ = "hosting_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    external_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    primary_website_id: Mapped[Optional[int]] = mapped_column(ForeignKey("websites.id"), nullable=True)
+    plan_id: Mapped[Optional[int]] = mapped_column(ForeignKey("hosting_plans.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user: Mapped["User"] = relationship()
+    website: Mapped[Optional["Website"]] = relationship()
+    plan: Mapped[Optional["HostingPlan"]] = relationship()
+
+
+class ProvisioningJob(Base):
+    __tablename__ = "provisioning_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    external_id: Mapped[str] = mapped_column(String(128), index=True)
+    action: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PanelSsoToken(Base):
+    __tablename__ = "panel_sso_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship()
+
