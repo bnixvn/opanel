@@ -2,14 +2,15 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
 from app.api import api_tokens, auth, databases, firewall, maintenance, panel_settings as panel_settings_api, plans, provisioning, services, terminal, updates, users, waf, websites
 from app.core.config import settings
-from app.core.database import run_migrations
+from app.core.database import get_db, run_migrations
 from app.core.version import APP_VERSION
 from app.services import panel_settings as panel_brand_settings
 
@@ -152,6 +153,22 @@ def brand_asset(filename: str):
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
+
+@app.get("/sso/{token}", include_in_schema=False)
+def sso_login(token: str, request: Request, response: Response, db: Session = Depends(get_db)):
+    """Consume a one-time SSO token from WHMCS bpanel and create a session."""
+    from app.api.auth import _issue_login_session
+    from app.models.entities import User
+    from app.services.provisioning import consume_sso_token
+
+    user_id = consume_sso_token(db, token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired SSO token")
+    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    _issue_login_session(response, request, user)
+    return RedirectResponse(url="/", status_code=302)
 
 @app.get("/{full_path:path}", include_in_schema=False)
 def serve_spa(full_path: str):
