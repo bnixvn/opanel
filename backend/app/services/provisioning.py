@@ -186,8 +186,31 @@ def create_account(
     Idempotent: if external_id already exists, returns existing account.
     """
     existing = get_account(db, external_id)
-    if existing is not None:
+    if existing is not None and existing.status != "terminated":
+        # Idempotent: a still-active account already exists, return it without
+        # re-provisioning (otherwise we would recreate the website/domain).
         return existing, False
+
+    if existing is not None and existing.status == "terminated":
+        # WHMCS sent CreateAccount for a service that was previously terminated.
+        # Re-provision from scratch: drop the stale account row (and its user,
+        # since username/email are unique) and any leftover websites so the
+        # normal create path below can rebuild everything cleanly.
+        stale_user = (
+            db.query(User).filter(User.id == existing.user_id).first()
+            if existing.user_id
+            else None
+        )
+        for website in (
+            db.query(Website).filter(Website.owner_id == stale_user.id).all()
+            if stale_user
+            else []
+        ):
+            db.delete(website)
+        if stale_user is not None:
+            db.delete(stale_user)
+        db.delete(existing)
+        db.commit()
 
     job = _start_job(db, external_id, "create")
 
