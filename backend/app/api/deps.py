@@ -48,8 +48,12 @@ def _user_from_token(token: str, db: Session) -> tuple[User, dict]:
         raise credentials_exception from exc
 
     user = db.query(User).filter(User.username == username).first()
-    if user is None or not user.is_active:
+    if user is None:
         raise credentials_exception
+    # NOTE: is_active is NOT checked here. Session validation must accept
+    # suspended users so admin impersonation of a suspended account works
+    # end-to-end (the impersonate endpoint already allows suspended targets).
+    # Normal login rejects inactive users in the /auth/login handler.
     if (user.token_version or 0) != token_version:
         raise credentials_exception
     if jti and db.query(RevokedToken.id).filter(RevokedToken.jti == jti).first():

@@ -2923,7 +2923,9 @@ function App() {
   function storageUsageText(user) {
     const used = Number(user?.storage_used_bytes || 0);
     const limit = storageLimitBytes(user);
-    return limit === null ? `${formatBytes(used)} / Unlimited` : `${formatBytes(used)} / ${formatBytes(limit)}`;
+    if (limit === null) return `${formatBytes(used)}`;
+    const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
+    return `${formatBytes(used)}/${formatBytes(limit)} ${pct}%`;
   }
 
   function ResourceCard({ icon: Icon, label, value, detail, percent }) {
