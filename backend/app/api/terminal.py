@@ -31,7 +31,7 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     allowed = {item.rstrip("/") for item in settings.cors_origins}
     if settings.panel_url:
         allowed.add(settings.panel_url.rstrip("/"))
-    return not allowed or origin in allowed
+    return bool(allowed) and origin in allowed
 
 
 def _current_user_from_session_cookie(websocket: WebSocket, db: Session) -> User | None:

@@ -1,4 +1,4 @@
-from pydantic import Field, field_validator
+﻿from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # silently leaking through. Set STRICT_DECRYPT=false during a one-shot
     # migration window only.
     strict_decrypt: bool = True
+    pma_signon_secret: str = ""
 
     @field_validator("secret_key")
     @classmethod

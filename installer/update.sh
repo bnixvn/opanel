@@ -562,6 +562,7 @@ install_panel_runtime() {
   env_set_default RATE_LIMIT_BACKEND "redis"
   if [[ -z "$(env_get ALLOWED_ORIGINS)" ]]; then
     env_set_default ALLOWED_ORIGINS "$panel_url"
+env_set_default PMA_SIGNON_SECRET "$(openssl rand -hex 32)"
   fi
   panel_domain="$(env_get PANEL_DOMAIN)"
   if [[ -n "$panel_domain" ]] && ! is_domain_name "$panel_domain"; then
@@ -576,7 +577,7 @@ install_panel_runtime() {
   if [[ "$panel_url" == https://* && -n "$panel_domain" ]]; then
     _pcert="$(env_get PANEL_SSL_CERT)"; _pkey="$(env_get PANEL_SSL_KEY)"
     if [[ -z "$_pcert" || -z "$_pkey" || ! -f "$_pcert" || ! -f "$_pkey" ]]; then
-      log "SSL cert missing for $panel_domain — requesting Let's Encrypt certificate"
+      log "SSL cert missing for $panel_domain â€” requesting Let's Encrypt certificate"
       sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper panel-ssl-install "$panel_domain" "$panel_port" "$(env_get SSL_EMAIL)" || \
         echo "WARNING: certbot failed; panel will use self-signed cert"
     fi
@@ -701,7 +702,7 @@ SERVICE
   iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
   rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
   rm -f /etc/nginx/sites-enabled/opanel.conf /etc/nginx/sites-available/opanel.conf 2>/dev/null || true
-  # Refresh tools vhost (phpMyAdmin) via OLS helper — handles phpmyadmin
+  # Refresh tools vhost (phpMyAdmin) via OLS helper â€” handles phpmyadmin
   # signon config, phpIniOverride, SSL, and OLS main config sync.
   # Must invoke as 'opanel' user (helper enforces caller identity).
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper refresh-tools 2>/dev/null || write_tools_nginx_config

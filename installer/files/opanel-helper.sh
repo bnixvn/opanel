@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # /usr/local/sbin/opanel-helper
 #
 # Root-privileged trampoline for the OPanel API daemon.
@@ -646,7 +646,7 @@ for link in phpmyadmin.rglob('*'):
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   [[ -n "$host" ]] && sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
-  # OLS PHP runs as www-data:opanel-sites – group is opanel-sites (not www-data),
+  # OLS PHP runs as www-data:opanel-sites â€“ group is opanel-sites (not www-data),
   # so group-readable (640) won't work.  Must be world-readable (644).
   chmod 644 /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
   fix_phpmyadmin_permissions
@@ -1883,6 +1883,33 @@ require_terminal_path_args() {
   done
 }
 
+_block_internal_url() {
+  local url="$1" host port resolved
+  host="${url#*://}"
+  host="${host%%/*}"
+  host="${host%%\?*}"
+  port="${host##*:}"
+  if [[ "$port" == "$host" ]]; then port=""; fi
+  host="${host%%:*}"
+  host="${host#[@]}"
+  [[ -z "$host" ]] && return
+  case "$host" in
+    169.254.*|metadata.google.internal)
+      deny "terminal URL points to a cloud metadata endpoint: $url"
+      ;;
+    0.0.0.0|[::])
+      deny "terminal URL points to an unspecified address: $url"
+      ;;
+  esac
+  if command -v getent >/dev/null 2>&1; then
+    while IFS= read -r resolved; do
+      case "$resolved" in
+        169.254.*|fe80:*|fc00:*|fd00:*) deny "terminal URL resolves to a link-local or private address: $url" ;;
+      esac
+    done < <(getent ahosts "$host" 2>/dev/null | awk '{print $1}' | sort -u)
+  fi
+}
+
 require_terminal_download_args() {
   local user="$1" cwd="$2" arg value expect_output=0
   shift 2
@@ -1904,6 +1931,7 @@ require_terminal_download_args() {
         expect_output=1
         ;;
       http://*|https://*|ftp://*|ftps://*|sftp://*)
+        _block_internal_url "$arg"
         ;;
       -*|"")
         ;;

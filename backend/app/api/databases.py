@@ -1,15 +1,17 @@
-from pathlib import Path
+﻿from pathlib import Path
 from tempfile import NamedTemporaryFile
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from hmac import compare_digest
 from typing import List
 import ipaddress
 import logging
 
 from app.api.deps import get_current_user
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
@@ -136,11 +138,18 @@ def consume_phpmyadmin_sso(token: str, request: Request):
     Security model:
       * 256-bit token entropy (secrets.token_urlsafe(32)).
       * One-shot (file removed on read), TTL 60 seconds.
-      * Restricted to loopback callers. The phpMyAdmin signon script always
-        curls ``http(s)://127.0.0.1:<port>/api/...`` from the same host, so a
-        legitimate request never has a remote peer.
+      * Requires a shared secret header (X-OPanel-Signon-Secret) that is
+        generated at install time and injected into the phpMyAdmin signon
+        script. This is more robust than IP-based loopback checking because
+        it cannot be bypassed via X-Forwarded-For spoofing.
+      * Falls back to loopback peer check when no secret is configured
+        (backward compatibility for installs that predate this feature).
     """
-    if not _is_loopback_peer(request):
+    if settings.pma_signon_secret:
+        provided = request.headers.get("x-opanel-signon-secret", "")
+        if not provided or not compare_digest(provided, settings.pma_signon_secret):
+            raise HTTPException(status_code=404, detail="Invalid or expired token")
+    elif not _is_loopback_peer(request):
         peer = request.client.host if request.client else "unknown"
         logger.warning("phpmyadmin-sso non-loopback access attempt from %s", peer)
         raise HTTPException(status_code=404, detail="Invalid or expired token")

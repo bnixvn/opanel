@@ -375,7 +375,7 @@ INI
   systemctl restart lshttpd.service 2>/dev/null || /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
 }
 
-# configure_fastcgi_cache removed — OLS handles caching internally via LSCache module.
+# configure_fastcgi_cache removed Ã¢â‚¬â€ OLS handles caching internally via LSCache module.
 
 write_modsec_base_conf() {
   local modsec_dir="/usr/local/lsws/conf/opanel/waf"
@@ -399,7 +399,7 @@ write_modsec_main_conf() {
   } >"${modsec_dir}/opanel-main.conf"
 }
 
-# write_http_flood_nginx_conf removed — OLS handles per-vhost connection limits
+# write_http_flood_nginx_conf removed Ã¢â‚¬â€ OLS handles per-vhost connection limits
 # via the openlitespeed.py service module (config written into vhost templates).
 
 ensure_ols_modsecurity_enabled() {
@@ -638,6 +638,7 @@ PANEL_PORT=${PANEL_PORT}
 PANEL_SSL_CERT=
 PANEL_SSL_KEY=
 FRONTEND_DIST=${APP_DIR}/frontend/dist
+PMA_SIGNON_SECRET=$(openssl rand -hex 32)
 ENV
 
   # Lock down the env file: contains SECRET_KEY and ALLOWED_ORIGINS.
@@ -869,7 +870,7 @@ fix_phpmyadmin_permissions() {
 setup_phpmyadmin_sso() {
   # phpMyAdmin must be installed first
   if [[ ! -d /usr/share/phpmyadmin ]]; then
-    log "phpMyAdmin not found — skipping SSO setup"
+    log "phpMyAdmin not found Ã¢â‚¬â€ skipping SSO setup"
     return 0
   fi
 
@@ -941,7 +942,7 @@ curl_setopt_array($ch, [
     CURLOPT_TIMEOUT => 5,
     CURLOPT_SSL_VERIFYPEER => false,
     CURLOPT_SSL_VERIFYHOST => false,
-    CURLOPT_HTTPHEADER => ['Accept: application/json'],
+    CURLOPT_HTTPHEADER => ['Accept: application/json', 'X-OPanel-Signon-Secret: __opanel_PMA_SIGNON_SECRET__'],
 ]);
 $response = curl_exec($ch);
 $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -982,6 +983,8 @@ PHP
   fi
   sed -i "s#__opanel_API_BASE__#${api_scheme}://127.0.0.1:${PANEL_PORT}/api/databases/phpmyadmin-sso/#" /usr/share/phpmyadmin/opanel-signon.php
   sed -i "s#__opanel_PMA_COOKIE_SECURE__#${pma_secure}#" /usr/share/phpmyadmin/opanel-signon.php
+  local pma_signon_secret="$(grep -oP \"^PMA_SIGNON_SECRET=\K.*\" \"${APP_DIR}/backend/.env\" 2>/dev/null || true)"
+  sed -i "s#__opanel_PMA_SIGNON_SECRET__#${pma_signon_secret}#" /usr/share/phpmyadmin/opanel-signon.php
 
   chown root:opanel-sites /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || chown root:www-data /etc/phpmyadmin/conf.d/opanel-signon.php
   chmod 644 /etc/phpmyadmin/conf.d/opanel-signon.php

@@ -1,4 +1,4 @@
-"""Provisioning service — bridges WHMCS billing to OPanel runtime.
+﻿"""Provisioning service â€” bridges WHMCS billing to OPanel runtime.
 
 Every public function is idempotent where the contract requires it.
 """
@@ -108,7 +108,7 @@ def _account_dict(db: Session, account: HostingAccount) -> dict:
         service_label_parts.append(domain)
     if plan:
         service_label_parts.append(plan.name)
-    service_label = " — ".join(service_label_parts) if service_label_parts else None
+    service_label = " â€” ".join(service_label_parts) if service_label_parts else None
 
     return {
         "external_id": account.external_id,
@@ -569,7 +569,7 @@ def create_sso_login(db: Session, external_id: str, panel_url: str) -> dict:
 
     base_url = panel_url.rstrip("/")
     return {
-        "url": f"{base_url}/sso/{raw_token}",
+        "login_url": f"{base_url}/sso#{raw_token}",
         "expires_at": expires_at.isoformat(),
     }
 

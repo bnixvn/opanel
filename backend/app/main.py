@@ -1,8 +1,8 @@
-import logging
+﻿import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Depends, Request, Response
+from fastapi import FastAPI, HTTPException, Depends, Request, Response, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -154,9 +154,62 @@ def brand_asset(filename: str):
     )
 
 
+@app.get("/sso", include_in_schema=False)
+def sso_intermediary():
+    """Serve an intermediary page that reads the SSO token from the URL
+    fragment (#) and POSTs it to /sso.
+
+    Using the fragment keeps the token out of server access logs and proxy
+    logs because browsers never send the fragment in HTTP requests.
+    """
+    from fastapi.responses import HTMLResponse
+
+    return HTMLResponse(
+        """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>OPanel SSO</title></head>
+<body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif">
+<p>Logging in…</p>
+<form id="sso-form" method="POST" action="/sso">
+<input type="hidden" name="token" id="sso-token">
+</form>
+<script>
+(function(){
+  var hash = window.location.hash.replace(/^#/, "");
+  if (!hash) { document.body.innerHTML = "<p>Invalid SSO link.</p>"; return; }
+  document.getElementById("sso-token").value = hash;
+  document.getElementById("sso-form").submit();
+})();
+</script>
+</body></html>""",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
+@app.post("/sso", include_in_schema=False)
+def sso_login_post(request: Request, response: Response, token: str = Form(...), db: Session = Depends(get_db)):
+    """Consume a one-time SSO token submitted via POST body."""
+    from app.api.auth import _issue_login_session
+    from app.models.entities import User
+    from app.services.provisioning import consume_sso_token
+
+    user_id = consume_sso_token(db, token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired SSO token")
+    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    redirect = RedirectResponse(url="/", status_code=302)
+    _issue_login_session(redirect, request, user)
+    return redirect
+
+
 @app.get("/sso/{token}", include_in_schema=False)
 def sso_login(token: str, request: Request, response: Response, db: Session = Depends(get_db)):
-    """Consume a one-time SSO token from WHMCS bpanel and create a session."""
+    """Consume a one-time SSO token from WHMCS bpanel and create a session.
+
+    Deprecated: kept for backward compatibility. New SSO links use the
+    fragment-based /sso endpoint to keep the token out of server logs.
+    """
     from app.api.auth import _issue_login_session
     from app.models.entities import User
     from app.services.provisioning import consume_sso_token
