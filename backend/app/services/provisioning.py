@@ -450,7 +450,7 @@ def unsuspend_account(db: Session, external_id: str) -> HostingAccount:
 # Terminate
 # ---------------------------------------------------------------------------
 
-def terminate_account(db: Session, external_id: str, backup: bool = True) -> bool:
+def terminate_account(db: Session, external_id: str) -> bool:
     account = get_account(db, external_id)
     if account is None:
         raise ValueError(f"Account {external_id} not found")
@@ -460,23 +460,19 @@ def terminate_account(db: Session, external_id: str, backup: bool = True) -> boo
     websites = db.query(Website).filter(Website.owner_id == account.user_id).all() if user else []
 
     for website in websites:
-        if not backup:
-            # Hard delete: drop DB, remove files
-            db_acc = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
-            if db_acc:
-                mariadb.drop_database(db_acc.db_name, db_acc.db_user)
-                db.delete(db_acc)
-            openlitespeed.remove_vhost(website.domain)
-            wordpress.delete_wordpress(website.root_path)
-        else:
-            # Soft: just remove vhost config, keep home dir
-            openlitespeed.remove_vhost(website.domain)
+        # Full teardown: drop the site database, remove files, and the vhost.
+        db_acc = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
+        if db_acc:
+            mariadb.drop_database(db_acc.db_name, db_acc.db_user)
+            db.delete(db_acc)
+        openlitespeed.remove_vhost(website.domain)
+        wordpress.delete_wordpress(website.root_path)
         db.delete(website)
 
     if user:
-        if not backup:
-            site_users.delete_panel_user(user.username)
-        user.is_active = False
+        # Remove the Linux/SFTP user and its home directory entirely.
+        site_users.delete_panel_user(user.username)
+        db.delete(user)
         db.commit()
 
     account.status = "terminated"

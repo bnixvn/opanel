@@ -113,9 +113,9 @@ function bpanel_UnsuspendAccount($params)
 
 function bpanel_TerminateAccount($params)
 {
-    // Terminate hard-deletes the hosting account and its Linux user/home.
-    // (backup=false => hard delete; the API defaults to hard delete too.)
-    $result = bpanel_request($params, 'DELETE', '/api/provisioning/v1/accounts/' . rawurlencode(bpanel_external_id($params)), null, ['backup' => 'false']);
+    // Terminate fully removes the hosting account, its websites, and the
+    // Linux/SFTP user and home directory.
+    $result = bpanel_request($params, 'DELETE', '/api/provisioning/v1/accounts/' . rawurlencode(bpanel_external_id($params)));
     return $result['ok'] ? 'success' : $result['error'];
 }
 

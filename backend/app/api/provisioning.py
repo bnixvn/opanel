@@ -9,7 +9,7 @@ Error format: {"detail": "message string"} (FastAPI default).
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.provisioning_deps import require_provisioning_read, require_provisioning_write
@@ -104,12 +104,11 @@ def unsuspend_account(
 @router.delete("/accounts/{external_id}")
 def terminate_account(
     external_id: str,
-    backup: bool = Query(default=False),
     db: Session = Depends(get_db),
     _token: ApiToken = Depends(require_provisioning_write),
 ) -> Dict[str, Any]:
     try:
-        provisioning.terminate_account(db, external_id, backup=backup)
+        provisioning.terminate_account(db, external_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return {"terminated": True}
