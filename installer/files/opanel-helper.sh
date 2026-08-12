@@ -3529,8 +3529,12 @@ PY
     )
     php_bin="php"
     if [[ -n "$php_version" ]]; then
-      php_bin="php${php_version}"
-      command -v "$php_bin" >/dev/null 2>&1 || deny "PHP CLI is not installed: $php_bin"
+      lsphp_php_bin="/usr/local/lsws/lsphp${php_version//./}/bin/php"
+      if [[ -x "$lsphp_php_bin" ]]; then
+        php_bin="$lsphp_php_bin"
+      else
+        deny "PHP CLI is not installed: lsphp${php_version//./}"
+      fi
     fi
 
     # Whitelist of allowed commands for terminal access
@@ -3570,9 +3574,14 @@ PY
         [[ -f artisan ]] || deny "artisan not found in $target"
         exec runuser -u "$user" -- env "${terminal_env[@]}" "$php_bin" artisan "$@"
         ;;
+      wp)
+        # WP-CLI as the site user with the selected PHP version
+        [[ -x /usr/local/bin/wp ]] || deny "wp-cli not found"
+        exec runuser -u "$user" -- env "${terminal_env[@]}" WP_CLI_PHP_ARGS='-d pcre.jit=0' "$php_bin" -d pcre.jit=0 /usr/local/bin/wp "$@"
+        ;;
       *)
         echo "Command not allowed: $cmd" >&2
-        echo "Allowed commands: php, composer, artisan, node, npm, npx, yarn, git, phpunit, ls, cat, mkdir, rm, cp, mv, chmod, chown, pwd, echo, touch, grep, find, tar, zip, unzip, curl, wget, diff, head, tail, less, du, df, date, whoami, which, clear" >&2
+        echo "Allowed commands: php, composer, artisan, wp, node, npm, npx, yarn, git, phpunit, ls, cat, mkdir, rm, cp, mv, chmod, chown, pwd, echo, touch, grep, find, tar, zip, unzip, curl, wget, diff, head, tail, less, du, df, date, whoami, which, clear" >&2
         exit 126
         ;;
     esac

@@ -25,6 +25,7 @@ class TestIsCommandAllowed:
         allowed = [
             "php",
             "composer",
+            "wp",
             "node",
             "npm",
             "yarn",
@@ -106,6 +107,7 @@ class TestIsCommandAllowed:
         """Whitelist should contain a reasonable number of commands."""
         assert len(ALLOWED_COMMANDS) >= 20
         assert len(ALLOWED_COMMANDS) <= 50
+        assert "wp" in ALLOWED_COMMANDS
 
 
 class TestTruncateOutput:

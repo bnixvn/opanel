@@ -21,6 +21,7 @@ ALLOWED_COMMANDS: Set[str] = {
     "php",
     "composer",
     "artisan",
+    "wp",
     "node",
     "npm",
     "npx",
@@ -177,7 +178,7 @@ def exec_command(
         cwd: Working directory (defaults to user's home).
         timeout: Maximum execution time in seconds.
         php_version: PHP version to use (e.g. "8.4").  When provided the helper
-            will call ``php8.4`` instead of the system default ``php`` binary so
+            will call the matching LSPHP binary (e.g. ``lsphp84/bin/php``) instead of the system default ``php`` binary so
             Composer platform checks pass for the correct version.
 
     Returns:
@@ -211,7 +212,7 @@ def exec_command(
     working_dir = cwd or f"/home/{linux_user}"
 
     # When a php_version is known, pass it so opanel-helper can invoke the
-    # correct versioned binary (php8.4) instead of the system default (php).
+    # correct LSPHP binary (lsphp84/bin/php) instead of the system default (php).
     extra_env: list[str] = []
     if php_version and _PHP_VERSION_RE.match(php_version):
         extra_env = [f"--php-version={php_version}"]

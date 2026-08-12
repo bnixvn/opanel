@@ -190,19 +190,23 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
       }
 
       if (data === '\r' || data === '\n') {
-        const command = lineRef.current;
-        term.write('\r\n');
-        if (command.trim()) {
-          historyRef.current = [command, ...historyRef.current.filter(item => item !== command)].slice(0, 50);
-          historyIndexRef.current = -1;
-          lineRef.current = '';
-          cursorRef.current = 0;
-          runningRef.current = true;
-          promptVisibleRef.current = false;
-          ws.send(JSON.stringify({ type: 'input', data: command }));
-        } else {
-          lineRef.current = '';
-          cursorRef.current = 0;
+        submitLine();
+        return;
+      }
+
+      // Multi-line paste: split on newlines and submit each line
+      if (data.length > 1 && /[\r\n]/.test(data)) {
+        const segments = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+        for (let i = 0; i < segments.length; i++) {
+          const segment = segments[i];
+          if (segment) {
+            lineRef.current = lineRef.current.slice(0, cursorRef.current) + segment + lineRef.current.slice(cursorRef.current);
+            cursorRef.current += segment.length;
+            redrawLine();
+          }
+          if (i < segments.length - 1) {
+            submitLine();
+          }
         }
         return;
       }
@@ -211,7 +215,11 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
         if (cursorRef.current > 0) {
           lineRef.current = lineRef.current.slice(0, cursorRef.current - 1) + lineRef.current.slice(cursorRef.current);
           cursorRef.current -= 1;
-          redrawLine();
+          if (cursorRef.current === lineRef.current.length) {
+            term.write('\b \b');
+          } else {
+            redrawLine();
+          }
         }
         return;
       }
@@ -266,9 +274,30 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
       if (data >= ' ') {
         lineRef.current = lineRef.current.slice(0, cursorRef.current) + data + lineRef.current.slice(cursorRef.current);
         cursorRef.current += data.length;
-        redrawLine();
+        if (cursorRef.current === lineRef.current.length) {
+          term.write(data);
+        } else {
+          redrawLine();
+        }
       }
     });
+
+    function submitLine() {
+      const command = lineRef.current;
+      term.write('\r\n');
+      if (command.trim()) {
+        historyRef.current = [command, ...historyRef.current.filter(item => item !== command)].slice(0, 50);
+        historyIndexRef.current = -1;
+        lineRef.current = '';
+        cursorRef.current = 0;
+        runningRef.current = true;
+        promptVisibleRef.current = false;
+        wsRef.current?.send(JSON.stringify({ type: 'input', data: command }));
+      } else {
+        lineRef.current = '';
+        cursorRef.current = 0;
+      }
+    }
 
     connect();
 
