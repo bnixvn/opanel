@@ -221,12 +221,12 @@ def create_account(
     website = None
     if domain:
         root_path = site_users.site_root_for_panel_user(username, domain)
-        # Do NOT pass the panel linux_user here: ensure_site_runtime derives the
-        # per-domain site user from the domain and returns it. Using the panel
-        # user would make the vhost run under the wrong account and break WP
-        # installs (files owned by the site user, vhost under the panel user).
+        # root_path lives under the panel user's home (/home/<paneluser>/<domain>),
+        # exactly like the canonical website-create path in websites.py. Pass the
+        # panel linux_user so ensure_site_runtime asserts ownership against the
+        # real owner of that path (the same account that owns the home).
         try:
-            site_linux_user = site_users.ensure_site_runtime(domain, root_path, php_version if app_type in {"php", "wordpress"} else None)
+            site_linux_user = site_users.ensure_site_runtime(domain, root_path, php_version if app_type in {"php", "wordpress"} else None, linux_user)
         except (ValueError, RuntimeError) as exc:
             user.is_active = False
             db.commit()
