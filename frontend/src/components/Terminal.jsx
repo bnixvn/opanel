@@ -189,18 +189,21 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
         return;
       }
 
-      if (data === '\r') {
+      if (data === '\r' || data === '\n') {
         const command = lineRef.current;
         term.write('\r\n');
         if (command.trim()) {
           historyRef.current = [command, ...historyRef.current.filter(item => item !== command)].slice(0, 50);
+          historyIndexRef.current = -1;
+          lineRef.current = '';
+          cursorRef.current = 0;
+          runningRef.current = true;
+          promptVisibleRef.current = false;
+          ws.send(JSON.stringify({ type: 'input', data: command }));
+        } else {
+          lineRef.current = '';
+          cursorRef.current = 0;
         }
-        historyIndexRef.current = -1;
-        lineRef.current = '';
-        cursorRef.current = 0;
-        runningRef.current = true;
-        promptVisibleRef.current = false;
-        ws.send(JSON.stringify({ type: 'input', data: command }));
         return;
       }
 

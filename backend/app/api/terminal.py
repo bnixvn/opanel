@@ -235,51 +235,56 @@ async def terminal_websocket(
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
             elif msg_type == "input":
-                command = (msg.get("data", "") or "").strip()
-                if not command:
-                    await websocket.send_json({"type": "exit", "code": 0})
-                    continue
-                if command in {"clear", "cls"}:
-                    await websocket.send_json({"type": "clear"})
-                    await websocket.send_json({"type": "exit", "code": 0})
-                    continue
-
-                try:
-                    argv = terminal.split_command(command)
-                except ValueError as exc:
-                    await websocket.send_json({"type": "output", "data": f"{exc}\r\n"})
-                    await websocket.send_json({"type": "exit", "code": 2})
-                    continue
-
-                if argv[0] == "cd":
-                    if len(argv) > 2:
-                        await websocket.send_json({"type": "output", "data": "usage: cd [path]\r\n"})
-                        await websocket.send_json({"type": "exit", "code": 2})
+                # A pasted block may contain several lines/commands. Split on
+                # newlines and run each command sequentially so a multi-line
+                # paste behaves like typing each line and pressing Enter.
+                raw_input = msg.get("data", "") or ""
+                lines = [ln.rstrip() for ln in raw_input.split("\n")]
+                for command in lines:
+                    command = command.strip()
+                    if not command:
                         continue
+                    if command in {"clear", "cls"}:
+                        await websocket.send_json({"type": "clear"})
+                        await websocket.send_json({"type": "exit", "code": 0})
+                        continue
+
                     try:
-                        cwd = terminal.resolve_cwd(website.root_path, cwd, argv[1] if len(argv) == 2 else "")
+                        argv = terminal.split_command(command)
                     except ValueError as exc:
                         await websocket.send_json({"type": "output", "data": f"{exc}\r\n"})
-                        await websocket.send_json({"type": "exit", "code": 1})
+                        await websocket.send_json({"type": "exit", "code": 2})
                         continue
-                    await websocket.send_json({"type": "cwd", "data": cwd})
-                    await websocket.send_json({"type": "exit", "code": 0})
-                    continue
 
-                result = terminal.exec_command(
-                    website.linux_user,
-                    command,
-                    cwd=cwd,
-                    php_version=getattr(website, "php_version", None),
-                )
-                await websocket.send_json({
-                    "type": "output",
-                    "data": result.stdout + result.stderr,
-                })
-                await websocket.send_json({
-                    "type": "exit",
-                    "code": result.exit_code,
-                })
+                    if argv[0] == "cd":
+                        if len(argv) > 2:
+                            await websocket.send_json({"type": "output", "data": "usage: cd [path]\r\n"})
+                            await websocket.send_json({"type": "exit", "code": 2})
+                            continue
+                        try:
+                            cwd = terminal.resolve_cwd(website.root_path, cwd, argv[1] if len(argv) == 2 else "")
+                        except ValueError as exc:
+                            await websocket.send_json({"type": "output", "data": f"{exc}\r\n"})
+                            await websocket.send_json({"type": "exit", "code": 1})
+                            continue
+                        await websocket.send_json({"type": "cwd", "data": cwd})
+                        await websocket.send_json({"type": "exit", "code": 0})
+                        continue
+
+                    result = terminal.exec_command(
+                        website.linux_user,
+                        command,
+                        cwd=cwd,
+                        php_version=getattr(website, "php_version", None),
+                    )
+                    await websocket.send_json({
+                        "type": "output",
+                        "data": result.stdout + result.stderr,
+                    })
+                    await websocket.send_json({
+                        "type": "exit",
+                        "code": result.exit_code,
+                    })
             elif msg_type == "resize":
                 # Terminal resize - can be used for PTY support in future
                 pass
