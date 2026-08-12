@@ -221,8 +221,12 @@ def create_account(
     website = None
     if domain:
         root_path = site_users.site_root_for_panel_user(username, domain)
+        # Do NOT pass the panel linux_user here: ensure_site_runtime derives the
+        # per-domain site user from the domain and returns it. Using the panel
+        # user would make the vhost run under the wrong account and break WP
+        # installs (files owned by the site user, vhost under the panel user).
         try:
-            linux_user = site_users.ensure_site_runtime(domain, root_path, php_version if app_type in {"php", "wordpress"} else None, linux_user)
+            site_linux_user = site_users.ensure_site_runtime(domain, root_path, php_version if app_type in {"php", "wordpress"} else None)
         except (ValueError, RuntimeError) as exc:
             user.is_active = False
             db.commit()
@@ -234,7 +238,7 @@ def create_account(
             owner_id=user.id,
             root_path=root_path,
             document_root="public_html",
-            linux_user=linux_user,
+            linux_user=site_linux_user,
             php_version=php_version,
             app_type=app_type if not install_wordpress else "wordpress",
             nginx_rewrite_mode="front_controller" if (app_type == "wordpress" or install_wordpress) else "none",
@@ -262,7 +266,7 @@ def create_account(
                     password,
                     f"admin@{domain}",
                     php_version,
-                    linux_user,
+                    site_linux_user,
                     root_path=root_path,
                 )
             except (RuntimeError, ValueError) as exc:
@@ -276,7 +280,7 @@ def create_account(
                 placeholder = site_users.document_root(root_path)
                 if not settings.command_dry_run:
                     placeholder.mkdir(parents=True, exist_ok=True)
-                    site_users.fix_site_path(str(placeholder), linux_user)
+                    site_users.fix_site_path(str(placeholder), site_linux_user)
             except (OSError, RuntimeError):
                 pass
 
@@ -287,8 +291,8 @@ def create_account(
                 root_path,
                 app_type=website.app_type,
                 php_version=php_version,
-                linux_user=linux_user,
-                lsphp_socket_override=site_users.site_lsphp_socket(linux_user, root_path, php_version if website.app_type in {"php", "wordpress"} else None),
+                linux_user=site_linux_user,
+                lsphp_socket_override=site_users.site_lsphp_socket(site_linux_user, root_path, php_version if website.app_type in {"php", "wordpress"} else None),
                 document_root="public_html",
                 rewrite_mode=website.nginx_rewrite_mode,
             )
