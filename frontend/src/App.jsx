@@ -12,7 +12,7 @@ import 'ace-builds/src-noconflict/mode-php';
 import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
-import { Archive, Check, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, MoveRight, Network, PackageOpen, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink } from 'lucide-react';
+import { Archive, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, MoveRight, Network, PackageOpen, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import './style.css';
 import './brand.css';
@@ -1025,6 +1025,23 @@ function App() {
       setNotice(`Deleted user ${user.username}${count ? ` and ${count} website(s)` : ''}`);
       await loadUsers();
       await loadWebsites();
+    }
+  }
+
+  async function toggleUserActive(user) {
+    if (!user) return;
+    const action = user.is_active ? 'suspend' : 'unsuspend';
+    if (!confirm(`${action === 'suspend' ? 'Suspend' : 'Unsuspend'} ${user.username}?`)) return;
+    try {
+      await request(`/users/${user.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: !user.is_active }),
+      }, `${action === 'suspend' ? 'Suspending' : 'Unsuspending'} ${user.username}...`);
+      setNotice(`${user.username} ${action === 'suspend' ? 'suspended' : 'unsuspended'}.`);
+      await loadUsers();
+    } catch (err) {
+      setError(`Failed to ${action} ${user.username}: ${err?.message || err}`);
     }
   }
 
@@ -4289,10 +4306,12 @@ function App() {
         {users.map(user => <div className="row user-row" key={user.id}>
           <div className="user-main"><strong>{user.username}</strong><small>{user.email}</small></div>
           <span className="badge">{roleLabel(user.role)}</span>
+          <span className={`badge ${user.is_active ? 'ok' : 'warn'}`}>{user.is_active ? 'Active' : 'Suspended'}</span>
           <span className="user-metric"><HardDrive size={13}/>{storageUsageText(user)}</span>
           <div className="row-actions">
             <button className="mini secondary-light" disabled={!!loading} onClick={() => startEditingUser(user)}><Pencil size={14}/> Edit</button>
             <button className="mini secondary-light" disabled={!!loading} onClick={() => quickLoginUser(user)}><LogIn size={14}/> Login as</button>
+            {user.id !== currentUser?.id && <button className={`mini ${user.is_active ? 'danger' : 'secondary-light'}`} disabled={!!loading} onClick={() => toggleUserActive(user)}>{user.is_active ? <><Ban size={14}/> Suspend</> : <><CheckCircle size={14}/> Unsuspend</>}</button>}
             {user.totp_enabled && user.id !== currentUser?.id && <button className="mini secondary-light" disabled={!!loading} onClick={() => resetUserTwoFactor(user)}>Reset 2FA</button>}
             {user.id !== currentUser?.id && <button className="mini danger" disabled={!!loading} onClick={() => deletePanelUser(user)}><Trash2 size={14}/></button>}
           </div>

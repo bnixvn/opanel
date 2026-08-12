@@ -491,8 +491,11 @@ def impersonate_user(
     _enforce_rate_limit(_username_key(current_user.username))
 
     target_user = db.query(User).filter(User.id == user_id).first()
-    if target_user is None or not target_user.is_active:
-        raise HTTPException(status_code=404, detail="User not found or inactive")
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Admins may impersonate suspended users for support/troubleshooting.
+    # Normal login still rejects inactive users; only impersonation is allowed
+    # to bypass the active check here.
 
     # Re-prompt TOTP for admins that have 2FA. Refusing without a code keeps
     # the feature usable from the SPA (which can pop a modal on 401) while
