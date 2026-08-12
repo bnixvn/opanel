@@ -104,7 +104,7 @@ def unsuspend_account(
 @router.delete("/accounts/{external_id}")
 def terminate_account(
     external_id: str,
-    backup: bool = Query(default=True),
+    backup: bool = Query(default=False),
     db: Session = Depends(get_db),
     _token: ApiToken = Depends(require_provisioning_write),
 ) -> Dict[str, Any]:
