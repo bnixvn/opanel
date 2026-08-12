@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
@@ -74,6 +75,17 @@ class Website(Base):
     @webserver_rewrite_mode.setter
     def webserver_rewrite_mode(self, value: str) -> None:
         self.nginx_rewrite_mode = value
+
+    @property
+    def wp_installed(self) -> bool:
+        """True when a WordPress wp-config.php exists in the document root."""
+        if not self.root_path:
+            return False
+        wp_config = Path(self.root_path) / (self.document_root or "public_html") / "wp-config.php"
+        try:
+            return wp_config.is_file()
+        except OSError:
+            return False
     waf_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     waf_default_rules: Mapped[str] = mapped_column(Text, default="")
     waf_custom_rules: Mapped[str] = mapped_column(Text, default="")

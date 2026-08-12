@@ -485,6 +485,7 @@ class WebsiteOut(BaseModel):
     panel_password: Optional[str] = None
     php_version: str
     app_type: str
+    wp_installed: bool = False
     ssl_enabled: bool
     ssl_mode: str = "none"
     ssl_updated_at: Optional[datetime] = None
