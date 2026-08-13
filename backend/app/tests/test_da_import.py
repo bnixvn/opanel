@@ -1,5 +1,7 @@
 from io import BytesIO
+import os
 import tarfile
+import threading
 
 import pytest
 
@@ -74,10 +76,22 @@ def test_safe_extract_tar_zst_uses_zstdcat_without_decompress_flag(tmp_path, mon
     calls = []
 
     class FakePopen:
+        """Feeds the tar bytes through a real OS pipe (non-seekable), like a
+        genuine subprocess.Popen(..., stdout=PIPE) would — a BytesIO stand-in
+        would stay seekable and silently miss bugs that only show up on a
+        real pipe (e.g. "[Errno 29] Illegal seek")."""
+
         def __init__(self, args, stdout=None, stderr=None):
             calls.append(args)
-            self.stdout = BytesIO(raw_tar.getvalue())
+            read_fd, write_fd = os.pipe()
+            self.stdout = os.fdopen(read_fd, "rb")
             self.returncode = 0
+
+            def _feed():
+                with os.fdopen(write_fd, "wb") as w:
+                    w.write(raw_tar.getvalue())
+
+            threading.Thread(target=_feed, daemon=True).start()
 
         def communicate(self, timeout=None):
             return b"", b""

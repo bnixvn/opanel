@@ -91,14 +91,14 @@ def create_token(
 
 
 @router.delete("/{token_id}")
-def revoke_token(
+def delete_token(
     token_id: int,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     ensure_role(current_user.role, Role.admin)
-    if not provisioning.revoke_api_token(db, token_id):
+    if not provisioning.delete_api_token(db, token_id):
         raise HTTPException(status_code=404, detail="Token not found")
-    log_action(db, current_user.id, "revoke_api_token", str(token_id), request=request)
+    log_action(db, current_user.id, "delete_api_token", str(token_id), request=request)
     return {"ok": True}

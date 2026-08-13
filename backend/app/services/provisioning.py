@@ -612,13 +612,13 @@ def create_api_token(db: Session, name: str, scopes: list[str], expires_days: in
 
 
 def list_api_tokens(db: Session) -> list[ApiToken]:
-    return db.query(ApiToken).order_by(ApiToken.id).all()
+    return db.query(ApiToken).filter(ApiToken.revoked_at.is_(None)).order_by(ApiToken.id).all()
 
 
-def revoke_api_token(db: Session, token_id: int) -> bool:
+def delete_api_token(db: Session, token_id: int) -> bool:
     token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
     if token is None:
         return False
-    token.revoked_at = datetime.utcnow()
+    db.delete(token)
     db.commit()
     return True

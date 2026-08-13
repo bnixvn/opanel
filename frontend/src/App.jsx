@@ -1135,10 +1135,10 @@ function App() {
     }
   }
 
-  async function revokeApiToken(token) {
-    if (!confirm(`Revoke token "${token.name}"? This cannot be undone.`)) return;
-    const data = await request(`/api-tokens/${token.id}`, { method: 'DELETE' }, 'Revoking token...');
-    if (data?.ok) { setNotice('Token revoked.'); loadApiTokens(); }
+  async function deleteApiToken(token) {
+    if (!confirm(`Delete token "${token.name}"? This cannot be undone.`)) return;
+    const data = await request(`/api-tokens/${token.id}`, { method: 'DELETE' }, 'Deleting token...');
+    if (data?.ok) { setNotice('Token deleted.'); loadApiTokens(); }
   }
 
   // --- Profile ---
@@ -4303,8 +4303,8 @@ function App() {
               <small>{t.scopes.join(', ')}</small>
               <small>Prefix: {t.prefix}... | Created: {t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}{t.last_used_at ? ` | Last used: ${new Date(t.last_used_at).toLocaleDateString()}` : ''}</small>
             </div>
-            <span className={t.revoked_at ? 'badge danger' : 'badge ok'}>{t.revoked_at ? 'Revoked' : 'Active'}</span>
-            {!t.revoked_at && <button className="mini danger" disabled={!!loading} onClick={() => revokeApiToken(t)}><Trash2 size={14}/> Revoke</button>}
+            <span className="badge ok">Active</span>
+            <button className="mini danger" disabled={!!loading} onClick={() => deleteApiToken(t)}><Trash2 size={14}/> Delete</button>
           </div>)}
         </div>}
       </section>

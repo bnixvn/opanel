@@ -201,7 +201,12 @@ def _safe_extract_tar(archive: Path, destination: Path) -> None:
 
     try:
         if source_fd is not None:
-            tar = tarfile.open(fileobj=source_fd, mode="r:")
+            # "r|" is the streaming mode: sequential-access only, does not
+            # seek() the underlying object. Required here since source_fd is
+            # a subprocess pipe (zstd -dc), which is not seekable — "r:"
+            # looks similar but assumes a seekable file and raises
+            # "[Errno 29] Illegal seek" on a pipe.
+            tar = tarfile.open(fileobj=source_fd, mode="r|")
         else:
             tar = tarfile.open(str(archive), "r:*")
 
