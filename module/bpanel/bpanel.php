@@ -382,6 +382,7 @@ function bpanel_service_label($params, $account)
 function bpanel_sso_url($params)
 {
     if (empty($params['serviceid'])) {
+        bpanel_log($params, 'POST', '/api/provisioning/v1/accounts/{external_id}/login', null, null, 'Skipped: params[serviceid] is empty, falling back to plain panel URL (no SSO token requested)');
         return bpanel_base_url($params);
     }
 
@@ -392,6 +393,12 @@ function bpanel_sso_url($params)
             return $url;
         }
         return rtrim(bpanel_base_url($params), '/') . '/' . ltrim($url, '/');
+    }
+
+    if (!$result['ok']) {
+        bpanel_log($params, 'POST', '/api/provisioning/v1/accounts/' . bpanel_external_id($params) . '/login', null, null, 'SSO link request failed, falling back to plain panel URL: ' . $result['error']);
+    } else {
+        bpanel_log($params, 'POST', '/api/provisioning/v1/accounts/' . bpanel_external_id($params) . '/login', null, $result['data'], 'SSO link request returned no login_url, falling back to plain panel URL');
     }
 
     return bpanel_base_url($params);

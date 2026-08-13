@@ -161,6 +161,12 @@ def sso_intermediary():
 
     Using the fragment keeps the token out of server access logs and proxy
     logs because browsers never send the fragment in HTTP requests.
+
+    The auto-submit script is loaded from /sso.js (same-origin) rather than
+    inlined here: the panel's CSP sends script-src 'self' with no
+    'unsafe-inline', so an inline <script> block is silently blocked by the
+    browser and the token is never submitted (the login just appears to
+    hang, then falls through to the normal login page).
     """
     from fastapi.responses import HTMLResponse
 
@@ -172,15 +178,30 @@ def sso_intermediary():
 <form id="sso-form" method="POST" action="/sso">
 <input type="hidden" name="token" id="sso-token">
 </form>
-<script>
-(function(){
+<script src="/sso.js"></script>
+</body></html>""",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
+@app.get("/sso.js", include_in_schema=False)
+def sso_intermediary_script():
+    """Same-origin auto-submit script for the /sso intermediary page.
+
+    Served as a real script-src 'self' resource (see sso_intermediary())
+    rather than inlined, so the CSP doesn't block it from running.
+    """
+    from fastapi.responses import Response
+
+    return Response(
+        content="""(function(){
   var hash = window.location.hash.replace(/^#/, "");
   if (!hash) { document.body.innerHTML = "<p>Invalid SSO link.</p>"; return; }
   document.getElementById("sso-token").value = hash;
   document.getElementById("sso-form").submit();
 })();
-</script>
-</body></html>""",
+""",
+        media_type="application/javascript",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
     )
 

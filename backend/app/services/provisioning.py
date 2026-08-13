@@ -554,10 +554,16 @@ def create_sso_login(db: Session, external_id: str, panel_url: str) -> dict:
     if not user:
         raise ValueError("User not found")
 
-    # Generate one-time token
+    # Generate one-time token. The WHMCS bpanel module bakes this URL into a
+    # rendered page (client area / admin service page) and waits for the
+    # user to click it later — it is not fetched at click time — so the
+    # window has to survive normal page-load-to-click time, not just
+    # network latency. The token is still single-use and 256 bits of
+    # entropy, so 5 minutes stays effectively as safe as the previous 60s
+    # while giving real users enough time to actually click the link.
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    expires_at = datetime.utcnow() + timedelta(seconds=60)
+    expires_at = datetime.utcnow() + timedelta(seconds=300)
 
     sso = PanelSsoToken(
         user_id=user.id,
