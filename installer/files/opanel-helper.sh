@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # /usr/local/sbin/opanel-helper
 #
 # Root-privileged trampoline for the OPanel API daemon.
