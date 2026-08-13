@@ -787,40 +787,51 @@ def _process_archive(
                     matched_key,
                     set(),
                 )
-                db_password = secrets.token_urlsafe(16)
 
-                # Decompress SQL if needed
-                temp_sql = _temporary_sql_file(matched_sql)
+                existing_account = db.query(DatabaseAccount).filter(DatabaseAccount.db_name == db_name).first()
+                if existing_account is not None:
+                    # Already imported (e.g. re-running an import, or a
+                    # standalone .sql dump that duplicates a domain-matched
+                    # one) — skip instead of retrying the INSERT and hitting
+                    # the db_name UNIQUE constraint.
+                    imported_sql_keys.add(matched_key)
+                    _log(f"    Database {db_name} already imported, skipping")
+                else:
+                    db_password = secrets.token_urlsafe(16)
 
-                # Create database and user
-                mariadb.create_database_credentials(db_name, db_user, db_password)
+                    # Decompress SQL if needed
+                    temp_sql = _temporary_sql_file(matched_sql)
 
-                # Import SQL
-                mariadb.import_database(db_name, str(temp_sql))
+                    # Create database and user
+                    mariadb.create_database_credentials(db_name, db_user, db_password)
 
-                # Store credentials in panel DB
-                item = DatabaseAccount(
-                    owner_id=user.id,
-                    website_id=website.id,
-                    db_name=db_name,
-                    db_user=db_user,
-                    db_password=encrypt(db_password),
-                )
-                db.add(item)
-                db.commit()
+                    # Import SQL
+                    mariadb.import_database(db_name, str(temp_sql))
 
-                # Update app config files with new DB credentials
-                _update_app_db_config(public, db_name, db_user, db_password)
+                    # Store credentials in panel DB
+                    item = DatabaseAccount(
+                        owner_id=user.id,
+                        website_id=website.id,
+                        db_name=db_name,
+                        db_user=db_user,
+                        db_password=encrypt(db_password),
+                    )
+                    db.add(item)
+                    db.commit()
 
-                imported_sql_keys.add(matched_key)
-                summary["databases"].append({
-                    "domain": domain,
-                    "source": str(matched_sql),
-                    "db_name": db_name,
-                })
-                credentials.append(f"database target={domain} db_name={db_name} db_user={db_user} db_password={db_password}")
-                _log(f"    Imported database: {db_name}")
+                    # Update app config files with new DB credentials
+                    _update_app_db_config(public, db_name, db_user, db_password)
+
+                    imported_sql_keys.add(matched_key)
+                    summary["databases"].append({
+                        "domain": domain,
+                        "source": str(matched_sql),
+                        "db_name": db_name,
+                    })
+                    credentials.append(f"database target={domain} db_name={db_name} db_user={db_user} db_password={db_password}")
+                    _log(f"    Imported database: {db_name}")
             except Exception as exc:
+                db.rollback()
                 _log(f"    WARNING: Database import failed for {domain}: {exc}")
                 summary["warnings"].append(f"Database import failed for {domain}: {exc}")
             finally:
@@ -869,8 +880,14 @@ def _process_archive(
             continue
         temp_sql = None
         try:
-            temp_sql = _temporary_sql_file(sql_path)
             db_name = _normalize_db_identifier(key, key, set())
+            if db.query(DatabaseAccount).filter(DatabaseAccount.db_name == db_name).first() is not None:
+                # Already imported via the per-domain match above (or a
+                # previous run) — skip instead of retrying the INSERT and
+                # hitting the db_name UNIQUE constraint.
+                _log(f"    Database {db_name} already imported, skipping")
+                continue
+            temp_sql = _temporary_sql_file(sql_path)
             db_user = _normalize_db_identifier(key, key, set())
             db_password = secrets.token_urlsafe(16)
             mariadb.create_database_credentials(db_name, db_user, db_password)
@@ -893,6 +910,7 @@ def _process_archive(
             credentials.append(f"database target={username} db_name={db_name} db_user={db_user} db_password={db_password}")
             _log(f"    Imported unassigned database: {db_name}")
         except Exception as exc:
+            db.rollback()
             _log(f"    WARNING: Unassigned database import failed for {key}: {exc}")
         finally:
             if temp_sql is not None:
@@ -921,6 +939,7 @@ def _process_archive(
                     else:
                         _log(f"    SSL skipped for {website.domain}: certbot returned {result.returncode}")
                 except Exception as exc:
+                    db.rollback()
                     _log(f"    SSL skipped for {website.domain}: {exc}")
         except Exception:
             pass
