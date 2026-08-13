@@ -12,7 +12,8 @@ import 'ace-builds/src-noconflict/mode-php';
 import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
-import { Archive, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, MoveRight, Network, PackageOpen, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
+import 'ace-builds/src-noconflict/theme-tomorrow_night';
+import { Archive, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import './style.css';
 import './brand.css';
@@ -269,7 +270,11 @@ function applyAceLineHeight(editor) {
   renderer.updateCursor?.();
 }
 
-function CodeEditor({ value, mode, disabled, onChange, onCursorChange }) {
+function aceThemePath(theme) {
+  return theme === 'dark' ? 'ace/theme/tomorrow_night' : 'ace/theme/textmate';
+}
+
+function CodeEditor({ value, mode, disabled, theme, onChange, onCursorChange }) {
   const hostRef = useRef(null);
   const editorRef = useRef(null);
   const suppressChangeRef = useRef(false);
@@ -283,7 +288,7 @@ function CodeEditor({ value, mode, disabled, onChange, onCursorChange }) {
     if (!hostRef.current) return undefined;
     const editor = ace.edit(hostRef.current, {
       mode: `ace/mode/${aceModeName(mode)}`,
-      theme: 'ace/theme/textmate',
+      theme: aceThemePath(theme),
       value: value || '',
       readOnly: !!disabled,
       showPrintMargin: false,
@@ -382,6 +387,12 @@ function CodeEditor({ value, mode, disabled, onChange, onCursorChange }) {
     editor.setReadOnly(!!disabled);
   }, [disabled]);
 
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.setTheme(aceThemePath(theme));
+  }, [theme]);
+
   return <div className="code-editor-host" ref={hostRef}></div>;
 }
 
@@ -392,6 +403,16 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [standaloneEditor] = useState(() => editorParamsFromLocation());
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem('opanel-theme');
+    if (saved === 'dark' || saved === 'light') return saved;
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('opanel-theme', theme);
+  }, [theme]);
+  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
@@ -491,6 +512,11 @@ function App() {
   const [scanLoading, setScanLoading] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(''), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   const [loading, setLoading] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
@@ -2887,8 +2913,12 @@ function App() {
     </select>;
   }
 
-  function EmptyState({ icon: Icon = AlertCircle, message = 'No data yet' }) {
-    return <div className="empty-state"><Icon size={40} /><p>{message}</p></div>;
+  function EmptyState({ icon: Icon = AlertCircle, message = 'No data yet', action }) {
+    return <div className="empty-state">
+      <Icon size={40} />
+      <p>{message}</p>
+      {action && <button type="button" className="mini secondary-light" onClick={action.onClick}>{action.icon ? <action.icon size={14}/> : null} {action.label}</button>}
+    </div>;
   }
 
   function formatBytes(value) {
@@ -2974,7 +3004,7 @@ function App() {
         {websites.length > 4 && <p className="hint" style={{marginTop:8}}>Showing 4 of {websites.length} websites. Go to Websites for full list.</p>}
       </section>}
       {websites.length === 0 && <section className="section">
-        <EmptyState icon={Globe} message="No websites yet. Create your first WordPress site from the Websites menu." />
+        <EmptyState icon={Globe} message="No websites yet." action={{ label: 'Go to Websites', icon: Globe, onClick: () => navigateToPage('websites') }} />
       </section>}
     </>;
   }
@@ -3130,7 +3160,7 @@ function App() {
       <section className="section">
         <h2>Create website</h2>
         <div className="form-row create-site-row">
-          <input value={domain} onChange={e => setDomain(e.target.value)} placeholder="domain.com" />
+          <input id="create-website-domain" value={domain} onChange={e => setDomain(e.target.value)} placeholder="domain.com" />
           <select value={siteType} onChange={e => setSiteType(e.target.value)}>
             <option value="wordpress">WordPress</option>
             <option value="php">PHP</option>
@@ -3160,7 +3190,7 @@ function App() {
           <h2>Website list</h2>
           <button disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> Refresh</button>
         </div>
-        {websites.length === 0 && <EmptyState icon={Globe} message="No websites yet." />}
+        {websites.length === 0 && <EmptyState icon={Globe} message="No websites yet." action={{ label: 'New website', icon: Plus, onClick: () => { const el = document.getElementById('create-website-domain'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
         <div className="site-grid">
           {websites.map(site => <div className="site-stack" key={site.id}>
           <article className="site-card">
@@ -3280,7 +3310,7 @@ function App() {
         <button disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> Refresh</button>
       </div>
       <div className="form-row">
-        <input value={newDatabase.db_name} onChange={e => setNewDatabase(prev => ({ ...prev, db_name: e.target.value }))} placeholder="database_name" />
+        <input id="create-database-name" value={newDatabase.db_name} onChange={e => setNewDatabase(prev => ({ ...prev, db_name: e.target.value }))} placeholder="database_name" />
         <input value={newDatabase.db_user} onChange={e => setNewDatabase(prev => ({ ...prev, db_user: e.target.value }))} placeholder="db_user (default = db_name)" />
         <input value={newDatabase.db_password} onChange={e => setNewDatabase(prev => ({ ...prev, db_password: e.target.value }))} placeholder="password (min 12 chars)" />
         <button className="mini secondary-light" title="Generate random password" onClick={() => setNewDatabase(prev => ({ ...prev, db_password: generateRandomPassword() }))}><Dices size={13}/></button>
@@ -3289,12 +3319,12 @@ function App() {
       {createdDbInfo && <div className="info-box db-created-box">
         <div className="db-created-head"><strong>Database created successfully</strong><button className="mini secondary-light" onClick={() => setCreatedDbInfo(null)}><X size={13}/></button></div>
         <div className="db-created-grid">
-          <label>Database</label><span>{createdDbInfo.db_name} <button className="mini secondary-light" title={copiedField === 'db_name' ? 'Copied!' : 'Copy'} onClick={() => copyToClipboard(createdDbInfo.db_name, 'db_name')}>{copiedField === 'db_name' ? <Check size={12} style={{color:'var(--green)'}}/> : <Copy size={12}/>}</button></span>
-          <label>User</label><span>{createdDbInfo.db_user} <button className="mini secondary-light" title={copiedField === 'db_user' ? 'Copied!' : 'Copy'} onClick={() => copyToClipboard(createdDbInfo.db_user, 'db_user')}>{copiedField === 'db_user' ? <Check size={12} style={{color:'var(--green)'}}/> : <Copy size={12}/>}</button></span>
-          <label>Password</label><span><code>{createdDbInfo.db_password}</code> <button className="mini secondary-light" title={copiedField === 'db_password' ? 'Copied!' : 'Copy'} onClick={() => copyToClipboard(createdDbInfo.db_password, 'db_password')}>{copiedField === 'db_password' ? <Check size={12} style={{color:'var(--green)'}}/> : <Copy size={12}/>}</button></span>
+          <label>Database</label><span>{createdDbInfo.db_name} <button className="mini secondary-light" title={copiedField === 'db_name' ? 'Copied!' : 'Copy'} onClick={() => copyToClipboard(createdDbInfo.db_name, 'db_name')}>{copiedField === 'db_name' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
+          <label>User</label><span>{createdDbInfo.db_user} <button className="mini secondary-light" title={copiedField === 'db_user' ? 'Copied!' : 'Copy'} onClick={() => copyToClipboard(createdDbInfo.db_user, 'db_user')}>{copiedField === 'db_user' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
+          <label>Password</label><span><code>{createdDbInfo.db_password}</code> <button className="mini secondary-light" title={copiedField === 'db_password' ? 'Copied!' : 'Copy'} onClick={() => copyToClipboard(createdDbInfo.db_password, 'db_password')}>{copiedField === 'db_password' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
         </div>
       </div>}
-      {databases.length === 0 && !createdDbInfo && <EmptyState icon={Database} message="No databases found." />}
+      {databases.length === 0 && !createdDbInfo && <EmptyState icon={Database} message="No databases found." action={{ label: 'New database', icon: Plus, onClick: () => { const el = document.getElementById('create-database-name'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
       <div className="table">
         {databases.map(db => {
           return <div className="row db-row" key={db.id}>
@@ -3494,7 +3524,7 @@ function App() {
             <input type="file" accept=".tar.gz,application/gzip" onChange={e => { uploadBackup(e.target.files?.[0]); e.target.value = ''; }} />
           </label>
         </div>
-        {backups.length === 0 && selectedWebsiteId && <EmptyState icon={Archive} message="No backups found for this website." />}
+        {backups.length === 0 && selectedWebsiteId && <EmptyState icon={Archive} message="No backups found for this website." action={{ label: 'Create backup', icon: Plus, onClick: () => { if (!loading) createBackup(); } }} />}
         <div className="backup-list">
           {backups.map(file => <div className="backup-item" key={file}>
             <span>{file.split('/').pop()}</span>
@@ -3597,7 +3627,7 @@ function App() {
                 {job.summary && <small style={{whiteSpace: 'pre-wrap'}}>
                   Domains: {job.summary.imported_domains?.join(', ') || 'none'}{job.summary.databases?.length ? ` | DBs: ${job.summary.databases.length}` : ''}{job.summary.ssl_enabled_domains?.length ? ` | SSL: ${job.summary.ssl_enabled_domains.join(', ')}` : ''}
                 </small>}
-                {job.error && <small style={{color: 'var(--color-danger, #ef4444)'}}>{job.error}</small>}
+                {job.error && <small style={{color: 'var(--danger)'}}>{job.error}</small>}
               </span>
             </div>)}
           </div>
@@ -3711,7 +3741,7 @@ function App() {
         <button className="secondary-light" disabled={!!loading} onClick={loadPhpTuning}><Zap size={14}/> Auto-tune</button>
         <button disabled={!!loading} onClick={updatePhpConfig}>Save</button>
       </div>
-      {phpTuning && phpTuning.recommendation && <div className="user-create-card" style={{ marginTop: 16, borderColor: 'var(--accent, #4f8ff7)' }}>
+      {phpTuning && phpTuning.recommendation && <div className="user-create-card" style={{ marginTop: 16, borderColor: 'var(--accent)' }}>
         <h3>⚡ Auto-tune Recommendation</h3>
         <p className="hint">Based on {phpTuning.recommendation.ram_mb} MB RAM, {phpTuning.recommendation.cores} CPU cores, {phpTuning.recommendation.is_ssd ? 'SSD' : 'HDD'} storage</p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px', margin: '12px 0', fontSize: '0.9em' }}>
@@ -4022,7 +4052,7 @@ function App() {
           <div className="update-log-head"><strong>Update logs</strong><button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={13}/> Refresh</button></div>
           <pre>{statusText}</pre>
         </div>}
-        {(panelUpdating || (panelUpdate.progress_percent && panelUpdate.last_update_status && panelUpdate.last_update_status !== 'completed' && panelUpdate.last_update_status !== 'failed')) && (
+        {(panelUpdating || (Boolean(panelUpdate.progress_percent) && panelUpdate.last_update_status && panelUpdate.last_update_status !== 'completed' && panelUpdate.last_update_status !== 'failed')) && (
           <div className="info-box firewall-status update-progress-box">
             <div className="update-progress-row">
               <span className={panelUpdate.last_update_status === 'failed' ? 'badge bad' : 'badge ok'}>
@@ -4474,6 +4504,7 @@ function App() {
           value={fileContent}
           mode={editorMode}
           disabled={!selectedWebsiteId}
+          theme={theme}
           onChange={setFileContent}
           onCursorChange={setEditorCursor}
         />
@@ -4503,6 +4534,7 @@ function App() {
   // Login screen
   if (bootstrapping) {
     return <main className="login-page">
+      <button type="button" className="theme-toggle-btn" onClick={toggleTheme} aria-label="Toggle dark mode" title="Toggle dark mode">{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button>
       <section className="login-card">
         <div className="login-brand">{renderBrandMark('login-brand-mark')}<div><p className="eyebrow">{panelSettings.app_name || 'opanel'}</p><h1>Loading…</h1></div></div>
       </section>
@@ -4511,6 +4543,7 @@ function App() {
 
   if (!isAuthenticated) {
     return <main className="login-page">
+      <button type="button" className="theme-toggle-btn" onClick={toggleTheme} aria-label="Toggle dark mode" title="Toggle dark mode">{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button>
       <section className="login-card">
         <div className="login-brand">
           {renderBrandMark('login-brand-mark')}
@@ -4578,6 +4611,7 @@ function App() {
           <div className="login logged-in">
             <div className="account-pill"><span>Logged in as</span><strong>{currentUser?.username || username}</strong></div>
             <div className="top-actions">
+              <button className="secondary compact-btn icon-only" onClick={toggleTheme} aria-label="Toggle dark mode" title="Toggle dark mode">{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
               <button className="secondary compact-btn" onClick={openProfileModal} aria-label="Profile settings" title="Profile settings"><KeyRound size={15}/><span className="btn-label">Profile</span></button>
               <button className="secondary compact-btn" onClick={logout} aria-label="Logout" title="Logout"><LogOut size={15}/><span className="btn-label">Logout</span></button>
             </div>

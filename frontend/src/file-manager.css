@@ -107,8 +107,8 @@
 }
 
 .file-job.error {
-  border-color: #fecaca;
-  background: #fff1f2;
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
   color: var(--danger);
 }
 
@@ -145,13 +145,13 @@
 
 .crumb:hover:not(:disabled) {
   background: var(--primary-light);
-  border-color: #cfe0f7;
+  border-color: var(--border-hover);
   color: var(--brand-navy);
 }
 
 .crumb:disabled {
   background: var(--primary-light);
-  border-color: #cfe0f7;
+  border-color: var(--border-hover);
   color: var(--primary);
   opacity: 1;
 }
@@ -332,7 +332,7 @@
 
 .file-row-actions .mini.danger {
   background: var(--surface);
-  border: 1px solid #fecaca;
+  border: 1px solid var(--danger-border);
   color: var(--danger);
   min-width: 26px;
   width: 26px;
@@ -340,8 +340,8 @@
 }
 
 .file-row-actions .mini.danger:hover:not(:disabled) {
-  background: #fee2e2;
-  border-color: #fca5a5;
+  background: var(--danger-bg);
+  border-color: var(--danger);
   color: var(--danger);
 }
 
