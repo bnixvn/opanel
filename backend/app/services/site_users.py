@@ -205,6 +205,23 @@ def ensure_document_root(root_path: str, relative_path: str, linux_user: Optiona
     return target
 
 
+def import_site_files(root_path: str, relative_path: str, linux_user: str, staging_source: Path) -> None:
+    """Copy an already-extracted, opanel-owned staging directory into a
+    site's document root.
+
+    The document root is created chown'd to the site's own Linux user (see
+    ensure_document_root), so the opanel-api process has no write access to
+    it — this goes through the same root-privileged trampoline used for
+    website backup restores.
+    """
+    username = validate_linux_user(linux_user)
+    shell.privileged(
+        "site-import-copy",
+        helper_args=[username, root_path, validate_document_root(relative_path), str(staging_source)],
+        fallback=["cp", "-a", "--no-target-directory", str(staging_source), str(document_root(root_path, relative_path))],
+    )
+
+
 def move_site_runtime(old_root_path: str, new_root_path: str, linux_user: str, php_version: Optional[str] = None) -> str:
     username = validate_linux_user(linux_user)
     shell.privileged(

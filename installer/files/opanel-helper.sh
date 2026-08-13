@@ -3205,6 +3205,70 @@ PY
     fix_site_tree "$root_target" "$user"
     ;;
 
+  site-import-copy)
+    # Copies an already-extracted directory tree (built by an unprivileged
+    # opanel-api staging step, e.g. DirectAdmin backup import) into a site's
+    # document root. The site directory is created chown'd to the site's own
+    # Linux user (see site-document-root-ensure), so opanel-api itself has no
+    # write access to it — this subcommand is the privileged trampoline that
+    # places the files, mirroring how site-backup-restore places a raw
+    # archive's contents.
+    [[ $# -eq 4 ]] || deny "usage: site-import-copy <site-user> <site-root> <relative-path> <staging-source-dir>"
+    user="$1"; root_arg="$2"; rel_arg="$3"; source_arg="$4"
+    require_linux_user "$user"
+    root_target=$(require_managed_path "$root_arg" "$user")
+    case "$rel_arg" in
+      ""|"/"|/*|*$'\n'*|"."|".."|"./"*|"../"*|*"/."|*"/.."|*"/./"*|*"/../"*) deny "unsafe relative path: $rel_arg" ;;
+    esac
+    target=$(require_safe_path "$root_target" "$root_target/$rel_arg")
+    mkdir -p -- "$target"
+    source_target=$(readlink -m "$source_arg") || deny "cannot resolve staging source"
+    case "$source_target" in
+      /tmp/opanel-da-import-*) ;;
+      *) deny "staging source outside expected da-import temp dir: $source_target" ;;
+    esac
+    [[ -d "$source_target" && ! -L "$source_target" ]] || deny "staging source not found"
+    python3 - "$source_target" "$target" <<'PY'
+import os
+import shutil
+import sys
+
+source, destination = sys.argv[1:3]
+source = os.path.realpath(source)
+destination = os.path.realpath(destination)
+
+
+def _contained(path):
+    return os.path.commonpath((destination, path)) == destination
+
+
+for root, dirs, files in os.walk(source):
+    dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+    rel = os.path.relpath(root, source)
+    target_dir = destination if rel == "." else os.path.abspath(os.path.join(destination, rel))
+    if not _contained(target_dir):
+        raise ValueError("import path escapes website root")
+    if os.path.islink(target_dir):
+        raise ValueError("import destination contains an unsafe symlink")
+    os.makedirs(target_dir, exist_ok=True)
+    for name in files:
+        src = os.path.join(root, name)
+        if os.path.islink(src):
+            continue
+        dst = os.path.abspath(os.path.join(target_dir, name))
+        if not _contained(dst):
+            raise ValueError("import path escapes website root")
+        if os.path.islink(dst):
+            raise ValueError("import destination contains an unsafe symlink")
+        if os.path.isdir(dst):
+            shutil.rmtree(dst)
+        descriptor = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with open(src, "rb") as handle, os.fdopen(descriptor, "wb") as output:
+            shutil.copyfileobj(handle, output, length=1024 * 1024)
+PY
+    fix_site_tree "$root_target" "$user"
+    ;;
+
   site-archive-extract)
     [[ $# -eq 7 ]] || deny "usage: site-archive-extract <site-user> <site-root> <archive-path> <destination-path> <zip|tar.gz> <max-items> <max-bytes>"
     user="$1"; root_arg="$2"; archive_rel="$3"; destination_rel="$4"; archive_kind="$5"

@@ -57,6 +57,40 @@ def test_placeholder_page_for_linux_user_uses_site_file_write(tmp_path, monkeypa
     assert "example.test" in calls[0][2]["input"]
 
 
+def test_import_site_files_uses_privileged_site_import_copy(tmp_path, monkeypatch):
+    root = tmp_path / "site"
+    root.mkdir()
+    staging = tmp_path / "opanel-da-import-xyz" / "example.test"
+    staging.mkdir(parents=True)
+    calls = []
+
+    def fake_privileged(helper_command, helper_args=None, **kwargs):
+        calls.append((helper_command, helper_args, kwargs))
+        return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(site_users.shell, "privileged", fake_privileged)
+
+    site_users.import_site_files(str(root), "public_html", "siteuser", staging)
+
+    assert calls[0][0] == "site-import-copy"
+    assert calls[0][1] == ["siteuser", str(root), "public_html", str(staging)]
+
+
+def test_site_import_copy_helper_rejects_symlinks_and_staging_outside_da_import_tmp():
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    assert "site-import-copy)" in helper
+    assert "/tmp/opanel-da-import-*" in helper
+    assert 'deny "staging source outside expected da-import temp dir' in helper
+    assert "os.path.islink(src)" in helper
+    assert 'raise ValueError("import destination contains an unsafe symlink")' in helper
+    assert 'raise ValueError("import path escapes website root")' in helper
+    assert "os.O_NOFOLLOW" in helper
+    # The final chown/chmod pass must still run so imported files end up
+    # owned by the site's own Linux user, not root.
+    import_block = helper.split("site-import-copy)", 1)[1].split("site-archive-extract)", 1)[0]
+    assert 'fix_site_tree "$root_target" "$user"' in import_block
+
+
 def test_panel_linux_users_are_sftp_chroot_only():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
     for script_path in (INSTALL_SCRIPT, UPDATE_SCRIPT):

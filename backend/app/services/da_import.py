@@ -611,29 +611,6 @@ def _update_app_db_config(public: Path, db_name: str, db_user: str, db_password:
 
 
 # ---------------------------------------------------------------------------
-# Site file copy
-# ---------------------------------------------------------------------------
-
-def _copy_site_files(source: Optional[Path], public: Path) -> None:
-    public.mkdir(parents=True, exist_ok=True)
-    if not source or not source.exists():
-        return
-    for root_dir, dirs, files in os.walk(source):
-        root_path = Path(root_dir)
-        rel_root = root_path.relative_to(source)
-        target_root = public / rel_root
-        target_root.mkdir(parents=True, exist_ok=True)
-        dirs[:] = [name for name in dirs if not (root_path / name).is_symlink()]
-        for name in files:
-            src = root_path / name
-            if src.is_symlink() or not src.is_file():
-                continue
-            dst = target_root / name
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-
-
-# ---------------------------------------------------------------------------
 # Delete existing domain/user (for re-import)
 # ---------------------------------------------------------------------------
 
@@ -746,9 +723,13 @@ def _process_archive(
         # Ensure document root exists
         public = site_users.ensure_document_root(root_path, document_root, linux_user)
 
-        # Copy site files
-        _copy_site_files(source, public)
-        _log(f"    Copied site files to {public}")
+        # Copy site files. public_html is owned by the site's own Linux user
+        # (see ensure_document_root), so this must go through the privileged
+        # helper rather than a plain shutil copy running as the opanel
+        # service account.
+        if source and source.exists():
+            site_users.import_site_files(root_path, document_root, linux_user, source)
+            _log(f"    Copied site files to {public}")
 
         # Create or update website record
         website = db.query(Website).filter(Website.domain == domain).first()
