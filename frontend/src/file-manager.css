@@ -5,8 +5,7 @@
   align-items: stretch;
 }
 
-.file-panel,
-.file-editor {
+.file-panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -360,69 +359,25 @@
   font-weight: 700;
 }
 
-.file-editor .editor-tools {
-  display: grid;
-  grid-template-columns: 1fr auto auto auto;
-  gap: 8px;
-  margin: 0 0 10px;
-}
-
-.file-editor {
-  display: flex;
-  flex-direction: column;
-}
-
-.file-editor .file-meta {
-  margin-bottom: 10px;
-}
-
-.editor-status {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 700;
-  margin-bottom: 8px;
-  padding: 8px 10px;
-}
-
-.editor-status strong {
-  color: var(--text);
-}
-
-.code-editor-frame {
-  min-height: min(74vh, 820px);
-  overflow: hidden;
-  background: var(--surface);
+/* The editor fills its container — Ace takes the height from here and scrolls
+   the document itself through .ace_scrollbar-v/-h. Never give .ace_scroller an
+   overflow of its own: Ace renders only the visible rows, so a native scrollbar
+   there both doubles up with Ace's and desyncs the renderer from the row a
+   click lands on, which leaves the end of a long file uneditable. */
+.code-editor-host {
+  height: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 
-.code-editor-host,
-.code-editor-host .ace_editor {
-  min-height: min(74vh, 820px);
-  height: min(74vh, 820px);
-}
-
-.code-editor-host .ace_scroller {
-  overflow: auto;
-}
-
-/* Ace editor replacement for CodeMirror.
-   These are token-driven rather than hardcoded light values: the rules below
-   out-specify Ace's own theme class (.ace-tomorrow-night), so hardcoding a
-   white background here left the editor light even in dark mode. */
-.code-editor-host.ace_editor,
-.code-editor-host .ace_editor {
+/* Colours hang off .ace_editor (the class Ace adds to this host) so they
+   out-specify Ace's own theme class .ace-tomorrow-night — hardcoding light
+   values here is what used to leave the editor light in dark mode. Line height
+   belongs here too: Ace measures it off this element. */
+.code-editor-host.ace_editor {
   background: var(--surface);
   color: var(--text);
-  font: 13px/22px var(--font-mono);
+  line-height: 22px;
 }
 
 .code-editor-host .ace_gutter {
@@ -436,26 +391,10 @@
   background: var(--primary-light);
 }
 
+/* Selection sits behind the text layer, so it has to stay light enough to read
+   through — an opaque --primary here is what forced the old white-text overlay. */
 .code-editor-host .ace_marker-layer .ace_selection {
-  background: var(--primary) !important;
-  opacity: 1;
-}
-
-.code-editor-host .opanel-ace-selection-overlay {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 20;
-}
-
-.code-editor-host .opanel-ace-selected-text {
-  position: absolute;
-  color: var(--primary-contrast);
-  font: 13px/22px var(--font-mono);
-  overflow: hidden;
-  white-space: pre;
-  -webkit-text-fill-color: var(--primary-contrast);
+  background: var(--primary-soft);
 }
 
 .code-editor-host .ace_marker-layer .ace_selected-word {
@@ -492,10 +431,15 @@
   padding: 2px 6px;
 }
 
+/* Exactly one viewport tall, never more: the page must not scroll, only the
+   editor inside it. min-height overrides the global main{min-height:100vh},
+   which would otherwise re-add a page scrollbar wherever dvh < vh (mobile). */
 .standalone-editor-page {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   background: var(--surface-alt);
   color: var(--text);
@@ -564,28 +508,17 @@
   white-space: nowrap;
 }
 
+/* The editor fills whatever is left under the toolbar; min-height:0 lets this
+   flex item shrink so the page itself never grows past 100vh and scrolls. */
 .standalone-editor-body {
   flex: 1 1 auto;
   min-height: 0;
   padding: 10px;
 }
 
-.standalone-editor-body .code-editor-host,
-.standalone-editor-body .code-editor-host .ace_editor {
-  height: 100%;
-  min-height: 0;
-}
-
-.standalone-editor-body .ace_editor {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
 @media (max-width: 1100px) {
   .file-manager,
-  .file-controls,
-  .file-editor .editor-tools {
+  .file-controls {
     grid-template-columns: 1fr;
   }
 
@@ -604,13 +537,6 @@
     grid-column: 2;
     justify-content: flex-start;
     flex-wrap: wrap;
-  }
-
-  .code-editor-frame,
-  .code-editor-host,
-  .code-editor-host .ace_editor {
-    min-height: 520px;
-    height: 520px;
   }
 }
 

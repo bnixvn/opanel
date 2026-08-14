@@ -54,8 +54,6 @@ const PAGE_ROUTES = {
   updates: '/updates',
   services: '/services',
 };
-const EDITOR_LINE_HEIGHT = 22;
-const EDITOR_FONT_FAMILY = "Consolas, 'SFMono-Regular', 'Liberation Mono', Menlo, monospace";
 const ROUTE_PAGES = new Map([
   ...Object.entries(PAGE_ROUTES).map(([pageName, path]) => [path, pageName]),
   ['/dashboard', 'dashboard'],
@@ -214,62 +212,6 @@ function fallbackCopy(text) {
   document.body.removeChild(ta);
 }
 
-function renderAceSelectionTextOverlay(editor, overlay) {
-  if (!editor || !overlay) return;
-  overlay.innerHTML = '';
-  const ranges = editor.selection.getAllRanges?.() || [editor.selection.getRange()];
-  const visibleFirst = editor.renderer.getFirstVisibleRow?.() ?? 0;
-  const visibleLast = editor.renderer.getLastVisibleRow?.() ?? editor.session.getLength();
-  const containerRect = editor.container.getBoundingClientRect();
-  const lineHeight = editor.renderer.lineHeight || 20;
-  const charWidth = editor.renderer.characterWidth || 8;
-
-  ranges.forEach(range => {
-    if (!range || range.isEmpty()) return;
-    const startRow = Math.max(range.start.row, visibleFirst);
-    const endRow = Math.min(range.end.row, visibleLast);
-    for (let row = startRow; row <= endRow; row += 1) {
-      const line = editor.session.getLine(row) || '';
-      const fromColumn = row === range.start.row ? range.start.column : 0;
-      const toColumn = row === range.end.row ? range.end.column : line.length;
-      if (toColumn <= fromColumn) continue;
-
-      const start = editor.renderer.textToScreenCoordinates(row, fromColumn);
-      const end = editor.renderer.textToScreenCoordinates(row, toColumn);
-      const left = start.pageX - containerRect.left;
-      const top = start.pageY - containerRect.top;
-      const width = Math.max(end.pageX - start.pageX, charWidth);
-
-      const node = document.createElement('div');
-      node.className = 'opanel-ace-selected-text';
-      node.textContent = line.slice(fromColumn, toColumn);
-      node.style.left = `${left}px`;
-      node.style.top = `${top}px`;
-      node.style.width = `${width}px`;
-      node.style.height = `${lineHeight}px`;
-      overlay.appendChild(node);
-    }
-  });
-}
-
-function applyAceLineHeight(editor) {
-  if (!editor?.renderer) return;
-  const { renderer } = editor;
-  const characterWidth = renderer.characterWidth || renderer.$textLayer?.getCharacterWidth?.() || 8;
-  editor.container?.style.setProperty('font-family', EDITOR_FONT_FAMILY);
-  editor.container?.style.setProperty('font-size', '13px');
-  editor.container?.style.setProperty('line-height', `${EDITOR_LINE_HEIGHT}px`);
-  renderer.$textLayer?.$fontMetrics?.checkForSizeChanges?.({ width: characterWidth, height: EDITOR_LINE_HEIGHT });
-  renderer.updateFontSize?.();
-  renderer.updateCharacterSize?.();
-  renderer.lineHeight = EDITOR_LINE_HEIGHT;
-  if (renderer.layerConfig) renderer.layerConfig.lineHeight = EDITOR_LINE_HEIGHT;
-  if (renderer.scroller) renderer.scroller.style.lineHeight = `${EDITOR_LINE_HEIGHT}px`;
-  renderer.updateFull?.(true);
-  renderer.updateText?.();
-  renderer.updateCursor?.();
-}
-
 function aceThemePath(theme) {
   return theme === 'dark' ? 'ace/theme/tomorrow_night' : 'ace/theme/textmate';
 }
@@ -284,6 +226,10 @@ function CodeEditor({ value, mode, disabled, theme, onChange, onCursorChange }) 
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
   useEffect(() => { onCursorChangeRef.current = onCursorChange; }, [onCursorChange]);
 
+  // Mount once. Sizing, font metrics and scrolling stay Ace's job: it renders
+  // only the visible rows and drives its own scrollbars, so re-implementing any
+  // of that desyncs the renderer from the document (last lines unreachable,
+  // duplicate scrollbars). Height and colours come from CSS instead.
   useEffect(() => {
     if (!hostRef.current) return undefined;
     const editor = ace.edit(hostRef.current, {
@@ -293,72 +239,40 @@ function CodeEditor({ value, mode, disabled, theme, onChange, onCursorChange }) 
       readOnly: !!disabled,
       showPrintMargin: false,
       highlightActiveLine: true,
+      // Ace stamps font-size on the host inline (it defaults the option), so
+      // CSS cannot set it — both font properties live here and only the line
+      // height stays in CSS, which Ace measures off the DOM. var() keeps the
+      // token the single source of truth for the stack.
       fontSize: 13,
+      fontFamily: 'var(--font-mono)',
       tabSize: 2,
       useSoftTabs: true,
       wrap: false,
       selectionStyle: 'text',
-    });
-
-    const selectionOverlay = document.createElement('div');
-    selectionOverlay.className = 'opanel-ace-selection-overlay';
-    editor.container.appendChild(selectionOverlay);
-    const refreshSelectionOverlay = () => renderAceSelectionTextOverlay(editor, selectionOverlay);
-
-    editor.setOptions({
       enableBasicAutocompletion: true,
       enableLiveAutocompletion: true,
-      enableMatchBrackets: true,
       enableSnippets: false,
-      fontFamily: EDITOR_FONT_FAMILY,
     });
-    applyAceLineHeight(editor);
     editor.session.setUseWorker(false);
     editor.session.setNewLineMode('unix');
 
-    let destroyed = false;
     const reportCursor = () => {
-      if (destroyed || !editorRef.current || !onCursorChangeRef.current) return;
-      const pos = editorRef.current.getCursorPosition();
-      onCursorChangeRef.current({ line: pos.row + 1, column: pos.column + 1 });
+      const pos = editor.getCursorPosition();
+      onCursorChangeRef.current?.({ line: pos.row + 1, column: pos.column + 1 });
     };
     const handleChange = () => {
-      if (destroyed || !editorRef.current) return;
-      if (!suppressChangeRef.current) {
-        if (onChangeRef.current) onChangeRef.current(editorRef.current.getValue());
-      }
-      // Only report cursor on explicit cursor moves, not on every content change
+      if (suppressChangeRef.current) return;
+      onChangeRef.current?.(editor.getValue());
     };
 
     editor.session.on('change', handleChange);
     editor.selection.on('changeCursor', reportCursor);
-    editor.selection.on('changeSelection', refreshSelectionOverlay);
-    const afterRender = () => {
-      if (Math.round(editor.renderer.lineHeight || 0) !== EDITOR_LINE_HEIGHT) {
-        applyAceLineHeight(editor);
-      }
-      refreshSelectionOverlay();
-    };
-    editor.renderer.on('afterRender', afterRender);
     editorRef.current = editor;
-    requestAnimationFrame(() => {
-      if (destroyed) return;
-      applyAceLineHeight(editor);
-      refreshSelectionOverlay();
-    });
     reportCursor();
-    refreshSelectionOverlay();
 
     return () => {
-      destroyed = true;
-      editor.session.off('change', handleChange);
-      editor.selection.off('changeCursor', reportCursor);
-      editor.selection.off('changeSelection', refreshSelectionOverlay);
-      editor.renderer.off('afterRender', afterRender);
-      selectionOverlay.remove();
-      editor.destroy();
       editorRef.current = null;
-      if (hostRef.current) hostRef.current.textContent = '';
+      editor.destroy();
     };
   }, []);
 
