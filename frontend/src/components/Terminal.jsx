@@ -131,12 +131,14 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
       fontSize: 14,
       fontFamily: 'Consolas, "Cascadia Code", "Fira Code", monospace',
       scrollback: 2000,
+      // Always-dark surface, warm-neutral to match the panel's console tokens
+      // (--console-* in style.css). xterm needs literal colours, not vars.
       theme: {
-        background: '#1f2428',
-        foreground: '#e5e7eb',
-        cursor: '#ffffff',
-        selectionBackground: '#315a7c',
-        black: '#1f2428',
+        background: '#17120f',
+        foreground: '#ece5e1',
+        cursor: '#ee3124',
+        selectionBackground: '#5a3a34',
+        black: '#17120f',
         red: '#ef4444',
         green: '#22c55e',
         yellow: '#eab308',
@@ -328,15 +330,17 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
         <div ref={containerRef} className="terminal-fit" />
       </div>
       <style>{`
-        .terminal-wrapper { display:flex; flex-direction:column; height:100%; background:#1f2428; border-radius:8px; overflow:hidden; }
-        .terminal-toolbar { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:#252b31; border-bottom:1px solid #39424c; }
-        .terminal-status { font-size:13px; font-family:Consolas, monospace; }
+        .terminal-wrapper { display:flex; flex-direction:column; height:100%; background:#17120f; border:1px solid #39302b; border-radius:10px; overflow:hidden; }
+        .terminal-toolbar { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:#221b17; border-bottom:1px solid #39302b; }
+        .terminal-status { font-size:13px; font-family:var(--font-mono); }
         .status-connected { color:#4ade80; }
-        .status-disconnected { color:#9ca3af; }
+        .status-disconnected { color:#a2938c; }
         .status-error { color:#f87171; }
-        .terminal-btn { padding:4px 12px; border:0; border-radius:4px; font-size:12px; cursor:pointer; }
-        .terminal-btn.connect { background:#2563eb; color:white; }
-        .terminal-btn.disconnect { background:#dc2626; color:white; }
+        .terminal-btn { padding:5px 12px; border:1px solid transparent; border-radius:6px; font-size:12px; font-weight:600; line-height:1.4; cursor:pointer; transition:background-color .15s ease,color .15s ease,border-color .15s ease; }
+        .terminal-btn.connect { background:#ee3124; color:#fff; }
+        .terminal-btn.connect:hover { background:#ae271e; }
+        .terminal-btn.disconnect { background:transparent; color:#ff8a7d; border-color:rgba(255,138,125,.45); }
+        .terminal-btn.disconnect:hover { background:#b42318; color:#fff; border-color:#b42318; }
         .terminal-container { flex:1; min-height:0; padding:8px; overflow:hidden; }
         .terminal-fit { width:100%; height:100%; min-height:0; overflow:hidden; }
         .terminal-fit .xterm { width:100%; height:100%; }

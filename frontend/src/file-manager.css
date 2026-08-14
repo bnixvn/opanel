@@ -80,7 +80,7 @@
 
 .file-job svg {
   flex: none;
-  color: var(--primary);
+  color: var(--primary-ink);
 }
 
 .file-job span {
@@ -146,13 +146,13 @@
 .crumb:hover:not(:disabled) {
   background: var(--primary-light);
   border-color: var(--border-hover);
-  color: var(--brand-navy);
+  color: var(--brand-ink);
 }
 
 .crumb:disabled {
   background: var(--primary-light);
-  border-color: var(--border-hover);
-  color: var(--primary);
+  border-color: var(--primary-soft);
+  color: var(--primary-ink);
   opacity: 1;
 }
 
@@ -271,13 +271,13 @@
 
 .file-list button.file-name:hover {
   background: transparent !important;
-  color: var(--primary) !important;
+  color: var(--primary-ink) !important;
 }
 
 .file-list button.file-name:focus,
 .file-list button.file-name:active {
   background: transparent !important;
-  color: var(--primary) !important;
+  color: var(--primary-ink) !important;
   box-shadow: none !important;
 }
 
@@ -289,7 +289,7 @@
 }
 
 .file-list button.file-name svg {
-  color: var(--primary);
+  color: var(--primary-ink);
   flex: 0 0 auto;
   width: 15px;
   height: 15px;
@@ -305,7 +305,7 @@
 .file-mode {
   font-size: 11px;
   color: var(--text-muted);
-  font-family: Consolas, 'SFMono-Regular', 'Liberation Mono', Menlo, monospace;
+  font-family: var(--font-mono);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -414,27 +414,30 @@
   overflow: auto;
 }
 
-/* Ace editor replacement for CodeMirror. */
+/* Ace editor replacement for CodeMirror.
+   These are token-driven rather than hardcoded light values: the rules below
+   out-specify Ace's own theme class (.ace-tomorrow-night), so hardcoding a
+   white background here left the editor light even in dark mode. */
 .code-editor-host.ace_editor,
 .code-editor-host .ace_editor {
-  background: #ffffff;
-  color: #0f172a;
-  font: 13px/22px Consolas, 'SFMono-Regular', 'Liberation Mono', Menlo, monospace;
+  background: var(--surface);
+  color: var(--text);
+  font: 13px/22px var(--font-mono);
 }
 
 .code-editor-host .ace_gutter {
-  background: #f6f8fb;
-  color: #64748b;
-  border-right: 1px solid #dbe4f0;
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  border-right: 1px solid var(--border);
 }
 
 .code-editor-host .ace_marker-layer .ace_active-line,
 .code-editor-host .ace_gutter-active-line {
-  background: #edf6ff;
+  background: var(--primary-light);
 }
 
 .code-editor-host .ace_marker-layer .ace_selection {
-  background: #2563eb !important;
+  background: var(--primary) !important;
   opacity: 1;
 }
 
@@ -448,44 +451,44 @@
 
 .code-editor-host .opanel-ace-selected-text {
   position: absolute;
-  color: #ffffff;
-  font: 13px/22px Consolas, 'SFMono-Regular', 'Liberation Mono', Menlo, monospace;
+  color: var(--primary-contrast);
+  font: 13px/22px var(--font-mono);
   overflow: hidden;
   white-space: pre;
-  -webkit-text-fill-color: #ffffff;
+  -webkit-text-fill-color: var(--primary-contrast);
 }
 
 .code-editor-host .ace_marker-layer .ace_selected-word {
-  border: 1px solid #2f6feb;
+  border: 1px solid var(--primary);
 }
 
 /* Search match highlighting for ext-searchbox */
 .code-editor-host .ace_search {
-  background: #f6f8fb;
-  border: 1px solid #dbe4f0;
-  border-radius: 4px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 4px 8px;
 }
 .code-editor-host .ace_search_field {
-  background: #ffffff;
-  border: 1px solid #dbe4f0;
-  border-radius: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 2px 6px;
 }
 .code-editor-host .ace_searchbtn {
   background: transparent;
   border: none;
-  color: #64748b;
+  color: var(--text-muted);
   cursor: pointer;
   padding: 0 4px;
 }
 .code-editor-host .ace_searchbtn:hover {
-  color: #0f172a;
+  color: var(--text);
 }
 .code-editor-host .ace_replace {
-  background: #ffffff;
-  border: 1px solid #dbe4f0;
-  border-radius: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 2px 6px;
 }
 

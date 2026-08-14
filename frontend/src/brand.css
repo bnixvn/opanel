@@ -1,10 +1,11 @@
-/* BNIX brand polish — tokens live in style.css :root / :root[data-theme="dark"] */
+/* BNIX brand polish — tokens live in style.css :root / :root[data-theme="dark"].
+   Brand red #ee3124 / #ae271e. Add no raw hex here; extend a token instead. */
 body{background:var(--bg);color:var(--text)}
 .topbar{background:var(--topbar-bg);border-bottom-color:var(--border)}
 .sidebar{border-right-color:var(--border);background:var(--surface)}
 .sidebar-head{border-bottom-color:var(--border)}
-.brand-mark{position:relative;overflow:hidden;background:var(--brand-blue);color:#fff;box-shadow:none}
-.brand-mark::after{content:'';position:absolute;left:8px;right:8px;bottom:7px;height:3px;border-radius:999px;background:var(--brand-yellow)}
+.brand-mark{position:relative;overflow:hidden;background:linear-gradient(150deg,var(--brand-red) 0%,var(--brand-red-deep) 100%);color:var(--primary-contrast);box-shadow:none}
+.brand-mark::after{content:'';position:absolute;left:8px;right:8px;bottom:7px;height:3px;border-radius:999px;background:rgba(255,255,255,.6)}
 .brand-mark.has-logo{background:var(--surface);border:1px solid var(--border);color:transparent}
 .brand-mark.has-logo::after{display:none}
 .brand-mark img{width:100%;height:100%;display:block;object-fit:cover;border-radius:inherit}
@@ -12,25 +13,25 @@ body{background:var(--bg);color:var(--text)}
 .login-brand>div{min-width:0}
 .login-brand-mark{width:44px;height:44px;border-radius:var(--radius-lg);font-size:14px}
 .settings-brand-mark{width:52px;height:52px;border-radius:var(--radius-lg);font-size:16px}
-.sidebar button.active{background:var(--primary-light);color:var(--primary);border-color:var(--border-hover)}
-.sidebar button:hover:not(.active){background:var(--surface-alt);color:var(--brand-navy);border-color:var(--border)}
-.sidebar .sidebar-group-toggle.active{background:var(--primary-light);color:var(--primary);border-color:var(--border-hover)}
-.sidebar .sidebar-subnav button.active{background:var(--primary-light);color:var(--primary);border-color:var(--border)}
+.sidebar button.active{background:var(--primary-light);color:var(--primary-ink);border-color:var(--primary-soft)}
+.sidebar button:hover:not(.active){background:var(--surface-alt);color:var(--brand-ink);border-color:var(--border)}
+.sidebar .sidebar-group-toggle.active{background:var(--primary-light);color:var(--primary-ink);border-color:var(--primary-soft)}
+.sidebar .sidebar-subnav button.active{background:var(--primary-light);color:var(--primary-ink);border-color:var(--primary-soft)}
 .section,.stat-card,.card,.site-card,.service-card,.backup-item,.info-box,.user-create-card{border-color:var(--border)}
 .section:hover,.stat-card:hover,.card:hover,.site-card:hover,.service-card:hover,.backup-item:hover{border-color:var(--border-hover)}
-h1,h2{color:var(--brand-navy)}
-.site-link{display:inline-flex;align-items:center;color:var(--brand-navy);font-weight:600;text-decoration:none}
-.site-link:hover{color:var(--primary);text-decoration:underline;text-underline-offset:3px}
+h1,h2{color:var(--brand-ink)}
+.site-link{display:inline-flex;align-items:center;color:var(--brand-ink);font-weight:600;text-decoration:none}
+.site-link:hover{color:var(--primary-ink);text-decoration:underline;text-underline-offset:3px}
 .resource-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px}
 .resource-card{display:grid;gap:8px;min-height:116px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);min-width:0}
 .resource-head{display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:12px;font-weight:800}
-.resource-icon{width:28px;height:28px;display:grid;place-items:center;border-radius:var(--radius-sm);background:var(--primary-light);color:var(--primary);border:1px solid var(--border-hover);flex:none}
-.resource-card strong{font-size:28px;line-height:1;color:var(--brand-navy);font-weight:800}
-.resource-track{height:7px;overflow:hidden;border-radius:999px;background:var(--primary-light);border:1px solid var(--border-hover)}
+.resource-icon{width:28px;height:28px;display:grid;place-items:center;border-radius:var(--radius-sm);background:var(--primary-light);color:var(--primary-ink);border:1px solid var(--primary-soft);flex:none}
+.resource-card strong{font-size:28px;line-height:1;color:var(--brand-ink);font-weight:800}
+.resource-track{height:7px;overflow:hidden;border-radius:999px;background:var(--primary-light);border:1px solid var(--primary-soft)}
 .resource-track span{display:block;height:100%;border-radius:inherit;background:var(--primary)}
 .resource-card small{color:var(--text-muted);font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .user-metric{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;background:var(--surface-alt);border:1px solid var(--border);border-radius:999px;color:var(--text-secondary);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
-.user-metric svg{width:13px;height:13px;flex:none;color:var(--primary)}
+.user-metric svg{width:13px;height:13px;flex:none;color:var(--primary-ink)}
 .user-edit-panel{background:var(--surface-alt);border-color:var(--border-hover)}
 .panel-settings-grid{display:grid;grid-template-columns:minmax(190px,1fr) minmax(220px,1.2fr) 120px max-content;gap:10px;align-items:end}
 .panel-settings-compact{grid-template-columns:minmax(190px,1fr) minmax(220px,1.2fr) max-content max-content}
@@ -61,15 +62,20 @@ select[multiple],textarea{height:auto}
 button,.button-link,.upload-button{
   display:inline-flex;align-items:center;justify-content:center;gap:7px;
   min-height:40px;height:40px;padding:0 14px;border-radius:var(--radius-sm);
-  background:var(--primary);color:#fff;border:1px solid transparent;
-  font-size:13px;font-weight:700;line-height:1;box-shadow:none;
+  background:var(--primary);color:var(--primary-contrast);border:1px solid transparent;
+  font-size:13px;font-weight:600;line-height:1;box-shadow:none;
 }
-button:hover:not(:disabled),.button-link:hover,.upload-button:hover{background:var(--primary-hover);color:#fff;box-shadow:none}
+button:hover:not(:disabled),.button-link:hover,.upload-button:hover{background:var(--primary-hover);color:var(--primary-contrast);box-shadow:none}
+button:active:not(:disabled),.button-link:active,.upload-button:active{background:var(--primary-active)}
 button:disabled,.upload-button.disabled{background:var(--surface-alt);color:var(--text-muted);border-color:var(--border);opacity:1;box-shadow:none}
-.danger{background:var(--danger);color:#fff}
-.danger:hover:not(:disabled){background:var(--danger-hover);color:#fff}
-.secondary,.secondary-light{background:var(--surface);color:var(--brand-navy);border-color:var(--border)}
-.secondary:hover:not(:disabled),.secondary-light:hover:not(:disabled){background:var(--primary-light);color:var(--brand-navy);border-color:var(--border-hover)}
+/* Destructive actions stay outlined so they never read as the (now red)
+   primary CTA; the fill only appears on hover, right before the click. */
+.danger,.danger-light{background:var(--surface);color:var(--danger);border-color:var(--danger-border)}
+.danger:hover:not(:disabled),.danger-light:hover:not(:disabled){background:var(--danger);color:var(--primary-contrast);border-color:var(--danger)}
+.danger:active:not(:disabled),.danger-light:active:not(:disabled){background:var(--danger-hover);border-color:var(--danger-hover)}
+.danger:focus-visible,.danger-light:focus-visible{outline-color:var(--danger)}
+.secondary,.secondary-light{background:var(--surface);color:var(--text-secondary);border-color:var(--border)}
+.secondary:hover:not(:disabled),.secondary-light:hover:not(:disabled){background:var(--surface-alt);color:var(--text);border-color:var(--border-hover)}
 .mini{min-height:34px;height:34px;padding:0 10px;font-size:12px}
 .compact-btn{min-height:36px;height:36px;padding:0 11px;font-size:13px}
 .top-actions button{box-shadow:none}
@@ -81,8 +87,8 @@ button:disabled,.upload-button.disabled{background:var(--surface-alt);color:var(
 .login.logged-in .top-actions{align-items:center}
 .login.logged-in .top-actions button{padding:0 12px}
 
-.file-meta{background:var(--primary-light);border-color:var(--border-hover);color:var(--brand-navy)}
-.loading{background:var(--primary-light);color:var(--primary);border-color:var(--border-hover)}
+.file-meta{background:var(--primary-light);border-color:var(--primary-soft);color:var(--brand-ink)}
+.loading{background:var(--primary-light);color:var(--primary-ink);border-color:var(--primary-soft)}
 .notice{background:var(--success-bg);color:var(--success-text);border-color:var(--success-border)}
 
 /* Backup page balance */
@@ -91,11 +97,11 @@ button:disabled,.upload-button.disabled{background:var(--surface-alt);color:var(
 .backup-tabs{width:100%;grid-auto-flow:row;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
 .backup-tabs button{gap:7px;white-space:nowrap}
 .backup-tabs button:hover:not(:disabled){background:var(--surface);color:var(--text-secondary)}
-.backup-tabs button.active:hover:not(:disabled){background:var(--primary-hover);color:#fff}
+.backup-tabs button.active:hover:not(:disabled){background:var(--primary-hover);color:var(--primary-contrast)}
 .backup-tab-panel{display:grid;gap:12px;min-width:0}
 .backup-logs-panel .backup-job-list{margin-top:0}
 .backup-panel-title{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--border)}
-.backup-panel-title h3,.backup-subtitle h3{margin:0 0 3px;color:var(--brand-navy);font-size:16px;line-height:1.2}
+.backup-panel-title h3,.backup-subtitle h3{margin:0 0 3px;color:var(--brand-ink);font-size:16px;line-height:1.2}
 .backup-panel-title>button{min-width:108px;height:38px;min-height:38px}
 .backup-toolbar{margin-top:2px}
 .backup-toolbar button,.backup-toolbar .upload-button{min-width:132px}
@@ -106,7 +112,7 @@ button:disabled,.upload-button.disabled{background:var(--surface-alt);color:var(
   border-radius:var(--radius-lg);
 }
 .backup-panel-heading{align-items:center;padding-bottom:12px;border-bottom:1px solid var(--border)}
-.backup-panel-heading h2,.backup-panel-heading h3{margin-bottom:3px;color:var(--brand-navy)}
+.backup-panel-heading h2,.backup-panel-heading h3{margin-bottom:3px;color:var(--brand-ink)}
 .backup-panel-heading>button,.backup-panel-heading>.actions button,.backup-panel-heading>.actions .upload-button{min-width:108px;height:38px;min-height:38px}
 .backup-run-row{grid-template-columns:minmax(240px,1fr) max-content;gap:10px;align-items:center}
 .user-backup-row{grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) max-content}
@@ -146,10 +152,10 @@ button:disabled,.upload-button.disabled{background:var(--surface-alt);color:var(
 }
 .backup-schedule-form{grid-template-columns:130px minmax(240px,1.2fr) 140px minmax(190px,1fr) max-content}
 .backup-schedule-form select[multiple]{min-height:88px;padding-block:8px}
-.schedule-toggle{height:40px;padding:0 12px;background:var(--surface);border-color:var(--border);color:var(--brand-navy)}
+.schedule-toggle{height:40px;padding:0 12px;background:var(--surface);border-color:var(--border);color:var(--brand-ink)}
 .schedule-toggle input{accent-color:var(--primary)}
 .sftp-target-form{grid-template-columns:minmax(150px,1fr) minmax(150px,1fr) 96px minmax(140px,1fr) minmax(140px,1fr) minmax(180px,1.15fr) max-content}
-.sftp-form textarea{grid-column:1 / -2;min-height:88px;background:#0b2348;color:#eaf2ff;border-color:#163c72}
+.sftp-form textarea{grid-column:1 / -2;min-height:88px;background:var(--console-bg);color:var(--console-text);border-color:var(--console-border)}
 .sftp-form button{align-self:center;height:40px;min-height:40px}
 .sftp-target-form button{min-width:122px}
 
@@ -252,8 +258,8 @@ button:disabled,.upload-button.disabled{background:var(--surface-alt);color:var(
 .site-icon-button svg{width:15px;height:15px;flex:none}
 .site-icon-button[data-tooltip]::before,
 .site-icon-button[data-tooltip]::after{position:absolute;left:50%;opacity:0;pointer-events:none;transition:opacity .14s ease,transform .14s ease;z-index:30}
-.site-icon-button[data-tooltip]::after{content:attr(data-tooltip);bottom:calc(100% + 8px);transform:translateX(-50%) translateY(3px);padding:6px 8px;border-radius:var(--radius-sm);background:#0f1f36;color:#fff;font-size:12px;font-weight:700;line-height:1;white-space:nowrap;box-shadow:0 8px 18px rgba(7,53,109,.16)}
-.site-icon-button[data-tooltip]::before{content:'';bottom:calc(100% + 3px);transform:translateX(-50%) translateY(3px);border:5px solid transparent;border-top-color:#0f1f36}
+.site-icon-button[data-tooltip]::after{content:attr(data-tooltip);bottom:calc(100% + 8px);transform:translateX(-50%) translateY(3px);padding:6px 8px;border-radius:var(--radius-sm);background:var(--console-surface);color:var(--console-text);font-size:12px;font-weight:600;line-height:1;white-space:nowrap;box-shadow:var(--shadow-md)}
+.site-icon-button[data-tooltip]::before{content:'';bottom:calc(100% + 3px);transform:translateX(-50%) translateY(3px);border:5px solid transparent;border-top-color:var(--console-surface)}
 .site-icon-button[data-tooltip]:hover::before,
 .site-icon-button[data-tooltip]:hover::after,
 .site-icon-button[data-tooltip]:focus-visible::before,
@@ -317,4 +323,75 @@ button:disabled,.upload-button.disabled{background:var(--surface-alt);color:var(
   .site-feature-actions .site-icon-button{width:40px;min-width:40px;height:40px;min-height:40px;flex:0 0 40px}
   .alias-form,.settings-domain-form{grid-template-columns:1fr}
   .alias-form button{width:100%}
+}
+
+/* ==========================================================================
+   Typography & interaction polish
+   Loaded last-but-one, so these rules win over the base sheet on purpose.
+   ========================================================================== */
+
+body{
+  font-family:var(--font-sans);
+  font-size:14px;
+  line-height:1.5;
+  letter-spacing:-.005em;
+  font-synthesis-weight:none;
+}
+h1,h2,h3,h4{letter-spacing:-.02em}
+h3{font-size:15px;font-weight:700;color:var(--text)}
+h4{font-weight:700;color:var(--text)}
+.eyebrow,.access-log-hero .eyebrow{text-transform:none;letter-spacing:0}
+strong,b{font-weight:700}
+code,pre,.secret-text,.token-copy-row code,.db-created-grid code{font-family:var(--font-mono)}
+
+/* Numbers that change in place should not jitter. */
+.stat-card strong,
+.resource-card strong,
+.update-progress-pct,
+.access-log-footer,
+.file-size,
+.backup-job-time{font-variant-numeric:tabular-nums}
+
+::selection{background:var(--primary-soft);color:var(--brand-ink)}
+
+/* Brand-red form controls across every checkbox, radio and range. */
+input[type="checkbox"],input[type="radio"],input[type="range"],progress{accent-color:var(--primary)}
+input:disabled,select:disabled{background:var(--surface-alt);color:var(--text-muted);cursor:not-allowed}
+textarea:disabled{opacity:.65;cursor:not-allowed}
+
+/* Active nav item gets a brand rail so the tint alone is not carrying it. */
+.sidebar-nav button.active{box-shadow:inset 2px 0 0 var(--primary)}
+.sidebar-nav .sidebar-subnav button.active{box-shadow:inset 2px 0 0 var(--primary)}
+
+/* Selected items must keep their selected look on hover. The generic
+   `button:hover:not(:disabled)` rule ties on specificity with `.sidebar
+   button.active` and wins on source order, which repainted the current nav
+   item — and every active tab — solid brand red under the cursor. */
+.sidebar button.active:hover:not(:disabled),
+.sidebar .sidebar-group-toggle.active:hover:not(:disabled),
+.sidebar .sidebar-subnav button.active:hover:not(:disabled){
+  background:var(--primary-light);color:var(--primary-ink);border-color:var(--primary-soft);
+}
+.segmented button.active:hover:not(:disabled),
+.segmented-control button.active:hover:not(:disabled){
+  background:var(--primary-hover);color:var(--primary-contrast);
+}
+.tab.active:hover{color:var(--primary-ink)}
+.scan-history-item.active:hover:not(:disabled){background:var(--primary-light);color:var(--text)}
+
+/* Themed scrollbars — the default light scrollbar on a dark log pane is jarring. */
+*{scrollbar-width:thin;scrollbar-color:var(--border-hover) transparent}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--border-hover);border:3px solid transparent;background-clip:content-box;border-radius:999px}
+*::-webkit-scrollbar-thumb:hover{background:var(--text-muted);border:3px solid transparent;background-clip:content-box}
+.log-output,.malware-scan-log,.firewall-status pre,textarea,.terminal-wrapper{scrollbar-color:var(--console-border) transparent}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;
+    scroll-behavior:auto !important;
+  }
 }

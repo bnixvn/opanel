@@ -1,4 +1,5 @@
 ﻿import logging
+import mimetypes
 import os
 from pathlib import Path
 
@@ -119,6 +120,12 @@ def health():
 
 frontend_dist = Path(settings.frontend_dist)
 assets_dir = frontend_dist / "assets"
+# The bundle ships self-hosted Lexend woff2 files under /assets (the panel's
+# CSP is font-src 'self' data:, so a font CDN is not an option). Not every
+# host has .woff2 in its mime database, and StaticFiles would then serve it
+# as text/plain, so register it explicitly.
+mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("font/woff", ".woff")
 if assets_dir.exists():
     app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
