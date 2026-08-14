@@ -1,5 +1,5 @@
 /* BNIX brand polish — tokens live in style.css :root / :root[data-theme="dark"].
-   Brand red #ee3124 / #ae271e. Add no raw hex here; extend a token instead. */
+   Brand blue #0065bb / #00417a. Add no raw hex here; extend a token instead. */
 body{background:var(--bg);color:var(--text)}
 .topbar{background:var(--topbar-bg);border-bottom-color:var(--border)}
 .sidebar{border-right-color:var(--border);background:var(--surface)}
