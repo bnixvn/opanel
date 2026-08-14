@@ -803,13 +803,14 @@ context /.well-known/acme-challenge/ {
 }
 
 context / {
-  type                    NULL
-  rewriteRules            none
+  type                    null
+  location                /usr/share/phpmyadmin/
+  allowBrowse             1
 }
 
 extprocessor lsphp${default_ver_no_dot} {
   type                    lsapi
-  address                 uds://\${lsphp_sock}
+  address                 uds://${lsphp_sock}
   maxConns                10
   env                     PHP_LSAPI_CHILDREN=10
   initTimeout             60
@@ -824,6 +825,15 @@ extprocessor lsphp${default_ver_no_dot} {
   extUser                 www-data
   extGroup                www-data
   runOnStartUp            1
+}
+
+scripthandler {
+  add                     lsapi:lsphp${default_ver_no_dot} php
+}
+
+rewrite  {
+  enable                  1
+  rules                   rewriteRule ^/phpmyadmin/(.*)\$ /\$1 [L]
 }
 
 vhssl  {
@@ -983,7 +993,7 @@ PHP
   fi
   sed -i "s#__opanel_API_BASE__#${api_scheme}://127.0.0.1:${PANEL_PORT}/api/databases/phpmyadmin-sso/#" /usr/share/phpmyadmin/opanel-signon.php
   sed -i "s#__opanel_PMA_COOKIE_SECURE__#${pma_secure}#" /usr/share/phpmyadmin/opanel-signon.php
-  local pma_signon_secret="$(grep -oP \"^PMA_SIGNON_SECRET=\K.*\" \"${APP_DIR}/backend/.env\" 2>/dev/null || true)"
+  local pma_signon_secret="$(grep -oP "^PMA_SIGNON_SECRET=\K.*" "${APP_DIR}/backend/.env" 2>/dev/null || true)"
   sed -i "s#__opanel_PMA_SIGNON_SECRET__#${pma_signon_secret}#" /usr/share/phpmyadmin/opanel-signon.php
 
   chown root:opanel-sites /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || chown root:www-data /etc/phpmyadmin/conf.d/opanel-signon.php

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 
-TOKEN_TTL_SECONDS = 60
+TOKEN_TTL_SECONDS = 120
 TOKEN_DIR = Path("/tmp/opanel-phpmyadmin-sso")
 
 

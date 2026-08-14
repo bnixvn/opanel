@@ -583,11 +583,13 @@ schedule_panel_restart() {
 }
 
 refresh_tools_ols() {
-  local port domain host api_scheme tools_scheme pma_secure php_version panel_cert panel_key
+  local port domain host api_scheme tools_scheme pma_secure php_version panel_cert panel_key default_ver_no_dot lsphp_sock
   port="$(env_get PANEL_PORT)"; port="${port:-$DEFAULT_PANEL_PORT}"
   domain="$(env_get PANEL_DOMAIN)"; host="${domain:-$(detect_ip)}"
   panel_cert="$(env_get PANEL_SSL_CERT)"; panel_key="$(env_get PANEL_SSL_KEY)"
   php_version="${PHP_DEFAULT:-8.4}"
+  default_ver_no_dot="${php_version//./}"
+  lsphp_sock="/tmp/lshttpd/lsphp${default_ver_no_dot}.sock"
   api_scheme="http"; tools_scheme="http"; pma_secure="false"
   if panel_tls_enabled; then
     api_scheme="https"; tools_scheme="https"; pma_secure="true"
@@ -605,6 +607,35 @@ context /.well-known/acme-challenge/ {
   location                /var/www/opanel-acme/.well-known/acme-challenge/
   allowBrowse             1
   addDefaultCharset       off
+}
+
+context / {
+  type                    null
+  location                /usr/share/phpmyadmin/
+  allowBrowse             1
+}
+
+extprocessor lsphp${default_ver_no_dot} {
+  type                    lsapi
+  address                 uds://${lsphp_sock}
+  maxConns                10
+  env                     PHP_LSAPI_CHILDREN=10
+  initTimeout             60
+  retryTimeout            0
+  persistConn             1
+  pcKeepAliveTimeout      1
+  respBuffer              0
+  autoStart               1
+  path                    /usr/local/lsws/lsphp${default_ver_no_dot}/bin/lsphp
+  backlog                 100
+  instances               1
+  extUser                 www-data
+  extGroup                www-data
+  runOnStartUp            1
+}
+
+scripthandler {
+  add                     lsapi:lsphp${default_ver_no_dot} php
 }
 
 rewrite  {
@@ -646,6 +677,9 @@ for link in phpmyadmin.rglob('*'):
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   [[ -n "$host" ]] && sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
+  local pma_signon_secret
+  pma_signon_secret="$(env_get PMA_SIGNON_SECRET)"
+  [[ -n "$pma_signon_secret" ]] && sed -i -E "s#(X-OPanel-Signon-Secret: )[^']*#\1${pma_signon_secret}#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   # OLS PHP runs as www-data:opanel-sites â€“ group is opanel-sites (not www-data),
   # so group-readable (640) won't work.  Must be world-readable (644).
   chmod 644 /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
