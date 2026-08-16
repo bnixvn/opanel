@@ -131,14 +131,15 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
       fontSize: 14,
       fontFamily: 'Consolas, "Cascadia Code", "Fira Code", monospace',
       scrollback: 2000,
-      // Always-dark surface, cool-neutral to match the panel's console tokens
+      // Always-dark surface, warm-neutral to match the panel's console tokens
       // (--console-* in style.css). xterm needs literal colours, not vars.
+      // The cursor stays brand blue so it reads against the warm background.
       theme: {
-        background: '#0f141a',
-        foreground: '#e6edf5',
+        background: '#17120f',
+        foreground: '#ece5e1',
         cursor: '#4d9ee6',
-        selectionBackground: '#2b4a66',
-        black: '#0f141a',
+        selectionBackground: '#4a3a33',
+        black: '#17120f',
         red: '#ef4444',
         green: '#22c55e',
         yellow: '#eab308',

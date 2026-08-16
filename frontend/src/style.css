@@ -68,28 +68,30 @@
   --warning-bg:#fcefd0;
   --warning-border:#efc45c;
   --warning-text:#7c3f07;
-  /* Text — cool neutrals, tuned to sit under the brand blue. Muted text keeps
-     AA on both --surface and --surface-alt, so secondary copy stays legible. */
-  --text:#0f1a26;
-  --text-secondary:#3b4657;
-  --text-muted:#5a6778;
+  /* Text — warm neutrals held deliberately against the cool brand blue. That
+     warm/cool tension is the identity; a neutral grey palette under a blue
+     accent is the default every dashboard template already ships.
+     Muted text keeps AA on --surface, --bg and --surface-alt alike. */
+  --text:#1c1613;
+  --text-secondary:#4a3f38;
+  --text-muted:#6d6058;
   /* Surfaces */
-  --bg:#f2f5f9;
+  --bg:#f8f6f3;
   --surface:#ffffff;
-  --surface-alt:#e9eff6;
-  --border:#d5dde8;
-  --border-hover:#aab7c6;
+  --surface-alt:#efeae4;
+  --border:#e2dbd3;
+  --border-hover:#bcb0a5;
   --ring:rgba(0,101,187,.28);
-  --shadow-sm:0 1px 2px rgba(15,26,38,.08);
-  --shadow-md:0 10px 28px rgba(15,26,38,.12);
-  --shadow-lg:0 20px 48px rgba(15,26,38,.18);
+  --shadow-sm:0 1px 2px rgba(43,21,18,.08);
+  --shadow-md:0 10px 28px rgba(43,21,18,.12);
+  --shadow-lg:0 20px 48px rgba(43,21,18,.18);
   --topbar-bg:rgba(255,255,255,.92);
   /* Always-dark surfaces (terminals, log panes, code textareas) */
-  --console-bg:#0f141a;
-  --console-surface:#182029;
-  --console-border:#2e3945;
-  --console-text:#e6edf5;
-  --console-muted:#9aa8b8;
+  --console-bg:#17120f;
+  --console-surface:#221b17;
+  --console-border:#39302b;
+  --console-text:#ece5e1;
+  --console-muted:#a2938c;
   /* Fixed metrics (theme-independent) */
   --radius-sm:6px;
   --radius-md:8px;
@@ -120,7 +122,7 @@
   --primary-soft:rgba(0,101,187,.5);
   --brand-red:#0065bb;
   --brand-red-deep:#00417a;
-  --brand-ink:#e8eef5;
+  --brand-ink:#f5efe9;
   --accent:#5fb0ff;
   --danger:#f87171;
   --danger-hover:#fca5a5;
@@ -136,24 +138,24 @@
   --warning-bg:rgba(251,191,36,.18);
   --warning-border:rgba(251,191,36,.48);
   --warning-text:#fcd34d;
-  --text:#eef2f8;
-  --text-secondary:#c3cdda;
-  --text-muted:#94a2b3;
-  --bg:#0f1319;
-  --surface:#171c24;
-  --surface-alt:#212932;
-  --border:#2f3844;
-  --border-hover:#465262;
+  --text:#f2ede8;
+  --text-secondary:#cabfb5;
+  --text-muted:#9a8c80;
+  --bg:#14110f;
+  --surface:#1c1815;
+  --surface-alt:#262019;
+  --border:#352e28;
+  --border-hover:#4c433a;
   --ring:rgba(0,101,187,.5);
   --shadow-sm:0 1px 2px rgba(0,0,0,.35);
   --shadow-md:0 10px 28px rgba(0,0,0,.5);
   --shadow-lg:0 20px 48px rgba(0,0,0,.6);
-  --topbar-bg:rgba(23,28,36,.92);
-  --console-bg:#0c1015;
-  --console-surface:#161c24;
-  --console-border:#2f3844;
-  --console-text:#e6edf5;
-  --console-muted:#9aa8b8;
+  --topbar-bg:rgba(28,24,21,.92);
+  --console-bg:#100d0c;
+  --console-surface:#1a1514;
+  --console-border:#352e28;
+  --console-text:#ece5e1;
+  --console-muted:#a2938c;
   color-scheme:dark;
 }
 *{box-sizing:border-box}
