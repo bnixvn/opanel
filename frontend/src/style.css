@@ -44,49 +44,52 @@
   --primary-ink:#00539c;
   --primary-ink-hover:#00417a;
   --primary-contrast:#ffffff;
-  --primary-light:#e7f2fb;
-  --primary-soft:#bfe0f7;
+  --primary-light:#dcebfa;
+  --primary-soft:#a3cdf0;
   --brand-red:#0065bb;
   --brand-red-deep:#00417a;
   --brand-ink:#0d1b2b;
   --accent:#0065bb;
   /* Semantic status colors — destructive red is deliberately deeper and
-     less saturated than the brand red so "Delete" never reads as "Create". */
+     less saturated than the brand red so "Delete" never reads as "Create".
+     The -bg/-border tints carry real saturation: near-white tints made every
+     badge and callout read as disabled chrome instead of a status. */
   --danger:#b42318;
   --danger-hover:#8f1c13;
-  --danger-bg:#fef3f2;
-  --danger-border:#fbcdc8;
-  --danger-text:#912018;
+  --danger-bg:#fde7e4;
+  --danger-border:#f2a9a1;
+  --danger-text:#8f1d13;
   --success:#047857;
   --success-hover:#036549;
-  --success-bg:#ecfdf5;
-  --success-border:#a7e8c8;
-  --success-text:#0b6b4a;
+  --success-bg:#d6f4e4;
+  --success-border:#75d2a8;
+  --success-text:#05603a;
   --warning:#b54708;
-  --warning-bg:#fffaeb;
-  --warning-border:#fedf89;
-  --warning-text:#93370d;
-  /* Text — warm neutrals, tuned to sit under a red accent */
-  --text:#1b1513;
-  --text-secondary:#4a3f3c;
-  --text-muted:#7c706c;
+  --warning-bg:#fcefd0;
+  --warning-border:#efc45c;
+  --warning-text:#7c3f07;
+  /* Text — cool neutrals, tuned to sit under the brand blue. Muted text keeps
+     AA on both --surface and --surface-alt, so secondary copy stays legible. */
+  --text:#0f1a26;
+  --text-secondary:#3b4657;
+  --text-muted:#5a6778;
   /* Surfaces */
-  --bg:#f7f6f5;
+  --bg:#f2f5f9;
   --surface:#ffffff;
-  --surface-alt:#faf8f7;
-  --border:#e7e2e0;
-  --border-hover:#d2c9c6;
-  --ring:rgba(0,101,187,.20);
-  --shadow-sm:0 1px 2px rgba(43,21,18,.06);
-  --shadow-md:0 10px 28px rgba(43,21,18,.09);
-  --shadow-lg:0 20px 48px rgba(43,21,18,.14);
+  --surface-alt:#e9eff6;
+  --border:#d5dde8;
+  --border-hover:#aab7c6;
+  --ring:rgba(0,101,187,.28);
+  --shadow-sm:0 1px 2px rgba(15,26,38,.08);
+  --shadow-md:0 10px 28px rgba(15,26,38,.12);
+  --shadow-lg:0 20px 48px rgba(15,26,38,.18);
   --topbar-bg:rgba(255,255,255,.92);
   /* Always-dark surfaces (terminals, log panes, code textareas) */
-  --console-bg:#17120f;
-  --console-surface:#221b17;
-  --console-border:#39302b;
-  --console-text:#ece5e1;
-  --console-muted:#a2938c;
+  --console-bg:#0f141a;
+  --console-surface:#182029;
+  --console-border:#2e3945;
+  --console-text:#e6edf5;
+  --console-muted:#9aa8b8;
   /* Fixed metrics (theme-independent) */
   --radius-sm:6px;
   --radius-md:8px;
@@ -113,44 +116,44 @@
   --primary-ink:#5fb0ff;
   --primary-ink-hover:#8fcbff;
   --primary-contrast:#ffffff;
-  --primary-light:rgba(0,101,187,.16);
-  --primary-soft:rgba(0,101,187,.34);
+  --primary-light:rgba(0,101,187,.26);
+  --primary-soft:rgba(0,101,187,.5);
   --brand-red:#0065bb;
   --brand-red-deep:#00417a;
   --brand-ink:#e8eef5;
   --accent:#5fb0ff;
   --danger:#f87171;
   --danger-hover:#fca5a5;
-  --danger-bg:rgba(248,113,113,.12);
-  --danger-border:rgba(248,113,113,.35);
+  --danger-bg:rgba(248,113,113,.2);
+  --danger-border:rgba(248,113,113,.5);
   --danger-text:#fca5a5;
   --success:#4ade80;
   --success-hover:#6ee7a3;
-  --success-bg:rgba(74,222,128,.12);
-  --success-border:rgba(74,222,128,.35);
-  --success-text:#4ade80;
+  --success-bg:rgba(74,222,128,.18);
+  --success-border:rgba(74,222,128,.48);
+  --success-text:#6ee7a3;
   --warning:#fbbf24;
-  --warning-bg:rgba(251,191,36,.12);
-  --warning-border:rgba(251,191,36,.35);
-  --warning-text:#fbbf24;
-  --text:#f2ebe9;
-  --text-secondary:#c0b4b0;
-  --text-muted:#8d817c;
-  --bg:#141110;
-  --surface:#1c1817;
-  --surface-alt:#241f1d;
-  --border:#332c29;
-  --border-hover:#473d39;
-  --ring:rgba(0,101,187,.42);
+  --warning-bg:rgba(251,191,36,.18);
+  --warning-border:rgba(251,191,36,.48);
+  --warning-text:#fcd34d;
+  --text:#eef2f8;
+  --text-secondary:#c3cdda;
+  --text-muted:#94a2b3;
+  --bg:#0f1319;
+  --surface:#171c24;
+  --surface-alt:#212932;
+  --border:#2f3844;
+  --border-hover:#465262;
+  --ring:rgba(0,101,187,.5);
   --shadow-sm:0 1px 2px rgba(0,0,0,.35);
   --shadow-md:0 10px 28px rgba(0,0,0,.5);
   --shadow-lg:0 20px 48px rgba(0,0,0,.6);
-  --topbar-bg:rgba(28,24,23,.92);
-  --console-bg:#100d0c;
-  --console-surface:#1a1514;
-  --console-border:#332c29;
-  --console-text:#ece5e1;
-  --console-muted:#a2938c;
+  --topbar-bg:rgba(23,28,36,.92);
+  --console-bg:#0c1015;
+  --console-surface:#161c24;
+  --console-border:#2f3844;
+  --console-text:#e6edf5;
+  --console-muted:#9aa8b8;
   color-scheme:dark;
 }
 *{box-sizing:border-box}
@@ -176,7 +179,9 @@ main{width:100%;min-height:100vh;margin:0;padding:0}
   background:none;
   pointer-events:none;
 }
-.eyebrow{text-transform:none;letter-spacing:0;font-size:11px;opacity:.75;margin:0 0 6px;font-weight:600}
+/* Secondary copy is tinted with the muted token, never faded with opacity —
+   opacity stacks on an already-light colour and washes the text out. */
+.eyebrow{text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-muted);margin:0 0 6px;font-weight:600}
 h1{font-size:30px;line-height:1;margin:0;font-weight:800;letter-spacing:0}
 h2{font-size:19px;margin:0 0 10px;font-weight:700;color:var(--text)}
 
@@ -216,7 +221,7 @@ h2{font-size:19px;margin:0 0 10px;font-weight:700;color:var(--text)}
 .login.compact{grid-template-columns:145px 165px auto;align-items:center}
 .login.logged-in{grid-template-columns:auto auto;align-items:stretch;font-weight:800;min-width:330px}
 .account-pill{display:flex;flex-direction:column;justify-content:center;gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:6px 14px}
-.account-pill span{font-size:11px;opacity:.7}
+.account-pill span{font-size:11px;color:var(--text-muted)}
 .account-pill strong{font-size:14px}
 .top-actions{display:flex;gap:8px;justify-content:flex-end;align-items:stretch}
 .top-actions button{min-height:0;height:auto}
@@ -411,7 +416,7 @@ button:disabled{opacity:.55;cursor:not-allowed;box-shadow:none}
 .file-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
 .file-item{background:var(--surface-alt);color:var(--text);border:1px solid var(--border);justify-content:space-between;transition:var(--transition)}
 .file-item:hover{border-color:var(--primary);background:var(--primary-light)}
-.file-item small{opacity:.7}
+.file-item small{color:var(--text-muted)}
 .file-meta{display:flex;gap:9px;flex-wrap:wrap;background:var(--primary-light);border:1px solid var(--border-hover);color:var(--brand-ink);border-radius:var(--radius-md);padding:10px 12px;font-weight:700;font-size:13px}
 
 /* Backups */
