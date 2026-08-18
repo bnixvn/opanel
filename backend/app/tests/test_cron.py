@@ -95,3 +95,45 @@ def test_listing_hides_the_generated_redirect():
     parsed = cron._parse_cron_line(0, line)
     assert parsed["schedule"] == "*/5 * * * *"
     assert parsed["command"] == "wget -q -O - 'https://taplooks.com/wp-cron.php'"
+
+
+def test_listing_matches_the_marker_case_insensitively(monkeypatch):
+    """Regression: add_cron writes '# OPanel:<domain>' but list_cron searched for
+    the lowercase 'opanel:<domain>' with a case-sensitive test, so every job was
+    written to the crontab yet never shown in the panel."""
+    crontab = (
+        "*/15 * * * * cd /home/taplooks/taplooks.com/public_html && "
+        "wget -q -O - 'https://taplooks.com/wp-cron.php' >/dev/null 2>&1 # OPanel:taplooks.com\n"
+        "0 3 * * * cd /home/other/other.test/public_html && "
+        "wp core update --allow-root # OPanel:other.test\n"
+    )
+    monkeypatch.setattr(cron, "list_cron_all", lambda cron_user="www-data": crontab)
+
+    listed = cron.list_cron("taplooks.com", "taplooks")
+    assert "taplooks.com/wp-cron.php" in listed
+    assert "other.test" not in listed
+
+    entries = cron.list_cron_entries("taplooks.com", "taplooks")
+    assert len(entries) == 1
+    assert entries[0]["schedule"] == "*/15 * * * *"
+    assert entries[0]["command"] == "wget -q -O - 'https://taplooks.com/wp-cron.php'"
+
+
+def test_delete_targets_the_right_line(monkeypatch):
+    """delete_cron indexes into list_cron, so it was unusable while listing was broken."""
+    crontab = (
+        "*/15 * * * * cd /home/taplooks/taplooks.com/public_html && "
+        "wget -q -O - 'https://taplooks.com/a.php' >/dev/null 2>&1 # OPanel:taplooks.com\n"
+        "*/30 * * * * cd /home/taplooks/taplooks.com/public_html && "
+        "wget -q -O - 'https://taplooks.com/b.php' >/dev/null 2>&1 # OPanel:taplooks.com\n"
+    )
+    written = {}
+    monkeypatch.setattr(cron, "list_cron_all", lambda cron_user="www-data": crontab)
+    monkeypatch.setattr(
+        cron.shell, "privileged",
+        lambda *a, **kw: written.update(content=kw.get("input")) or type("R", (), {"stdout": ""})(),
+    )
+    removed = cron.delete_cron("taplooks.com", 1, "taplooks")
+    assert "b.php" in removed
+    assert "a.php" in written["content"]
+    assert "b.php" not in written["content"]

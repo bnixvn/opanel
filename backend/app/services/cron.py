@@ -195,7 +195,10 @@ def list_cron_all(cron_user: str = "www-data") -> str:
 def list_cron(domain: str, cron_user: str = "www-data") -> str:
     safe_domain = _validate_domain(domain)
     marker = f"opanel:{safe_domain}"
-    return "\n".join(line for line in list_cron_all(cron_user).splitlines() if marker in line)
+    # add_cron writes the marker as "# OPanel:<domain>", so match case-insensitively.
+    # A case-sensitive test against the lowercase marker never matched, which left
+    # every cron job invisible in the panel although it was written to the crontab.
+    return "\n".join(line for line in list_cron_all(cron_user).splitlines() if marker in line.lower())
 
 
 def list_cron_entries(domain: str, cron_user: str = "www-data") -> list[dict]:
