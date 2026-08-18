@@ -153,7 +153,8 @@ def _parse_cron_line(index: int, line: str) -> dict:
     command = re.sub(r"\s+#\s*opanel:[^\s]+\s*$", "", command, flags=re.IGNORECASE).strip()
     if command.startswith("cd ") and " && " in command:
         command = command.split(" && ", 1)[1].strip()
-    command = TRAILING_REDIRECT_RE.sub("", command).strip()
+    # The command is shown back verbatim. Rewriting it for display made users
+    # think their input had been swallowed, so they re-added the same job.
     command = command.replace(" --allow-root", "").strip()
     return {"index": index, "schedule": schedule, "command": command, "line": line}
 

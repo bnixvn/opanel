@@ -87,14 +87,16 @@ def test_arbitrary_shell_is_still_rejected(docroot):
             cron._validate_command(command, docroot)
 
 
-def test_listing_hides_the_generated_redirect():
+def test_listing_shows_the_command_verbatim():
+    """The panel must echo back exactly what runs. Trimming the redirect for
+    display made users believe their input had been dropped."""
     line = (
         "*/5 * * * * cd '/home/u/taplooks.com/public_html' && "
         "wget -q -O - 'https://taplooks.com/wp-cron.php' >/dev/null 2>&1 # OPanel:taplooks.com"
     )
     parsed = cron._parse_cron_line(0, line)
     assert parsed["schedule"] == "*/5 * * * *"
-    assert parsed["command"] == "wget -q -O - 'https://taplooks.com/wp-cron.php'"
+    assert parsed["command"] == "wget -q -O - 'https://taplooks.com/wp-cron.php' >/dev/null 2>&1"
 
 
 def test_listing_matches_the_marker_case_insensitively(monkeypatch):
@@ -116,7 +118,7 @@ def test_listing_matches_the_marker_case_insensitively(monkeypatch):
     entries = cron.list_cron_entries("taplooks.com", "taplooks")
     assert len(entries) == 1
     assert entries[0]["schedule"] == "*/15 * * * *"
-    assert entries[0]["command"] == "wget -q -O - 'https://taplooks.com/wp-cron.php'"
+    assert entries[0]["command"] == "wget -q -O - 'https://taplooks.com/wp-cron.php' >/dev/null 2>&1"
 
 
 def test_delete_targets_the_right_line(monkeypatch):
@@ -137,3 +139,15 @@ def test_delete_targets_the_right_line(monkeypatch):
     assert "b.php" in removed
     assert "a.php" in written["content"]
     assert "b.php" not in written["content"]
+
+
+def test_pasting_the_displayed_command_back_is_idempotent(tmp_path):
+    """Because the list now shows the redirect, users will paste it back into the
+    form. That must not stack a second redirect onto the stored line."""
+    root = tmp_path / "taplooks.com" / "public_html"
+    root.mkdir(parents=True)
+    typed = "wget -q -O - https://taplooks.com/wp-cron.php?doing_wp_cron >/dev/null 2>&1"
+    once = cron._validate_command(typed, root)
+    twice = cron._validate_command(once, root)
+    assert once == twice
+    assert once.count(">/dev/null") == 1
