@@ -3263,10 +3263,10 @@ function App() {
       <div className="cron-form">
         <WebsiteSelect />
         <input value={cronSchedule} onChange={e => setCronSchedule(e.target.value)} placeholder="*/15 * * * *" />
-        <input value={cronCommand} onChange={e => setCronCommand(e.target.value)} placeholder="command" />
+        <input value={cronCommand} onChange={e => setCronCommand(e.target.value)} placeholder="wget -q -O - https://example.com/wp-cron.php" />
         <button disabled={!selectedWebsiteId || !!loading} onClick={addCron}><Plus size={14}/> Add cron</button>
       </div>
-      {selectedWebsiteId && <p className="hint">Cron runs as <strong>{cronUser || currentSite?.linux_user || 'www-data'}</strong> for the selected website.</p>}
+      {selectedWebsiteId && <p className="hint">Cron runs as <strong>{cronUser || currentSite?.linux_user || 'www-data'}</strong> for the selected website. Accepted commands: <code>wget</code>/<code>curl</code> to an http(s) URL, WP-CLI maintenance commands, or a <code>.php</code> file inside this website. Output is discarded automatically.</p>}
       <div className="cron-list">
         {selectedWebsiteId && cronItems.length === 0 && <EmptyState icon={Clock} message="No cron jobs found for this website." />}
         {cronItems.map(item => <div className="cron-item" key={`${item.index}-${item.line}`}>

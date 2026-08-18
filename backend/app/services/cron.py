@@ -1,6 +1,7 @@
 import re
 import shlex
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from app.models.entities import Website
 from app.services import site_users
@@ -15,6 +16,27 @@ ALLOWED_COMMAND_PREFIXES = (
     ("wp", "theme", "update", "--all"),
 )
 ALLOWED_PHP_OPTIONS = {"-q"}
+
+# URL fetchers. Every accepted option is listed explicitly: an allowlist is the
+# only safe shape here because both tools can be told to read their options
+# from a file (`curl -K`, `wget -e`), which would turn any denylist into a
+# bypass. Anything not named below is rejected.
+FETCH_COMMANDS = ("wget", "curl")
+FETCH_BOOL_FLAGS = {
+    "wget": {"-q", "--quiet", "-nv", "--no-verbose", "--spider", "--no-check-certificate", "--no-cache"},
+    "curl": {"-s", "--silent", "-S", "--show-error", "-L", "--location", "-k", "--insecure", "-f", "--fail", "-I", "--head"},
+}
+FETCH_VALUE_FLAGS = {
+    "wget": {"-t", "--tries", "-T", "--timeout", "--connect-timeout", "--read-timeout", "-U", "--user-agent", "--header", "--post-data"},
+    "curl": {"-m", "--max-time", "--connect-timeout", "-A", "--user-agent", "-H", "--header", "-d", "--data", "-X", "--request", "--retry"},
+}
+FETCH_OUTPUT_FLAGS = {"wget": {"-O", "--output-document"}, "curl": {"-o", "--output"}}
+SAFE_OUTPUT_TARGETS = {"-", "/dev/null"}
+FETCH_REDIRECT = ">/dev/null 2>&1"
+# A trailing `>/dev/null 2>&1` (or any mix of redirects) pasted from a tutorial.
+# shlex would turn these into literal argv entries, so they are stripped before
+# validation and re-attached afterwards as a real shell redirect.
+TRAILING_REDIRECT_RE = re.compile(r"\s*(?:[12]?>>?\s*\S+|[12]>&[12])(?:\s*(?:[12]?>>?\s*\S+|[12]>&[12]))*\s*$")
 
 
 def _validate_schedule(schedule: str) -> str:
@@ -51,12 +73,57 @@ def _validate_php_command(args: list[str], document_root: str | Path) -> str:
     return " ".join(shlex.quote(arg) for arg in args)
 
 
+def _validate_fetch_command(args: list[str], document_root: str | Path) -> str:
+    program = args[0]
+    bool_flags = FETCH_BOOL_FLAGS[program]
+    value_flags = FETCH_VALUE_FLAGS[program]
+    output_flags = FETCH_OUTPUT_FLAGS[program]
+    safe_root = Path(document_root).resolve(strict=False)
+
+    urls: list[str] = []
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if arg in bool_flags:
+            index += 1
+            continue
+        if arg in value_flags or arg in output_flags:
+            if index + 1 >= len(args):
+                raise ValueError(f"{arg} needs a value (separate the option and its value with a space)")
+            value = args[index + 1]
+            if arg in output_flags and value not in SAFE_OUTPUT_TARGETS:
+                candidate = (Path(value) if Path(value).is_absolute() else safe_root / value).resolve(strict=False)
+                try:
+                    candidate.relative_to(safe_root)
+                except ValueError as exc:
+                    raise ValueError(
+                        "Cron downloads may only write to -, /dev/null, or a path inside this website's public_html"
+                    ) from exc
+            index += 2
+            continue
+        if arg.startswith("-"):
+            raise ValueError(f"Option {arg} is not allowed in cron commands")
+        urls.append(arg)
+        index += 1
+
+    if len(urls) != 1:
+        raise ValueError("Provide exactly one http:// or https:// URL")
+    parsed = urlsplit(urls[0])
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Cron URLs must start with http:// or https://")
+
+    quoted = " ".join(shlex.quote(arg) for arg in args)
+    return f"{quoted} {FETCH_REDIRECT}"
+
+
 def _validate_command(command: str, document_root: str | Path) -> str:
-    args = shlex.split(command)
+    args = shlex.split(TRAILING_REDIRECT_RE.sub("", command))
     if not args:
         raise ValueError("Cron command is required")
     if args[0] == "php":
         return _validate_php_command(args, document_root)
+    if args[0] in FETCH_COMMANDS:
+        return _validate_fetch_command(args, document_root)
 
     normalized = [arg for arg in args if arg != "--allow-root"]
     if not any(tuple(normalized[:len(prefix)]) == prefix for prefix in ALLOWED_COMMAND_PREFIXES):
@@ -86,6 +153,7 @@ def _parse_cron_line(index: int, line: str) -> dict:
     command = re.sub(r"\s+#\s*opanel:[^\s]+\s*$", "", command, flags=re.IGNORECASE).strip()
     if command.startswith("cd ") and " && " in command:
         command = command.split(" && ", 1)[1].strip()
+    command = TRAILING_REDIRECT_RE.sub("", command).strip()
     command = command.replace(" --allow-root", "").strip()
     return {"index": index, "schedule": schedule, "command": command, "line": line}
 
