@@ -14,7 +14,7 @@ body{background:var(--bg);color:var(--text)}
 .login-brand-mark{width:44px;height:44px;border-radius:var(--radius-lg);font-size:14px}
 .settings-brand-mark{width:52px;height:52px;border-radius:var(--radius-lg);font-size:16px}
 .sidebar button.active{background:var(--primary-light);color:var(--primary-ink);border-color:var(--primary-soft)}
-.sidebar button:hover:not(.active){background:var(--surface-alt);color:var(--brand-ink);border-color:var(--border)}
+.sidebar button:hover:not(.active){background:var(--surface-hover);color:var(--brand-ink);border-color:var(--border)}
 .sidebar .sidebar-group-toggle.active{background:var(--primary-light);color:var(--primary-ink);border-color:var(--primary-soft)}
 .sidebar .sidebar-subnav button.active{background:var(--primary-light);color:var(--primary-ink);border-color:var(--primary-soft)}
 .section,.stat-card,.card,.site-card,.service-card,.backup-item,.info-box,.user-create-card{border-color:var(--border)}
@@ -67,7 +67,7 @@ button,.button-link,.upload-button{
 }
 button:hover:not(:disabled),.button-link:hover,.upload-button:hover{background:var(--primary-hover);color:var(--primary-contrast);box-shadow:none}
 button:active:not(:disabled),.button-link:active,.upload-button:active{background:var(--primary-active)}
-button:disabled,.upload-button.disabled{background:var(--surface-alt);color:var(--text-muted);border-color:var(--border);opacity:1;box-shadow:none}
+button:disabled,.upload-button.disabled{background:var(--surface-muted);color:var(--text-muted);border-color:var(--border);opacity:1;box-shadow:none}
 /* Destructive actions stay outlined so they never read as the (now red)
    primary CTA; the fill only appears on hover, right before the click. */
 .danger,.danger-light{background:var(--surface);color:var(--danger);border-color:var(--danger-border)}
@@ -75,7 +75,7 @@ button:disabled,.upload-button.disabled{background:var(--surface-alt);color:var(
 .danger:active:not(:disabled),.danger-light:active:not(:disabled){background:var(--danger-hover);border-color:var(--danger-hover)}
 .danger:focus-visible,.danger-light:focus-visible{outline-color:var(--danger)}
 .secondary,.secondary-light{background:var(--surface);color:var(--text-secondary);border-color:var(--border)}
-.secondary:hover:not(:disabled),.secondary-light:hover:not(:disabled){background:var(--surface-alt);color:var(--text);border-color:var(--border-hover)}
+.secondary:hover:not(:disabled),.secondary-light:hover:not(:disabled){background:var(--surface-hover);color:var(--text);border-color:var(--border-hover)}
 .mini{min-height:34px;height:34px;padding:0 10px;font-size:12px}
 .compact-btn{min-height:36px;height:36px;padding:0 11px;font-size:13px}
 .top-actions button{box-shadow:none}
@@ -356,7 +356,7 @@ code,pre,.secret-text,.token-copy-row code,.db-created-grid code{font-family:var
 
 /* Brand-red form controls across every checkbox, radio and range. */
 input[type="checkbox"],input[type="radio"],input[type="range"],progress{accent-color:var(--primary)}
-input:disabled,select:disabled{background:var(--surface-alt);color:var(--text-muted);cursor:not-allowed}
+input:disabled,select:disabled{background:var(--surface-muted);color:var(--text-muted);cursor:not-allowed}
 textarea:disabled{opacity:.65;cursor:not-allowed}
 
 /* Active nav item gets a brand rail so the tint alone is not carrying it. */

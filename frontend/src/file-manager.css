@@ -243,11 +243,13 @@
 }
 
 .file-item:hover {
-  background: var(--surface);
+  background: var(--surface-hover);
 }
 
 .file-item.selected {
-  background: var(--surface);
+  /* Stronger than --surface-hover so a selected row still reads as selected
+     while the pointer is over it. */
+  background: var(--primary-light);
 }
 
 .file-list button.file-name {
