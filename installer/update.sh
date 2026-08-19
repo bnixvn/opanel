@@ -965,6 +965,24 @@ if [[ "$panel_url_now" == http://* ]]; then
   echo "  (the old http:// address will no longer connect -- use https://)"
 fi
 
+# --- Repair OPcache timestamp validation ------------------------------------
+# Installs tuned before this fix shipped opcache.validate_timestamps = 0, which
+# leaves edited files invisible until every LSAPI worker for the pool exits.
+# Only that one line is rewritten: a full re-tune would discard whatever else
+# the admin has changed in the file.
+opcache_repaired=0
+for _ini in /usr/local/lsws/lsphp*/etc/php/*/mods-available/99-opanel.ini; do
+  [[ -f "$_ini" ]] || continue
+  if grep -qE '^[[:space:]]*opcache\.validate_timestamps[[:space:]]*=[[:space:]]*0[[:space:]]*$' "$_ini"; then
+    sed -i -E 's/^([[:space:]]*opcache\.validate_timestamps[[:space:]]*=[[:space:]]*)0[[:space:]]*$/	/' "$_ini"
+    opcache_repaired=$((opcache_repaired + 1))
+  fi
+done
+if [[ "$opcache_repaired" -gt 0 ]]; then
+  log "Repaired OPcache validate_timestamps in ${opcache_repaired} php.ini file(s)"
+  systemctl restart lshttpd.service 2>/dev/null || /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
+fi
+
 log "Removing legacy UFW firewall package"
 remove_ufw_legacy
 rm -f /usr/local/sbin/opanel-rescue-ufw-blocklist
