@@ -1314,15 +1314,16 @@ firewall_blocklist_apply() {
     ipset flush "$v6_target" 2>/dev/null || true
   fi
   if [[ -s "${BLOCKLIST_DIR}/blocklist.set" ]]; then
-    while IFS= read -r net; do
-      [[ -n "$net" ]] || continue
-      [[ "$net" == \#* ]] && continue
-      if [[ "$net" == *:* ]]; then
-        ipset add "$v6_target" "$net" 2>/dev/null || true
-      else
-        ipset add "$v4_target" "$net" 2>/dev/null || true
-      fi
-    done <"${BLOCKLIST_DIR}/blocklist.set"
+    # A per-line `ipset add` loop forks one process per entry; with a
+    # 100k+ line blocklist that turns a few seconds of work into minutes,
+    # and this function can run several times in one "Update panel now"
+    # pass. `ipset restore` loads the whole batch in a single process.
+    awk -v v4="$v4_target" -v v6="$v6_target" '
+      NF && $0 !~ /^[[:space:]]*#/ {
+        if (index($0, ":") > 0) print "add " v6 " " $0
+        else print "add " v4 " " $0
+      }
+    ' "${BLOCKLIST_DIR}/blocklist.set" | ipset restore -exist 2>/dev/null || true
   fi
   if [[ "$v4_target" == "$v4_new" ]]; then
     ipset swap "$v4_new" "$BLOCKLIST_IPSET_V4" 2>/dev/null || true
