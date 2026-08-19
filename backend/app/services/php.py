@@ -229,7 +229,13 @@ def recommend_php_config() -> dict:
     upload_mb = max(64, min(1024, ram_mb // 4))
     post_mb = upload_mb + max(32, upload_mb // 4)
 
-    # OPcache revalidate: 0 in production (fastest), 60 in dev
+    # OPcache staleness. revalidate_freq is how long a cached script may be
+    # served without re-checking its mtime; 0 means check on every request.
+    # It is NOT an on/off switch -- that is validate_timestamps, which must stay
+    # on for shared hosting. With it off, an edited file is never noticed: the
+    # old opcode stays until every LSAPI worker for that pool exits. On a quiet
+    # site the workers idle out within LSAPI_MAX_IDLE and the edit appears to
+    # take effect, so the breakage only shows up once a site has real traffic.
     revalidate = 0
 
     return {
@@ -250,7 +256,7 @@ def recommend_php_config() -> dict:
         "opcache_interned_strings_buffer": interned_buf,
         "opcache_max_accelerated_files": opcache_files,
         "opcache_revalidate_freq": revalidate,
-        "opcache_validate_timestamps": 1 if revalidate > 0 else 0,
+        "opcache_validate_timestamps": 1,
         "opcache_save_comments": 1,
         "opcache_jit": 1255,
         "opcache_jit_buffer_size": max(16, min(256, ram_mb // 16)),
