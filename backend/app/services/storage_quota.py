@@ -18,9 +18,19 @@ class StorageQuotaExceeded(ValueError):
 
 
 def user_storage_limit_bytes(user: User) -> int | None:
+    """Bytes the account may use, or None for unlimited.
+
+    0 means unlimited, the convention every hosting panel uses and the one the
+    admin UI offers. Returning 0 bytes here instead made the limit "may store
+    nothing", so every write failed with a quota error the moment an admin set
+    the field to 0 expecting no cap.
+    """
     if is_admin_role(user.role):
         return None
-    return max(0, int(user.storage_limit_mb or 0)) * BYTES_PER_MB
+    limit_mb = int(user.storage_limit_mb or 0)
+    if limit_mb <= 0:
+        return None
+    return limit_mb * BYTES_PER_MB
 
 
 def path_usage_bytes(path: str | Path) -> int:

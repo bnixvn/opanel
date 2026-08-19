@@ -4281,10 +4281,10 @@ function App() {
                 else setEditingUserForm(prev => ({ ...prev, _planId: '' }));
               }}>
                 <option value="">Custom</option>
-                {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} sites, {p.storage_limit_mb} MB)</option>)}
+                {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} sites, {p.storage_limit_mb > 0 ? `${p.storage_limit_mb} MB` : 'unlimited'})</option>)}
               </select></label>
               <label><span>Site limit</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
-              <label><span>Disk limit (MB)</span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
+              <label><span>Disk limit (MB) <em>0 = unlimited</em></span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
               <label><span>New password <small>(leave empty to keep)</small></span><input type="password" value={editingUserForm._password || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, _password: e.target.value }))} placeholder="Min 12 characters" /></label>
             </div>
             <div className="user-edit-actions">
@@ -4321,7 +4321,7 @@ function App() {
         <div className="token-create-form">
           <label><span>Name</span><input value={newPlan.name} onChange={e => { const name = e.target.value; setNewPlan(prev => ({ ...prev, name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') })); }} placeholder="Starter" /></label>
           <label><span>Sites</span><input type="number" min="0" value={newPlan.website_limit} onChange={e => setNewPlan(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
-          <label><span>Disk (MB)</span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
+          <label><span>Disk (MB) <em>0 = unlimited</em></span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
           <button disabled={!!loading || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> Add</button>
         </div>
         {plans.length === 0 && <p className="hint">No packages yet. Create one above.</p>}
@@ -4329,7 +4329,7 @@ function App() {
           {plans.map(plan => <div className="row" key={plan.id}>
             <div className="token-info">
               <strong>{plan.name}</strong>
-              <small>{plan.website_limit} site{plan.website_limit !== 1 ? 's' : ''} | {plan.storage_limit_mb >= 1024 ? `${(plan.storage_limit_mb/1024).toFixed(plan.storage_limit_mb % 1024 ? 1 : 0)} GB` : `${plan.storage_limit_mb} MB`}</small>
+              <small>{plan.website_limit} site{plan.website_limit !== 1 ? 's' : ''} | {plan.storage_limit_mb > 0 ? (plan.storage_limit_mb >= 1024 ? `${(plan.storage_limit_mb/1024).toFixed(plan.storage_limit_mb % 1024 ? 1 : 0)} GB` : `${plan.storage_limit_mb} MB`) : 'Unlimited disk'}</small>
             </div>
             <span className={plan.active ? 'badge ok' : 'badge'}>{plan.active ? 'Active' : 'Inactive'}</span>
             <div className="row-actions">
@@ -4344,7 +4344,7 @@ function App() {
               <div className="user-edit-grid">
                 <label><span>Name</span><input value={editingPlanForm.name} onChange={e => setEditingPlanForm(prev => ({ ...prev, name: e.target.value }))} /></label>
                 <label><span>Sites</span><input type="number" min="0" value={editingPlanForm.website_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
-                <label><span>Disk (MB)</span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
+                <label><span>Disk (MB) <em>0 = unlimited</em></span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
                 <label className="check-line"><input type="checkbox" checked={editingPlanForm.active} onChange={e => setEditingPlanForm(prev => ({ ...prev, active: e.target.checked }))} /> Active</label>
               </div>
               <div className="user-edit-actions">
@@ -4381,10 +4381,10 @@ function App() {
             }
           }}>
             <option value="">Custom</option>
-            {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} sites, {p.storage_limit_mb} MB)</option>)}
+            {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} sites, {p.storage_limit_mb > 0 ? `${p.storage_limit_mb} MB` : 'unlimited'})</option>)}
           </select></label>
           <label><span>Site limit</span><input type="number" value={newUser.website_limit} onChange={e => setNewUser(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
-          <label><span>Disk (MB)</span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
+          <label><span>Disk (MB) <em>0 = unlimited</em></span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
           <button disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> Create user</button>
         </div>
       </section>

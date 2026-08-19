@@ -395,3 +395,7 @@ textarea:disabled{opacity:.65;cursor:not-allowed}
     scroll-behavior:auto !important;
   }
 }
+
+/* Inline field hints ("0 = unlimited"). <em> is used so the hint stays part of
+   the label for screen readers; it must not read as italic emphasis. */
+label span em{font-style:normal;font-weight:600;font-size:11px;color:var(--text-muted);margin-left:5px}
