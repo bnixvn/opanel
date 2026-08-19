@@ -595,7 +595,10 @@ refresh_tools_ols() {
     api_scheme="https"; tools_scheme="https"; pma_secure="true"
   fi
   ensure_ols_conf_dir_writable
-  firewall_blocklist_apply 2>/dev/null || true
+  # The IP blocklist is not part of the web configuration and has its own
+  # opanel-firewall-blocklist.timer plus a blocklist-apply command. Re-applying
+  # it from here made every caller -- issuing SSL, refreshing a vhost -- pay for
+  # a full reload of the set, which is minutes once the list reaches six figures.
   cat >"${OLS_VHOSTS_DIR}/00-opanel-tools.conf" <<OLS_VHOST
 docRoot                   /usr/share/phpmyadmin/
 vhDomain                  ${host}
