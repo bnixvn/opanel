@@ -611,6 +611,11 @@ install_panel_cli() {
 
 validate_privileged_helper() {
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper wp --info >/dev/null
+  # Seed /etc/opanel/certs before the panel first starts: a self-signed default
+  # so HTTPS works out of the box, plus a directory per Let's Encrypt domain so
+  # any site with SSL can reach the panel under its own certificate.
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper panel-cert-sync >/dev/null || \
+    echo "  (warning: could not seed the panel certificate store)"
 }
 
 setup_backend() {
@@ -672,11 +677,11 @@ setup_systemd() {
 # the configured panel port) cannot spoof the audit log IP or the login rate-limit key.
 set -euo pipefail
 cd ${APP_DIR}/backend
-args=(app.main:app --host 0.0.0.0 --port "\${PANEL_PORT:-2222}" --proxy-headers --forwarded-allow-ips "127.0.0.1")
-if [[ "\${PANEL_URL:-}" == https://* && -n "\${PANEL_SSL_CERT:-}" && -n "\${PANEL_SSL_KEY:-}" && -f "\${PANEL_SSL_CERT}" && -f "\${PANEL_SSL_KEY}" ]]; then
-  args+=(--ssl-certfile "\${PANEL_SSL_CERT}" --ssl-keyfile "\${PANEL_SSL_KEY}")
-fi
-exec ${APP_DIR}/backend/.venv/bin/uvicorn "\${args[@]}"
+# app.server serves HTTPS by default and selects a certificate per SNI
+# hostname from /etc/opanel/certs, so any site with SSL can reach the panel on
+# this port. It degrades to the self-signed default, then to plain HTTP, rather
+# than refusing to start -- the panel is how the box gets repaired.
+exec ${APP_DIR}/backend/.venv/bin/python -m app.server
 STARTER
   chmod 0755 /usr/local/sbin/opanel-api-start
 

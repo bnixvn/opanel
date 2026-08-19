@@ -1531,6 +1531,68 @@ copy_panel_live_certificate() {
   fi
 }
 
+# ---- panel certificate store -----------------------------------------------
+# The panel serves HTTPS itself and picks a certificate per SNI hostname, so it
+# needs every site certificate in a directory it can read. It runs as `opanel`
+# and /etc/letsencrypt is root-only (0700), so certificates are mirrored here as
+# root:opanel 0640 -- the same arrangement panel-ssl-install already used for the
+# single panel certificate, just one directory per domain.
+PANEL_CERT_STORE="/etc/opanel/certs"
+
+panel_cert_store_put() {
+  local name="$1" cert="$2" key="$3"
+  [[ -f "$cert" && -f "$key" ]] || return 0
+  install -d -o root -g opanel -m 0750 "$PANEL_CERT_STORE"
+  install -d -o root -g opanel -m 0750 "${PANEL_CERT_STORE}/${name}"
+  install -m 0640 -o root -g opanel "$cert" "${PANEL_CERT_STORE}/${name}/fullchain.pem"
+  install -m 0640 -o root -g opanel "$key" "${PANEL_CERT_STORE}/${name}/privkey.pem"
+}
+
+# A self-signed fallback so the panel is never served over plain HTTP. Browsers
+# will warn on it, which is correct: it is a placeholder until a real
+# certificate exists, not a substitute for one.
+panel_self_signed_ensure() {
+  local dir="${PANEL_CERT_STORE}/_default"
+  local cert="${dir}/fullchain.pem" key="${dir}/privkey.pem"
+  if [[ -f "$cert" && -f "$key" ]] && openssl x509 -checkend 2592000 -noout -in "$cert" >/dev/null 2>&1; then
+    return 0
+  fi
+  local cn tmp
+  cn="$(env_get PANEL_DOMAIN)"
+  [[ -n "$cn" ]] || cn="$(hostname -f 2>/dev/null || hostname)"
+  [[ -n "$cn" ]] || cn="opanel.local"
+  tmp="$(mktemp -d /tmp/opanel-selfsigned.XXXXXX)"
+  if openssl req -x509 -newkey rsa:2048 -nodes -days 3650        -keyout "${tmp}/privkey.pem" -out "${tmp}/fullchain.pem"        -subj "/CN=${cn}" -addext "subjectAltName=DNS:${cn}" >/dev/null 2>&1; then
+    panel_cert_store_put "_default" "${tmp}/fullchain.pem" "${tmp}/privkey.pem"
+    echo "Generated self-signed panel certificate for ${cn}"
+  else
+    echo "WARNING: could not generate a self-signed panel certificate" >&2
+  fi
+  rm -rf "$tmp"
+}
+
+# Mirror every Let's Encrypt certificate into the store and drop entries whose
+# certificate is gone, so a site that lost its SSL stops being offered a stale one.
+panel_cert_store_sync() {
+  local live name
+  panel_self_signed_ensure
+  install -d -o root -g opanel -m 0750 "$PANEL_CERT_STORE"
+  for live in /etc/letsencrypt/live/*/; do
+    [[ -d "$live" ]] || continue
+    name="$(basename "$live")"
+    is_domain "$name" || continue
+    panel_cert_store_put "$name" "${live}fullchain.pem" "${live}privkey.pem"
+  done
+  for live in "${PANEL_CERT_STORE}"/*/; do
+    [[ -d "$live" ]] || continue
+    name="$(basename "$live")"
+    [[ "$name" == "_default" ]] && continue
+    if [[ ! -f "/etc/letsencrypt/live/${name}/fullchain.pem" ]]; then
+      rm -rf "${PANEL_CERT_STORE:?}/${name}"
+    fi
+  done
+}
+
 install_manual_ssl() {
   local domain="$1" base tmpdir
   require_domain "$domain"
@@ -2846,6 +2908,7 @@ case "$cmd" in
     env_set PANEL_URL "https://${domain}:${port}"
     env_set ALLOWED_ORIGINS "https://${domain}:${port}"
     copy_panel_live_certificate "$domain"
+    panel_cert_store_sync
     if [[ -n "$email" ]]; then
       env_set SSL_EMAIL "$email"
     fi
@@ -2853,6 +2916,12 @@ case "$cmd" in
     refresh_tools_ols
     schedule_panel_restart
     echo "Panel SSL enabled: https://${domain}:${port}"
+    ;;
+
+  panel-cert-sync)
+    [[ $# -eq 0 ]] || deny "usage: panel-cert-sync"
+    panel_cert_store_sync
+    echo "Panel certificate store synced"
     ;;
 
   # ---- certbot ----------------------------------------------------------
@@ -2889,11 +2958,14 @@ case "$cmd" in
     certbot "${args[@]}"
     restart_openlitespeed
     copy_panel_live_certificate "$domain"
+    panel_cert_store_sync
     echo "SSL certificate issued for ${domain}"
     ;;
 
   certbot-renew)
-    exec certbot renew --quiet
+    certbot renew --quiet
+    panel_cert_store_sync
+    schedule_panel_restart
     ;;
   certbot-renew-soon)
     [[ $# -le 1 ]] || deny "usage: certbot-renew-soon [days]"

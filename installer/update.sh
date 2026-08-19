@@ -631,16 +631,16 @@ SSHD
 
   cat >/usr/local/sbin/opanel-api-start <<STARTER
 #!/usr/bin/env bash
-# Trusted forwarders: only the local Nginx (127.0.0.1) is allowed to set
+# Trusted forwarders: only a local reverse proxy (127.0.0.1) is allowed to set
 # X-Forwarded-For / X-Forwarded-Proto. Anything else (direct hits on
 # the configured panel port) cannot spoof the audit log IP or the login rate-limit key.
 set -euo pipefail
 cd ${APP_DIR}/backend
-args=(app.main:app --host 0.0.0.0 --port "\${PANEL_PORT:-2222}" --proxy-headers --forwarded-allow-ips "127.0.0.1")
-if [[ "\${PANEL_URL:-}" == https://* && -n "\${PANEL_SSL_CERT:-}" && -n "\${PANEL_SSL_KEY:-}" && -f "\${PANEL_SSL_CERT}" && -f "\${PANEL_SSL_KEY}" ]]; then
-  args+=(--ssl-certfile "\${PANEL_SSL_CERT}" --ssl-keyfile "\${PANEL_SSL_KEY}")
-fi
-exec ${APP_DIR}/backend/.venv/bin/uvicorn "\${args[@]}"
+# app.server serves HTTPS by default and selects a certificate per SNI
+# hostname from /etc/opanel/certs, so any site with SSL can reach the panel on
+# this port. It degrades to the self-signed default, then to plain HTTP, rather
+# than refusing to start -- the panel is how the box gets repaired.
+exec ${APP_DIR}/backend/.venv/bin/python -m app.server
 STARTER
   chmod 0755 /usr/local/sbin/opanel-api-start
   mkdir -p /etc/systemd/system/opanel-api.service.d
@@ -942,9 +942,27 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
       echo "  (warning: could not retune MariaDB; update will continue with existing settings)"
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper refresh-tools >/dev/null || \
       echo "  (warning: could not refresh phpMyAdmin tools vhost; update will retry later)"
+    # Populates /etc/opanel/certs: a self-signed default plus one directory per
+    # Let's Encrypt domain, so the panel can serve HTTPS immediately and pick a
+    # matching certificate for whichever hostname a browser asks for.
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper panel-cert-sync >/dev/null || \
+      echo "  (warning: could not sync the panel certificate store; panel may stay on HTTP)"
   else
     echo "  (opanel user not found; skipping helper refresh - run install.sh first)"
   fi
+fi
+
+# --- Panel serves HTTPS by default -----------------------------------------
+# There is always a certificate now (self-signed at worst), so an http:// panel
+# URL only means "configured before this existed". Flip it; app.server still
+# falls back to plain HTTP by itself if no certificate can be loaded at all.
+panel_url_now="$(env_get PANEL_URL)"
+if [[ "$panel_url_now" == http://* ]]; then
+  panel_url_https="https://${panel_url_now#http://}"
+  env_set PANEL_URL "$panel_url_https"
+  env_set ALLOWED_ORIGINS "$panel_url_https"
+  log "Panel now serves HTTPS: ${panel_url_https}"
+  echo "  (the old http:// address will no longer connect -- use https://)"
 fi
 
 log "Removing legacy UFW firewall package"
