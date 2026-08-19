@@ -32,12 +32,39 @@ def _safe_ini_value(value: str) -> str:
     return value
 
 
+OPCACHE_PREFIX = "opcache."
+
+
+def _existing_opcache_lines(php_version: str) -> list[str]:
+    """Keep the tuned opcache block when this editor rewrites the ini.
+
+    Two things write this file: the auto-tuner, which emits the whole opcache
+    block, and update_php_ini, which only knows the handful of basic
+    directives. Re-emitting just the basics silently discarded the tuning, so
+    saving an unrelated field like memory_limit reset opcache to PHP defaults.
+    """
+    try:
+        raw = _lsphp_opanel_ini_path(php_version).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    kept = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(";") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key.startswith(OPCACHE_PREFIX) and key not in {"opcache.enable", "opcache.enable_cli"}:
+            kept.append(stripped)
+    return kept
+
+
 def update_php_ini(payload: PhpConfigUpdate) -> str:
     php_version = payload.php_version
     if php_version not in SUPPORTED_PHP_VERSIONS:
         allowed = ", ".join(sorted(SUPPORTED_PHP_VERSIONS))
         raise ValueError(f"Unsupported PHP version. Allowed: {allowed}")
     display_errors = "On" if str(payload.display_errors).lower() in {"1", "true", "on", "yes"} else "Off"
+    opcache_enable = 1 if payload.opcache_enable else 0
     content = "\n".join([
         f"display_errors = {display_errors}",
         f"memory_limit = {_safe_ini_value(payload.memory_limit)}",
@@ -47,6 +74,11 @@ def update_php_ini(payload: PhpConfigUpdate) -> str:
         f"max_input_time = {int(payload.max_input_time)}",
         f"max_input_vars = {int(payload.max_input_vars)}",
         "max_file_uploads = 100",
+        f"opcache.enable = {opcache_enable}",
+        # enable_cli follows the same switch so wp-cli and cron runs behave
+        # like web requests instead of quietly diverging.
+        f"opcache.enable_cli = {opcache_enable}",
+        *_existing_opcache_lines(php_version),
         "",
     ])
     target = _lsphp_opanel_ini_path(php_version)
@@ -107,6 +139,7 @@ def read_php_ini(php_version: str) -> dict:
         allowed = ", ".join(sorted(SUPPORTED_PHP_VERSIONS))
         raise ValueError(f"Unsupported PHP version. Allowed: {allowed}")
     values = dict(PHP_CONFIG_KEYS)
+    values["opcache.enable"] = "1"
     for path in [
         _lsphp_litespeed_ini_path(php_version),
         _legacy_lsphp_opanel_ini_path(php_version),
@@ -126,6 +159,8 @@ def read_php_ini(php_version: str) -> dict:
     values["max_input_time"] = int(values["max_input_time"])
     values["max_input_vars"] = int(values["max_input_vars"])
     values["max_file_uploads"] = int(values["max_file_uploads"])
+    raw_opcache = str(values.pop("opcache.enable", "1")).strip().lower()
+    values["opcache_enable"] = raw_opcache not in {"0", "off", "false", ""}
     return values
 
 

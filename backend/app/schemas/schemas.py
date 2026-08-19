@@ -825,6 +825,7 @@ class PhpConfigUpdate(BaseModel):
     max_execution_time: int = Field(default=300, ge=1, le=3600)
     max_input_time: int = Field(default=600, ge=1, le=3600)
     max_input_vars: int = Field(default=10000, ge=100, le=1_000_000)
+    opcache_enable: bool = True
 
     @field_validator("php_version")
     @classmethod

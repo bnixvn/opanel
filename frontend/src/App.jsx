@@ -390,7 +390,7 @@ function App() {
   const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
   const [editingUser, setEditingUser] = useState(null);
   const [editingUserForm, setEditingUserForm] = useState({ email: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
-  const [phpConfig, setPhpConfig] = useState({ php_version: '8.4', display_errors: 'Off', max_execution_time: 300, max_input_time: 600, max_input_vars: 10000, memory_limit: '1024M', post_max_size: '1024M', upload_max_filesize: '1024M' });
+  const [phpConfig, setPhpConfig] = useState({ php_version: '8.4', display_errors: 'Off', max_execution_time: 300, max_input_time: 600, max_input_vars: 10000, memory_limit: '1024M', post_max_size: '1024M', upload_max_filesize: '1024M', opcache_enable: true });
   const [phpVersions, setPhpVersions] = useState({ installed: ['8.3', '8.4'], supported: ['7.4', '8.1', '8.2', '8.3', '8.4', '8.5'] });
   const [phpTuning, setPhpTuning] = useState(null);
   const [firewallStatus, setFirewallStatus] = useState(null);
@@ -2275,7 +2275,7 @@ function App() {
   async function updatePhpConfig() {
     const data = await request('/maintenance/php-config', {
       method: 'POST',
-      body: JSON.stringify({ ...phpConfig, max_execution_time: Number(phpConfig.max_execution_time), max_input_time: Number(phpConfig.max_input_time), max_input_vars: Number(phpConfig.max_input_vars) }),
+      body: JSON.stringify({ ...phpConfig, max_execution_time: Number(phpConfig.max_execution_time), max_input_time: Number(phpConfig.max_input_time), max_input_vars: Number(phpConfig.max_input_vars), opcache_enable: !!phpConfig.opcache_enable }),
     }, 'Updating PHP config...');
     if (data?.target) { setNotice(`Updated PHP config: ${data.target}`); await loadPhpConfig(phpConfig.php_version); }
   }
@@ -3645,6 +3645,18 @@ function App() {
         <label><span>display_errors</span><select value={phpConfig.display_errors} onChange={e => setPhpConfig(prev => ({ ...prev, display_errors: e.target.value }))}>
           <option value="Off">Off (production)</option><option value="On">On (debug)</option>
         </select></label>
+        <label className="php-opcache-toggle"><span>OPcache</span>
+          <button
+            type="button"
+            className={phpConfig.opcache_enable ? '' : 'secondary'}
+            aria-pressed={!!phpConfig.opcache_enable}
+            disabled={!!loading}
+            onClick={() => setPhpConfig(prev => ({ ...prev, opcache_enable: !prev.opcache_enable }))}
+            title={`OPcache is ${phpConfig.opcache_enable ? 'on' : 'off'} for PHP ${phpConfig.php_version}. Press Save to apply.`}
+          >
+            <Zap size={14}/> {phpConfig.opcache_enable ? 'Enabled' : 'Disabled'}
+          </button>
+        </label>
         <label><span>max_execution_time</span><input type="number" value={phpConfig.max_execution_time} onChange={e => setPhpConfig(prev => ({ ...prev, max_execution_time: e.target.value }))} /></label>
         <label><span>max_input_time</span><input type="number" value={phpConfig.max_input_time} onChange={e => setPhpConfig(prev => ({ ...prev, max_input_time: e.target.value }))} /></label>
         <label><span>max_input_vars</span><input type="number" value={phpConfig.max_input_vars} onChange={e => setPhpConfig(prev => ({ ...prev, max_input_vars: e.target.value }))} /></label>
