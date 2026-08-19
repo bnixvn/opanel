@@ -968,15 +968,20 @@ fi
 # --- Repair OPcache timestamp validation ------------------------------------
 # Installs tuned before this fix shipped opcache.validate_timestamps = 0, which
 # leaves edited files invisible until every LSAPI worker for the pool exits.
-# Only that one line is rewritten: a full re-tune would discard whatever else
-# the admin has changed in the file.
+# Only that directive is touched; a full re-tune would discard whatever else
+# the admin has changed. If the directive is missing entirely it is added,
+# rather than left to PHP's built-in default.
 opcache_repaired=0
 for _ini in /usr/local/lsws/lsphp*/etc/php/*/mods-available/99-opanel.ini; do
   [[ -f "$_ini" ]] || continue
+  _before="$(md5sum "$_ini" | cut -d" " -f1)"
   if grep -qE '^[[:space:]]*opcache\.validate_timestamps[[:space:]]*=[[:space:]]*0[[:space:]]*$' "$_ini"; then
-    sed -i -E 's/^([[:space:]]*opcache\.validate_timestamps[[:space:]]*=[[:space:]]*)0[[:space:]]*$/	/' "$_ini"
-    opcache_repaired=$((opcache_repaired + 1))
+    sed -i -E 's/^[[:space:]]*opcache\.validate_timestamps[[:space:]]*=[[:space:]]*0[[:space:]]*$/opcache.validate_timestamps = 1/' "$_ini"
+  elif grep -qE '^[[:space:]]*opcache\.enable[[:space:]]*=' "$_ini" && ! grep -qE '^[[:space:]]*opcache\.validate_timestamps[[:space:]]*=' "$_ini"; then
+    sed -i -E '/^[[:space:]]*opcache\.enable[[:space:]]*=/a opcache.validate_timestamps = 1' "$_ini"
   fi
+  _after="$(md5sum "$_ini" | cut -d" " -f1)"
+  [[ "$_before" != "$_after" ]] && opcache_repaired=$((opcache_repaired + 1))
 done
 if [[ "$opcache_repaired" -gt 0 ]]; then
   log "Repaired OPcache validate_timestamps in ${opcache_repaired} php.ini file(s)"
