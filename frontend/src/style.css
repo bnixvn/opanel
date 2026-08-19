@@ -48,7 +48,7 @@
   --primary-soft:#a3cdf0;
   --brand-red:#0065bb;
   --brand-red-deep:#00417a;
-  --brand-ink:#0d1b2b;
+  --brand-ink:#0a0a0a;
   --accent:#0065bb;
   /* Semantic status colors — destructive red is deliberately deeper and
      less saturated than the brand red so "Delete" never reads as "Create".
@@ -68,30 +68,29 @@
   --warning-bg:#fcefd0;
   --warning-border:#efc45c;
   --warning-text:#7c3f07;
-  /* Text — warm neutrals held deliberately against the cool brand blue. That
-     warm/cool tension is the identity; a neutral grey palette under a blue
-     accent is the default every dashboard template already ships.
-     Muted text keeps AA on --surface, --bg and --surface-alt alike. */
-  --text:#1c1613;
-  --text-secondary:#4a3f38;
-  --text-muted:#6d6058;
+  /* Text and surfaces are pure neutrals -- no hue at all, so the only colour
+     on screen is the brand blue. Tinted greys (warm or cool) were read as
+     washed out; black-on-white with real separation reads as sharp. */
+  --text:#0a0a0a;
+  --text-secondary:#333333;
+  --text-muted:#525252;
   /* Surfaces */
-  --bg:#f8f6f3;
+  --bg:#f4f4f4;
   --surface:#ffffff;
-  --surface-alt:#efeae4;
-  --border:#e2dbd3;
-  --border-hover:#bcb0a5;
+  --surface-alt:#ebebeb;
+  --border:#d4d4d4;
+  --border-hover:#9e9e9e;
   --ring:rgba(0,101,187,.28);
-  --shadow-sm:0 1px 2px rgba(43,21,18,.08);
-  --shadow-md:0 10px 28px rgba(43,21,18,.12);
-  --shadow-lg:0 20px 48px rgba(43,21,18,.18);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.08);
+  --shadow-md:0 10px 28px rgba(0,0,0,.12);
+  --shadow-lg:0 20px 48px rgba(0,0,0,.18);
   --topbar-bg:rgba(255,255,255,.92);
   /* Always-dark surfaces (terminals, log panes, code textareas) */
-  --console-bg:#17120f;
-  --console-surface:#221b17;
-  --console-border:#39302b;
-  --console-text:#ece5e1;
-  --console-muted:#a2938c;
+  --console-bg:#111111;
+  --console-surface:#1c1c1c;
+  --console-border:#333333;
+  --console-text:#f0f0f0;
+  --console-muted:#a3a3a3;
   /* Fixed metrics (theme-independent) */
   --radius-sm:6px;
   --radius-md:8px;
@@ -122,7 +121,7 @@
   --primary-soft:rgba(0,101,187,.5);
   --brand-red:#0065bb;
   --brand-red-deep:#00417a;
-  --brand-ink:#f5efe9;
+  --brand-ink:#ffffff;
   --accent:#5fb0ff;
   --danger:#f87171;
   --danger-hover:#fca5a5;
@@ -138,24 +137,24 @@
   --warning-bg:rgba(251,191,36,.18);
   --warning-border:rgba(251,191,36,.48);
   --warning-text:#fcd34d;
-  --text:#f2ede8;
-  --text-secondary:#cabfb5;
-  --text-muted:#9a8c80;
-  --bg:#14110f;
-  --surface:#1c1815;
-  --surface-alt:#262019;
-  --border:#352e28;
-  --border-hover:#4c433a;
+  --text:#fafafa;
+  --text-secondary:#d4d4d4;
+  --text-muted:#a3a3a3;
+  --bg:#0a0a0a;
+  --surface:#171717;
+  --surface-alt:#242424;
+  --border:#333333;
+  --border-hover:#525252;
   --ring:rgba(0,101,187,.5);
-  --shadow-sm:0 1px 2px rgba(0,0,0,.35);
-  --shadow-md:0 10px 28px rgba(0,0,0,.5);
-  --shadow-lg:0 20px 48px rgba(0,0,0,.6);
-  --topbar-bg:rgba(28,24,21,.92);
-  --console-bg:#100d0c;
-  --console-surface:#1a1514;
-  --console-border:#352e28;
-  --console-text:#ece5e1;
-  --console-muted:#a2938c;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:0 10px 28px rgba(0,0,0,.55);
+  --shadow-lg:0 20px 48px rgba(0,0,0,.65);
+  --topbar-bg:rgba(23,23,23,.92);
+  --console-bg:#0d0d0d;
+  --console-surface:#181818;
+  --console-border:#333333;
+  --console-text:#f0f0f0;
+  --console-muted:#a3a3a3;
   color-scheme:dark;
 }
 *{box-sizing:border-box}
