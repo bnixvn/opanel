@@ -327,6 +327,7 @@ def render_php_ini(cfg: dict | None = None) -> str:
         "",
         "; OPcache",
         f"opcache.enable        = {cfg['opcache_enable']}",
+        f"opcache.enable_cli    = {cfg['opcache_enable']}",
         f"opcache.memory_consumption      = {cfg['opcache_memory_consumption']}",
         f"opcache.interned_strings_buffer = {cfg['opcache_interned_strings_buffer']}",
         f"opcache.max_accelerated_files    = {cfg['opcache_max_accelerated_files']}",
@@ -346,6 +347,14 @@ def render_php_ini(cfg: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+def current_opcache_enabled(php_version: str) -> bool:
+    """Read the OPcache switch currently written for *php_version*."""
+    try:
+        return bool(read_php_ini(php_version)["opcache_enable"])
+    except (ValueError, OSError, KeyError):
+        return True
+
+
 def apply_php_tuning(php_version: str | None = None) -> dict:
     """Write auto-tuned PHP config and restart OLS.
 
@@ -353,12 +362,17 @@ def apply_php_tuning(php_version: str | None = None) -> dict:
     Returns the recommendation dict with an extra ``applied_to`` list.
     """
     cfg = recommend_php_config()
-    content = render_php_ini(cfg)
 
     targets: list[str] = []
     versions = [php_version] if php_version else list_installed_php()
 
     for ver in versions:
+        # The tuner recommends OPcache on, but a version the operator switched
+        # off must stay off: otherwise applying the recommendation silently
+        # flips the switch back behind their back.
+        ver_cfg = dict(cfg)
+        ver_cfg["opcache_enable"] = 1 if current_opcache_enabled(ver) else 0
+        content = render_php_ini(ver_cfg)
         target = _lsphp_opanel_ini_path(ver)
         if settings.command_dry_run:
             targets.append(str(target))
