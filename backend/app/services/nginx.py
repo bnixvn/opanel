@@ -40,7 +40,6 @@ WORDPRESS_CSP = (
     "object-src 'none'; "
     "base-uri 'self'; "
     "form-action 'self' https:; "
-    "frame-ancestors 'self'; "
     "upgrade-insecure-requests"
 )
 WORDPRESS_CSP_HEADER = f'    add_header Content-Security-Policy "{WORDPRESS_CSP}" always;'

@@ -63,12 +63,10 @@ WORDPRESS_CSP = (
     "object-src 'none'; "
     "base-uri 'self'; "
     "form-action 'self' https:; "
-    "frame-ancestors 'self'; "
     "upgrade-insecure-requests"
 )
 
 SECURITY_HEADERS = (
-    "X-Frame-Options: SAMEORIGIN\n"
     "X-Content-Type-Options: nosniff\n"
     "Referrer-Policy: strict-origin-when-cross-origin\n"
     "Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), "

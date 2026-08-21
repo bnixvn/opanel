@@ -62,7 +62,6 @@ async def unhandled_exception_handler(request, exc):
 async def security_headers(request, call_next):
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
     if _is_potentially_trustworthy_origin(request):
         response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
@@ -82,7 +81,6 @@ async def security_headers(request, call_next):
         "img-src 'self' data:; "
         "font-src 'self' data:; "
         "connect-src 'self' ws: wss:; "
-        "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'",
     )

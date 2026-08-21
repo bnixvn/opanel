@@ -217,3 +217,4 @@ def test_ensure_hsts_header_adds_gutenberg_safe_wordpress_csp():
 
     assert "frame-src 'self' https: blob:;" in hardened
     assert "worker-src 'self' blob:;" in hardened
+    assert "frame-ancestors" not in hardened

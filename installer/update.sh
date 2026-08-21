@@ -476,6 +476,38 @@ for root in roots:
 PY
 }
 
+migrate_drop_iframe_blocking() {
+  python3 - <<'PY'
+import re
+from pathlib import Path
+
+roots = [
+    Path("/etc/nginx/conf.d"),
+    Path("/etc/nginx/sites-enabled"),
+    Path("/etc/nginx/opanel/custom"),
+    Path("/usr/local/lsws/conf/opanel/vhosts"),
+]
+XFO_LINE = re.compile(r'(?im)^[ \t]*(?:add_header[ \t]+)?"?X-Frame-Options"?[ \t:].*\r?\n')
+FRAME_ANCESTORS = re.compile(r'(?i)frame-ancestors[^;"\n]*(?:;[ \t]*)?')
+
+for root in roots:
+    if not root.exists():
+        continue
+    for path in sorted(root.rglob("*.conf")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        new_text = FRAME_ANCESTORS.sub("", XFO_LINE.sub("", text))
+        if new_text != text:
+            path.write_text(new_text, encoding="utf-8")
+            print(f"Removed iframe blocking from {path}")
+PY
+  if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx >/dev/null 2>&1 || true
+  fi
+}
+
 ensure_terminal_tools() {
   local missing=()
   command -v composer >/dev/null 2>&1 || missing+=(composer)
@@ -1211,6 +1243,7 @@ systemctl restart opanel-api
 log "Reloading OpenLiteSpeed"
 update_progress 92 "restarting" "Restarting services and reloading OpenLiteSpeed"
 migrate_nginx_wordpress_csp_worker_src
+migrate_drop_iframe_blocking
 install -d -m 0755 /etc/systemd/system/lshttpd.service.d
 printf '%s\n' '[Service]' 'PIDFile=/run/openlitespeed.pid' 'KillMode=mixed' \
   >/etc/systemd/system/lshttpd.service.d/10-opanel.conf

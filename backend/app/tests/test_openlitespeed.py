@@ -69,7 +69,7 @@ def test_wordpress_vhost_includes_security_headers_when_ssl_is_enabled():
     )
 
     assert "Strict-Transport-Security: max-age=31536000; includeSubDomains" in rendered
-    assert "X-Frame-Options: SAMEORIGIN" in rendered
+    assert "X-Frame-Options" not in rendered
     assert "X-Content-Type-Options: nosniff" in rendered
     assert "Referrer-Policy: strict-origin-when-cross-origin" in rendered
     assert "Permissions-Policy: accelerometer=(), autoplay=(), camera=()" in rendered
@@ -85,7 +85,7 @@ def test_static_vhost_does_not_emit_hsts_without_ssl():
     )
 
     assert "Strict-Transport-Security:" not in rendered
-    assert "X-Frame-Options: SAMEORIGIN" in rendered
+    assert "X-Frame-Options" not in rendered
     assert "X-Content-Type-Options: nosniff" in rendered
     assert "Referrer-Policy: strict-origin-when-cross-origin" in rendered
     assert "Permissions-Policy: accelerometer=(), autoplay=(), camera=()" in rendered
