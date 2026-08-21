@@ -1149,7 +1149,7 @@ validate_php_config_file() {
         [[ "$value" =~ ^[0-9]{1,7}$ ]] || deny "invalid integer value for $key"
         (( 10#$value >= 1 && 10#$value <= 1000000 )) || deny "$key out of range"
         ;;
-      opcache.enable|opcache.validate_timestamps|opcache.save_comments)
+      opcache.enable|opcache.enable_cli|opcache.validate_timestamps|opcache.save_comments)
         [[ "$value" == "0" || "$value" == "1" ]] || deny "invalid boolean value for $key"
         ;;
       opcache.memory_consumption|opcache.interned_strings_buffer|opcache.max_accelerated_files|opcache.revalidate_freq|lsapi_children|lsapi_max_idle|lsapi_max_idle_children|lsapi_max_process_time)
