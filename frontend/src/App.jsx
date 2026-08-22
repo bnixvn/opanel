@@ -35,7 +35,8 @@ const NGINX_REWRITE_MODES = [
   { value: 'codeigniter', label: 'CodeIgniter' },
   { value: 'seohburl', label: 'SEO HB URL' },
 ];
-const SETTINGS_PAGE_KEYS = ['settings', 'security', 'php', 'firewall', 'waf', 'wafLogs', 'updates', 'services'];
+const SETTINGS_PAGE_KEYS = ['settings', 'security', 'malware', 'php', 'firewall', 'waf', 'wafLogs', 'updates', 'services'];
+const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const PAGE_ROUTES = {
   dashboard: '/',
   websites: '/website',
@@ -47,6 +48,7 @@ const PAGE_ROUTES = {
   users: '/users',
   settings: '/settings',
   security: '/security',
+  malware: '/malware',
   php: '/php',
   firewall: '/firewall',
   waf: '/waf',
@@ -423,6 +425,7 @@ function App() {
   const [scanResults, setScanResults] = useState(null);
   const [scanJob, setScanJob] = useState(null);
   const [scanJobs, setScanJobs] = useState([]);
+  const [malwareSchedule, setMalwareSchedule] = useState({ enabled: false, frequency: 'weekly', hour: 3, minute: 0, weekday: 0, day: 1, scan_root: '/' });
   const [scanLoading, setScanLoading] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -1243,6 +1246,52 @@ function App() {
         setScanJob(data);
         await loadMalwareScanJobs();
         setNotice('Malware scan started.');
+      }
+    } finally {
+      setScanLoading(false);
+    }
+  }
+
+  async function loadMalwareSchedule() {
+    const data = await request('/panel-settings/malware-scan/schedule', { silent: true }, '');
+    if (data) setMalwareSchedule(data);
+    return data;
+  }
+
+  async function saveMalwareSchedule() {
+    const data = await request('/panel-settings/malware-scan/schedule', {
+      method: 'PUT',
+      body: JSON.stringify({
+        enabled: !!malwareSchedule.enabled,
+        frequency: malwareSchedule.frequency || 'weekly',
+        hour: Number(malwareSchedule.hour) || 0,
+        minute: Number(malwareSchedule.minute) || 0,
+        weekday: Number(malwareSchedule.weekday) || 0,
+        day: Number(malwareSchedule.day) || 1,
+        scan_root: (malwareSchedule.scan_root || '/').trim() || '/',
+      }),
+    }, 'Saving scan schedule...');
+    if (data) {
+      setMalwareSchedule(data);
+      setNotice(data.enabled ? 'Scheduled scan saved.' : 'Scheduled scan disabled.');
+    }
+  }
+
+  async function runSystemScan() {
+    const scanRoot = (malwareSchedule.scan_root || '/').trim() || '/';
+    if (!confirm(`Scan ${scanRoot} on this server now? A full scan can run for hours.`)) return;
+    setScanResults(null);
+    setScanJob(null);
+    setScanLoading(true);
+    try {
+      const data = await request('/panel-settings/malware-scan/run', {
+        method: 'POST',
+        body: JSON.stringify({ scope: 'system', scan_root: scanRoot }),
+      }, 'Starting full server scan...');
+      if (data) {
+        setScanJob(data);
+        await loadMalwareScanJobs();
+        setNotice('Full server scan started.');
       }
     } finally {
       setScanLoading(false);
@@ -2688,7 +2737,12 @@ function App() {
     if (isAuthenticated && page === 'updates' && currentUser?.role === 'admin') loadUpdates();
     if (isAuthenticated && page === 'security') {
       loadTwoFactorStatus();
-      if (isAdmin) { loadMalwareScanStatus(); loadMalwareScanJobs(); loadLatestMalwareScanJob(); }
+    }
+    if (isAuthenticated && page === 'malware' && isAdmin) {
+      loadMalwareScanStatus();
+      loadMalwareScanJobs();
+      loadLatestMalwareScanJob();
+      loadMalwareSchedule();
       if (!websites.length) refreshAll();
     }
     if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); }
@@ -2750,6 +2804,7 @@ function App() {
   const settingsNavItems = [
     ...(isAdmin ? [['settings', 'Panel settings', SettingsIcon]] : []),
     ['security', 'Security', Shield],
+    ...(isAdmin ? [['malware', 'Malware Scanner', Search]] : []),
     ...(isAdmin ? [['php', 'PHP config', Code2]] : []),
     ...(isAdmin ? [['firewall', 'Firewall', Shield]] : []),
     ...(isAdmin ? [['waf', 'WAF', Shield]] : []),
@@ -4009,38 +4064,6 @@ function App() {
 
   function renderSecurity() {
     const enabled = Boolean(twoFactorStatus?.enabled || currentUser?.totp_enabled);
-    const mw = malwareScanStatus || {};
-    const mwActive = Boolean(mw.active);
-    const mwInstalled = Boolean(mw.installed);
-    const mwEnabled = Boolean(mw.enabled);
-    const activeScanJob = scanJob || scanResults || {};
-    const scanRunning = ['queued', 'running'].includes(scanJob?.status);
-    const scanJobTitle = job => (job.domains && job.domains.length > 0)
-      ? (job.domains.length === 1 ? job.domains[0] : `${job.domains.length} websites`)
-      : (job.scope === 'all' ? 'All websites' : 'Scan job');
-    const scanJobStamp = job => {
-      const stamp = job.finished_at || job.updated_at || job.started_at || job.created_at || '';
-      if (!stamp) return 'No timestamp';
-      const date = new Date(stamp);
-      return Number.isNaN(date.getTime()) ? stamp : new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Asia/Ho_Chi_Minh',
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      }).format(date).replace(',', '');
-    };
-    const scanJobDetail = job => `${job.scanned || 0}/${job.total_files || job.scanned || 0} files, ${job.infected || 0} threats, ${job.errors || 0} errors`;
-    const scanJobMeta = job => `${scanJobStamp(job)} / ${scanJobDetail(job)}`;
-    const scanJobBadgeClass = job => {
-      if (job.status === 'done') return 'badge ok';
-      if (job.status === 'infected') return 'badge danger';
-      if (['error', 'interrupted'].includes(job.status)) return 'badge bad';
-      return 'badge warn';
-    };
     return <>
       <section className="section">
         <div className="section-title">
@@ -4070,7 +4093,46 @@ function App() {
           </div>
         </div>}
       </section>
+    </>;
+  }
 
+  function renderMalwareScanner() {
+    if (!isAdmin) return <section className="section"><h2>Malware Scanner</h2><p className="hint">No permission.</p></section>;
+    const mw = malwareScanStatus || {};
+    const mwActive = Boolean(mw.active);
+    const mwInstalled = Boolean(mw.installed);
+    const mwEnabled = Boolean(mw.enabled);
+    const activeScanJob = scanJob || scanResults || {};
+    const scanRunning = ['queued', 'running'].includes(scanJob?.status);
+    const scanJobTitle = job => (job.domains && job.domains.length > 0)
+      ? (job.domains.length === 1 ? job.domains[0] : `${job.domains.length} websites`)
+      : (job.scope === 'all' ? 'All websites'
+        : job.scope === 'system' ? `Full server (${job.scan_root || '/'})`
+        : 'Scan job');
+    const scanJobStamp = job => {
+      const stamp = job.finished_at || job.updated_at || job.started_at || job.created_at || '';
+      if (!stamp) return 'No timestamp';
+      const date = new Date(stamp);
+      return Number.isNaN(date.getTime()) ? stamp : new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }).format(date).replace(',', '');
+    };
+    const scanJobDetail = job => `${job.scanned || 0}/${job.total_files || job.scanned || 0} files, ${job.infected || 0} threats, ${job.errors || 0} errors`;
+    const scanJobMeta = job => `${scanJobStamp(job)} / ${scanJobDetail(job)}`;
+    const scanJobBadgeClass = job => {
+      if (job.status === 'done') return 'badge ok';
+      if (job.status === 'infected') return 'badge danger';
+      if (['error', 'interrupted'].includes(job.status)) return 'badge bad';
+      return 'badge warn';
+    };
+    return <>
       {isAdmin && <section className="section">
         <div className="section-title">
           <div>
@@ -4166,6 +4228,66 @@ function App() {
             {activeScanJob.log && activeScanJob.log.length > 0 && <pre className="malware-scan-log">{activeScanJob.log.join('\n')}</pre>}
           </div>}
         </div>}
+      </section>}
+
+      {isAdmin && <section className="section">
+        <div className="section-title">
+          <div>
+            <h2>Full server scan</h2>
+            <p className="hint">Website scans only cover document roots. This walks the whole VPS as root, so malware parked in /tmp, /root or a home folder outside public_html is found too.</p>
+          </div>
+          <button className="secondary" disabled={!!loading} onClick={loadMalwareSchedule}><RefreshCw size={14}/> Refresh</button>
+        </div>
+        <div className="info-box">
+          <div className="malware-scan-controls">
+            <input value={malwareSchedule.scan_root || '/'} onChange={e => setMalwareSchedule(prev => ({ ...prev, scan_root: e.target.value }))} placeholder="/" />
+            <button disabled={!!loading || scanRunning || !mw.clamd_running} onClick={runSystemScan}>
+              {scanRunning ? <><RefreshCw size={14} className="spin"/> Scanning...</> : <><Search size={14}/> Scan now</>}
+            </button>
+          </div>
+          <p className="hint" style={{marginTop:8}}>Skips /proc, /sys, /dev, /run, the ClamAV signature database and panel backup archives. A full scan of a busy server can run for hours.</p>
+        </div>
+        <div className="info-box">
+          <strong>Scheduled scan</strong>
+          <p className="hint">Runs automatically on the server clock. The scan starts even when nobody is logged in to the panel.</p>
+          <div className="firewall-form">
+            <label><span>Enabled</span>
+              <select value={malwareSchedule.enabled ? 'on' : 'off'} onChange={e => setMalwareSchedule(prev => ({ ...prev, enabled: e.target.value === 'on' }))}>
+                <option value="off">Off</option>
+                <option value="on">On</option>
+              </select>
+            </label>
+            <label><span>Frequency</span>
+              <select value={malwareSchedule.frequency || 'weekly'} onChange={e => setMalwareSchedule(prev => ({ ...prev, frequency: e.target.value }))}>
+                <option value="hourly">Hourly</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </label>
+            {malwareSchedule.frequency === 'weekly' && <label><span>Day of week</span>
+              <select value={Number(malwareSchedule.weekday) || 0} onChange={e => setMalwareSchedule(prev => ({ ...prev, weekday: Number(e.target.value) }))}>
+                {WEEKDAY_LABELS.map((label, index) => <option key={label} value={index}>{label}</option>)}
+              </select>
+            </label>}
+            {malwareSchedule.frequency === 'monthly' && <label><span>Day of month</span>
+              <input type="number" min="1" max="28" value={Number(malwareSchedule.day) || 1} onChange={e => setMalwareSchedule(prev => ({ ...prev, day: Number(e.target.value) }))} />
+            </label>}
+            {malwareSchedule.frequency !== 'hourly' && <label><span>Hour</span>
+              <input type="number" min="0" max="23" value={Number(malwareSchedule.hour) || 0} onChange={e => setMalwareSchedule(prev => ({ ...prev, hour: Number(e.target.value) }))} />
+            </label>}
+            <label><span>Minute</span>
+              <input type="number" min="0" max="59" value={Number(malwareSchedule.minute) || 0} onChange={e => setMalwareSchedule(prev => ({ ...prev, minute: Number(e.target.value) }))} />
+            </label>
+            <label><span>Path</span>
+              <input value={malwareSchedule.scan_root || '/'} onChange={e => setMalwareSchedule(prev => ({ ...prev, scan_root: e.target.value }))} placeholder="/" />
+            </label>
+            <button disabled={!!loading} onClick={saveMalwareSchedule}><Clock size={14}/> Save schedule</button>
+          </div>
+          {malwareSchedule.last_run_at && <p className="hint" style={{marginTop:8}}>
+            Last scheduled run: {malwareSchedule.last_run_at} — <span className={malwareSchedule.last_status === 'infected' ? 'badge danger' : malwareSchedule.last_status === 'error' ? 'badge bad' : 'badge ok'}>{malwareSchedule.last_status || 'unknown'}</span> {malwareSchedule.last_message || ''}
+          </p>}
+        </div>
       </section>}
     </>;
   }
@@ -4446,6 +4568,7 @@ function App() {
     if (page === 'files') return renderFiles();
     if (page === 'backups') return renderBackups();
     if (page === 'security') return renderSecurity();
+    if (page === 'malware') return renderMalwareScanner();
     if (page === 'php') return renderPhpConfig();
     if (page === 'firewall') return renderFirewall();
     if (page === 'waf') return renderWaf();

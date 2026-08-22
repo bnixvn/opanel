@@ -713,6 +713,48 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 SERVICE
+  cat >/etc/systemd/system/opanel-malware-scheduler.service <<SERVICE
+[Unit]
+Description=opanel scheduled malware scan runner
+After=network.target clamav-daemon.service
+
+[Service]
+Type=oneshot
+User=opanel
+Group=opanel
+SupplementaryGroups=www-data opanel-sites
+WorkingDirectory=${APP_DIR}/backend
+EnvironmentFile=${APP_DIR}/backend/.env
+Environment=HOME=${APP_DIR}
+Environment=opanel_USE_HELPER=true
+ExecStart=${APP_DIR}/backend/.venv/bin/python -m app.services.malware_scheduler
+# A full-filesystem scan is not a one-minute job; let it run to the end instead
+# of being killed while the next timer tick waits.
+TimeoutStartSec=infinity
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+ReadWritePaths=${APP_DIR} /var/lib/opanel /tmp
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+  cat >/etc/systemd/system/opanel-malware-scheduler.timer <<'SERVICE'
+[Unit]
+Description=Check for a due opanel malware scan every minute
+
+[Timer]
+OnBootSec=120s
+OnUnitActiveSec=60s
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+SERVICE
+
   cat >/etc/systemd/system/opanel-backup-scheduler.timer <<'SERVICE'
 [Unit]
 Description=Run opanel scheduled backups every minute
@@ -1089,6 +1131,7 @@ else
   python -c "from app.core.database import run_migrations; run_migrations()"
 fi
 systemctl enable --now opanel-backup-scheduler.timer >/dev/null 2>&1 || true
+systemctl enable --now opanel-malware-scheduler.timer >/dev/null 2>&1 || true
 
 log "Refreshing managed site permissions"
 if id -u opanel >/dev/null 2>&1; then
@@ -1178,6 +1221,7 @@ python -m py_compile \
   app/services/file_manager.py \
   app/services/backup.py \
   app/services/backup_scheduler.py \
+  app/services/malware_scheduler.py \
   app/services/da_import.py \
   app/services/storage_quota.py \
   app/services/site_users.py \

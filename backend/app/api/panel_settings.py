@@ -9,6 +9,8 @@ from app.schemas.schemas import (
     MalwareScanJob,
     MalwareScanJobsOut,
     MalwareScanRun,
+    MalwareScanScheduleIn,
+    MalwareScanScheduleOut,
     MalwareScanStatus,
     MalwareScanToggle,
     PanelSettingsOut,
@@ -142,15 +144,43 @@ def run_malware_scan(
     current_user: User = Depends(get_current_user),
 ):
     ensure_role(current_user.role, Role.admin)
+    scope = (payload.scope or "").strip().lower()
     try:
-        if not payload.all and payload.website_id is None:
-            raise ValueError("Website is required")
-        result = panel_settings.start_scan_job(None if payload.all else payload.website_id, db)
+        if scope == "system":
+            result = panel_settings.start_system_scan_job(payload.scan_root or "/")
+        else:
+            if not payload.all and payload.website_id is None:
+                raise ValueError("Website is required")
+            result = panel_settings.start_scan_job(None if payload.all else payload.website_id, db)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    log_action(db, current_user.id, "malware_scan_run", "all" if payload.all else str(payload.website_id), request=request)
+    target = "system" if scope == "system" else ("all" if payload.all else str(payload.website_id))
+    log_action(db, current_user.id, "malware_scan_run", target, request=request)
+    return result
+
+
+@router.get("/malware-scan/schedule", response_model=MalwareScanScheduleOut)
+def get_malware_scan_schedule(current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    return panel_settings.malware_schedule()
+
+
+@router.put("/malware-scan/schedule", response_model=MalwareScanScheduleOut)
+def save_malware_scan_schedule(
+    payload: MalwareScanScheduleIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        result = panel_settings.set_malware_schedule(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    action = "malware_scan_schedule_enable" if payload.enabled else "malware_scan_schedule_disable"
+    log_action(db, current_user.id, action, result.get("scan_root") or "/", request=request)
     return result
 
 

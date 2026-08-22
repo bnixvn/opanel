@@ -1,3 +1,4 @@
+import calendar
 import json
 import os
 import re
@@ -294,6 +295,8 @@ MALWARE_JOB_THREADS: dict[str, threading.Thread] = {}
 MALWARE_JOBS_LOCK = threading.RLock()
 MALWARE_JOBS_DIR = SETTINGS_DIR / "malware-scan-jobs"
 MAX_MALWARE_LOG_LINES = 1000
+# A job whose progress file has not moved for this long is treated as dead.
+MALWARE_JOB_STALE_SECONDS = 300
 
 
 def _persist_malware_enabled(enabled: bool) -> None:
@@ -371,8 +374,20 @@ def _public_malware_job(job: dict) -> dict:
     return dict(job)
 
 
+def _job_age_seconds(job: dict) -> float:
+    stamp = job.get("updated_at") or job.get("started_at") or job.get("created_at") or ""
+    try:
+        return max(0.0, time.time() - calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")))
+    except (ValueError, TypeError):
+        return float("inf")
+
+
 def _finalize_stale_malware_job(job: dict) -> dict:
     if job.get("status") not in {"queued", "running"}:
+        return job
+    # Scheduled scans run in the systemd timer process, so the API has no
+    # thread for them. Recent progress is what proves such a job is alive.
+    if _job_age_seconds(job) < MALWARE_JOB_STALE_SECONDS:
         return job
     with MALWARE_JOBS_LOCK:
         thread = MALWARE_JOB_THREADS.get(job.get("job_id"))
@@ -630,6 +645,259 @@ def _run_scan_job(job_id: str, targets: list[dict]) -> None:
             status="error",
             message="Scan failed",
             error=str(exc),
+            finished_at=_now_iso(),
+        )
+        _append_malware_log(job_id, f"ERROR scan failed: {exc}")
+    finally:
+        with MALWARE_JOBS_LOCK:
+            MALWARE_JOB_THREADS.pop(job_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Scheduled full-system scans
+# ---------------------------------------------------------------------------
+MALWARE_SCHEDULE_KEY = "malware_scan_schedule"
+MALWARE_SCHEDULE_STATE_FILE = SETTINGS_DIR / "malware-scan-schedule-state.json"
+MALWARE_SCHEDULE_FREQUENCIES = ("hourly", "daily", "weekly", "monthly")
+MALWARE_SCHEDULE_DEFAULTS = {
+    "enabled": False,
+    "frequency": "weekly",
+    "hour": 3,
+    "minute": 0,
+    "weekday": 0,
+    "day": 1,
+    "scan_root": "/",
+}
+
+
+def _clamp_int(value, low: int, high: int, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
+def normalize_malware_schedule(raw) -> dict:
+    """Coerce stored or posted schedule fields into a complete, valid schedule."""
+    data = raw if isinstance(raw, dict) else {}
+    frequency = str(data.get("frequency") or MALWARE_SCHEDULE_DEFAULTS["frequency"]).strip().lower()
+    if frequency not in MALWARE_SCHEDULE_FREQUENCIES:
+        frequency = MALWARE_SCHEDULE_DEFAULTS["frequency"]
+    scan_root = str(data.get("scan_root") or "/").strip() or "/"
+    if not scan_root.startswith("/"):
+        raise ValueError("Scan path must be absolute")
+    if len(scan_root) > 1:
+        scan_root = scan_root.rstrip("/") or "/"
+    return {
+        "enabled": bool(data.get("enabled", MALWARE_SCHEDULE_DEFAULTS["enabled"])),
+        "frequency": frequency,
+        "hour": _clamp_int(data.get("hour"), 0, 23, MALWARE_SCHEDULE_DEFAULTS["hour"]),
+        "minute": _clamp_int(data.get("minute"), 0, 59, MALWARE_SCHEDULE_DEFAULTS["minute"]),
+        # 0 = Sunday, matching the weekday numbering used in the panel UI.
+        "weekday": _clamp_int(data.get("weekday"), 0, 6, MALWARE_SCHEDULE_DEFAULTS["weekday"]),
+        # Capped at 28 so a monthly schedule fires in February too.
+        "day": _clamp_int(data.get("day"), 1, 28, MALWARE_SCHEDULE_DEFAULTS["day"]),
+        "scan_root": scan_root,
+    }
+
+
+def _read_malware_schedule_state() -> dict:
+    try:
+        if MALWARE_SCHEDULE_STATE_FILE.exists():
+            state = json.loads(MALWARE_SCHEDULE_STATE_FILE.read_text(encoding="utf-8"))
+            return state if isinstance(state, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {}
+
+
+def write_malware_schedule_state(**updates) -> dict:
+    """Record the outcome of the last scheduled run.
+
+    Kept out of panel-settings.json on purpose: the scheduler process writes
+    this after every run, and a read-modify-write race against the settings API
+    would otherwise be able to drop an unrelated setting.
+    """
+    state = _read_malware_schedule_state()
+    state.update(updates)
+    try:
+        SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile("w", encoding="utf-8", dir=str(SETTINGS_DIR), delete=False) as tmp:
+            print(json.dumps(state, ensure_ascii=True, indent=2, sort_keys=True), file=tmp)
+            tmp_path = Path(tmp.name)
+        tmp_path.replace(MALWARE_SCHEDULE_STATE_FILE)
+    except OSError:
+        pass
+    return state
+
+
+def malware_schedule() -> dict:
+    schedule = normalize_malware_schedule(_read_raw().get(MALWARE_SCHEDULE_KEY))
+    state = _read_malware_schedule_state()
+    schedule.update(
+        last_run_at=state.get("last_run_at") or "",
+        last_status=state.get("last_status") or "",
+        last_message=state.get("last_message") or "",
+        last_job_id=state.get("last_job_id") or "",
+    )
+    return schedule
+
+
+def set_malware_schedule(payload) -> dict:
+    schedule = normalize_malware_schedule(payload)
+    data = _read_raw()
+    data[MALWARE_SCHEDULE_KEY] = schedule
+    _write_raw(data)
+    return malware_schedule()
+
+
+# A full-filesystem scan walks hundreds of thousands of files. Writing the job
+# file on every one of them would cost more IO than the scan itself, so
+# progress is flushed on a file/second budget instead.
+SYSTEM_SCAN_FLUSH_FILES = 250
+SYSTEM_SCAN_FLUSH_SECONDS = 3.0
+SYSTEM_SCAN_MAX_ERROR_LINES = 100
+
+
+def _new_malware_job(scope: str, **fields) -> dict:
+    job = {
+        "job_id": uuid.uuid4().hex,
+        "status": "queued",
+        "scope": scope,
+        "website_id": None,
+        "domains": [],
+        "scan_root": "",
+        "trigger": "manual",
+        "message": "Queued",
+        "progress_percent": 0,
+        "total_files": 0,
+        "scanned": 0,
+        "infected": 0,
+        "errors": 0,
+        "skipped": 0,
+        "threats": [],
+        "log": [],
+        "error": "",
+        "created_at": _now_iso(),
+        "started_at": "",
+        "finished_at": "",
+        "updated_at": _now_iso(),
+    }
+    job.update(fields)
+    return job
+
+
+def start_system_scan_job(scan_root: str = "/", trigger: str = "manual", background: bool = True) -> dict:
+    """Scan the whole server, not just website roots.
+
+    Website scans only ever look at document roots, so malware parked in
+    /tmp, /root, a user's home outside public_html or a system directory stays
+    invisible. This walks the filesystem as root through the helper.
+    """
+    scan_root = (scan_root or "/").strip() or "/"
+    if not scan_root.startswith("/"):
+        raise ValueError("Scan path must be absolute")
+    job = _new_malware_job("system", scan_root=scan_root, trigger=trigger, message="Queued full system scan")
+    _remember_malware_job(job)
+    job_id = job["job_id"]
+    if not background:
+        _run_system_scan_job(job_id, scan_root)
+        return get_malware_scan_job(job_id)
+    thread = threading.Thread(target=_run_system_scan_job, args=(job_id, scan_root), daemon=True)
+    with MALWARE_JOBS_LOCK:
+        MALWARE_JOB_THREADS[job_id] = thread
+    thread.start()
+    return _public_malware_job(job)
+
+
+def _run_system_scan_job(job_id: str, scan_root: str) -> None:
+    _update_malware_job(job_id, status="running", started_at=_now_iso(), message=f"Starting full scan of {scan_root}")
+    total = 0
+    scanned = 0
+    errors = 0
+    error_lines = 0
+    threats: list[dict] = []
+    unparsed_tail: list[str] = []
+    try:
+        process = _malware_scan.system_scan_process(scan_root)
+        last_flush = time.monotonic()
+
+        def flush(message: str) -> None:
+            _update_malware_job(
+                job_id,
+                total_files=total,
+                scanned=scanned,
+                infected=len(threats),
+                errors=errors,
+                threats=threats,
+                progress_percent=int((scanned / total) * 100) if total else 0,
+                message=message,
+            )
+
+        for raw_line in process.stdout or []:
+            line = raw_line.rstrip()
+            if line.startswith(_malware_scan.SYSTEM_SCAN_TOTAL_PREFIX):
+                try:
+                    total = int(line[len(_malware_scan.SYSTEM_SCAN_TOTAL_PREFIX):].strip() or 0)
+                except ValueError:
+                    total = 0
+                _append_malware_log(job_id, f"Found {total} files to scan under {scan_root}")
+                flush(f"Scanning 0/{total} files")
+                continue
+            result = _malware_scan.parse_clamdscan_line(line)
+            if result is None:
+                if line.strip():
+                    _append_malware_log(job_id, line.strip())
+                    unparsed_tail = [*unparsed_tail[-2:], line.strip()]
+                continue
+            scanned += 1
+            if result["status"] == "infected":
+                threats.append({"path": result["path"], "signature": result["signature"], "domain": ""})
+                _append_malware_log(job_id, f"INFECTED {result['path']}: {result['signature']}")
+            elif result["status"] == "error":
+                errors += 1
+                # Unreadable special files are common and uninteresting; keep a
+                # sample in the log and just count the rest.
+                if error_lines < SYSTEM_SCAN_MAX_ERROR_LINES:
+                    error_lines += 1
+                    _append_malware_log(job_id, f"ERROR {result['path']}: {result['detail']}")
+            now = time.monotonic()
+            if scanned % SYSTEM_SCAN_FLUSH_FILES == 0 or now - last_flush >= SYSTEM_SCAN_FLUSH_SECONDS:
+                last_flush = now
+                flush(f"Scanning {scanned}/{total} files" if total else f"Scanned {scanned} files")
+
+        returncode = process.wait()
+        # clamdscan exits 1 when it finds something and the helper exits 1 when
+        # it refuses to start, so the exit code alone cannot tell those apart --
+        # a run that scanned nothing and found nothing is the failure.
+        if returncode != 0 and scanned == 0 and not threats:
+            detail = "; ".join(unparsed_tail) or "no output"
+            raise RuntimeError(f"Scan command failed (exit {returncode}): {detail}")
+        status = "infected" if threats else "done"
+        _update_malware_job(
+            job_id,
+            status=status,
+            progress_percent=100,
+            total_files=total,
+            scanned=scanned,
+            infected=len(threats),
+            errors=errors,
+            threats=threats,
+            message=f"Scan complete: {scanned} files, {len(threats)} threats, {errors} errors",
+            finished_at=_now_iso(),
+        )
+        _append_malware_log(job_id, "Scan finished")
+    except Exception as exc:  # noqa: BLE001 - scan jobs report errors, they do not crash the API
+        _update_malware_job(
+            job_id,
+            status="error",
+            message="Scan failed",
+            error=str(exc),
+            scanned=scanned,
+            infected=len(threats),
+            errors=errors,
+            threats=threats,
             finished_at=_now_iso(),
         )
         _append_malware_log(job_id, f"ERROR scan failed: {exc}")

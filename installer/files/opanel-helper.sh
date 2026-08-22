@@ -987,6 +987,35 @@ install_clamav_engine() {
   echo "ClamAV installed and clamav-daemon enabled."
 }
 
+# Directories a full-system scan must not walk into: kernel/device trees and
+# live process state (not real files), the signature database (clamd's own
+# working set), and the panel's backup archives, which are multi-GB tarballs of
+# files the scan already covers in place.
+CLAMAV_SCAN_PRUNE_PATHS=(/proc /sys /dev /run /var/lib/clamav /var/backups/opanel /snap)
+
+run_clamav_system_scan() {
+  local scan_root="$1" list total prune=() path
+  command -v clamdscan >/dev/null 2>&1 || deny "clamdscan is not installed"
+  systemctl is-active --quiet clamav-daemon 2>/dev/null || deny "clamav-daemon is not running"
+
+  for path in "${CLAMAV_SCAN_PRUNE_PATHS[@]}"; do
+    prune+=(-path "$path" -o)
+  done
+
+  list="$(mktemp /tmp/opanel-clamav-list.XXXXXX)" || deny "cannot create scan list"
+  trap 'rm -f "$list"' RETURN
+  find "$scan_root" \( "${prune[@]}" -false \) -prune -o -type f -print >"$list" 2>/dev/null || true
+  total="$(wc -l <"$list" | tr -d "[:space:]")"
+  # The panel reads this first line to size its progress bar; clamdscan itself
+  # never reports a total.
+  echo "opanel-scan-total ${total:-0}"
+  [[ "${total:-0}" -gt 0 ]] || { echo "opanel-scan-empty"; return 0; }
+
+  # stdbuf keeps the per-file lines flowing so progress updates while the scan
+  # runs instead of arriving in one block at the end.
+  stdbuf -oL clamdscan --fdpass --stdout --file-list="$list"
+}
+
 ensure_litespeed_php74_repo() {
   install -d -o root -g root -m 0755 /etc/apt/preferences.d /etc/apt/sources.list.d
   cat >/etc/apt/sources.list.d/opanel-lsphp74-jammy.list <<'EOF'
@@ -2806,6 +2835,20 @@ case "$cmd" in
   clamav-stop)
     systemctl disable --now clamav-daemon 2>/dev/null || systemctl stop clamav-daemon
     echo "clamav-daemon stopped"
+    ;;
+
+  clamav-scan-system)
+    [[ $# -le 1 ]] || deny "usage: clamav-scan-system [path]"
+    scan_root="${1:-/}"
+    # Anchored allowlist: absolute, and no whitespace, quotes or shell
+    # metacharacters that could survive into a log line or a filename glob.
+    [[ "$scan_root" =~ ^/[A-Za-z0-9._/-]*$ ]] || deny "unsafe scan path"
+    case "$scan_root" in
+      ".."|"../"*|*"/.."|*"/../"*) deny "path traversal not allowed" ;;
+    esac
+    scan_root="$(readlink -m "$scan_root")" || deny "cannot resolve $scan_root"
+    [[ -d "$scan_root" ]] || deny "scan path is not a directory: $scan_root"
+    run_clamav_system_scan "$scan_root"
     ;;
 
   waf-update)

@@ -558,6 +558,26 @@ class MalwareScanToggle(BaseModel):
 class MalwareScanRun(BaseModel):
     website_id: Optional[int] = None
     all: bool = False
+    # "system" scans the whole server instead of website document roots.
+    scope: Optional[str] = None
+    scan_root: str = "/"
+
+
+class MalwareScanScheduleIn(BaseModel):
+    enabled: bool = False
+    frequency: str = "weekly"
+    hour: int = Field(default=3, ge=0, le=23)
+    minute: int = Field(default=0, ge=0, le=59)
+    weekday: int = Field(default=0, ge=0, le=6)
+    day: int = Field(default=1, ge=1, le=28)
+    scan_root: str = "/"
+
+
+class MalwareScanScheduleOut(MalwareScanScheduleIn):
+    last_run_at: str = ""
+    last_status: str = ""
+    last_message: str = ""
+    last_job_id: str = ""
 
 
 class MalwareScanThreat(BaseModel):
@@ -582,6 +602,8 @@ class MalwareScanJob(BaseModel):
     scope: str = "website"
     website_id: Optional[int] = None
     domains: list[str] = []
+    scan_root: str = ""
+    trigger: str = "manual"
     message: str = ""
     progress_percent: int = 0
     total_files: int = 0

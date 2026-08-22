@@ -87,6 +87,37 @@ class ShellRunner:
             )
         return self._exec(argv, check=check, input=input, sensitive=sensitive)
 
+    def privileged_popen(
+        self,
+        helper_command: str,
+        helper_args: Optional[List[str]] = None,
+        fallback: Optional[List[str]] = None,
+    ) -> subprocess.Popen:
+        """Start a privileged operation and stream its stdout line by line.
+
+        privileged() waits for the command to finish, which is fine for the
+        short operations that make up most of the panel. A full-filesystem
+        malware scan runs for hours, so its progress has to be read while it
+        is still running.
+        """
+        helper_args = list(helper_args or [])
+        if _use_helper():
+            argv = ["sudo", "-n", HELPER_PATH, helper_command, *helper_args]
+        elif fallback is not None:
+            argv = list(fallback)
+        else:
+            raise RuntimeError(
+                f"opanel-helper is not available and no fallback was provided "
+                f"for privileged operation '{helper_command}'"
+            )
+        return subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
     def _exec(
         self,
         argv: List[str],
