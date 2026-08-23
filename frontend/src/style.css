@@ -1165,3 +1165,7 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
 .wp-manager-panel .user-edit-grid label{display:flex;flex-direction:column;gap:4px}
 .wp-manager-panel .user-edit-grid label span{font-size:12px;font-weight:500;color:var(--text-secondary)}
 .wp-manager-panel .user-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.network-address-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 0}
+.network-address-row+.network-address-row{border-top:1px solid var(--border)}
+.network-address-row strong{min-width:56px;font-size:12px;font-weight:600;color:var(--text-secondary)}
+.network-address-row code{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 8px;font-size:13px;word-break:break-all}

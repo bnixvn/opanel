@@ -161,6 +161,38 @@ tools_conf_name = "00-opanel-tools.conf"
 tools_conf = vhosts_dir / tools_conf_name
 domain_re = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 ipv4_re = re.compile(r"^(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])(?:\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){3}$")
+settings_file = pathlib.Path("/var/lib/opanel/panel-settings.json")
+
+
+def host_has_global_ipv6() -> bool:
+    """A global (scope 0) address on something other than loopback."""
+    try:
+        for line in pathlib.Path("/proc/net/if_inet6").read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if len(fields) >= 6 and fields[3] == "00" and fields[5] != "lo":
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def ipv6_enabled() -> bool:
+    """Panel setting wins; an install that has never been asked follows the box.
+
+    That is what makes a server built with IPv6 serve it from the first boot,
+    while a box where the admin switched it off stays off even though the
+    address is still configured.
+    """
+    try:
+        import json
+
+        stored = json.loads(settings_file.read_text(encoding="utf-8"))
+        if isinstance(stored, dict) and "ipv6_enabled" in stored:
+            return bool(stored["ipv6_enabled"])
+    except (OSError, ValueError):
+        pass
+    return host_has_global_ipv6()
+
 
 def env_get(key: str) -> str:
     if not env_file.is_file():
@@ -201,7 +233,7 @@ def remove_named_block(source: str, directive: str, name: str) -> str:
     pattern = re.compile(rf"(?ms)^[ \t]*{re.escape(directive)}[ \t]+{re.escape(name)}[ \t]*\{{.*?^[ \t]*\}}[ \t]*\n?")
     return pattern.sub("", source)
 
-for block_name in ("opanel_http", "opanel_https"):
+for block_name in ("opanel_http", "opanel_https", "opanel_http6", "opanel_https6"):
     text = remove_named_block(text, "listener", block_name)
 text = re.sub(r"(?ms)^# OPanel managed vhosts BEGIN\n.*?^# OPanel managed vhosts END\n?", "", text)
 
@@ -297,6 +329,11 @@ def listener_block(name: str, address: str, secure: bool, include_ssl_sites: boo
 
 managed.extend(listener_block("opanel_http", "*:80", False, False))
 managed.extend(listener_block("opanel_https", "*:443", True, True))
+if ipv6_enabled():
+    # "*" is IPv4-only in OpenLiteSpeed; [ANY] is the IPv6 wildcard. Sites are
+    # mapped into both, so every vhost answers on either protocol.
+    managed.extend(listener_block("opanel_http6", "[ANY]:80", False, False))
+    managed.extend(listener_block("opanel_https6", "[ANY]:443", True, True))
 managed.append("# OPanel managed vhosts END")
 managed.append("")
 
@@ -2683,6 +2720,21 @@ case "$cmd" in
     ols_sync_main_config
     restart_openlitespeed 2>/dev/null || true
     echo "OpenLiteSpeed main config synced"
+    ;;
+
+  panel-ipv6-set)
+    [[ $# -eq 1 ]] || deny "usage: panel-ipv6-set <on|off>"
+    case "$1" in
+      on)  panel_bind="::" ;;
+      off) panel_bind="0.0.0.0" ;;
+      *) deny "usage: panel-ipv6-set <on|off>" ;;
+    esac
+    # The listeners follow the flag the panel just wrote to panel-settings.json.
+    ols_sync_main_config
+    restart_openlitespeed 2>/dev/null || true
+    env_set PANEL_BIND_HOST "$panel_bind"
+    schedule_panel_restart
+    echo "IPv6 $1 (panel bind ${panel_bind})"
     ;;
 
   refresh-tools)

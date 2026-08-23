@@ -425,6 +425,7 @@ function App() {
   const [scanResults, setScanResults] = useState(null);
   const [scanJob, setScanJob] = useState(null);
   const [scanJobs, setScanJobs] = useState([]);
+  const [networkStatus, setNetworkStatus] = useState({ ipv4: [], ipv6: [], ipv6_available: false, ipv6_enabled: false });
   const [malwareSchedule, setMalwareSchedule] = useState({ enabled: false, frequency: 'weekly', hour: 3, minute: 0, weekday: 0, day: 1, scan_root: '/' });
   const [scanLoading, setScanLoading] = useState(false);
   const [notice, setNotice] = useState('');
@@ -1207,6 +1208,23 @@ function App() {
     if (!confirm(`Reset 2FA for ${user.username}?`)) return;
     const data = await request(`/users/${user.id}/2fa/reset`, { method: 'POST' }, `Resetting 2FA for ${user.username}...`);
     if (data?.message) { setNotice(data.message); await loadUsers(); }
+  }
+
+  async function loadNetworkStatus() {
+    const data = await request('/panel-settings/network', { silent: true }, '');
+    if (data) setNetworkStatus(data);
+    return data;
+  }
+
+  async function toggleIpv6(enable) {
+    const data = await request('/panel-settings/network/ipv6', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: enable }),
+    }, enable ? 'Enabling IPv6...' : 'Disabling IPv6...');
+    if (data) {
+      setNetworkStatus(data);
+      setNotice(data.message || `IPv6 ${enable ? 'enabled' : 'disabled'}.`);
+    }
   }
 
   async function loadMalwareScanStatus() {
@@ -2745,7 +2763,7 @@ function App() {
       loadMalwareSchedule();
       if (!websites.length) refreshAll();
     }
-    if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); }
+    if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); loadNetworkStatus(); }
     if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); loadRestoreBackups(); loadDaBackups(); loadDaImportJobs(); }
   }, [isAuthenticated, page, currentUser?.role]);
 
@@ -4305,6 +4323,42 @@ function App() {
           <label><span>Panel hostname</span><input value={panelSettingsForm.panel_hostname} onChange={e => setPanelSettingsForm(prev => ({ ...prev, panel_hostname: e.target.value }))} placeholder="panel.domain.com" /></label>
           <label className="check-line panel-ssl-status"><input type="checkbox" checked={!!panelSettingsForm.ssl_enabled} onChange={e => setPanelSettingsForm(prev => ({ ...prev, ssl_enabled: e.target.checked }))} /> Panel SSL</label>
           <button disabled={!!loading || !panelSettingsForm.app_name || !panelSettingsForm.panel_hostname} onClick={savePanelSettings}><SettingsIcon size={14}/> Save settings</button>
+        </div>
+      </section>
+      <section className="section">
+        <div className="section-title">
+          <div>
+            <h2>Server network</h2>
+            <p className="hint">Addresses this server answers on. Detected live, so an IPv6 block added later shows up here.</p>
+          </div>
+          <button disabled={!!loading} onClick={loadNetworkStatus}><RefreshCw size={14}/> Refresh</button>
+        </div>
+        <div className="info-box">
+          <div className="network-address-row">
+            <strong>IPv4</strong>
+            {(networkStatus.ipv4 || []).length > 0
+              ? (networkStatus.ipv4 || []).map(address => <code key={address}>{address}</code>)
+              : <span className="hint">None detected</span>}
+          </div>
+          <div className="network-address-row">
+            <strong>IPv6</strong>
+            {(networkStatus.ipv6 || []).length > 0
+              ? (networkStatus.ipv6 || []).map(address => <code key={address}>{address}</code>)
+              : <span className="hint">None detected</span>}
+            {networkStatus.ipv6_available
+              ? (networkStatus.ipv6_enabled ? <span className="badge ok">Enabled</span> : <span className="badge">Disabled</span>)
+              : <span className="badge warn">Not available</span>}
+          </div>
+          <div className="actions" style={{marginTop:12}}>
+            {networkStatus.ipv6_enabled
+              ? <button className="danger" disabled={!!loading} onClick={() => toggleIpv6(false)}>Disable IPv6</button>
+              : <button disabled={!!loading || !networkStatus.ipv6_available} onClick={() => toggleIpv6(true)}><Network size={14}/> Enable IPv6</button>}
+          </div>
+          <p className="hint" style={{marginTop:8}}>
+            {networkStatus.ipv6_available
+              ? 'Websites and the panel listen on both protocols while this is on. Point an AAAA record at the address above.'
+              : 'No global IPv6 address is configured on this server yet. Add one at your provider, then refresh.'}
+          </p>
         </div>
       </section>
       <section className="section">

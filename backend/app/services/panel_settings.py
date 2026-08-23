@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from fastapi import HTTPException, UploadFile, status
 
 from app.core.config import settings
+from app.services import network
 from app.services.shell import shell
 
 
@@ -651,6 +652,59 @@ def _run_scan_job(job_id: str, targets: list[dict]) -> None:
     finally:
         with MALWARE_JOBS_LOCK:
             MALWARE_JOB_THREADS.pop(job_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Server addresses / IPv6
+# ---------------------------------------------------------------------------
+IPV6_SETTING_KEY = "ipv6_enabled"
+
+
+def network_status() -> dict:
+    """Addresses the server answers on, plus the state of the IPv6 switch."""
+    addresses = network.detect_addresses()
+    stored = network.read_stored_flag(_read_raw(), IPV6_SETTING_KEY)
+    available = bool(addresses["ipv6"])
+    return {
+        "ipv4": addresses["ipv4"],
+        "ipv6": addresses["ipv6"],
+        "ipv6_available": available,
+        # Never asked: follow the server. A box installed with IPv6 serves it
+        # from day one, and a block added later is picked up on the next read
+        # instead of waiting for a reinstall.
+        "ipv6_enabled": available if stored is None else stored,
+        "ipv6_configured": stored is not None,
+        "message": "",
+    }
+
+
+def set_ipv6(enabled: bool) -> dict:
+    enabled = bool(enabled)
+    if enabled and not network.ipv6_available():
+        raise ValueError("This server has no global IPv6 address")
+    data = _read_raw()
+    previous = data.get(IPV6_SETTING_KEY)
+    data[IPV6_SETTING_KEY] = enabled
+    _write_raw(data)
+    try:
+        message = network.apply_ipv6(enabled)
+    except RuntimeError:
+        # The listeners are what actually serve IPv6; if they could not be
+        # rebuilt, the stored flag must not claim otherwise.
+        data = _read_raw()
+        if previous is None:
+            data.pop(IPV6_SETTING_KEY, None)
+        else:
+            data[IPV6_SETTING_KEY] = previous
+        _write_raw(data)
+        raise
+    status = network_status()
+    status["message"] = message or (
+        "IPv6 enabled. Sites and the panel now answer on IPv6."
+        if enabled
+        else "IPv6 disabled. Sites and the panel answer on IPv4 only."
+    )
+    return status
 
 
 # ---------------------------------------------------------------------------

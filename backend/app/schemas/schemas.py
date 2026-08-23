@@ -551,6 +551,21 @@ class PanelSettingsOut(BaseModel):
     malware_scan_detail: Optional[str] = None
 
 
+class Ipv6Toggle(BaseModel):
+    enabled: bool = False
+
+
+class NetworkStatusOut(BaseModel):
+    ipv4: list[str] = []
+    ipv6: list[str] = []
+    ipv6_available: bool = False
+    ipv6_enabled: bool = False
+    # False until an admin has explicitly chosen; until then the panel follows
+    # whatever the server actually has.
+    ipv6_configured: bool = False
+    message: str = ""
+
+
 class MalwareScanToggle(BaseModel):
     enabled: bool = False
 

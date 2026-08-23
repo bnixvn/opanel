@@ -13,6 +13,8 @@ from app.schemas.schemas import (
     MalwareScanScheduleOut,
     MalwareScanStatus,
     MalwareScanToggle,
+    NetworkStatusOut,
+    Ipv6Toggle,
     PanelSettingsOut,
     PanelSettingsUpdate,
     PanelSslInstall,
@@ -110,6 +112,30 @@ def install_panel_ssl(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     log_action(db, current_user.id, "install_panel_ssl", result.get("panel_url") or payload.panel_hostname or "panel", request=request)
+    return result
+
+
+@router.get("/network", response_model=NetworkStatusOut)
+def get_network_status(current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    return panel_settings.network_status()
+
+
+@router.post("/network/ipv6", response_model=NetworkStatusOut)
+def toggle_ipv6(
+    payload: Ipv6Toggle,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        result = panel_settings.set_ipv6(payload.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    log_action(db, current_user.id, "enable_ipv6" if payload.enabled else "disable_ipv6", "network", request=request)
     return result
 
 

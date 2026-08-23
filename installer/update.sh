@@ -386,6 +386,11 @@ iptables_panel_allow_port() {
     || true
 }
 
+host_has_global_ipv6() {
+  # scope 00 in /proc/net/if_inet6 is a global address; loopback never counts.
+  awk '$4 == "00" && $6 != "lo" { found = 1 } END { exit found ? 0 : 1 }' /proc/net/if_inet6 2>/dev/null
+}
+
 detect_server_ip() {
   hostname -I 2>/dev/null | awk '{print $1}' || true
 }
@@ -1212,6 +1217,7 @@ python -m py_compile \
   app/api/terminal.py \
   app/services/firewall.py \
   app/services/nginx.py \
+  app/services/network.py \
   app/services/panel_urls.py \
   app/services/panel_settings.py \
   app/services/updates.py \
@@ -1288,6 +1294,19 @@ log "Reloading OpenLiteSpeed"
 update_progress 92 "restarting" "Restarting services and reloading OpenLiteSpeed"
 migrate_nginx_wordpress_csp_worker_src
 migrate_drop_iframe_blocking
+
+# --- Serve IPv6 when the box has it ----------------------------------------
+# Only fills in a bind host that was never set: an admin who turned IPv6 off in
+# the panel keeps it off.
+if ! grep -q '^PANEL_BIND_HOST=' "$APP_DIR/backend/.env" 2>/dev/null; then
+  if host_has_global_ipv6; then
+    printf 'PANEL_BIND_HOST=%s\n' "::" >>"$APP_DIR/backend/.env"
+    log "Detected global IPv6; panel will listen on IPv6 as well"
+  else
+    printf 'PANEL_BIND_HOST=%s\n' "0.0.0.0" >>"$APP_DIR/backend/.env"
+  fi
+fi
+
 install -d -m 0755 /etc/systemd/system/lshttpd.service.d
 printf '%s\n' '[Service]' 'PIDFile=/run/openlitespeed.pid' 'KillMode=mixed' \
   >/etc/systemd/system/lshttpd.service.d/10-opanel.conf

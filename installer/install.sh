@@ -65,6 +65,11 @@ fail() {
   exit 1
 }
 
+host_has_global_ipv6() {
+  # scope 00 in /proc/net/if_inet6 is a global address; loopback never counts.
+  awk '$4 == "00" && $6 != "lo" { found = 1 } END { exit found ? 0 : 1 }' /proc/net/if_inet6 2>/dev/null
+}
+
 detect_server_ip() {
   hostname -I 2>/dev/null | awk '{print $1}' || true
 }
@@ -627,6 +632,11 @@ setup_backend() {
 
   ADMIN_PASSWORD="${opanel_ADMIN_PASSWORD:-$(openssl rand -base64 24 | tr -d '\n')}"
 
+  # A box that ships with IPv6 serves it from the first boot; the panel
+  # settings page can turn it off later.
+  panel_bind_host="0.0.0.0"
+  host_has_global_ipv6 && panel_bind_host="::"
+
   cat > .env <<ENV
 APP_ENV=production
 SECRET_KEY=$(openssl rand -hex 32)
@@ -640,6 +650,7 @@ SSL_EMAIL=${SSL_EMAIL}
 PANEL_URL=${PANEL_URL}
 PANEL_DOMAIN=${PANEL_DOMAIN}
 PANEL_PORT=${PANEL_PORT}
+PANEL_BIND_HOST=${panel_bind_host}
 PANEL_SSL_CERT=
 PANEL_SSL_KEY=
 FRONTEND_DIST=${APP_DIR}/frontend/dist

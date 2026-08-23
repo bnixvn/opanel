@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 
 import uvicorn
 
@@ -19,8 +20,30 @@ from app.core import tls
 logger = logging.getLogger("opanel.server")
 
 
+def _bindable_host(host: str) -> str:
+    """Fall back to IPv4 when the requested IPv6 bind cannot work.
+
+    Turning IPv6 on writes PANEL_BIND_HOST=:: . If the address family is later
+    taken away -- ipv6.disable=1 on the kernel command line, a rebuilt VPS --
+    binding it would abort start-up, and the panel is the tool used to fix that
+    kind of mistake, so it has to come up anyway.
+    """
+    if host not in {"::", "[::]"}:
+        return host
+    if not socket.has_ipv6:
+        logger.warning("IPv6 is unavailable on this host; binding 0.0.0.0 instead")
+        return "0.0.0.0"
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+            probe.bind(("::", 0))
+    except OSError as exc:
+        logger.warning("Cannot bind IPv6 (%s); binding 0.0.0.0 instead", exc)
+        return "0.0.0.0"
+    return "::"
+
+
 def build_config() -> uvicorn.Config:
-    host = os.environ.get("PANEL_BIND_HOST", "0.0.0.0")
+    host = _bindable_host(os.environ.get("PANEL_BIND_HOST", "0.0.0.0"))
     port = int(os.environ.get("PANEL_PORT", "2222"))
     kwargs = dict(
         app="app.main:app",
