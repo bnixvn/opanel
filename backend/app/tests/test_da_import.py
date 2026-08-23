@@ -103,3 +103,65 @@ def test_safe_extract_tar_zst_uses_zstdcat_without_decompress_flag(tmp_path, mon
 
     assert calls == [["/usr/bin/zstdcat", str(zst_archive)]]
     assert (destination / "domains/example.test/public_html/index.html").read_text(encoding="utf-8") == "restored"
+
+
+def test_da_db_credentials_reads_a_plaintext_password(tmp_path):
+    backup = tmp_path / "backup"
+    backup.mkdir()
+    dump = backup / "admin_shop.sql"
+    dump.write_text("-- dump", encoding="utf-8")
+    (backup / "admin_shop.conf").write_text(
+        "user=admin_shop\npasswd=S3cret!pass\n", encoding="utf-8"
+    )
+
+    assert da_import._da_db_credentials(dump, tmp_path) == {"password": "S3cret!pass", "password_hash": ""}
+
+
+def test_da_db_credentials_reports_a_hash_separately(tmp_path):
+    """A mysql_native hash cannot be shown to the admin as a password, so it
+    must not be handed back as one -- the import falls back to a fresh
+    password and says so in the log."""
+    backup = tmp_path / "backup"
+    backup.mkdir()
+    dump = backup / "admin_blog.sql.gz"
+    dump.write_bytes(b"")
+    (backup / "admin_blog.conf").write_text(
+        "admin_blog=*A1B2C3D4E5F60718293A4B5C6D7E8F90A1B2C3D4\n", encoding="utf-8"
+    )
+
+    creds = da_import._da_db_credentials(dump, tmp_path)
+
+    assert creds["password"] == ""
+    assert creds["password_hash"].startswith("*")
+
+
+def test_da_db_credentials_returns_empty_without_a_conf(tmp_path):
+    dump = tmp_path / "admin_none.sql"
+    dump.write_text("-- dump", encoding="utf-8")
+
+    assert da_import._da_db_credentials(dump, tmp_path) == {"password": "", "password_hash": ""}
+
+
+def test_importer_reuses_the_password_from_the_site_config():
+    """Regression: the importer always generated a random database password and
+    relied on rewriting wp-config.php. Wherever that rewrite missed the config
+    the app actually reads, the site was left pointing at a password MariaDB
+    had just replaced, and the admin had to reset it by hand."""
+    password, reused = da_import._import_db_password(
+        {"DB_NAME": "shop", "DB_PASSWORD": "keep-me"}, {"password": "", "password_hash": ""}
+    )
+
+    assert (password, reused) == ("keep-me", True)
+
+
+def test_importer_falls_back_to_the_backup_conf_password():
+    password, reused = da_import._import_db_password({}, {"password": "from-conf", "password_hash": ""})
+
+    assert (password, reused) == ("from-conf", True)
+
+
+def test_importer_generates_a_password_when_the_backup_has_none():
+    password, reused = da_import._import_db_password({"DB_NAME": "shop"}, {"password": "", "password_hash": "*AB"})
+
+    assert reused is False
+    assert len(password) >= 16

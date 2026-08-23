@@ -447,6 +447,10 @@ def _parse_app_db_config(path: Path) -> dict[str, str]:
 # SQL helpers
 # ---------------------------------------------------------------------------
 
+# mysql_native_password stores "*" followed by 40 hex characters.
+DA_PASSWORD_HASH_RE = re.compile(r"^\*[0-9A-Fa-f]{40}$")
+
+
 def _sql_base_name(path: Path) -> str:
     name = path.name
     for suffix in SQL_SUFFIXES:
@@ -473,6 +477,46 @@ def _discover_sql_files(root: Path) -> dict[str, Path]:
     for path in files:
         result.setdefault(_sql_base_name(path).lower(), path)
     return result
+
+
+def _import_db_password(app_config: dict[str, str], da_credentials: dict[str, str]) -> tuple[str, bool]:
+    """Pick the password for an imported database user.
+
+    Reusing the password the site already carries is what keeps it online after
+    the import: the panel rewrites wp-config.php and friends, but any config it
+    does not recognise -- a custom include, a second copy outside the document
+    root -- would still point at the old password. Returns the password and
+    whether it came from the backup.
+    """
+    original = (app_config or {}).get("DB_PASSWORD") or (da_credentials or {}).get("password") or ""
+    if original:
+        return original, True
+    return secrets.token_urlsafe(16), False
+
+
+def _da_db_credentials(sql_file: Path, root: Path) -> dict[str, str]:
+    """Recover the original MySQL password for a DirectAdmin dump.
+
+    DA writes a <db>.conf next to each dump. Older versions store the password
+    in clear, newer ones only the mysql_native hash, which cannot be turned
+    back into a password the panel could show. Only the clear one is usable.
+    """
+    base = _sql_base_name(sql_file)
+    for candidate in (sql_file.with_name(f"{base}.conf"), root / "backup" / f"{base}.conf"):
+        values = _read_key_values(candidate)
+        if not values:
+            continue
+        for key in ("passwd", "password", "pass", "db_password", "dbpass"):
+            value = values.get(key) or ""
+            if not value:
+                continue
+            if DA_PASSWORD_HASH_RE.match(value):
+                return {"password": "", "password_hash": value}
+            return {"password": value, "password_hash": ""}
+        for value in values.values():
+            if DA_PASSWORD_HASH_RE.match(value or ""):
+                return {"password": "", "password_hash": value}
+    return {"password": "", "password_hash": ""}
 
 
 def _temporary_sql_file(sql_file: Path) -> Path:
@@ -830,7 +874,18 @@ def _process_archive(
                     imported_sql_keys.add(matched_key)
                     _log(f"    Database {db_name} already imported, skipping")
                 else:
-                    db_password = secrets.token_urlsafe(16)
+                    # Reuse the password the site already has. Generating a new
+                    # one leaves wp-config.php (or whatever config the app
+                    # actually reads) pointing at a password MariaDB no longer
+                    # accepts, and the site stays down until someone resets it
+                    # by hand in the Databases page.
+                    da_credentials = _da_db_credentials(matched_sql, root)
+                    db_password, reused_password = _import_db_password(app_config, da_credentials)
+                    if not reused_password and da_credentials["password_hash"]:
+                        _log(
+                            f"    NOTE: {matched_key} only ships a password hash; "
+                            "generated a new database password instead"
+                        )
 
                     # Decompress SQL if needed
                     temp_sql = _temporary_sql_file(matched_sql)
@@ -852,8 +907,15 @@ def _process_archive(
                     db.add(item)
                     db.commit()
 
-                    # Update app config files with new DB credentials
-                    _update_app_db_config(public, db_name, db_user, db_password)
+                    # Update app config files with the DB credentials. This
+                    # is best-effort: the database itself is already imported,
+                    # so a config the panel cannot parse or write must not be
+                    # reported as a failed database import.
+                    try:
+                        _update_app_db_config(public, db_name, db_user, db_password)
+                    except OSError as exc:
+                        _log(f"    WARNING: could not update app config for {domain}: {exc}")
+                        summary["warnings"].append(f"App config not updated for {domain}: {exc}")
 
                     imported_sql_keys.add(matched_key)
                     summary["databases"].append({
@@ -922,7 +984,7 @@ def _process_archive(
                 continue
             temp_sql = _temporary_sql_file(sql_path)
             db_user = _normalize_db_identifier(key, key, set())
-            db_password = secrets.token_urlsafe(16)
+            db_password, _reused = _import_db_password({}, _da_db_credentials(sql_path, root))
             mariadb.create_database_credentials(db_name, db_user, db_password)
             mariadb.import_database(db_name, str(temp_sql))
             item = DatabaseAccount(
