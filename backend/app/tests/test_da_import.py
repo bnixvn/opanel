@@ -165,3 +165,77 @@ def test_importer_generates_a_password_when_the_backup_has_none():
 
     assert reused is False
     assert len(password) >= 16
+
+def _wp_config(password: str, db: str = "admin_shop", user: str = "admin_shop") -> str:
+    return (
+        "<?php\n"
+        f"define('DB_NAME', '{db}');\n"
+        f"define('DB_USER', '{user}');\n"
+        f"define('DB_PASSWORD', '{password}');\n"
+        "define('DB_HOST', 'localhost');\n"
+    )
+
+
+def test_wp_config_is_found_one_level_above_the_document_root(tmp_path):
+    """WordPress reads wp-config.php from the parent of the webroot too, and DA
+    accounts do use that layout. Missing it there is what left the imported
+    database on a password the site never learned about."""
+    site = tmp_path / "domains" / "example.test"
+    public = site / "public_html"
+    public.mkdir(parents=True)
+    (site / "wp-config.php").write_text(_wp_config("above-root"), encoding="utf-8")
+
+    assert da_import._parse_app_db_config(public)["DB_PASSWORD"] == "above-root"
+
+
+def test_wp_config_is_found_in_a_subfolder(tmp_path):
+    public = tmp_path / "public_html"
+    (public / "shop").mkdir(parents=True)
+    (public / "shop" / "wp-config.php").write_text(_wp_config("in-subfolder"), encoding="utf-8")
+
+    assert da_import._parse_app_db_config(public)["DB_PASSWORD"] == "in-subfolder"
+
+
+def test_config_scan_skips_heavy_content_directories(tmp_path):
+    """wp-content holds themes and plugins, not the site's own credentials.
+    Walking it on a big site costs far more than it can ever find."""
+    public = tmp_path / "public_html"
+    buried = public / "wp-content" / "plugins"
+    buried.mkdir(parents=True)
+    (buried / "wp-config.php").write_text(_wp_config("should-not-be-read"), encoding="utf-8")
+
+    assert da_import._parse_app_db_config(public) == {}
+
+
+def test_update_reaches_the_config_above_the_document_root(tmp_path):
+    site = tmp_path / "domains" / "example.test"
+    public = site / "public_html"
+    public.mkdir(parents=True)
+    (site / "wp-config.php").write_text(_wp_config("old"), encoding="utf-8")
+
+    da_import._update_app_db_config(public, "admin_shop", "admin_shop", "new-pass")
+
+    assert "new-pass" in (site / "wp-config.php").read_text(encoding="utf-8")
+
+
+def test_update_leaves_another_app_in_a_subfolder_alone(tmp_path):
+    """A second app in a subfolder has its own database. Writing these
+    credentials into it would take that app down rather than fix anything."""
+    public = tmp_path / "public_html"
+    (public / "crm").mkdir(parents=True)
+    other = public / "crm" / ".env"
+    other.write_text("DB_DATABASE=admin_crm\nDB_PASSWORD=crm-secret\n", encoding="utf-8")
+
+    da_import._update_app_db_config(public, "admin_shop", "admin_shop", "new-pass")
+
+    assert other.read_text(encoding="utf-8") == "DB_DATABASE=admin_crm\nDB_PASSWORD=crm-secret\n"
+
+
+def test_da_conf_is_found_under_mysql_as_well(tmp_path):
+    mysql_dir = tmp_path / "mysql"
+    mysql_dir.mkdir()
+    dump = mysql_dir / "admin_shop.sql.gz"
+    dump.write_bytes(b"")
+    (mysql_dir / "admin_shop.conf").write_text("passwd=from-mysql-dir\n", encoding="utf-8")
+
+    assert da_import._da_db_credentials(dump, tmp_path)["password"] == "from-mysql-dir"

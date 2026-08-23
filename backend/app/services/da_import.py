@@ -435,11 +435,61 @@ def _parse_php_variable_config(path: Path) -> dict[str, str]:
     return result
 
 
+# Directories that are never a site config location but are expensive to walk.
+APP_CONFIG_SKIP_DIRS = {
+    "wp-content", "wp-includes", "wp-admin", "node_modules", "vendor", "cache",
+    "storage", "uploads", "images", "img", "assets", "media", "backup", "backups",
+    ".git", ".well-known", "logs", "tmp",
+}
+APP_CONFIG_SCAN_DEPTH = 2
+
+
+def _candidate_config_dirs(path: Path) -> list[Path]:
+    """Directories that may hold the app's database config, closest first.
+
+    Looking only at the top of public_html misses two very common layouts:
+    WordPress allows wp-config.php one level above the document root, and
+    plenty of accounts keep the site itself in a subfolder. Both hold the
+    password the imported database has to match.
+    """
+    found: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(candidate: Path) -> None:
+        try:
+            if candidate.is_dir() and candidate not in seen:
+                seen.add(candidate)
+                found.append(candidate)
+        except OSError:
+            return
+
+    add(path)
+    add(path.parent)
+    level = [path]
+    for _depth in range(APP_CONFIG_SCAN_DEPTH):
+        children: list[Path] = []
+        for parent in level:
+            try:
+                entries = sorted(parent.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                if not entry.is_dir() or entry.name.startswith("."):
+                    continue
+                if entry.name.lower() in APP_CONFIG_SKIP_DIRS:
+                    continue
+                add(entry)
+                children.append(entry)
+        level = children
+    return found
+
+
 def _parse_app_db_config(path: Path) -> dict[str, str]:
-    for parser in (_parse_wp_config, _parse_dotenv_config, _parse_php_variable_config):
-        values = parser(path)
-        if values.get("DB_NAME"):
-            return values
+    for directory in _candidate_config_dirs(path):
+        for parser in (_parse_wp_config, _parse_dotenv_config, _parse_php_variable_config):
+            values = parser(directory)
+            if values.get("DB_NAME"):
+                return values
     return {}
 
 
@@ -494,6 +544,32 @@ def _import_db_password(app_config: dict[str, str], da_credentials: dict[str, st
     return secrets.token_urlsafe(16), False
 
 
+def _da_db_conf_candidates(sql_file: Path, root: Path, base: str) -> list[Path]:
+    """Every file that could be the DA conf for this dump, closest first.
+
+    DA has moved these around between versions -- beside the dump, under
+    backup/, under mysql/ -- and the suffix on the dump is not always part of
+    the conf name, so the name is matched case-insensitively rather than
+    assumed.
+    """
+    candidates = [sql_file.with_name(f"{base}.conf"), root / "backup" / f"{base}.conf"]
+    seen = {path for path in candidates}
+    for directory in (sql_file.parent, root / "backup", root / "mysql"):
+        if not directory.is_dir():
+            continue
+        try:
+            entries = sorted(directory.rglob("*.conf"))
+        except OSError:
+            continue
+        for entry in entries:
+            if entry in seen:
+                continue
+            if entry.stem.lower() == base.lower():
+                seen.add(entry)
+                candidates.append(entry)
+    return candidates
+
+
 def _da_db_credentials(sql_file: Path, root: Path) -> dict[str, str]:
     """Recover the original MySQL password for a DirectAdmin dump.
 
@@ -502,7 +578,7 @@ def _da_db_credentials(sql_file: Path, root: Path) -> dict[str, str]:
     back into a password the panel could show. Only the clear one is usable.
     """
     base = _sql_base_name(sql_file)
-    for candidate in (sql_file.with_name(f"{base}.conf"), root / "backup" / f"{base}.conf"):
+    for candidate in _da_db_conf_candidates(sql_file, root, base):
         values = _read_key_values(candidate)
         if not values:
             continue
@@ -591,7 +667,42 @@ def _replace_define(text: str, key: str, value: str) -> str:
     return text + f"\ndefine('{key}', '{value}');\n"
 
 
+def _config_targets_database(directory: Path, db_name: str) -> bool:
+    """True when the config in *directory* already points at this database.
+
+    Outside the document root itself this is what keeps the rewrite honest: a
+    second app living in a subfolder has its own database, and handing it these
+    credentials would take it down instead of fixing anything.
+    """
+    for parser in (_parse_wp_config, _parse_dotenv_config, _parse_php_variable_config):
+        name = parser(directory).get("DB_NAME") or ""
+        if not name:
+            continue
+        if name == db_name:
+            return True
+        try:
+            return _normalize_db_identifier(name, name, set()) == db_name
+        except ValueError:
+            return False
+    return False
+
+
 def _update_app_db_config(public: Path, db_name: str, db_user: str, db_password: str) -> None:
+    """Point the site's configs at the imported database.
+
+    The document root is always rewritten; anything further out is only
+    rewritten when it already names this database.
+    """
+    _update_config_dir(public, db_name, db_user, db_password)
+    for directory in _candidate_config_dirs(public):
+        if directory == public:
+            continue
+        if not _config_targets_database(directory, db_name):
+            continue
+        _update_config_dir(directory, db_name, db_user, db_password)
+
+
+def _update_config_dir(public: Path, db_name: str, db_user: str, db_password: str) -> None:
     wp = public / "wp-config.php"
     if wp.exists():
         text = wp.read_text(encoding="utf-8", errors="ignore")
