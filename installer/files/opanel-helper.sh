@@ -464,22 +464,42 @@ iptables_panel_allow_port() {
   done
 }
 
+firewall_persist_rules() {
+  install -d -o root -g root -m 0755 /etc/iptables
+  iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
+  ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
+}
+
+iptables_refresh_standard_ports() {
+  # SSH, web, and the three mail ports. Re-applied whenever IPv6 is switched
+  # on, because a chain built before the box had IPv6 only ever got the IPv4
+  # half -- which reads to a visitor arriving over IPv6 as a closed port.
+  local port p
+  port="$(env_get PANEL_PORT)"
+  port="${port:-$DEFAULT_PANEL_PORT}"
+  for p in 22 25 80 443 465 587 "$port"; do
+    iptables_panel_allow_port "$p" 2>/dev/null || true
+  done
+}
+
 iptables_panel_delete_port_rules() {
-  local port="$1" comment="${2:-}"
-  local line_nums
-  line_nums="$(iptables -L OPANEL_INPUT -n --line-numbers 2>/dev/null \
-    | awk -v port="$port" -v comment="$comment" '
-        $0 ~ "tcp dpt:"port {
-          if (comment == "" || $0 ~ comment) {
-            gsub(/[^0-9]/, "", $1)
-            if ($1 != "") print $1
+  local port="$1" comment="${2:-}" binary num line_nums
+  # Both families, so re-applying a port cannot leave a duplicate IPv6 rule
+  # behind and closing one really closes it.
+  for binary in iptables ip6tables; do
+    line_nums="$("$binary" -L OPANEL_INPUT -n --line-numbers 2>/dev/null \
+      | awk -v port="$port" -v comment="$comment" '
+          $0 ~ "tcp dpt:"port {
+            if (comment == "" || $0 ~ comment) {
+              gsub(/[^0-9]/, "", $1)
+              if ($1 != "") print $1
+            }
           }
-        }
-      ' | sort -rn)"
-  local num
-  for num in $line_nums; do
-    [[ -n "$num" ]] || continue
-    iptables -D OPANEL_INPUT "$num" 2>/dev/null || true
+        ' | sort -rn)"
+    for num in $line_nums; do
+      [[ -n "$num" ]] || continue
+      "$binary" -D OPANEL_INPUT "$num" 2>/dev/null || true
+    done
   done
 }
 
@@ -2760,6 +2780,11 @@ case "$cmd" in
     # just asked for.
     env_set PANEL_BIND_HOST "$panel_bind"
     set_outbound_ipv4_preference "$1"
+    if [[ "$1" == "on" ]]; then
+      iptables_ensure_opanel_chains
+      iptables_refresh_standard_ports
+      firewall_persist_rules 2>/dev/null || true
+    fi
     # The listeners follow the flag the panel already wrote to
     # panel-settings.json.
     ols_sync_main_config || true
@@ -3153,9 +3178,7 @@ case "$cmd" in
     iptables_insert_managed_jumps
     iptables_add_default_allowances
     firewall_blocklist_apply 2>/dev/null || true
-    install -d -o root -g root -m 0755 /etc/iptables
-    iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
-    ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
+    firewall_persist_rules
     echo "opanel iptables chains enabled"
     ;;
   iptables-disable)
@@ -3168,16 +3191,12 @@ case "$cmd" in
     ip6tables -D INPUT -j OPANEL_USER 2>/dev/null || true
     iptables -P INPUT ACCEPT 2>/dev/null || true
     ip6tables -P INPUT ACCEPT 2>/dev/null || true
-    install -d -o root -g root -m 0755 /etc/iptables
-    iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
-    ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
+    firewall_persist_rules
     echo "opanel iptables chains disconnected from INPUT"
     ;;
   iptables-reload)
     firewall_blocklist_apply 2>/dev/null || true
-    install -d -o root -g root -m 0755 /etc/iptables
-    iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
-    ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
+    firewall_persist_rules
     echo "opanel iptables rules reloaded"
     ;;
   iptables-run)
