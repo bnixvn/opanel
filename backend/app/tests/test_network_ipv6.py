@@ -170,3 +170,14 @@ def test_ipv6_bind_falls_back_to_ipv4_when_the_family_is_gone(monkeypatch):
         assert sock.family == server.socket.AF_INET
     finally:
         sock.close()
+
+
+def test_settings_accept_the_installer_written_bind_host(monkeypatch):
+    """The installer writes PANEL_BIND_HOST into .env, and Settings forbids
+    unknown keys -- so a field it does not declare stops the whole backend from
+    importing, taking migrations and the API down with it."""
+    from app.core.config import Settings
+
+    monkeypatch.setenv("PANEL_BIND_HOST", "::")
+
+    assert Settings(_env_file=None).panel_bind_host == "::"

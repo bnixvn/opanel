@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     panel_url: str = ""
     panel_domain: str = ""
     panel_port: int = 2222
+    # Address the API binds. "::" serves IPv6 and IPv4 from one socket;
+    # the installer writes it, so the model has to know the name or start-up
+    # fails on an unexpected env var.
+    panel_bind_host: str = "0.0.0.0"
     panel_ssl_cert: str = ""
     panel_ssl_key: str = ""
     frontend_dist: str = "/opt/opanel/frontend/dist"
