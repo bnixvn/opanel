@@ -120,3 +120,33 @@ def test_parse_iptables_status_and_open_ports(monkeypatch):
     ]
     assert open_ports[0]["zone"] == "PanelZone"
     assert open_ports[-1]["source"] == "203.0.113.10"
+
+
+def test_allow_port_does_not_duplicate_a_default_port(monkeypatch, tmp_path):
+    """22, 25, 80, 443, 465, 587 and the panel port are opened for every
+    install. Adding one from the panel used to append a second rule for the
+    same port, so the firewall list showed it twice with no way to tell which
+    rule was the admin's."""
+    monkeypatch.setattr(firewall, "RULES_FILE", tmp_path / "rules.json")
+    calls = []
+    monkeypatch.setattr(firewall, "_iptables", lambda *a, **kw: calls.append(a))
+    monkeypatch.setattr(firewall, "_ip6tables", lambda *a, **kw: calls.append(a))
+
+    result = firewall.allow_port(587)
+
+    assert "already open by default" in result.stdout
+    assert calls == []
+    assert firewall._read_rules() == []
+
+
+def test_allow_port_is_idempotent_for_a_custom_port(monkeypatch, tmp_path):
+    monkeypatch.setattr(firewall, "RULES_FILE", tmp_path / "rules.json")
+    monkeypatch.setattr(firewall, "_iptables", lambda *a, **kw: None)
+    monkeypatch.setattr(firewall, "_ip6tables", lambda *a, **kw: None)
+
+    first = firewall.allow_port(8443)
+    second = firewall.allow_port(8443)
+
+    assert first.stdout == "Port allowed"
+    assert "already allowed" in second.stdout
+    assert len(firewall._read_rules()) == 1

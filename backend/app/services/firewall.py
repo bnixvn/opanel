@@ -12,7 +12,8 @@ from app.services.shell import CommandResult, shell
 # ---------------------------------------------------------------------------
 PORT_RE = re.compile(r"^[0-9]{1,5}$")
 PROTOCOLS = {"tcp", "udp"}
-DEFAULT_PROTECTED_PORTS = {22, 80, 443, 465, 587}
+# Ports the helper opens for every install (see iptables_add_default_allowances).
+DEFAULT_PROTECTED_PORTS = {22, 25, 80, 443, 465, 587}
 LEGACY_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(.+?)\s{2,}(ALLOW|DENY|REJECT|LIMIT)\s+(IN|OUT)\s+(.+)$", re.I)
 IPTABLES_NUMBERED_RULE_RE = re.compile(r"^(?:\[\s*)?(\d+)(?:\])?\s+(\S+)\s+(\S+)\s+--\s+(\S+)\s+(\S+)\s*(.*)$", re.I)
 PORT_SPEC_RE = re.compile(r"^(\d{1,5})/(tcp|udp)(?:\s+\(v6\))?$", re.I)
@@ -531,10 +532,45 @@ def _remove_rule_from_iptables(rule: dict) -> None:
         cmd_fn(*argv, check=False)
 
 
+def default_allowed_ports() -> set[int]:
+    """Ports every install already accepts, panel port included."""
+    ports = set(DEFAULT_PROTECTED_PORTS)
+    try:
+        ports.add(int(settings.panel_port or 2222))
+    except (TypeError, ValueError):
+        pass
+    return ports
+
+
 def allow_port(port: str | int, protocol: str = "tcp") -> CommandResult:
     clean_port = _validate_port(port)
     clean_protocol = _validate_protocol(protocol)
+
+    # A port the default zone already accepts needs no user rule. Adding one
+    # anyway leaves two rules for the same port -- the panel then lists it
+    # twice and the admin cannot tell which one is theirs.
+    if clean_protocol == "tcp" and clean_port.isdigit() and int(clean_port) in default_allowed_ports():
+        return CommandResult(
+            command=f"allow port {clean_port}/{clean_protocol}",
+            returncode=0,
+            stdout=f"Port {clean_port} is already open by default",
+            stderr="",
+        )
+
     rules = _read_rules()
+    for existing in rules:
+        if (
+            existing.get("type") == "port"
+            and str(existing.get("port")) == clean_port
+            and existing.get("protocol") == clean_protocol
+        ):
+            return CommandResult(
+                command=f"allow port {clean_port}/{clean_protocol}",
+                returncode=0,
+                stdout=f"Port {clean_port}/{clean_protocol} is already allowed",
+                stderr="",
+            )
+
     rule = {
         "id": _next_rule_id(rules),
         "action": "allow",
