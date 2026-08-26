@@ -1,5 +1,7 @@
 import pytest
 
+from pathlib import Path
+
 from app.services import network, panel_settings
 from app.services.shell import CommandResult
 
@@ -181,3 +183,21 @@ def test_settings_accept_the_installer_written_bind_host(monkeypatch):
     monkeypatch.setenv("PANEL_BIND_HOST", "::")
 
     assert Settings(_env_file=None).panel_bind_host == "::"
+
+
+def test_every_env_key_the_installer_writes_is_declared():
+    """Guard for the whole class of failure above: any variable the installer
+    puts in .env that Settings does not declare kills every process that
+    imports the config, so the panel cannot even be used to undo it."""
+    import re
+
+    from app.core.config import Settings
+
+    install_sh = Path(__file__).resolve().parents[3] / "installer" / "install.sh"
+    template = install_sh.read_text(encoding="utf-8").split("cat > .env <<ENV", 1)[1]
+    env_block = template.split("\nENV\n", 1)[0]
+    written = {match.group(1) for match in re.finditer(r"(?m)^([A-Z][A-Z0-9_]+)=", env_block)}
+    declared = {name.upper() for name in Settings.model_fields}
+
+    assert written, "could not read the .env template out of install.sh"
+    assert written <= declared, f"undeclared in Settings: {sorted(written - declared)}"
