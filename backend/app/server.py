@@ -42,6 +42,39 @@ def _bindable_host(host: str) -> str:
     return "::"
 
 
+def listen_socket(host: str, port: int) -> socket.socket:
+    """Open the panel's listening socket, dual-stack whenever IPv6 is asked for.
+
+    asyncio sets IPV6_V6ONLY on every AF_INET6 server socket it creates, so
+    letting uvicorn bind "::" would answer IPv6 clients and refuse every IPv4
+    one -- including the admin trying to undo the change. Binding it here with
+    V6ONLY cleared serves both families from one socket, and a host that cannot
+    do IPv6 at all still gets an IPv4 panel.
+    """
+    if host in {"::", "[::]"}:
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            sock.bind(("::", port))
+            sock.listen(2048)
+            sock.set_inheritable(True)
+            return sock
+        except OSError as exc:
+            logger.warning("Cannot listen on IPv6 (%s); falling back to 0.0.0.0", exc)
+            if sock is not None:
+                sock.close()
+        host = "0.0.0.0"
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((host, port))
+    sock.listen(2048)
+    sock.set_inheritable(True)
+    return sock
+
+
 def build_config() -> uvicorn.Config:
     host = _bindable_host(os.environ.get("PANEL_BIND_HOST", "0.0.0.0"))
     port = int(os.environ.get("PANEL_PORT", "2222"))
@@ -73,7 +106,7 @@ def main() -> None:
         logger.exception("TLS setup failed; retrying without HTTPS so the panel stays reachable")
         config = uvicorn.Config(
             app="app.main:app",
-            host=os.environ.get("PANEL_BIND_HOST", "0.0.0.0"),
+            host=_bindable_host(os.environ.get("PANEL_BIND_HOST", "0.0.0.0")),
             port=int(os.environ.get("PANEL_PORT", "2222")),
             proxy_headers=True,
             forwarded_allow_ips="127.0.0.1",
@@ -86,7 +119,11 @@ def main() -> None:
     else:
         logger.warning("Panel listening WITHOUT HTTPS (no usable certificate found)")
 
-    uvicorn.Server(config).run()
+    sock = listen_socket(
+        _bindable_host(os.environ.get("PANEL_BIND_HOST", "0.0.0.0")),
+        int(os.environ.get("PANEL_PORT", "2222")),
+    )
+    uvicorn.Server(config).run(sockets=[sock])
 
 
 if __name__ == "__main__":

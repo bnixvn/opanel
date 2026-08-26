@@ -177,12 +177,15 @@ def host_has_global_ipv6() -> bool:
 
 
 def ipv6_enabled() -> bool:
-    """Panel setting wins; an install that has never been asked follows the box.
+    """Panel setting wins, but the address still has to exist.
 
-    That is what makes a server built with IPv6 serve it from the first boot,
-    while a box where the admin switched it off stays off even though the
-    address is still configured.
+    A listener on an address family the kernel no longer has stops
+    OpenLiteSpeed from starting at all, which would take every site down over
+    a setting nobody re-read, so a stale "on" flag simply produces no IPv6
+    listener.
     """
+    if not host_has_global_ipv6():
+        return False
     try:
         import json
 
@@ -191,7 +194,8 @@ def ipv6_enabled() -> bool:
             return bool(stored["ipv6_enabled"])
     except (OSError, ValueError):
         pass
-    return host_has_global_ipv6()
+    # Never asked: a box that has IPv6 serves it from the first boot.
+    return True
 
 
 def env_get(key: str) -> str:
@@ -422,20 +426,42 @@ require_panel_host() {
   deny "invalid panel host: $host"
 }
 
+set_outbound_ipv4_preference() {
+  # Serving IPv6 says nothing about being able to reach the internet over it.
+  # Plenty of VPS images hand out an address with no working route, and many
+  # providers block outbound 25/587 on IPv6 -- while glibc starts preferring
+  # IPv6 the moment an address exists, so mail to any relay with an AAAA
+  # record begins to fail. Pinning outbound to IPv4 leaves delivery exactly as
+  # it was before the switch; inbound still answers on both families.
+  local mode="$1" tmp
+  [[ -f /etc/gai.conf ]] || : >/etc/gai.conf
+  tmp="$(mktemp /tmp/opanel-gai.XXXXXX)" || return 0
+  awk '$0 == "# OPanel BEGIN" { skip = 1 } skip == 0 { print } $0 == "# OPanel END" { skip = 0 }'     /etc/gai.conf >"$tmp" 2>/dev/null || cp /etc/gai.conf "$tmp"
+  if [[ "$mode" == "on" ]]; then
+    printf '%s\n' "# OPanel BEGIN" "precedence ::ffff:0:0/96  100" "# OPanel END" >>"$tmp"
+  fi
+  install -o root -g root -m 0644 "$tmp" /etc/gai.conf
+  rm -f "$tmp"
+}
+
 allow_panel_port() {
   local port="$1"
   iptables_panel_allow_port "$port"
 }
 
 iptables_panel_allow_port() {
-  local port="$1"
+  local port="$1" binary
   require_port "$port"
   iptables_ensure_opanel_chains
   # Remove any existing opanel panel-zone rules for this port first
   iptables_panel_delete_port_rules "$port" "opanel:PanelZone"
-  iptables -I OPANEL_INPUT 1 -p tcp --dport "$port" -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null \
-    || iptables -I OPANEL_INPUT 1 -p tcp --dport "$port" -j ACCEPT 2>/dev/null \
-    || true
+  # Both families: a port opened only for IPv4 is a closed port to every
+  # visitor whose DNS answer was an AAAA record.
+  for binary in iptables ip6tables; do
+    "$binary" -I OPANEL_INPUT 1 -p tcp --dport "$port" -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null \
+      || "$binary" -I OPANEL_INPUT 1 -p tcp --dport "$port" -j ACCEPT 2>/dev/null \
+      || true
+  done
 }
 
 iptables_panel_delete_port_rules() {
@@ -506,7 +532,7 @@ iptables_add_default_allowances() {
   local port p
   port="$(env_get PANEL_PORT)"
   port="${port:-$DEFAULT_PANEL_PORT}"
-  for p in 22 80 443 465 587 "$port"; do
+  for p in 22 25 80 443 465 587 "$port"; do
     require_port "$p"
     iptables -A OPANEL_INPUT -p tcp --dport "$p" -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null \
       || iptables -A OPANEL_INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null \
@@ -2729,10 +2755,15 @@ case "$cmd" in
       off) panel_bind="0.0.0.0" ;;
       *) deny "usage: panel-ipv6-set <on|off>" ;;
     esac
-    # The listeners follow the flag the panel just wrote to panel-settings.json.
-    ols_sync_main_config
-    restart_openlitespeed 2>/dev/null || true
+    # Write the panel bind before touching the web server: if the OLS sync
+    # fails, the admin must still get a panel back on the address family they
+    # just asked for.
     env_set PANEL_BIND_HOST "$panel_bind"
+    set_outbound_ipv4_preference "$1"
+    # The listeners follow the flag the panel already wrote to
+    # panel-settings.json.
+    ols_sync_main_config || true
+    restart_openlitespeed 2>/dev/null || true
     schedule_panel_restart
     echo "IPv6 $1 (panel bind ${panel_bind})"
     ;;

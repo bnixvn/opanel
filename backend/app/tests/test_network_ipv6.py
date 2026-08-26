@@ -135,3 +135,38 @@ def test_panel_falls_back_to_ipv4_when_the_ipv6_bind_cannot_work(monkeypatch):
 
     assert server._bindable_host("::") == "0.0.0.0"
     assert server._bindable_host("0.0.0.0") == "0.0.0.0"
+
+
+def test_ipv6_bind_still_serves_ipv4_clients():
+    """asyncio sets IPV6_V6ONLY on the sockets it creates, so letting uvicorn
+    bind :: answered IPv6 and refused every IPv4 client -- including the admin
+    trying to switch IPv6 back off. The panel opens the socket itself."""
+    import socket as socket_module
+
+    from app import server
+
+    sock = server.listen_socket("::", 0)
+    try:
+        assert sock.family == socket_module.AF_INET6
+        assert sock.getsockopt(socket_module.IPPROTO_IPV6, socket_module.IPV6_V6ONLY) == 0
+    finally:
+        sock.close()
+
+
+def test_ipv6_bind_falls_back_to_ipv4_when_the_family_is_gone(monkeypatch):
+    from app import server
+
+    real_socket = server.socket.socket
+
+    def fail_on_ipv6(family, *args, **kwargs):
+        if family == server.socket.AF_INET6:
+            raise OSError("Address family not supported by protocol")
+        return real_socket(family, *args, **kwargs)
+
+    monkeypatch.setattr(server.socket, "socket", fail_on_ipv6)
+
+    sock = server.listen_socket("::", 0)
+    try:
+        assert sock.family == server.socket.AF_INET
+    finally:
+        sock.close()

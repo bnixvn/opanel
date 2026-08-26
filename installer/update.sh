@@ -1298,6 +1298,14 @@ migrate_drop_iframe_blocking
 # --- Serve IPv6 when the box has it ----------------------------------------
 # Only fills in a bind host that was never set: an admin who turned IPv6 off in
 # the panel keeps it off.
+if grep -q '^PANEL_BIND_HOST=::' "$APP_DIR/backend/.env" 2>/dev/null && ! host_has_global_ipv6; then
+  # The address family went away (kernel flag, rebuilt VPS) but the bind did
+  # not. Left alone the API cannot listen at all, and the panel is what the
+  # admin would use to undo it.
+  sed -i 's|^PANEL_BIND_HOST=.*|PANEL_BIND_HOST=0.0.0.0|' "$APP_DIR/backend/.env"
+  log "IPv6 is gone from this host; panel bind reset to 0.0.0.0"
+fi
+
 if ! grep -q '^PANEL_BIND_HOST=' "$APP_DIR/backend/.env" 2>/dev/null; then
   if host_has_global_ipv6; then
     printf 'PANEL_BIND_HOST=%s\n' "::" >>"$APP_DIR/backend/.env"
