@@ -86,9 +86,11 @@ def issue_wildcard_ssl(domain: str, cf_token: str, *, email: str | None = None) 
     """Issue a Let's Encrypt cert covering ``domain`` and ``*.domain`` via the
     Cloudflare DNS-01 challenge.
 
-    The Cloudflare API token is passed on stdin only (never argv / logs); the
-    helper writes it to a root-only credentials file that certbot reads on every
-    renewal.
+    ``cf_token`` is a **scoped Cloudflare API Token** (Zone -> DNS -> Edit for the
+    zone), NOT the account-wide Global API Key. The helper writes it as
+    ``dns_cloudflare_api_token = ...`` in a root-only credentials file that
+    certbot re-reads on every renewal; it is passed on stdin only (never argv /
+    logs, ``sensitive=True``).
     """
     safe_domain = _safe_domain(domain)
     helper_args = [safe_domain]

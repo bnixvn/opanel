@@ -1810,8 +1810,9 @@ ensure_certbot_dns_cloudflare() {
 }
 
 # Issue / renew a wildcard cert for <domain> + *.<domain> via Cloudflare DNS-01.
-# The API token arrives on stdin and is written to a root-only credentials file
-# that certbot reads on every renewal.
+# stdin is a scoped Cloudflare API Token (Zone:DNS:Edit for the zone) -- NOT the
+# Global API Key. It is written as `dns_cloudflare_api_token` in a root-only
+# credentials file that certbot re-reads on every renewal.
 issue_cloudflare_wildcard() {
   local domain="$1" email="${2:-}" token creds
   require_domain "$domain"

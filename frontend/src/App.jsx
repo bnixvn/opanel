@@ -3243,9 +3243,9 @@ function App() {
           </div>
           {createSslMode === 'letsencrypt' && <p className="hint">certbot HTTP-01 — the domain must point to this server's IP first.</p>}
           {createSslMode === 'wildcard' && <div className="create-ssl-fields">
-            <input type="password" autoComplete="off" placeholder="Cloudflare API token (Zone → DNS → Edit)" value={createSslForm.api_token} onChange={e => setCreateSslForm(p => ({ ...p, api_token: e.target.value }))} />
+            <input type="password" autoComplete="off" placeholder="Cloudflare API Token" value={createSslForm.api_token} onChange={e => setCreateSslForm(p => ({ ...p, api_token: e.target.value }))} />
             <input type="email" autoComplete="off" placeholder="Contact email (optional)" value={createSslForm.email} onChange={e => setCreateSslForm(p => ({ ...p, email: e.target.value }))} />
-            <p className="hint">Issues one cert for the domain and *.domain via a Cloudflare DNS challenge.</p>
+            <p className="hint">A scoped <strong>API Token</strong> (My Profile → API Tokens → Create Token), <strong>not</strong> the Global API Key. Permission <code>Zone → DNS → Edit</code> for the zone(s) you issue certs for. Stored encrypted for renewal. Issues one cert for the domain and *.domain — no DNS record or port 80 needed.</p>
           </div>}
           {createSslMode === 'existing' && <div className="create-ssl-fields">
             <div className="form-row">
@@ -3256,7 +3256,7 @@ function App() {
               <button className="secondary-light" type="button" onClick={loadCreateSslCerts}><RefreshCw size={13}/> Refresh</button>
             </div>
             <p className="hint">{createSslCerts.length === 0
-              ? 'No certificate on this server covers this domain yet. Issue a wildcard on the parent domain first, then it will show here.'
+              ? 'No certificate on this server covers this domain. Issue a wildcard (here or on the apex domain) first, then it shows up.'
               : 'e.g. a *.example.com wildcard issued earlier covers every x.example.com.'}</p>
           </div>}
           {createSslMode === 'manual' && <div className="create-ssl-fields">
@@ -3369,14 +3369,14 @@ function App() {
         <button disabled={!selectedWebsiteId || !!loading} onClick={() => enableSsl(selectedWebsiteId)} style={{marginTop:8}}><Lock size={15}/> Install / Renew SSL</button>
         <p className="hint">certbot HTTP-01 — the domain must point to this server's IP before issuing.</p>
       </> : sslMode === 'wildcard' ? <div className="manual-ssl-grid">
-        <label style={{gridColumn:'1 / -1'}}>Cloudflare API token
-          <input type="password" autoComplete="off" value={wildcardSslForm.api_token} onChange={e => setWildcardSslForm(p => ({ ...p, api_token: e.target.value }))} placeholder={currentSite?.ssl_wildcard ? 'Stored — leave blank to reuse' : 'Token with Zone → DNS → Edit for this zone'} />
+        <label style={{gridColumn:'1 / -1'}}>Cloudflare API Token
+          <input type="password" autoComplete="off" value={wildcardSslForm.api_token} onChange={e => setWildcardSslForm(p => ({ ...p, api_token: e.target.value }))} placeholder={currentSite?.ssl_wildcard ? 'Stored — leave blank to reuse' : 'Scoped API Token (not the Global API Key)'} />
         </label>
         <label style={{gridColumn:'1 / -1'}}>Contact email (optional)
           <input type="email" autoComplete="off" value={wildcardSslForm.email} onChange={e => setWildcardSslForm(p => ({ ...p, email: e.target.value }))} placeholder="admin@domain.com" />
         </label>
         <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={issueWildcardSsl}><Globe size={15}/> {currentSite?.ssl_wildcard ? 'Renew / re-issue wildcard' : 'Issue wildcard certificate'}</button>
-        <p className="hint" style={{gridColumn:'1 / -1'}}>Issues one cert for <strong>{currentSite?.domain || 'the domain'}</strong> and <strong>*.{currentSite?.domain || 'domain'}</strong> via a Cloudflare DNS challenge — no DNS record or port 80 needed. Other websites can then pick this cert under "Use existing".</p>
+        <p className="hint" style={{gridColumn:'1 / -1'}}>Use a <strong>scoped API Token</strong> from Cloudflare (My Profile → API Tokens → Create Token → permission <code>Zone → DNS → Edit</code> for the zone), <strong>not</strong> the account Global API Key. It is stored encrypted and re-used for automatic renewal. Issues one cert for <strong>{currentSite?.domain || 'the domain'}</strong> and <strong>*.{currentSite?.domain || 'domain'}</strong> via a Cloudflare DNS challenge — no DNS record or port 80 needed. Other websites can then pick this cert under "Use existing".</p>
       </div> : sslMode === 'existing' ? <div className="manual-ssl-grid">
         <div className="form-row" style={{gridColumn:'1 / -1'}}>
           <select value={reuseCertName} onChange={e => setReuseCertName(e.target.value)}>
