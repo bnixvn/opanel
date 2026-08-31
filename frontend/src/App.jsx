@@ -335,6 +335,7 @@ function App() {
   const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
   const [page, setPage] = useState(() => pageFromPathname(window.location.pathname));
   const [domain, setDomain] = useState('');
+  const [websiteSearch, setWebsiteSearch] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [wpAdminUser, setWpAdminUser] = useState('admin');
   const [wpAdminPassword, setWpAdminPassword] = useState('');
@@ -3216,6 +3217,11 @@ function App() {
 
   function renderWebsites() {
     const wpFieldsEnabled = siteType === 'wordpress' && installWordPress;
+    const wsQuery = websiteSearch.trim().toLowerCase();
+    const filteredWebsites = wsQuery
+      ? websites.filter(s => (s.domain || '').toLowerCase().includes(wsQuery)
+          || (s.aliases || []).some(a => (a.domain || '').toLowerCase().includes(wsQuery)))
+      : websites;
     return <>
       <section className="section">
         <h2>Create website</h2>
@@ -3283,9 +3289,16 @@ function App() {
           <h2>Website list</h2>
           <button disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> Refresh</button>
         </div>
+        {websites.length > 0 && <div className="website-search">
+          <Search size={15}/>
+          <input value={websiteSearch} onChange={e => setWebsiteSearch(e.target.value)} placeholder="Filter domains…" />
+          {websiteSearch && <button className="mini secondary-light" onClick={() => setWebsiteSearch('')}><X size={13}/></button>}
+          <span className="hint">{wsQuery ? `${filteredWebsites.length} of ${websites.length}` : `${websites.length} website${websites.length === 1 ? '' : 's'}`}</span>
+        </div>}
         {websites.length === 0 && <EmptyState icon={Globe} message="No websites yet." action={{ label: 'New website', icon: Plus, onClick: () => { const el = document.getElementById('create-website-domain'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
+        {websites.length > 0 && filteredWebsites.length === 0 && <EmptyState icon={Globe} message={`No domain matches “${websiteSearch}”.`} />}
         <div className="site-grid">
-          {websites.map(site => <div className="site-stack" key={site.id}>
+          {filteredWebsites.map(site => <div className="site-stack" key={site.id}>
           <article className="site-card">
             <div className="site-head">
               <div>
