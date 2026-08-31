@@ -852,15 +852,17 @@ function App() {
   }, [currentUser?.email]);
 
   async function refreshAll() {
-    const refreshedUser = await loadCurrentUser();
-    const siteData = await request('/websites');
+    const [refreshedUser, siteData, dbData] = await Promise.all([
+      loadCurrentUser(),
+      request('/websites'),
+      request('/databases'),
+    ]);
     if (siteData) {
       setWebsites(siteData);
       if (!selectedWebsiteId && siteData[0]) setSelectedWebsiteId(String(siteData[0].id));
     }
-    const dbData = await request('/databases');
     if (dbData) setDatabases(dbData);
-    if (refreshedUser?.role === 'admin') await loadPhpVersions();
+    if (refreshedUser?.role === 'admin') loadPhpVersions();
   }
 
   async function loadUsers() {

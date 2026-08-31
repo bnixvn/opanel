@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -43,6 +44,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
 )
+
+# Compress responses (the ~1.8 MB JS bundle drops to ~490 KB, JSON lists shrink
+# too). Matters most for admins reaching the panel over a slow/long-haul link.
+app.add_middleware(GZipMiddleware, minimum_size=700, compresslevel=6)
 
 
 def _is_potentially_trustworthy_origin(request) -> bool:
@@ -124,8 +129,21 @@ assets_dir = frontend_dist / "assets"
 # as text/plain, so register it explicitly.
 mimetypes.add_type("font/woff2", ".woff2")
 mimetypes.add_type("font/woff", ".woff")
+
+
+class _ImmutableStaticFiles(StaticFiles):
+    """Vite emits content-hashed filenames under /assets, so a cache entry is
+    valid forever — tell the browser not to revalidate on every page load."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code < 400:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 if assets_dir.exists():
-    app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+    app.mount("/assets", _ImmutableStaticFiles(directory=str(assets_dir)), name="assets")
 
 
 @app.get("/favicon.png", include_in_schema=False)
