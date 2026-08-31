@@ -1155,6 +1155,12 @@ if id -u opanel >/dev/null 2>&1; then
 from app.core.database import SessionLocal
 from app.models.entities import Website
 from app.services import openlitespeed, site_users, waf
+# _rewrite_website_vhost resolves SSL from ssl_mode (letsencrypt / reuse / manual)
+# and carries aliases, redirects, WAF and flood settings. Calling
+# openlitespeed.rewrite_vhost by hand here dropped ssl_mode="reuse" -- it fell
+# back to /etc/letsencrypt/live/<own-domain>/ (which does not exist) and broke
+# HTTPS for every reuse-mode site on the next update.
+from app.api.websites import _rewrite_website_vhost
 
 with SessionLocal() as db:
     websites = db.query(Website).all()
@@ -1181,26 +1187,7 @@ with SessionLocal() as db:
             if getattr(website, "nginx_config_mode", "managed") != "managed":
                 website.nginx_config_mode = "managed"
                 db.commit()
-            app_type = website.app_type or "wordpress"
-            runtime_php_version = website.php_version if app_type in {"wordpress", "php"} else None
-            openlitespeed.rewrite_vhost(
-                website.domain,
-                website.root_path,
-                app_type=app_type,
-                php_version=website.php_version,
-                custom_directives="",
-                linux_user=website.linux_user,
-                lsphp_socket_override=site_users.site_lsphp_socket(website.linux_user, website.root_path, runtime_php_version),
-                waf_enabled=website.waf_enabled,
-                http_flood_enabled=website.http_flood_enabled,
-                http_flood_config=website.http_flood_config or "",
-                document_root=getattr(website, "document_root", "public_html") or "public_html",
-                rewrite_mode=getattr(website, "nginx_rewrite_mode", "none") or "none",
-                ssl_enabled=bool(getattr(website, "ssl_enabled", False)),
-                ssl_cert_path=getattr(website, "ssl_cert_path", None),
-                ssl_key_path=getattr(website, "ssl_key_path", None),
-                ssl_ca_path=getattr(website, "ssl_ca_path", None),
-            )
+            _rewrite_website_vhost(website)
         except Exception as exc:
             print(f"WARNING: could not refresh permissions for {website.domain}: {exc}")
     try:
