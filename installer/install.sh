@@ -222,7 +222,7 @@ install_base_packages() {
   echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
   echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
   apt-get update --allow-releaseinfo-change
-  apt-get install -y software-properties-common ca-certificates curl gnupg git composer mariadb-server mariadb-client redis-server openssh-server python3 python3-pip python3-venv certbot tar zip unzip openssl iptables iptables-persistent ipset acl phpmyadmin zstd
+  apt-get install -y software-properties-common ca-certificates curl gnupg git composer mariadb-server mariadb-client redis-server openssh-server python3 python3-pip python3-venv certbot python3-certbot-dns-cloudflare tar zip unzip openssl iptables iptables-persistent ipset acl phpmyadmin zstd
   systemctl enable --now mariadb redis-server
   systemctl enable --now ssh 2>/dev/null || systemctl enable --now sshd 2>/dev/null || true
   remove_ufw_legacy
@@ -670,8 +670,11 @@ ENV
 }
 
 wait_for_backend() {
+  # The panel serves HTTPS with a self-signed certificate out of the box, so a
+  # plain-HTTP probe fails on a fresh IP-only install even though the API is up.
   for _ in {1..30}; do
-    if curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${PANEL_PORT}/api/health" >/dev/null 2>&1; then
+    if curl -kfsS --connect-timeout 2 --max-time 5 "https://127.0.0.1:${PANEL_PORT}/api/health" >/dev/null 2>&1 \
+       || curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${PANEL_PORT}/api/health" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
