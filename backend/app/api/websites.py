@@ -12,9 +12,9 @@ from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_admin_role
-from app.core.secrets import encrypt
+from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
-from app.schemas.schemas import WebsiteAliasCreate, WebsiteAliasOut, WebsiteCreate, WebsiteHttpFloodUpdate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate
+from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCreate, WebsiteHttpFloodUpdate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
 from app.services import file_manager, mariadb, openlitespeed, site_users, ssl, storage_quota, waf, wordpress
 from app.services.audit import log_action
 
@@ -92,6 +92,17 @@ def _website_http_flood_config(website: Website) -> dict:
 def _rewrite_ssl_kwargs(website: Website) -> dict:
     if getattr(website, "ssl_mode", "none") == "letsencrypt" and getattr(website, "ssl_enabled", False):
         return {"ssl_enabled": True}
+    if getattr(website, "ssl_mode", "none") == "reuse" and getattr(website, "ssl_reuse_name", None):
+        try:
+            paths = ssl.reuse_cert_paths(website.ssl_reuse_name)
+        except ValueError:
+            return {}
+        return {
+            "ssl_enabled": True,
+            "ssl_cert_path": paths["cert"],
+            "ssl_key_path": paths["key"],
+            "ssl_ca_path": paths["ca"],
+        }
     if (
         getattr(website, "ssl_mode", "none") == "manual"
         and website.ssl_cert_path
@@ -213,6 +224,12 @@ def _rewrite_website_vhost(website: Website, **overrides) -> str:
 
 def _has_live_certificate(website: Website) -> bool:
     domain = website.domain
+    if getattr(website, "ssl_mode", "none") == "reuse" and getattr(website, "ssl_reuse_name", None):
+        try:
+            paths = ssl.reuse_cert_paths(website.ssl_reuse_name)
+            return Path(paths["cert"]).is_file() and Path(paths["key"]).is_file()
+        except (ValueError, OSError):
+            return False
     if (
         getattr(website, "ssl_mode", "none") == "manual"
         and website.ssl_cert_path
@@ -801,6 +818,11 @@ def delete_website(website_id: int, request: Request, delete_files: bool = True,
         openlitespeed.remove_vhost(website.domain)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"Cannot delete webserver config: {exc}") from exc
+    if getattr(website, "ssl_wildcard", False) and getattr(website, "ssl_mode", "none") == "letsencrypt":
+        try:
+            ssl.remove_wildcard_ssl(website.domain)
+        except Exception:  # noqa: BLE001
+            pass
     if delete_files:
         if website.linux_user:
             site_users.delete_site_runtime(website.root_path, website.linux_user)
@@ -868,6 +890,8 @@ def enable_ssl(website_id: int, db: Session = Depends(get_db), current_user: Use
         raise HTTPException(status_code=500, detail=_command_error(result))
     website.ssl_enabled = True
     website.ssl_mode = "letsencrypt"
+    website.ssl_wildcard = False
+    website.ssl_reuse_name = None
     website.ssl_updated_at = datetime.utcnow()
     website.ssl_cert_path = None
     website.ssl_key_path = None
@@ -914,6 +938,8 @@ async def install_manual_ssl(
         written = ssl.install_manual_ssl(website.domain, cert_raw, key_raw, ca_raw, aliases=_ssl_domains(website))
         website.ssl_enabled = True
         website.ssl_mode = "manual"
+        website.ssl_wildcard = False
+        website.ssl_reuse_name = None
         website.ssl_cert_path = written["cert"]
         website.ssl_key_path = written["key"]
         website.ssl_ca_path = written["ca"]
@@ -933,4 +959,126 @@ async def install_manual_ssl(
     db.commit()
     db.refresh(website)
     log_action(db, current_user.id, "install_manual_ssl", website.domain, request=request)
+    return website
+
+
+@router.post("/{website_id}/ssl/wildcard", response_model=WebsiteOut)
+def enable_wildcard_ssl(
+    website_id: int,
+    payload: WildcardSslRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Issue a Let's Encrypt cert covering the domain and *.domain via the
+    Cloudflare DNS-01 challenge. The API token is stored encrypted for renewal."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+    if website.owner_id != current_user.id:
+        ensure_role(current_user.role, Role.admin)
+
+    token = payload.api_token or (decrypt(website.ssl_dns_api_token) if website.ssl_dns_api_token else "")
+    if not token:
+        raise HTTPException(status_code=400, detail="A Cloudflare API token is required to issue a wildcard certificate")
+
+    previous_manual_paths = (website.ssl_cert_path, website.ssl_key_path, website.ssl_ca_path)
+    previous_snapshot = ssl.snapshot_manual_ssl_domain(website.domain)
+    try:
+        _rewrite_website_vhost(website, preserve_existing_ssl=False, include_ssl=False)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot prepare vhost config for the DNS challenge: {exc}") from exc
+
+    email = payload.email or settings.ssl_email or None
+    result = ssl.issue_wildcard_ssl(website.domain, token, email=email)
+    if result.returncode != 0:
+        if getattr(website, "ssl_mode", "none") == "manual":
+            ssl.restore_manual_ssl(previous_snapshot)
+        try:
+            _rewrite_website_vhost(website)
+        except (RuntimeError, ValueError):
+            pass
+        raise HTTPException(status_code=500, detail=_command_error(result))
+
+    website.ssl_enabled = True
+    website.ssl_mode = "letsencrypt"
+    website.ssl_wildcard = True
+    website.ssl_reuse_name = None
+    website.ssl_dns_provider = payload.provider
+    website.ssl_dns_api_token = encrypt(token)
+    website.ssl_updated_at = datetime.utcnow()
+    website.ssl_cert_path = None
+    website.ssl_key_path = None
+    website.ssl_ca_path = None
+    ssl.remove_manual_ssl_files(*previous_manual_paths)
+    try:
+        _rewrite_website_vhost(website)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot enable SSL in webserver config: {exc}") from exc
+    db.commit()
+    db.refresh(website)
+    log_action(db, current_user.id, "enable_wildcard_ssl", website.domain, request=request)
+    return website
+
+
+@router.get("/{website_id}/available-certificates", response_model=List[AvailableCertificateOut])
+def website_available_certificates(website_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    website = _get_authorized_website(db, website_id, current_user)
+    return ssl.list_available_certificates(website.domain)
+
+
+@router.get("/available-certificates", response_model=List[AvailableCertificateOut])
+def available_certificates_for_domain(
+    domain: str = Query(..., min_length=3, max_length=255),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Certificates on the box that cover ``domain`` — used by the create-website
+    form before the site exists. Only covering certs are returned so one tenant
+    cannot enumerate another's certificate names."""
+    safe_domain = (domain or "").strip().lower()
+    return [c for c in ssl.list_available_certificates(safe_domain) if c["covers_domain"]]
+
+
+@router.post("/{website_id}/ssl/reuse", response_model=WebsiteOut)
+def reuse_existing_ssl(
+    website_id: int,
+    payload: ReuseSslRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Serve this website with a certificate already installed on the box
+    (a Let's Encrypt cert — including a wildcard — or a manually installed one)."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+    if website.owner_id != current_user.id:
+        ensure_role(current_user.role, Role.admin)
+
+    usable, reason = ssl.reuse_cert_covers(payload.name, website.domain)
+    if not usable:
+        raise HTTPException(status_code=400, detail=reason)
+
+    previous_manual_paths = (website.ssl_cert_path, website.ssl_key_path, website.ssl_ca_path)
+    is_wildcard = any(
+        entry["name"] == payload.name and entry["is_wildcard"]
+        for entry in ssl.list_available_certificates(website.domain)
+    )
+    website.ssl_enabled = True
+    website.ssl_mode = "reuse"
+    website.ssl_reuse_name = payload.name
+    website.ssl_wildcard = is_wildcard
+    website.ssl_updated_at = datetime.utcnow()
+    website.ssl_cert_path = None
+    website.ssl_key_path = None
+    website.ssl_ca_path = None
+    try:
+        _rewrite_website_vhost(website)
+    except (RuntimeError, ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot apply the certificate: {exc}") from exc
+    ssl.remove_manual_ssl_files(*previous_manual_paths)
+    db.commit()
+    db.refresh(website)
+    log_action(db, current_user.id, "reuse_ssl", website.domain, payload.name, request=request)
     return website

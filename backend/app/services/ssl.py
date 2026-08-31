@@ -82,8 +82,181 @@ def issue_ssl(domain: str, aliases: list[str] | tuple[str, ...] | None = None) -
     return shell.privileged("certbot-issue", helper_args=helper_args, check=False, fallback=fallback)
 
 
+def issue_wildcard_ssl(domain: str, cf_token: str, *, email: str | None = None) -> CommandResult:
+    """Issue a Let's Encrypt cert covering ``domain`` and ``*.domain`` via the
+    Cloudflare DNS-01 challenge.
+
+    The Cloudflare API token is passed on stdin only (never argv / logs); the
+    helper writes it to a root-only credentials file that certbot reads on every
+    renewal.
+    """
+    safe_domain = _safe_domain(domain)
+    helper_args = [safe_domain]
+    quoted_email = ""
+    if email:
+        helper_args.append(email)
+        quoted_email = f" --email {shlex.quote(email)}"
+    else:
+        quoted_email = " --register-unsafely-without-email"
+    fallback = [
+        "bash",
+        "-lc",
+        (
+            "install -d -o root -g root -m 0700 /etc/opanel/acme-dns && "
+            "umask 077 && "
+            f"printf 'dns_cloudflare_api_token = %s\\n' \"$(cat)\" > /etc/opanel/acme-dns/{shlex.quote(safe_domain)}.ini && "
+            "certbot certonly --dns-cloudflare "
+            f"--dns-cloudflare-credentials /etc/opanel/acme-dns/{shlex.quote(safe_domain)}.ini "
+            "--dns-cloudflare-propagation-seconds 30 "
+            f"--cert-name {shlex.quote(safe_domain)} --non-interactive --agree-tos --expand "
+            f"-d {shlex.quote(safe_domain)} -d {shlex.quote('*.' + safe_domain)}"
+            f"{quoted_email}"
+        ),
+    ]
+    return shell.privileged(
+        "certbot-dns-cloudflare",
+        helper_args=helper_args,
+        check=False,
+        input=cf_token,
+        sensitive=True,
+        fallback=fallback,
+    )
+
+
+def remove_wildcard_ssl(domain: str) -> CommandResult:
+    """Delete a DNS-01 cert and its stored Cloudflare credentials file."""
+    safe_domain = _safe_domain(domain)
+    return shell.privileged(
+        "certbot-dns-cloudflare-remove",
+        helper_args=[safe_domain],
+        check=False,
+        fallback=[
+            "bash",
+            "-lc",
+            (
+                f"certbot delete --cert-name {shlex.quote(safe_domain)} --non-interactive || true; "
+                f"rm -f /etc/opanel/acme-dns/{shlex.quote(safe_domain)}.ini"
+            ),
+        ],
+    )
+
+
 def renew_all() -> CommandResult:
     return shell.privileged("certbot-renew", check=False, fallback=["certbot", "renew", "--quiet"])
+
+
+# ---------------------------------------------------------------------------
+# Reuse an existing certificate that is already on the box
+# ---------------------------------------------------------------------------
+PANEL_CERT_STORE = Path("/etc/opanel/certs")  # root:opanel mirror of every LE live cert
+
+
+def _cert_names_and_expiry(cert_pem: bytes) -> tuple[list[str], datetime | None]:
+    try:
+        cert = x509.load_pem_x509_certificate(cert_pem)
+    except ValueError:
+        return [], None
+    names: set[str] = set()
+    try:
+        san = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
+        names.update(name.lower() for name in san.get_values_for_type(x509.DNSName))
+    except x509.ExtensionNotFound:
+        pass
+    if not names:
+        names.update(attr.value.lower() for attr in cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME))
+    try:
+        not_after = cert.not_valid_after_utc
+    except Exception:  # noqa: BLE001
+        not_after = None
+    return sorted(names), not_after
+
+
+def _read_cert_bytes(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def list_available_certificates(target_domain: str | None = None) -> list[dict]:
+    """Every certificate already installed on the box that a website could be
+    pointed at: Let's Encrypt live certs (via the opanel-readable mirror) and
+    certs installed manually through the panel.
+
+    Each entry: name ("<source>:<primary domain>"), source, domains, is_wildcard,
+    covers_domain (against ``target_domain``), not_after.
+    """
+    safe_target = (target_domain or "").strip().lower() or None
+    results: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(source: str, key_name: str, cert_path: Path) -> None:
+        raw = _read_cert_bytes(cert_path)
+        if not raw:
+            return
+        domains, not_after = _cert_names_and_expiry(raw)
+        if not domains:
+            return
+        entry_id = f"{source}:{key_name}"
+        if entry_id in seen:
+            return
+        seen.add(entry_id)
+        results.append({
+            "name": entry_id,
+            "source": source,
+            "domains": domains,
+            "is_wildcard": any(name.startswith("*.") for name in domains),
+            "covers_domain": bool(
+                safe_target and any(_hostname_matches(safe_target, name) for name in domains)
+            ),
+            "not_after": not_after,
+        })
+
+    if PANEL_CERT_STORE.is_dir():
+        for entry in sorted(PANEL_CERT_STORE.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("_"):
+                continue
+            _add("letsencrypt", entry.name, entry / "fullchain.pem")
+
+    if MANUAL_SSL_ROOT.is_dir():
+        for entry in sorted(MANUAL_SSL_ROOT.iterdir()):
+            if not entry.is_dir():
+                continue
+            cert_file = entry / "fullchain.crt"
+            if not cert_file.is_file():
+                cert_file = entry / "cert.crt"
+            _add("manual", entry.name, cert_file)
+
+    return results
+
+
+def reuse_cert_paths(reuse_name: str) -> dict[str, str | None]:
+    """Resolve '<source>:<name>' to the cert/key/ca paths OpenLiteSpeed should use."""
+    source, _, name = (reuse_name or "").partition(":")
+    safe = _safe_domain(name) if name else ""
+    if source == "letsencrypt" and safe:
+        base = f"/etc/letsencrypt/live/{safe}"
+        return {"cert": f"{base}/fullchain.pem", "key": f"{base}/privkey.pem", "ca": None}
+    if source == "manual" and safe:
+        base = f"/usr/local/lsws/conf/opanel/ssl/sites/{safe}"
+        ca_path = Path(base) / "ca.crt"
+        return {
+            "cert": f"{base}/fullchain.crt",
+            "key": f"{base}/privkey.key",
+            "ca": f"{base}/ca.crt" if ca_path.is_file() else None,
+        }
+    raise ValueError("Invalid certificate name")
+
+
+def reuse_cert_covers(reuse_name: str, domain: str) -> tuple[bool, str]:
+    """(usable, reason) — is the named cert present and does its SAN cover ``domain``."""
+    safe_domain = (domain or "").strip().lower()
+    for entry in list_available_certificates(safe_domain):
+        if entry["name"] == reuse_name:
+            if not entry["covers_domain"]:
+                return False, f"certificate {reuse_name.split(':', 1)[-1]} does not cover {safe_domain}"
+            return True, ""
+    return False, "certificate not found on this server"
 
 
 def manual_ssl_paths(domain: str) -> dict[str, str | None]:

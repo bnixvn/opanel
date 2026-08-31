@@ -46,6 +46,15 @@ class Website(Base):
     ssl_key_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     ssl_ca_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     ssl_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Wildcard SSL issued over a DNS-01 challenge (currently Cloudflare only).
+    ssl_wildcard: Mapped[bool] = mapped_column(Boolean, default=False)
+    ssl_dns_provider: Mapped[str] = mapped_column(String(32), default="")
+    # Fernet ciphertext of the DNS provider API token (app.core.secrets); kept
+    # so a wildcard cert can be renewed / re-issued without re-entering it.
+    ssl_dns_api_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # ssl_mode == "reuse": served with an existing cert already on the box,
+    # identified as "<source>:<name>" (e.g. "letsencrypt:example.com").
+    ssl_reuse_name: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     nginx_custom: Mapped[str] = mapped_column(Text, default="")
     nginx_config_mode: Mapped[str] = mapped_column(String(16), default="managed")

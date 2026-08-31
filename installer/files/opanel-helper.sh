@@ -1788,11 +1788,73 @@ renew_ssl_soon() {
   shopt -u nullglob
   panel_domain="$(env_get PANEL_DOMAIN)"
   copy_panel_live_certificate "$panel_domain"
+  panel_cert_store_sync
   if [[ "$renewed" -gt 0 ]]; then
     restart_openlitespeed >/dev/null 2>&1 || true
     systemctl restart opanel-api >/dev/null 2>&1 || true
   fi
   echo "SSL auto-renew checked ${checked} certificate(s); renewed ${renewed} certificate(s) within ${days} day(s)."
+}
+
+# Cloudflare DNS-01 plugin — installed on demand so a box that never issues a
+# wildcard cert stays lean.
+ACME_DNS_DIR="/etc/opanel/acme-dns"
+
+ensure_certbot_dns_cloudflare() {
+  if certbot plugins 2>/dev/null | grep -q 'dns-cloudflare'; then
+    return 0
+  fi
+  DEBIAN_FRONTEND=noninteractive apt-get install -y python3-certbot-dns-cloudflare >/dev/null 2>&1 || true
+  certbot plugins 2>/dev/null | grep -q 'dns-cloudflare' \
+    || deny "certbot-dns-cloudflare plugin is not available (install python3-certbot-dns-cloudflare)"
+}
+
+# Issue / renew a wildcard cert for <domain> + *.<domain> via Cloudflare DNS-01.
+# The API token arrives on stdin and is written to a root-only credentials file
+# that certbot reads on every renewal.
+issue_cloudflare_wildcard() {
+  local domain="$1" email="${2:-}" token creds
+  require_domain "$domain"
+  if [[ -n "$email" ]]; then
+    require_email "$email"
+  fi
+  token="$(cat)"
+  token="${token%$'\n'}"
+  [[ -n "$token" ]] || deny "empty Cloudflare API token"
+  [[ "$token" =~ ^[A-Za-z0-9_-]{20,200}$ ]] || deny "malformed Cloudflare API token"
+  ensure_certbot_dns_cloudflare
+  install -d -o root -g root -m 0700 "$ACME_DNS_DIR"
+  creds="${ACME_DNS_DIR}/${domain}.ini"
+  local tmp
+  tmp="$(mktemp "${ACME_DNS_DIR}/.${domain}.XXXXXX")"
+  printf 'dns_cloudflare_api_token = %s\n' "$token" >"$tmp"
+  install -o root -g root -m 0600 "$tmp" "$creds"
+  rm -f "$tmp"
+  local args=(certonly --dns-cloudflare
+    --dns-cloudflare-credentials "$creds"
+    --dns-cloudflare-propagation-seconds 30
+    --cert-name "$domain" --non-interactive --agree-tos --expand
+    --deploy-hook "systemctl restart lshttpd.service 2>/dev/null || /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true; systemctl restart opanel-api 2>/dev/null || true"
+    -d "$domain" -d "*.${domain}")
+  if [[ -n "$email" ]]; then
+    args+=(--email "$email")
+  else
+    args+=(--register-unsafely-without-email)
+  fi
+  certbot "${args[@]}"
+  restart_openlitespeed
+  copy_panel_live_certificate "$domain"
+  panel_cert_store_sync
+  echo "Wildcard SSL certificate issued for ${domain} (and *.${domain})"
+}
+
+remove_cloudflare_wildcard() {
+  local domain="$1"
+  require_domain "$domain"
+  certbot delete --cert-name "$domain" --non-interactive 2>/dev/null || true
+  rm -f "${ACME_DNS_DIR}/${domain}.ini"
+  panel_cert_store_sync
+  echo "Wildcard SSL certificate removed for ${domain}"
 }
 
 is_in() {
@@ -3129,6 +3191,14 @@ case "$cmd" in
   certbot-auto-renew-install)
     write_ssl_auto_renew_timer
     echo "SSL auto-renew timer installed"
+    ;;
+  certbot-dns-cloudflare)
+    [[ $# -ge 1 && $# -le 2 ]] || deny "usage: certbot-dns-cloudflare <domain> [email]   (token on stdin)"
+    issue_cloudflare_wildcard "$1" "${2:-}"
+    ;;
+  certbot-dns-cloudflare-remove)
+    [[ $# -eq 1 ]] || deny "usage: certbot-dns-cloudflare-remove <domain>"
+    remove_cloudflare_wildcard "$1"
     ;;
   manual-ssl-install)
     [[ $# -eq 1 ]] || deny "usage: manual-ssl-install <domain>"

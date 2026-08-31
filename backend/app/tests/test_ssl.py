@@ -144,6 +144,76 @@ def test_issue_ssl_passes_aliases_and_email(monkeypatch):
     assert captured["helper_args"] == ["example.test", "www.example.test", "admin@example.test"]
 
 
+def test_issue_wildcard_ssl_passes_token_on_stdin(monkeypatch):
+    captured = {}
+
+    def fake_privileged(helper_command, helper_args=None, **kwargs):
+        captured["helper_command"] = helper_command
+        captured["helper_args"] = helper_args
+        captured["kwargs"] = kwargs
+        return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(ssl.shell, "privileged", fake_privileged)
+
+    result = ssl.issue_wildcard_ssl("example.test", "cf-secret-token-abc123", email="admin@example.test")
+
+    assert result.returncode == 0
+    assert captured["helper_command"] == "certbot-dns-cloudflare"
+    assert captured["helper_args"] == ["example.test", "admin@example.test"]
+    assert captured["kwargs"]["input"] == "cf-secret-token-abc123"
+    assert captured["kwargs"]["sensitive"] is True
+    fallback = " ".join(captured["kwargs"]["fallback"])
+    assert "--dns-cloudflare" in fallback and "-d '*.example.test'" in fallback
+
+
+def test_wildcard_ssl_helper_writes_root_only_credentials():
+    helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    assert "certbot-dns-cloudflare)" in helper
+    assert "certbot-dns-cloudflare-remove)" in helper
+    assert "ensure_certbot_dns_cloudflare()" in helper
+    assert 'install -d -o root -g root -m 0700 "$ACME_DNS_DIR"' in helper
+    assert 'install -o root -g root -m 0600 "$tmp" "$creds"' in helper
+    assert 'python3-certbot-dns-cloudflare' in (PROJECT_ROOT / "installer" / "install.sh").read_text(encoding="utf-8")
+
+
+def _write_cert(dir_path, name, filename, domains):
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    cert_pem, _ = _cert_pair(domains[0], key=key, aliases=domains[1:])
+    d = dir_path / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / filename).write_bytes(cert_pem)
+
+
+def test_list_available_certificates_and_reuse(monkeypatch, tmp_path):
+    le = tmp_path / "certs"
+    manual = tmp_path / "manual"
+    _write_cert(le, "example.test", "fullchain.pem", ["example.test", "*.example.test"])
+    _write_cert(le, "_default", "fullchain.pem", ["opanel.local"])
+    _write_cert(manual, "foo.test", "fullchain.crt", ["foo.test"])
+    monkeypatch.setattr(ssl, "PANEL_CERT_STORE", le)
+    monkeypatch.setattr(ssl, "MANUAL_SSL_ROOT", manual)
+
+    certs = ssl.list_available_certificates("blog.example.test")
+    names = {c["name"] for c in certs}
+    assert names == {"letsencrypt:example.test", "manual:foo.test"}  # _default skipped
+    wildcard = next(c for c in certs if c["name"] == "letsencrypt:example.test")
+    assert wildcard["is_wildcard"] is True
+    assert wildcard["covers_domain"] is True  # *.example.test covers blog.example.test
+    assert next(c for c in certs if c["name"] == "manual:foo.test")["covers_domain"] is False
+
+    assert ssl.reuse_cert_paths("letsencrypt:example.test") == {
+        "cert": "/etc/letsencrypt/live/example.test/fullchain.pem",
+        "key": "/etc/letsencrypt/live/example.test/privkey.pem",
+        "ca": None,
+    }
+    ok, _ = ssl.reuse_cert_covers("letsencrypt:example.test", "blog.example.test")
+    assert ok is True
+    bad, reason = ssl.reuse_cert_covers("letsencrypt:example.test", "other.test")
+    assert bad is False and "does not cover" in reason
+
+
 def test_issue_ssl_uses_opanel_acme_webroot(monkeypatch):
     captured = {}
 

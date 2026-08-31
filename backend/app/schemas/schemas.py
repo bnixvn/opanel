@@ -276,6 +276,46 @@ class WebsiteCreate(BaseModel):
         return value
 
 
+class WildcardSslRequest(BaseModel):
+    provider: Literal["cloudflare"] = "cloudflare"
+    api_token: Optional[str] = Field(default=None, max_length=400)
+    email: Optional[EmailStr] = None
+
+    @field_validator("api_token")
+    @classmethod
+    def normalize_token(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if len(value) < 10 or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+            raise ValueError("Cloudflare API token looks malformed")
+        return value
+
+
+class ReuseSslRequest(BaseModel):
+    """Serve a website with an existing certificate already on the box."""
+    name: str = Field(min_length=3, max_length=300)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = (value or "").strip()
+        if not re.fullmatch(r"(?:letsencrypt|manual):[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?", value) or ".." in value:
+            raise ValueError("Invalid certificate name")
+        return value
+
+
+class AvailableCertificateOut(BaseModel):
+    name: str            # "<source>:<primary domain>", the id passed to /ssl/reuse
+    source: Literal["letsencrypt", "manual"]
+    domains: list[str] = Field(default_factory=list)
+    is_wildcard: bool = False
+    covers_domain: bool = False
+    not_after: Optional[datetime] = None
+
+
 class WebsiteUpdate(BaseModel):
     php_version: Optional[str] = None
     app_type: Optional[str] = None
@@ -488,6 +528,9 @@ class WebsiteOut(BaseModel):
     wp_installed: bool = False
     ssl_enabled: bool
     ssl_mode: str = "none"
+    ssl_wildcard: bool = False
+    ssl_dns_provider: str = ""
+    ssl_reuse_name: Optional[str] = None
     ssl_updated_at: Optional[datetime] = None
     ssl_has_ca: bool = False
     ssl_cert_path: Optional[str] = Field(default=None, exclude=True)

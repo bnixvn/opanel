@@ -526,6 +526,16 @@ ensure_terminal_tools() {
   fi
 }
 
+ensure_dns_ssl_plugin() {
+  # Wildcard SSL via Cloudflare DNS-01. The helper also installs this on
+  # demand, but doing it here keeps the first issuance fast.
+  command -v certbot >/dev/null 2>&1 || return 0
+  if ! certbot plugins 2>/dev/null | grep -q 'dns-cloudflare'; then
+    log "Installing certbot Cloudflare DNS plugin"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-certbot-dns-cloudflare >/dev/null 2>&1 || true
+  fi
+}
+
 remove_ufw_legacy() {
   systemctl disable --now ufw >/dev/null 2>&1 || true
   command -v ufw >/dev/null 2>&1 && timeout 15 ufw --force disable >/dev/null 2>&1 || true
@@ -992,6 +1002,7 @@ fi
 log "Configuring legacy FastCGI cache compatibility"
 configure_fastcgi_cache
 ensure_terminal_tools
+ensure_dns_ssl_plugin
 venv_needs_recreate=false
 if [[ ! -x "$APP_DIR/backend/.venv/bin/uvicorn" ]]; then
   venv_needs_recreate=true

@@ -376,6 +376,13 @@ function App() {
   const [sslMode, setSslMode] = useState('letsencrypt');
   const [manualSslForm, setManualSslForm] = useState({ certificate: '', private_key: '', ca_bundle: '' });
   const [manualSslFiles, setManualSslFiles] = useState({ certificate: null, private_key: null, ca_bundle: null });
+  const [wildcardSslForm, setWildcardSslForm] = useState({ api_token: '', email: '' });
+  const [availableCerts, setAvailableCerts] = useState([]);   // SSL page: certs on the box covering currentSite
+  const [reuseCertName, setReuseCertName] = useState('');
+  // Create-website SSL section
+  const [createSslMode, setCreateSslMode] = useState('letsencrypt'); // letsencrypt|wildcard|existing|manual
+  const [createSslForm, setCreateSslForm] = useState({ api_token: '', email: '', reuse_name: '', certificate: '', private_key: '', ca_bundle: '' });
+  const [createSslCerts, setCreateSslCerts] = useState([]);
   const [cronSchedule, setCronSchedule] = useState('*/15 * * * *');
   const [cronCommand, setCronCommand] = useState('');
   const [cronItems, setCronItems] = useState([]);
@@ -1401,9 +1408,37 @@ function App() {
       } else {
         setNotice(`Created site ${cleanDomain}. Upload your files to public_html/ folder.`);
       }
-      if (installSslAfterCreate) await enableSsl(data.id);
+      if (installSslAfterCreate) await applySslForNewSite(data.id, cleanDomain);
       refreshAll();
     }
+  }
+
+  async function applySslForNewSite(id, siteDomain) {
+    if (createSslMode === 'wildcard') {
+      const token = String(createSslForm.api_token || '').trim();
+      if (!token) { setError('Enter a Cloudflare API token for wildcard SSL.'); return; }
+      const b = { provider: 'cloudflare', api_token: token };
+      const em = String(createSslForm.email || '').trim(); if (em) b.email = em;
+      await request(`/websites/${id}/ssl/wildcard`, { method: 'POST', body: JSON.stringify(b) }, 'Issuing wildcard certificate...');
+    } else if (createSslMode === 'existing') {
+      if (!createSslForm.reuse_name) { setError('Pick a certificate to use.'); return; }
+      await request(`/websites/${id}/ssl/reuse`, { method: 'POST', body: JSON.stringify({ name: createSslForm.reuse_name }) }, 'Applying existing certificate...');
+    } else if (createSslMode === 'manual') {
+      const form = new FormData();
+      form.append('certificate_text', createSslForm.certificate);
+      form.append('private_key_text', createSslForm.private_key);
+      if (createSslForm.ca_bundle.trim()) form.append('ca_bundle_text', createSslForm.ca_bundle);
+      await request(`/websites/${id}/ssl/manual`, { method: 'POST', body: form }, 'Installing manual SSL...');
+    } else {
+      await request(`/websites/${id}/ssl`, { method: 'POST' }, "Installing Let's Encrypt SSL...");
+    }
+  }
+
+  async function loadCreateSslCerts() {
+    const cleanDomain = domain.trim().toLowerCase();
+    if (!cleanDomain) { setCreateSslCerts([]); return; }
+    const data = await request(`/websites/available-certificates?domain=${encodeURIComponent(cleanDomain)}`, {}, 'Finding certificates...');
+    setCreateSslCerts(Array.isArray(data) ? data : []);
   }
 
   async function deleteWebsite(id) {
@@ -1415,6 +1450,33 @@ function App() {
   async function enableSsl(id) {
     const data = await request(`/websites/${id}/ssl`, { method: 'POST' }, "Installing Let's Encrypt SSL...");
     if (data) refreshAll();
+  }
+
+  async function issueWildcardSsl() {
+    if (!selectedWebsiteId) return;
+    const token = String(wildcardSslForm.api_token || '').trim();
+    if (!token && !currentSite?.ssl_wildcard) { setError('Enter a Cloudflare API token (Zone → DNS → Edit).'); return; }
+    const body = { provider: 'cloudflare' };
+    if (token) body.api_token = token;
+    const email = String(wildcardSslForm.email || '').trim();
+    if (email) body.email = email;
+    const data = await request(`/websites/${selectedWebsiteId}/ssl/wildcard`, { method: 'POST', body: JSON.stringify(body) }, 'Issuing wildcard certificate via Cloudflare DNS...');
+    if (data) { setNotice(`Wildcard certificate issued for ${data.domain} and *.${data.domain}.`); setWildcardSslForm({ api_token: '', email: '' }); refreshAll(); }
+  }
+
+  async function loadAvailableCerts() {
+    if (!selectedWebsiteId) return;
+    const data = await request(`/websites/${selectedWebsiteId}/available-certificates`, {}, 'Loading certificates on this server...');
+    const list = Array.isArray(data) ? data : [];
+    setAvailableCerts(list);
+    const covering = list.find(c => c.covers_domain);
+    setReuseCertName(prev => prev || (covering ? covering.name : ''));
+  }
+
+  async function reuseExistingSsl() {
+    if (!selectedWebsiteId || !reuseCertName) { setError('Pick a certificate to use.'); return; }
+    const data = await request(`/websites/${selectedWebsiteId}/ssl/reuse`, { method: 'POST', body: JSON.stringify({ name: reuseCertName }) }, 'Applying certificate...');
+    if (data) { setNotice(`${data.domain} now uses ${reuseCertName.split(':')[1]}.`); refreshAll(); }
   }
 
   async function addWebsiteAlias(site) {
@@ -2727,9 +2789,13 @@ function App() {
 
   useEffect(() => {
     if (!currentSite) return;
-    setSslMode(currentSite.ssl_mode === 'manual' ? 'manual' : 'letsencrypt');
+    const m = currentSite.ssl_mode;
+    setSslMode(m === 'manual' ? 'manual' : m === 'reuse' ? 'existing' : currentSite.ssl_wildcard ? 'wildcard' : 'letsencrypt');
     setManualSslForm({ certificate: '', private_key: '', ca_bundle: '' });
     setManualSslFiles({ certificate: null, private_key: null, ca_bundle: null });
+    setWildcardSslForm({ api_token: '', email: '' });
+    setAvailableCerts([]);
+    setReuseCertName(m === 'reuse' ? (currentSite.ssl_reuse_name || '') : '');
   }, [currentSite?.id]);
 
   useEffect(() => { if (selectedWebsiteId && page === 'backups') { listBackups(); loadBackupJobs(); } }, [selectedWebsiteId, page]);
@@ -3166,8 +3232,39 @@ function App() {
         </label>}
         <label className="check-line">
           <input type="checkbox" checked={installSslAfterCreate} onChange={e => setInstallSslAfterCreate(e.target.checked)} />
-          Install SSL after creating
+          Set up SSL after creating
         </label>
+        {installSslAfterCreate && <div className="create-ssl-box">
+          <div className="segmented ssl-mode-tabs">
+            <button className={createSslMode === 'letsencrypt' ? 'active' : ''} onClick={() => setCreateSslMode('letsencrypt')}><Lock size={13}/> Let's Encrypt</button>
+            <button className={createSslMode === 'wildcard' ? 'active' : ''} onClick={() => setCreateSslMode('wildcard')}><Globe size={13}/> Wildcard (Cloudflare)</button>
+            <button className={createSslMode === 'existing' ? 'active' : ''} onClick={() => { setCreateSslMode('existing'); loadCreateSslCerts(); }}><RefreshCw size={13}/> Use existing</button>
+            <button className={createSslMode === 'manual' ? 'active' : ''} onClick={() => setCreateSslMode('manual')}><KeyRound size={13}/> Manual</button>
+          </div>
+          {createSslMode === 'letsencrypt' && <p className="hint">certbot HTTP-01 — the domain must point to this server's IP first.</p>}
+          {createSslMode === 'wildcard' && <div className="create-ssl-fields">
+            <input type="password" autoComplete="off" placeholder="Cloudflare API token (Zone → DNS → Edit)" value={createSslForm.api_token} onChange={e => setCreateSslForm(p => ({ ...p, api_token: e.target.value }))} />
+            <input type="email" autoComplete="off" placeholder="Contact email (optional)" value={createSslForm.email} onChange={e => setCreateSslForm(p => ({ ...p, email: e.target.value }))} />
+            <p className="hint">Issues one cert for the domain and *.domain via a Cloudflare DNS challenge.</p>
+          </div>}
+          {createSslMode === 'existing' && <div className="create-ssl-fields">
+            <div className="form-row">
+              <select value={createSslForm.reuse_name} onChange={e => setCreateSslForm(p => ({ ...p, reuse_name: e.target.value }))}>
+                <option value="">— pick a certificate on this server —</option>
+                {createSslCerts.map(c => <option key={c.name} value={c.name}>{c.domains.join(', ')} ({c.source})</option>)}
+              </select>
+              <button className="secondary-light" type="button" onClick={loadCreateSslCerts}><RefreshCw size={13}/> Refresh</button>
+            </div>
+            <p className="hint">{createSslCerts.length === 0
+              ? 'No certificate on this server covers this domain yet. Issue a wildcard on the parent domain first, then it will show here.'
+              : 'e.g. a *.example.com wildcard issued earlier covers every x.example.com.'}</p>
+          </div>}
+          {createSslMode === 'manual' && <div className="create-ssl-fields">
+            <textarea rows={4} placeholder="-----BEGIN CERTIFICATE-----" value={createSslForm.certificate} onChange={e => setCreateSslForm(p => ({ ...p, certificate: e.target.value }))} />
+            <textarea rows={4} placeholder="-----BEGIN PRIVATE KEY-----" value={createSslForm.private_key} onChange={e => setCreateSslForm(p => ({ ...p, private_key: e.target.value }))} />
+            <textarea rows={3} placeholder="CA bundle (optional)" value={createSslForm.ca_bundle} onChange={e => setCreateSslForm(p => ({ ...p, ca_bundle: e.target.value }))} />
+          </div>}
+        </div>}
         <p className="hint">{wpFieldsEnabled
           ? 'WordPress will be installed and the panel will show the URL, admin account, and password after creation.'
           : 'A virtual host will be created with public_html/ folder. Upload your PHP, HTML, or static files via File Manager.'}</p>
@@ -3188,7 +3285,7 @@ function App() {
               </div>
             </div>
             <div className="site-meta">
-              <span className={`badge site-ssl-badge ${site.ssl_enabled ? 'ok' : ''}`}>{site.ssl_enabled ? 'SSL OK' : 'No SSL'}</span>
+              <span className={`badge site-ssl-badge ${site.ssl_enabled ? 'ok' : ''}`}>{site.ssl_wildcard ? 'Wildcard' : site.ssl_mode === 'reuse' ? 'Shared cert' : site.ssl_enabled ? 'SSL OK' : 'No SSL'}</span>
               <span>Type <strong>{site.app_type || 'wordpress'}</strong></span>
               <span>PHP <strong>{site.php_version}</strong></span>
               {site.app_type === 'php' && site.nginx_rewrite_mode && site.nginx_rewrite_mode !== 'none' && <span>Rewrite <strong>{site.nginx_rewrite_mode}</strong></span>}
@@ -3242,10 +3339,14 @@ function App() {
 
   function renderSsl() {
     const sslLabel = currentSite?.ssl_mode === 'manual'
-      ? 'Manual SSL Enabled'
-      : currentSite?.ssl_enabled
-        ? 'SSL Enabled'
-        : 'SSL Disabled';
+      ? 'Manual SSL'
+      : currentSite?.ssl_mode === 'reuse'
+        ? 'Existing certificate'
+        : currentSite?.ssl_wildcard
+          ? 'Wildcard SSL'
+          : currentSite?.ssl_enabled
+            ? 'SSL Enabled'
+            : 'SSL Disabled';
     const sslUpdated = currentSite?.ssl_updated_at ? new Date(currentSite.ssl_updated_at).toLocaleString() : '';
     return <section className="section">
       <h2>SSL Certificate</h2>
@@ -3253,17 +3354,44 @@ function App() {
       {currentSite && <div className="info-box" style={{marginTop:8}}>
         <strong>{currentSite.domain}</strong>
         <span className={currentSite.ssl_enabled ? 'badge ok' : 'badge'} style={{justifySelf:'start'}}>{sslLabel}</span>
+        {currentSite.ssl_wildcard && <span className="badge ok" style={{justifySelf:'start'}}>*.{currentSite.domain}</span>}
+        {currentSite.ssl_mode === 'reuse' && currentSite.ssl_reuse_name && <span className="hint">{currentSite.ssl_reuse_name.split(':')[1]}</span>}
         {sslUpdated && <span className="hint">Updated {sslUpdated}</span>}
         {currentSite.ssl_mode === 'manual' && currentSite.ssl_has_ca && <span className="badge ok" style={{justifySelf:'start'}}>CA Bundle</span>}
       </div>}
       <div className="segmented ssl-mode-tabs">
         <button className={sslMode === 'letsencrypt' ? 'active' : ''} onClick={() => setSslMode('letsencrypt')}><Lock size={14}/> Let's Encrypt</button>
+        <button className={sslMode === 'wildcard' ? 'active' : ''} onClick={() => setSslMode('wildcard')}><Globe size={14}/> Wildcard (Cloudflare)</button>
+        <button className={sslMode === 'existing' ? 'active' : ''} onClick={() => { setSslMode('existing'); loadAvailableCerts(); }}><RefreshCw size={14}/> Use existing</button>
         <button className={sslMode === 'manual' ? 'active' : ''} onClick={() => setSslMode('manual')}><KeyRound size={14}/> Manual SSL</button>
       </div>
       {sslMode === 'letsencrypt' ? <>
         <button disabled={!selectedWebsiteId || !!loading} onClick={() => enableSsl(selectedWebsiteId)} style={{marginTop:8}}><Lock size={15}/> Install / Renew SSL</button>
-        <p className="hint">The domain must point to the correct VPS IP before issuing SSL.</p>
-      </> : <div className="manual-ssl-grid">
+        <p className="hint">certbot HTTP-01 — the domain must point to this server's IP before issuing.</p>
+      </> : sslMode === 'wildcard' ? <div className="manual-ssl-grid">
+        <label style={{gridColumn:'1 / -1'}}>Cloudflare API token
+          <input type="password" autoComplete="off" value={wildcardSslForm.api_token} onChange={e => setWildcardSslForm(p => ({ ...p, api_token: e.target.value }))} placeholder={currentSite?.ssl_wildcard ? 'Stored — leave blank to reuse' : 'Token with Zone → DNS → Edit for this zone'} />
+        </label>
+        <label style={{gridColumn:'1 / -1'}}>Contact email (optional)
+          <input type="email" autoComplete="off" value={wildcardSslForm.email} onChange={e => setWildcardSslForm(p => ({ ...p, email: e.target.value }))} placeholder="admin@domain.com" />
+        </label>
+        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={issueWildcardSsl}><Globe size={15}/> {currentSite?.ssl_wildcard ? 'Renew / re-issue wildcard' : 'Issue wildcard certificate'}</button>
+        <p className="hint" style={{gridColumn:'1 / -1'}}>Issues one cert for <strong>{currentSite?.domain || 'the domain'}</strong> and <strong>*.{currentSite?.domain || 'domain'}</strong> via a Cloudflare DNS challenge — no DNS record or port 80 needed. Other websites can then pick this cert under "Use existing".</p>
+      </div> : sslMode === 'existing' ? <div className="manual-ssl-grid">
+        <div className="form-row" style={{gridColumn:'1 / -1'}}>
+          <select value={reuseCertName} onChange={e => setReuseCertName(e.target.value)}>
+            <option value="">— pick a certificate on this server —</option>
+            {availableCerts.map(c => <option key={c.name} value={c.name} disabled={!c.covers_domain}>
+              {c.domains.join(', ')} · {c.source}{c.covers_domain ? '' : ' (does not cover this domain)'}
+            </option>)}
+          </select>
+          <button className="secondary-light" type="button" disabled={!!loading} onClick={loadAvailableCerts}><RefreshCw size={13}/> Refresh</button>
+        </div>
+        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !reuseCertName || !!loading} onClick={reuseExistingSsl}><Lock size={15}/> Use this certificate</button>
+        <p className="hint" style={{gridColumn:'1 / -1'}}>{availableCerts.length === 0
+          ? 'No certificate on this server. Issue a Let’s Encrypt or wildcard cert first (here or on another domain).'
+          : 'A *.example.com wildcard covers every x.example.com — issue it once, reuse it everywhere.'}</p>
+      </div> : <div className="manual-ssl-grid">
         <label>
           Certificate (.crt/.pem)
           <input type="file" accept=".crt,.pem" onChange={e => setManualSslFiles(prev => ({ ...prev, certificate: e.target.files?.[0] || null }))} />
