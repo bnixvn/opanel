@@ -37,14 +37,14 @@ def test_positive_limit_is_converted_to_bytes():
 
 
 def test_enforce_allows_any_size_when_limit_is_zero(monkeypatch):
-    monkeypatch.setattr(storage_quota, "user_storage_used_bytes", lambda db, user: 900 * BYTES_PER_MB)
+    monkeypatch.setattr(storage_quota, "user_storage_used_bytes", lambda db, user, **kw: 900 * BYTES_PER_MB)
     storage_quota.enforce_user_storage_quota(
         _FakeSession(), _user(storage_limit_mb=0), incoming_bytes=500 * BYTES_PER_MB
     )
 
 
 def test_enforce_still_blocks_over_a_real_limit(monkeypatch):
-    monkeypatch.setattr(storage_quota, "user_storage_used_bytes", lambda db, user: 900 * BYTES_PER_MB)
+    monkeypatch.setattr(storage_quota, "user_storage_used_bytes", lambda db, user, **kw: 900 * BYTES_PER_MB)
     with pytest.raises(StorageQuotaExceeded):
         storage_quota.enforce_user_storage_quota(
             _FakeSession(), _user(storage_limit_mb=1024), incoming_bytes=200 * BYTES_PER_MB
@@ -52,7 +52,7 @@ def test_enforce_still_blocks_over_a_real_limit(monkeypatch):
 
 
 def test_enforce_allows_within_a_real_limit(monkeypatch):
-    monkeypatch.setattr(storage_quota, "user_storage_used_bytes", lambda db, user: 100 * BYTES_PER_MB)
+    monkeypatch.setattr(storage_quota, "user_storage_used_bytes", lambda db, user, **kw: 100 * BYTES_PER_MB)
     storage_quota.enforce_user_storage_quota(
         _FakeSession(), _user(storage_limit_mb=1024), incoming_bytes=200 * BYTES_PER_MB
     )
@@ -61,7 +61,7 @@ def test_enforce_allows_within_a_real_limit(monkeypatch):
 def test_summary_reports_unlimited_as_none(monkeypatch):
     """The frontend treats storage_limit_bytes === null as 'no limit', so an
     unlimited account must not report a 0-byte limit."""
-    monkeypatch.setattr(storage_quota, "user_storage_used_bytes", lambda db, user: 42 * BYTES_PER_MB)
+    monkeypatch.setattr(storage_quota, "user_storage_used_bytes", lambda db, user, **kw: 42 * BYTES_PER_MB)
     summary = storage_quota.storage_usage_summary(_FakeSession(), _user(storage_limit_mb=0))
     assert summary["storage_limit_bytes"] is None
     assert summary["storage_percent"] == 0.0
