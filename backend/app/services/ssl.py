@@ -180,6 +180,24 @@ def _read_cert_bytes(path: Path) -> bytes | None:
         return None
 
 
+def refresh_cert_store() -> None:
+    """Re-mirror every Let's Encrypt live cert into the opanel-readable store.
+
+    /etc/letsencrypt/live is root-only, so the panel reads certs from the
+    /etc/opanel/certs mirror instead. Certs issued before that mirror existed
+    (or on a box where no issue/renew has run since) would be missing, so the
+    "use existing" pickers refresh it first. Best-effort.
+    """
+    try:
+        shell.privileged(
+            "panel-cert-sync",
+            check=False,
+            fallback=["bash", "-lc", "true"],
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def list_available_certificates(target_domain: str | None = None) -> list[dict]:
     """Every certificate already installed on the box that a website could be
     pointed at: Let's Encrypt live certs (via the opanel-readable mirror) and

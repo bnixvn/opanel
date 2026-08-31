@@ -1024,6 +1024,7 @@ def enable_wildcard_ssl(
 @router.get("/{website_id}/available-certificates", response_model=List[AvailableCertificateOut])
 def website_available_certificates(website_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     website = _get_authorized_website(db, website_id, current_user)
+    ssl.refresh_cert_store()
     return ssl.list_available_certificates(website.domain)
 
 
@@ -1037,6 +1038,7 @@ def available_certificates_for_domain(
     form before the site exists. Only covering certs are returned so one tenant
     cannot enumerate another's certificate names."""
     safe_domain = (domain or "").strip().lower()
+    ssl.refresh_cert_store()
     return [c for c in ssl.list_available_certificates(safe_domain) if c["covers_domain"]]
 
 

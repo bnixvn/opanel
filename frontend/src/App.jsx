@@ -1437,9 +1437,16 @@ function App() {
   async function loadCreateSslCerts() {
     const cleanDomain = domain.trim().toLowerCase();
     if (!cleanDomain) { setCreateSslCerts([]); return; }
-    const data = await request(`/websites/available-certificates?domain=${encodeURIComponent(cleanDomain)}`, {}, 'Finding certificates...');
+    const data = await request(`/websites/available-certificates?domain=${encodeURIComponent(cleanDomain)}`, { silent: true });
     setCreateSslCerts(Array.isArray(data) ? data : []);
   }
+
+  // Keep the "Use existing" cert list in sync with the domain field.
+  useEffect(() => {
+    if (!installSslAfterCreate || createSslMode !== 'existing') return;
+    const t = setTimeout(loadCreateSslCerts, 400);
+    return () => clearTimeout(t);
+  }, [domain, createSslMode, installSslAfterCreate]);
 
   async function deleteWebsite(id) {
     if (!confirm('Delete this website including files, vhost, and database?')) return;
@@ -3255,9 +3262,11 @@ function App() {
               </select>
               <button className="secondary-light" type="button" onClick={loadCreateSslCerts}><RefreshCw size={13}/> Refresh</button>
             </div>
-            <p className="hint">{createSslCerts.length === 0
-              ? 'No certificate on this server covers this domain. Issue a wildcard (here or on the apex domain) first, then it shows up.'
-              : 'e.g. a *.example.com wildcard issued earlier covers every x.example.com.'}</p>
+            <p className="hint">{!domain.trim()
+              ? 'Type the domain above first — this list shows only certificates that cover it.'
+              : createSslCerts.length === 0
+                ? `No certificate on this server covers ${domain.trim().toLowerCase()}. Note a *.example.com wildcard covers x.example.com but not example.com itself. Issue a Let's Encrypt or wildcard cert first.`
+                : 'A *.example.com wildcard issued earlier covers every x.example.com.'}</p>
           </div>}
           {createSslMode === 'manual' && <div className="create-ssl-fields">
             <textarea rows={4} placeholder="-----BEGIN CERTIFICATE-----" value={createSslForm.certificate} onChange={e => setCreateSslForm(p => ({ ...p, certificate: e.target.value }))} />
