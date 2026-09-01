@@ -1018,6 +1018,14 @@ save_waf_site_rules() {
     deny "WAF site rules must be 160 KB or smaller"
   fi
   target="/usr/local/lsws/conf/opanel/waf/sites/${domain}.conf"
+  # Nothing to do (and no reason to restart OLS) when the rendered rules are
+  # byte-identical to what is already on disk -- the common case on a bulk
+  # refresh where the rule set has not changed.
+  if [[ -f "$target" ]] && cmp -s "$tmp" "$target"; then
+    rm -f "$tmp"
+    echo "WAF site rules unchanged: ${domain}"
+    return 0
+  fi
   if [[ -f "$target" ]]; then
     backup="${target}.bak.$(date +%s)"
     cp "$target" "$backup"
@@ -2736,7 +2744,9 @@ ensure_php_pool() {
   ensure_php_runtime_dirs "$user"
   install -d -o root -g root -m 0755 "$pool_dir"
   calculate_php_fpm_pool_tuning "$pool_file"
-  cat >"$pool_file" <<POOL
+  local pool_tmp
+  pool_tmp="$(mktemp)"
+  cat >"$pool_tmp" <<POOL
 ; opanel auto-tunes these values from RAM, CPU and managed pool count.
 ; Optional overrides: opanel_PHP_FPM_WORKER_MB, opanel_PHP_FPM_MAX_CHILDREN,
 ; opanel_PHP_FPM_IDLE_TIMEOUT, opanel_PHP_FPM_MAX_REQUESTS,
@@ -2752,8 +2762,15 @@ open_basedir = ${target}:${sess_dir}:${upload_dir}:/usr/share/php
 upload_tmp_dir = ${upload_dir}
 session.save_path = ${sess_dir}
 POOL
-  chown root:root "$pool_file"
-  chmod 0644 "$pool_file"
+  # Skip the OLS restart when the pool config is byte-identical to what is
+  # already deployed -- a bulk site refresh writes the same file back for every
+  # site and would otherwise restart OLS once per site for no reason.
+  if [[ -f "$pool_file" ]] && cmp -s "$pool_tmp" "$pool_file"; then
+    rm -f "$pool_tmp"
+    return 0
+  fi
+  install -m 0644 -o root -g root "$pool_tmp" "$pool_file"
+  rm -f "$pool_tmp"
   restart_openlitespeed 2>/dev/null || true
 }
 
@@ -2962,11 +2979,22 @@ case "$cmd" in
     for hostname in "$@"; do
       require_domain "$hostname"
     done
+    vhost_conf="$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
+    vhost_tmp="$(mktemp)"
+    cat >"$vhost_tmp"
+    # A bulk refresh re-renders every vhost with identical output; when the file
+    # is byte-identical and already in place there is nothing to sync or restart.
+    if [[ -f "$vhost_conf" ]] && cmp -s "$vhost_tmp" "$vhost_conf"; then
+      rm -f "$vhost_tmp"
+      echo "vhost unchanged: ${safe_domain}"
+      exit 0
+    fi
     install -d -o root -g opanel -m 2775 "$OLS_VHOSTS_DIR/$safe_domain"
-    cat >"$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
+    install -m 0644 -o root -g opanel "$vhost_tmp" "$vhost_conf"
+    rm -f "$vhost_tmp"
     chown -R root:opanel "$OLS_VHOSTS_DIR/$safe_domain"
     chmod 2775 "$OLS_VHOSTS_DIR/$safe_domain"
-    chmod 0644 "$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
+    chmod 0644 "$vhost_conf"
     # The -defer variant only stages the vhost file; the caller (e.g. a bulk
     # DirectAdmin import writing dozens of vhosts) is responsible for a single
     # `ols-sync-main` afterwards instead of one OLS restart per vhost.

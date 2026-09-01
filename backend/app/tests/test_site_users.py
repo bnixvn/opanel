@@ -246,3 +246,38 @@ def test_rm_site_helper_binds_delete_to_user_root_and_deletes_no_follow():
     assert "os.O_NOFOLLOW" in helper
     assert "os.unlink(name, dir_fd=dir_fd)" in helper
     assert 'usage: rm-site <site-user> <site-root> <path>' in helper
+
+
+def test_update_skips_per_site_refresh_when_nothing_site_facing_changed():
+    update = UPDATE_SCRIPT.read_text(encoding="utf-8")
+    # fingerprint gate on the files that actually shape per-site output
+    assert 'SITE_FP_FILE="/var/lib/opanel/site-refresh.fingerprint"' in update
+    assert "site_refresh_fingerprint()" in update
+    assert 'backend/app/services/openlitespeed.py' in update
+    assert 'backend/app/api/websites.py' in update
+    assert "skipping the per-site refresh" in update
+    assert "--refresh-sites)" in update
+    assert 'FORCE_SITE_REFRESH="${FORCE_SITE_REFRESH:-false}"' in update
+    # when the loop does run it defers the OLS/WAF reload to the single
+    # ols-sync-main near the end of the script
+    assert "waf.sync_website_rules(website, defer_reload=True)" in update
+    assert "_rewrite_website_vhost(website, defer_reload=True)" in update
+    # the redundant second recursive chown per site is gone from that loop
+    loop = update.split("Refreshing managed site permissions", 1)[1].split("Compiling backend modules", 1)[0]
+    assert "site_users.fix_site_permissions(" not in loop
+    # the recursive panel-user re-harden is version-gated too
+    assert "HARDEN_SITES_VERSION=" in update
+    assert 'harden_marker="/var/lib/opanel/harden-sites.version"' in update
+    assert 'if [[ "$do_recursive" == 1 ]]; then' in update
+
+
+def test_helper_skips_ols_restart_when_generated_config_is_unchanged():
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    # WAF site file
+    assert 'if [[ -f "$target" ]] && cmp -s "$tmp" "$target"; then' in helper
+    assert "WAF site rules unchanged:" in helper
+    # PHP-FPM pool file
+    assert 'if [[ -f "$pool_file" ]] && cmp -s "$pool_tmp" "$pool_file"; then' in helper
+    # OLS vhost file
+    assert 'if [[ -f "$vhost_conf" ]] && cmp -s "$vhost_tmp" "$vhost_conf"; then' in helper
+    assert "vhost unchanged:" in helper

@@ -31,12 +31,15 @@ Options:
   --channel MODE     Set update mode: release, tag, or branch.
   --remote NAME      Git remote to fetch from or create on clone (default: origin).
   --skip-pull        Sync the current SOURCE_DIR without fetching/checking out.
+  --refresh-sites    Force the per-site refresh (re-harden files, rewrite every
+                     vhost/WAF file). It is skipped automatically when nothing
+                     site-facing changed since the last update.
   --app-dir DIR      Production deployment dir (default: /opt/opanel).
   -h, --help         Show this help.
 
 Environment:
   APP_DIR, SOURCE_DIR, REPO_URL, GIT_REMOTE, UPDATE_CHANNEL, BRANCH,
-  RELEASE_TAG, RELEASE_PATTERN, RELEASE_ZIP_URL, SKIP_PULL.
+  RELEASE_TAG, RELEASE_PATTERN, RELEASE_ZIP_URL, SKIP_PULL, FORCE_SITE_REFRESH.
 
 Notes:
   The branch channel is the default and pulls GitHub main. The release channel
@@ -101,6 +104,7 @@ RELEASE_TAG="${RELEASE_TAG-}"                     # used when UPDATE_CHANNEL=tag
 RELEASE_PATTERN="${RELEASE_PATTERN:-v[0-9]*.[0-9]*.[0-9]*}"
 RELEASE_ZIP_URL="${RELEASE_ZIP_URL:-}"             # optional archive URL template with {tag}
 SKIP_PULL="${SKIP_PULL:-false}"
+FORCE_SITE_REFRESH="${FORCE_SITE_REFRESH:-false}"
 UPDATE_STATE_FILE="${UPDATE_STATE_FILE:-/var/lib/opanel/update-status.json}"
 RELEASE_WORK_DIR=""
 
@@ -112,6 +116,7 @@ while [[ $# -gt 0 ]]; do
     --tag) require_arg "$1" "${2-}"; UPDATE_CHANNEL="tag"; RELEASE_TAG="$2"; shift 2 ;;
     --remote) require_arg "$1" "${2-}"; GIT_REMOTE="$2"; shift 2 ;;
     --skip-pull) SKIP_PULL="true"; shift ;;
+    --refresh-sites) FORCE_SITE_REFRESH="true"; shift ;;
     --app-dir) require_arg "$1" "${2-}"; APP_DIR="$2"; shift 2 ;;
     -h|--help)
       usage
@@ -543,6 +548,12 @@ remove_ufw_legacy() {
   rm -rf /etc/ufw /var/lib/ufw 2>/dev/null || true
 }
 
+# Bump when the recursive per-site hardening below changes. Runs that already
+# stamped the current version skip the (expensive) recursive chown/chmod walk and
+# only re-apply the cheap home-dir and php-dir perms. FORCE_SITE_REFRESH=true
+# re-runs it regardless.
+HARDEN_SITES_VERSION=2
+
 harden_existing_panel_users() {
   local user home_dir site_dir
   getent group opanel-sftp >/dev/null || return 0
@@ -550,6 +561,13 @@ harden_existing_panel_users() {
   chmod 0711 /home
   chmod a-s /home 2>/dev/null || true
   chmod -t /home 2>/dev/null || true
+  local harden_marker="/var/lib/opanel/harden-sites.version"
+  local do_recursive=1
+  if [[ "$FORCE_SITE_REFRESH" != "true" \
+        && "$(cat "$harden_marker" 2>/dev/null || true)" == "$HARDEN_SITES_VERSION" ]]; then
+    do_recursive=0
+    log "Panel-user site permissions already at v${HARDEN_SITES_VERSION} -- skipping the recursive re-harden"
+  fi
   while IFS= read -r user; do
     [[ -n "$user" ]] || continue
     case "$user" in
@@ -569,24 +587,30 @@ harden_existing_panel_users() {
     if command -v setfacl >/dev/null 2>&1; then
       setfacl -b -k "$home_dir" 2>/dev/null || true
     fi
-    find "$home_dir" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | while IFS= read -r -d '' site_dir; do
-      [[ "$(basename "$site_dir")" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]] || continue
-      chown -R "$user:$user" "$site_dir" 2>/dev/null || true
-      if command -v setfacl >/dev/null 2>&1; then
-        setfacl -Rb "$site_dir" 2>/dev/null || true
-        find "$site_dir" -type d -exec setfacl -k {} + 2>/dev/null || true
-      fi
-      find "$site_dir" -type d -exec chmod 755 {} + 2>/dev/null || true
-      find "$site_dir" -type d -exec chmod a-s {} + 2>/dev/null || true
-      find "$site_dir" -type d -exec chmod -t {} + 2>/dev/null || true
-      find "$site_dir" -type f -exec chmod 644 {} + 2>/dev/null || true
-    done
+    if [[ "$do_recursive" == 1 ]]; then
+      find "$home_dir" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | while IFS= read -r -d '' site_dir; do
+        [[ "$(basename "$site_dir")" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]] || continue
+        chown -R "$user:$user" "$site_dir" 2>/dev/null || true
+        if command -v setfacl >/dev/null 2>&1; then
+          setfacl -Rb "$site_dir" 2>/dev/null || true
+          find "$site_dir" -type d -exec setfacl -k {} + 2>/dev/null || true
+        fi
+        find "$site_dir" -type d -exec chmod 755 {} + 2>/dev/null || true
+        find "$site_dir" -type d -exec chmod a-s {} + 2>/dev/null || true
+        find "$site_dir" -type d -exec chmod -t {} + 2>/dev/null || true
+        find "$site_dir" -type f -exec chmod 644 {} + 2>/dev/null || true
+      done
+    fi
     if [[ -d "/var/lib/php/uploads/$user" ]]; then
       chown "$user:$user" "/var/lib/php/uploads/$user" 2>/dev/null || true
       chmod 0700 "/var/lib/php/uploads/$user" 2>/dev/null || true
       chmod g-s "/var/lib/php/uploads/$user" 2>/dev/null || true
     fi
   done < <(getent group opanel-sftp | awk -F: '{gsub(",", "\n", $4); print $4}')
+  if [[ "$do_recursive" == 1 ]]; then
+    install -d -o opanel -g opanel -m 0750 /var/lib/opanel 2>/dev/null || mkdir -p /var/lib/opanel
+    printf '%s\n' "$HARDEN_SITES_VERSION" > "$harden_marker" 2>/dev/null || true
+  fi
 }
 
 install_panel_runtime() {
@@ -1150,11 +1174,51 @@ systemctl enable --now opanel-backup-scheduler.timer >/dev/null 2>&1 || true
 systemctl enable --now opanel-malware-scheduler.timer >/dev/null 2>&1 || true
 
 log "Refreshing managed site permissions"
+# The per-site refresh (re-harden every site's file tree, rewrite every vhost and
+# WAF file) is the slowest phase of an update -- on a box with many sites it is
+# minutes of `find`/`chown` and, before this, one OLS restart per site. Almost
+# every update is backend-only and changes nothing a site's runtime depends on,
+# so gate the loop on a fingerprint of the files that actually shape per-site
+# output. FORCE_SITE_REFRESH=true (or a site stuck in "provisioning") runs it
+# anyway. When it does run, per-site OLS/WAF writes are deferred and the single
+# `ols-sync-main` near the end of this script is the only reload.
+SITE_FP_FILE="/var/lib/opanel/site-refresh.fingerprint"
+site_refresh_fingerprint() {
+  sha256sum \
+    /usr/local/sbin/opanel-helper \
+    "$APP_DIR/backend/app/services/openlitespeed.py" \
+    "$APP_DIR/backend/app/services/waf.py" \
+    "$APP_DIR/backend/app/services/site_users.py" \
+    "$APP_DIR/backend/app/api/websites.py" \
+    2>/dev/null | sha256sum | awk '{print $1}'
+}
 if id -u opanel >/dev/null 2>&1; then
-  sudo -u opanel env HOME="$APP_DIR" opanel_USE_HELPER=true "$APP_DIR/backend/.venv/bin/python" - <<'PY'
+  NEW_SITE_FP="$(site_refresh_fingerprint)"
+  OLD_SITE_FP="$(cat "$SITE_FP_FILE" 2>/dev/null || true)"
+  # Cheap DB-only normalisation always runs; it also tells us whether any site
+  # still needs provisioning (forces the full refresh regardless of fingerprint).
+  NEEDS_REFRESH="$(sudo -u opanel env HOME="$APP_DIR" "$APP_DIR/backend/.venv/bin/python" - <<'PY' || echo 1
+import sys
 from app.core.database import SessionLocal
 from app.models.entities import Website
-from app.services import openlitespeed, site_users, waf
+with SessionLocal() as db:
+    n = db.query(Website).filter(Website.nginx_config_mode != "managed").update(
+        {"nginx_config_mode": "managed"}, synchronize_session=False)
+    if n:
+        db.commit()
+        print(f"normalised nginx_config_mode for {n} site(s)", file=sys.stderr)
+    pending = db.query(Website).filter(Website.status == "provisioning").count()
+print(1 if pending else 0)
+PY
+)"
+  NEEDS_REFRESH="$(printf '%s' "$NEEDS_REFRESH" | tail -n1 | tr -cd '01')"
+  if [[ "$FORCE_SITE_REFRESH" != "true" && -n "$NEW_SITE_FP" && "$NEW_SITE_FP" == "$OLD_SITE_FP" && "${NEEDS_REFRESH:-1}" == "0" ]]; then
+    log "Site-facing config unchanged since last update -- skipping the per-site refresh (FORCE_SITE_REFRESH=true to override)"
+  else
+    sudo -u opanel env HOME="$APP_DIR" opanel_USE_HELPER=true "$APP_DIR/backend/.venv/bin/python" - <<'PY'
+from app.core.database import SessionLocal
+from app.models.entities import Website
+from app.services import site_users, waf
 # _rewrite_website_vhost resolves SSL from ssl_mode (letsencrypt / reuse / manual)
 # and carries aliases, redirects, WAF and flood settings. Calling
 # openlitespeed.rewrite_vhost by hand here dropped ssl_mode="reuse" -- it fell
@@ -1164,39 +1228,28 @@ from app.api.websites import _rewrite_website_vhost
 
 with SessionLocal() as db:
     websites = db.query(Website).all()
-    try:
-        result = openlitespeed.sync_http_flood_zones(websites)
-        if result.returncode != 0:
-            print(f"WARNING: could not refresh HTTP flood zones: {result.stderr or result.stdout}")
-    except Exception as exc:
-        print(f"WARNING: could not refresh HTTP flood zones: {exc}")
     for website in websites:
         try:
             if website.linux_user:
                 runtime_php_version = website.php_version if (website.app_type or "wordpress") in {"wordpress", "php"} else None
+                # ensure_site_runtime already chowns the tree (fix_site_tree);
+                # the standalone fix_site_permissions call was a redundant second
+                # recursive chown per site.
                 site_users.ensure_site_runtime(website.domain, website.root_path, runtime_php_version, website.linux_user)
                 site_users.ensure_document_root(
                     website.root_path,
                     getattr(website, "document_root", "public_html") or "public_html",
                     website.linux_user,
                 )
-            site_users.fix_site_permissions(website.root_path, website.linux_user)
-            result = waf.sync_website_rules(website)
+            result = waf.sync_website_rules(website, defer_reload=True)
             if result.returncode != 0:
                 print(f"WARNING: could not refresh WAF rules for {website.domain}: {result.stderr or result.stdout}")
-            if getattr(website, "nginx_config_mode", "managed") != "managed":
-                website.nginx_config_mode = "managed"
-                db.commit()
-            _rewrite_website_vhost(website)
+            _rewrite_website_vhost(website, defer_reload=True)
         except Exception as exc:
             print(f"WARNING: could not refresh permissions for {website.domain}: {exc}")
-    try:
-        result = openlitespeed.sync_http_flood_zones(websites)
-        if result.returncode != 0:
-            print(f"WARNING: could not refresh HTTP flood zones: {result.stderr or result.stdout}")
-    except Exception as exc:
-        print(f"WARNING: could not refresh HTTP flood zones: {exc}")
 PY
+    printf '%s\n' "$NEW_SITE_FP" > "$SITE_FP_FILE" 2>/dev/null || true
+  fi
 fi
 
 log "Compiling backend modules"
