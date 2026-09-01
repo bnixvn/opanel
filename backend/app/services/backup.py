@@ -32,6 +32,17 @@ SITE_RESTORE_MAX_BYTES = 20 * 1024 * 1024 * 1024
 BACKUP_MANIFEST = "manifest.json"
 PANEL_USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,64}$")
 
+# Full-user archives opanel will restore. opanel writes "opanel_user"; "bpanel_user"
+# is the same archive layout (sites/<domain>/site, databases/<domain>.sql, a
+# version-1 website schema) written by bpanel, opanel's predecessor, so accept it
+# too and move accounts between the panels. bpanel's extra "applications" section
+# is ignored — only domains, files and databases are restored.
+RESTORABLE_BACKUP_KINDS = ("opanel_user", "bpanel_user")
+_PLACEHOLDER_EMAIL_SUFFIXES = (
+    "@users.opanel.test", "@users.opanel.vn",
+    "@users.bpanel.test", "@users.bpanel.vn",
+)
+
 
 def _hostname_conflicts(db, domain: str, exclude_website_id: int | None = None) -> bool:
     safe = (domain or "").strip().lower()
@@ -209,7 +220,7 @@ def describe_user_backup(backup_file: str) -> dict:
     }
     try:
         manifest = read_backup_manifest(str(path))
-        item["valid"] = manifest.get("kind") == "opanel_user"
+        item["valid"] = manifest.get("kind") in RESTORABLE_BACKUP_KINDS
         item["username"] = (manifest.get("user") or {}).get("username") or ""
         item["generated_at"] = manifest.get("generated_at") or ""
         item["websites"] = len(manifest.get("websites") or [])
@@ -327,7 +338,7 @@ def _extract_member_to_file(archive: Path, member_name: str, output_dir: Path) -
 def restore_user_backup(backup_file: str, db) -> dict:
     archive = user_backup_path(backup_file)
     manifest = read_backup_manifest(str(archive))
-    if manifest.get("kind") != "opanel_user":
+    if manifest.get("kind") not in RESTORABLE_BACKUP_KINDS:
         raise ValueError("This is not a full user backup")
     user_info = manifest.get("user") or {}
     username = user_info.get("username") or ""
@@ -338,7 +349,7 @@ def restore_user_backup(backup_file: str, db) -> dict:
     created_user = False
     if user is None:
         email = user_info.get("email") or f"{username}@users.opanel.invalid"
-        if email.endswith(("@users.opanel.test", "@users.opanel.vn")):
+        if email.endswith(_PLACEHOLDER_EMAIL_SUFFIXES):
             email = f"{username}@users.opanel.invalid"
         if db.query(User).filter(User.email == email).first():
             email = f"{username}-{secrets.token_hex(4)}@users.opanel.invalid"

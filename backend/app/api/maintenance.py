@@ -493,7 +493,7 @@ def _save_user_restore_upload(file: UploadFile) -> dict:
     try:
         target = backup.save_uploaded_user_backup(file.filename or "user-backup.tar.gz", file.file)
         manifest = backup.read_backup_manifest(target)
-        if manifest.get("kind") != "opanel_user":
+        if manifest.get("kind") not in backup.RESTORABLE_BACKUP_KINDS:
             raise ValueError("This is not a full user backup")
     except (ValueError, FileNotFoundError) as exc:
         if target:

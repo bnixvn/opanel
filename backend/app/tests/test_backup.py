@@ -1,3 +1,4 @@
+import json
 import tarfile
 from pathlib import Path
 
@@ -51,3 +52,42 @@ def test_restore_helper_validates_and_extracts_external_backup():
     helper = (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
     assert "site-backup-restore)" in helper
     assert "backup path escapes website root" in helper
+
+
+def _user_backup_archive(path: Path, *, kind: str) -> Path:
+    manifest = {
+        "kind": kind,
+        "version": 1,
+        "generated_at": "2026-09-02T00:00:00Z",
+        "user": {"username": "movingco", "email": "old@users.bpanel.vn", "role": "end_user"},
+        "websites": [{"domain": "shop.movingco.test", "app_type": "wordpress",
+                      "document_root": "public_html",
+                      "database": {"db_name": "movingco_shop", "db_user": "movingco_shop",
+                                   "db_password": "x", "sql_member": "databases/shop.movingco.test.sql"}}],
+        "applications": [{"name": "queue-worker"}],  # bpanel-only, must be ignored
+    }
+    mfile = path.parent / "manifest.json"
+    mfile.write_text(json.dumps(manifest), encoding="utf-8")
+    with tarfile.open(path, "w:gz") as tar:
+        tar.add(mfile, arcname=backup.BACKUP_MANIFEST)
+    return path
+
+
+def test_bpanel_user_backup_is_accepted_for_restore(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "backup_root", str(tmp_path))
+    assert "bpanel_user" in backup.RESTORABLE_BACKUP_KINDS
+
+    good = _user_backup_archive(tmp_path / "user-movingco.tar.gz", kind="bpanel_user")
+    info = backup.describe_user_backup(str(good))
+    assert info["valid"] is True
+    assert info["username"] == "movingco"
+    assert info["websites"] == 1
+    assert info["error"] == ""
+
+
+def test_unknown_backup_kind_is_still_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "backup_root", str(tmp_path))
+    bad = _user_backup_archive(tmp_path / "user-other.tar.gz", kind="cpanel_user")
+    info = backup.describe_user_backup(str(bad))
+    assert info["valid"] is False
+    assert info["error"] == "This is not a full user backup"
