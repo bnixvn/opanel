@@ -395,11 +395,11 @@ button:disabled{opacity:.55;cursor:not-allowed;box-shadow:none}
 .row-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 
 /* Toolbar & actions */
-.website-search{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-alt)}
-.website-search svg{flex:none;color:var(--text-muted)}
-.website-search input{flex:1;min-width:0;border:0;background:transparent;padding:2px 0;font-size:14px;outline:none}
-.website-search .hint{flex:none;white-space:nowrap}
-.website-search button{flex:none;width:22px;min-width:22px;height:22px;min-height:22px;padding:0}
+.website-search,.list-search{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-alt)}
+.website-search svg,.list-search svg{flex:none;color:var(--text-muted)}
+.website-search input,.list-search input{flex:1;min-width:0;border:0;background:transparent;padding:2px 0;font-size:14px;outline:none}
+.website-search .hint,.list-search .hint{flex:none;white-space:nowrap}
+.website-search button,.list-search button{flex:none;width:22px;min-width:22px;height:22px;min-height:22px;padding:0}
 .toolbar{display:grid;grid-template-columns:220px 1fr auto;gap:8px;margin-bottom:10px}
 .editor-tools{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;margin:10px 0}
 .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}

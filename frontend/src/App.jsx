@@ -336,6 +336,7 @@ function App() {
   const [page, setPage] = useState(() => pageFromPathname(window.location.pathname));
   const [domain, setDomain] = useState('');
   const [websiteSearch, setWebsiteSearch] = useState('');
+  const [databaseSearch, setDatabaseSearch] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [wpAdminUser, setWpAdminUser] = useState('admin');
   const [wpAdminPassword, setWpAdminPassword] = useState('');
@@ -3437,6 +3438,13 @@ function App() {
   }
 
   function renderDatabases() {
+    const dbQuery = databaseSearch.trim().toLowerCase();
+    const websiteById = new Map(websites.map(w => [w.id, w.domain]));
+    const filteredDatabases = dbQuery
+      ? databases.filter(db => (db.db_name || '').toLowerCase().includes(dbQuery)
+          || (db.db_user || '').toLowerCase().includes(dbQuery)
+          || (websiteById.get(db.website_id) || '').toLowerCase().includes(dbQuery))
+      : databases;
     function copyToClipboard(text, field) {
       const doCopy = navigator.clipboard ? navigator.clipboard.writeText(text) : new Promise((resolve, reject) => {
         try { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); resolve(); } catch(e) { reject(e); }
@@ -3464,8 +3472,15 @@ function App() {
         </div>
       </div>}
       {databases.length === 0 && !createdDbInfo && <EmptyState icon={Database} message="No databases found." action={{ label: 'New database', icon: Plus, onClick: () => { const el = document.getElementById('create-database-name'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
+      {databases.length > 0 && <div className="list-search">
+        <Search size={15}/>
+        <input value={databaseSearch} onChange={e => setDatabaseSearch(e.target.value)} placeholder="Filter databases…" />
+        {databaseSearch && <button className="mini secondary-light" onClick={() => setDatabaseSearch('')}><X size={13}/></button>}
+        <span className="hint">{dbQuery ? `${filteredDatabases.length} of ${databases.length}` : `${databases.length} database${databases.length === 1 ? '' : 's'}`}</span>
+      </div>}
+      {databases.length > 0 && filteredDatabases.length === 0 && <EmptyState icon={Database} message={`No database matches “${databaseSearch}”.`} />}
       <div className="table">
-        {databases.map(db => {
+        {filteredDatabases.map(db => {
           return <div className="row db-row" key={db.id}>
           <span><strong>{db.db_name}</strong></span>
           <span style={{color:'var(--text-muted)'}}>{db.db_user}</span>
