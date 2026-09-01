@@ -380,11 +380,19 @@ def website_custom_rules(website: Website) -> str:
     return _validate_custom_rules(getattr(website, "waf_custom_rules", "") or "")
 
 
-def sync_site_rules(domain: str, enabled_rule_ids: Iterable[str], custom_rules: str = "") -> CommandResult:
+def sync_site_rules(
+    domain: str,
+    enabled_rule_ids: Iterable[str],
+    custom_rules: str = "",
+    *,
+    defer_reload: bool = False,
+) -> CommandResult:
     safe_domain = _validate_domain(domain)
     content = render_site_rules(safe_domain, enabled_rule_ids, custom_rules)
+    # defer_reload writes the site rules file without restarting OpenLiteSpeed;
+    # a bulk caller must trigger one reload afterwards (see da_import).
     return shell.privileged(
-        "waf-site-save",
+        "waf-site-save-defer" if defer_reload else "waf-site-save",
         helper_args=[safe_domain],
         check=False,
         input=content,
@@ -392,8 +400,13 @@ def sync_site_rules(domain: str, enabled_rule_ids: Iterable[str], custom_rules: 
     )
 
 
-def sync_website_rules(website: Website) -> CommandResult:
-    return sync_site_rules(website.domain, website_enabled_rule_ids(website), website_custom_rules(website))
+def sync_website_rules(website: Website, *, defer_reload: bool = False) -> CommandResult:
+    return sync_site_rules(
+        website.domain,
+        website_enabled_rule_ids(website),
+        website_custom_rules(website),
+        defer_reload=defer_reload,
+    )
 
 
 def site_config(website: Website) -> dict:

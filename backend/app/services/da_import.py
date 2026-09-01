@@ -380,6 +380,81 @@ def _detect_app_type(source: Optional[Path]) -> str:
     return "php" if _has_php_files(source) else "static"
 
 
+_SUBDOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _discover_subdomains(root: Path, parent_domain: str) -> list[str]:
+    """DA subdomain labels declared for a parent domain.
+
+    DirectAdmin records them one label per line:
+      - newer backups: ``backup/<domain>/subdomain.list``
+      - older backups: ``backup/<domain>.subdomains``
+    Each label's document root lives at ``domains/<domain>/public_html/<label>``.
+    """
+    labels: list[str] = []
+    candidates = [
+        root / "backup" / parent_domain / "subdomain.list",
+        root / "backup" / f"{parent_domain}.subdomains",
+        root / "backup" / "domains" / f"{parent_domain}.subdomains",
+        root / "backup" / "domains" / parent_domain / "subdomain.list",
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            label = raw.strip().lower()
+            if not label or label.startswith("#"):
+                continue
+            # DA also stores "label:/custom/path" in some versions; take the label.
+            label = label.split(":", 1)[0].split("=", 1)[0].strip()
+            if _SUBDOMAIN_LABEL_RE.fullmatch(label) and label not in labels:
+                labels.append(label)
+    return labels
+
+
+def _relocate_da_subdomain_sources(root: Path, parent_domains: list[str]) -> dict[str, Optional[Path]]:
+    """Move DA subdomain docroots out of their parent's ``public_html``.
+
+    DirectAdmin nests ``sub.example.com`` inside ``example.com``'s public_html
+    (``.../public_html/sub``). OPanel has no parent/child website concept -- each
+    domain is standalone -- so every DA subdomain is imported as its own website
+    with its own root. Moving each docroot into a staging sibling keeps the
+    parent import from copying the same files again and gives the subdomain
+    import a clean source. The move is a rename inside the opanel-owned
+    ``/tmp/opanel-da-import-*`` staging tree, so it is cheap and touches no live
+    files.
+
+    Returns an ordered map of subdomain FQDN -> staging source dir (or ``None``
+    when the label is declared but ships no files, so the loop still creates the
+    website).
+    """
+    holding = root / "_opanel_subdomains"
+    sources: dict[str, Optional[Path]] = {}
+    for parent in parent_domains:
+        labels = _discover_subdomains(root, parent)
+        if not labels:
+            continue
+        parent_public = _source_for_domain(root, parent)
+        _log(f"  {parent}: {len(labels)} DirectAdmin subdomain(s) declared")
+        for label in labels:
+            fqdn = _normalize_domain(f"{label}.{parent}")
+            if not fqdn or fqdn in sources:
+                continue
+            src = (parent_public / label) if parent_public else None
+            if src and src.is_dir() and not src.is_symlink():
+                dest = holding / fqdn
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if dest.exists():
+                    shutil.rmtree(dest, ignore_errors=True)
+                shutil.move(str(src), str(dest))
+                sources[fqdn] = dest
+                _log(f"    staged subdomain {fqdn} from {parent}/public_html/{label}")
+            else:
+                sources[fqdn] = None
+                _log(f"    subdomain {fqdn}: no files under public_html/{label}, importing empty")
+    return sources
+
+
 # ---------------------------------------------------------------------------
 # Database config parsing
 # ---------------------------------------------------------------------------
@@ -837,12 +912,23 @@ def _process_archive(
     _extract_nested_domain_archives(root)
 
     domains = _discover_domains(root)
+
+    # DirectAdmin stores each subdomain's files inside its parent domain's
+    # public_html (sub.example.com -> domains/example.com/public_html/sub). Pull
+    # those out into their own staging dirs and import each as a standalone
+    # website -- OPanel has no parent/child concept.
+    subdomain_sources = _relocate_da_subdomain_sources(root, list(domains))
+    for fqdn in subdomain_sources:
+        if fqdn not in domains:
+            domains.append(fqdn)
+
     username, email = _discover_username(root, archive_name)
 
     summary: dict = {
         "archive": archive_name,
         "username": username,
         "domains": domains,
+        "subdomains": list(subdomain_sources),
         "imported_domains": [],
         "databases": [],
         "ssl_enabled_domains": [],
@@ -893,7 +979,10 @@ def _process_archive(
     websites = []
 
     for domain in domains:
-        source = _source_for_domain(root, domain)
+        if domain in subdomain_sources:
+            source = subdomain_sources[domain]
+        else:
+            source = _source_for_domain(root, domain)
         app_type = _detect_app_type(source)
         app_config = _parse_app_db_config(source) if source else {}
         php_version = settings.default_php_version
@@ -1047,7 +1136,9 @@ def _process_archive(
         # Fix permissions
         site_users.fix_site_permissions(root_path, linux_user)
 
-        # Configure OLS vhost
+        # Configure OLS vhost. defer_reload stages the vhost file only -- a
+        # single OLS reload happens after the loop so an archive with dozens of
+        # domains/subdomains does not restart OpenLiteSpeed once per site.
         try:
             lsphp_socket = site_users.site_lsphp_socket(linux_user, root_path, runtime_php_version)
             openlitespeed.rewrite_vhost(
@@ -1064,6 +1155,7 @@ def _process_archive(
                 document_root=document_root,
                 rewrite_mode=nginx_rewrite_mode,
                 aliases=[],
+                defer_reload=True,
             )
             _log(f"    Configured OLS vhost for {domain}")
         except Exception as exc:
@@ -1072,13 +1164,22 @@ def _process_archive(
 
         # Configure WAF
         try:
-            result = waf.sync_website_rules(website)
+            result = waf.sync_website_rules(website, defer_reload=True)
             if result.returncode != 0:
                 _log(f"    WARNING: WAF rules failed for {domain}")
         except Exception as exc:
             _log(f"    WARNING: WAF rules failed for {domain}: {exc}")
 
         summary["imported_domains"].append(domain)
+
+    # Sync the OLS main config and restart once for every vhost written above.
+    if summary["imported_domains"]:
+        try:
+            openlitespeed.reload_service()
+            _log(f"  Reloaded OpenLiteSpeed for {len(summary['imported_domains'])} vhost(s)")
+        except Exception as exc:
+            _log(f"  WARNING: OpenLiteSpeed reload failed: {exc}")
+            summary["warnings"].append(f"OpenLiteSpeed reload failed: {exc}")
 
     # Import unassigned SQL files as standalone databases
     for key, sql_path in sql_files.items():
@@ -1124,8 +1225,20 @@ def _process_archive(
 
     db.commit()
 
-    # Try to enable SSL when DNS matches server IP
+    # Try to enable SSL when DNS matches server IP. An archive with many
+    # subdomains of one domain can ask Let's Encrypt for dozens of certs in a
+    # row; after a run of failures (typically the LE rate limit -- 50 certs per
+    # registered domain per week) stop trying instead of hammering the CA. The
+    # user can issue one *.<domain> wildcard afterwards and reuse it.
+    consecutive_ssl_failures = 0
     for website in websites:
+        if consecutive_ssl_failures >= 5:
+            _log("    SSL: too many consecutive certbot failures, skipping the rest")
+            summary["warnings"].append(
+                "Automatic SSL stopped after repeated certbot failures (likely the "
+                "Let's Encrypt rate limit); issue a wildcard certificate and reuse it"
+            )
+            break
         try:
             import socket
             server_ip = socket.gethostbyname(socket.gethostname())
@@ -1141,10 +1254,13 @@ def _process_archive(
                         website.ssl_enabled = True
                         db.commit()
                         summary["ssl_enabled_domains"].append(website.domain)
+                        consecutive_ssl_failures = 0
                         _log(f"    SSL enabled for {website.domain}")
                     else:
+                        consecutive_ssl_failures += 1
                         _log(f"    SSL skipped for {website.domain}: certbot returned {result.returncode}")
                 except Exception as exc:
+                    consecutive_ssl_failures += 1
                     db.rollback()
                     _log(f"    SSL skipped for {website.domain}: {exc}")
         except Exception:

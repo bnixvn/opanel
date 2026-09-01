@@ -3764,7 +3764,7 @@ function App() {
                 <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'} style={{marginLeft: '0.5rem'}}>{job.status}</span>
                 <small>{job.message || '...'}</small>
                 {job.summary && <small style={{whiteSpace: 'pre-wrap'}}>
-                  Domains: {job.summary.imported_domains?.join(', ') || 'none'}{job.summary.databases?.length ? ` | DBs: ${job.summary.databases.length}` : ''}{job.summary.ssl_enabled_domains?.length ? ` | SSL: ${job.summary.ssl_enabled_domains.join(', ')}` : ''}
+                  Domains: {job.summary.imported_domains?.join(', ') || 'none'}{job.summary.subdomains?.length ? ` | Subdomains: ${job.summary.subdomains.length}` : ''}{job.summary.databases?.length ? ` | DBs: ${job.summary.databases.length}` : ''}{job.summary.ssl_enabled_domains?.length ? ` | SSL: ${job.summary.ssl_enabled_domains.join(', ')}` : ''}
                 </small>}
                 {job.error && <small style={{color: 'var(--danger)'}}>{job.error}</small>}
               </span>

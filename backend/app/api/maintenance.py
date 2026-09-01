@@ -688,11 +688,16 @@ def _run_da_import_job(job_id: str, backup_file: str) -> None:
     db = SessionLocal()
     try:
         summary = da_import.import_da_backup(backup_file, db)
+        imported = len(summary.get("imported_domains", []))
+        subs = len(summary.get("subdomains", []))
+        message = f"Imported {imported} domain(s)"
+        if subs:
+            message += f" (incl. {subs} DirectAdmin subdomain(s))"
         _set_da_import_job(
             job_id,
             status="done",
             summary=summary,
-            message=f"Imported {len(summary.get('imported_domains', []))} domain(s)",
+            message=message,
             finished_at=datetime.utcnow().isoformat() + "Z",
         )
     except Exception as exc:

@@ -32,6 +32,34 @@ def test_rewrite_vhost_ignores_nginx_compat_ssl_kwargs(monkeypatch):
     assert "preserve_existing_ssl" not in captured["kwargs"]
 
 
+def _capture_rewrite(monkeypatch, **extra):
+    captured = {}
+    monkeypatch.setattr(openlitespeed, "render_vhost", lambda *a, **k: "vh { }")
+
+    class DummyShell:
+        def privileged(self, *args, **kwargs):
+            captured["subcommand"] = args[0]
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(openlitespeed, "shell", DummyShell())
+    openlitespeed.rewrite_vhost("example.test", "/home/admin/example.test", **extra)
+    return captured
+
+
+def test_rewrite_vhost_reloads_ols_by_default(monkeypatch):
+    captured = _capture_rewrite(monkeypatch)
+    assert captured["subcommand"] == "ols-vhost-write"
+    assert "defer_reload" not in captured["kwargs"]
+
+
+def test_rewrite_vhost_defer_reload_stages_only(monkeypatch):
+    captured = _capture_rewrite(monkeypatch, defer_reload=True)
+    assert captured["subcommand"] == "ols-vhost-write-defer"
+    # the fallback for the deferred variant must not restart the web server
+    fallback = " ".join(captured["kwargs"]["fallback"])
+    assert "lshttpd" not in fallback and "lswsctrl" not in fallback
+
+
 def test_wordpress_vhost_runs_lsphp_as_site_user():
     rendered = openlitespeed.render_vhost(
         "example.test",

@@ -2,11 +2,14 @@ from io import BytesIO
 import os
 import tarfile
 import threading
+from pathlib import Path
 
 import pytest
 
 from app.core.config import settings
 from app.services import da_import
+
+HELPER_SCRIPT = Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh"
 
 
 def test_import_da_backup_resolves_filename_from_da_backup_dir(tmp_path, monkeypatch):
@@ -239,3 +242,78 @@ def test_da_conf_is_found_under_mysql_as_well(tmp_path):
     (mysql_dir / "admin_shop.conf").write_text("passwd=from-mysql-dir\n", encoding="utf-8")
 
     assert da_import._da_db_credentials(dump, tmp_path)["password"] == "from-mysql-dir"
+
+
+# ---------------------------------------------------------------------------
+# DirectAdmin subdomains
+# ---------------------------------------------------------------------------
+
+def test_discover_subdomains_reads_the_newer_per_domain_layout(tmp_path):
+    listing = tmp_path / "backup" / "example.test" / "subdomain.list"
+    listing.parent.mkdir(parents=True)
+    listing.write_text("blog\nshop\n\n# a comment\nBAD_LABEL\ndev\n", encoding="utf-8")
+
+    assert da_import._discover_subdomains(tmp_path, "example.test") == ["blog", "shop", "dev"]
+
+
+def test_discover_subdomains_reads_the_older_flat_layout(tmp_path):
+    listing = tmp_path / "backup" / "example.test.subdomains"
+    listing.parent.mkdir(parents=True)
+    listing.write_text("staging\napi\n", encoding="utf-8")
+
+    assert da_import._discover_subdomains(tmp_path, "example.test") == ["staging", "api"]
+
+
+def test_discover_subdomains_is_empty_without_a_list(tmp_path):
+    (tmp_path / "backup").mkdir()
+    assert da_import._discover_subdomains(tmp_path, "example.test") == []
+
+
+def test_relocate_da_subdomain_sources_moves_docroots_out_of_the_parent(tmp_path):
+    public = tmp_path / "domains" / "example.test" / "public_html"
+    (public / "blog").mkdir(parents=True)
+    (public / "blog" / "index.php").write_text("<?php // blog", encoding="utf-8")
+    (public / "shop").mkdir()
+    (public / "shop" / "index.html").write_text("shop", encoding="utf-8")
+    (public / "index.php").write_text("<?php // parent", encoding="utf-8")
+
+    listing = tmp_path / "backup" / "example.test" / "subdomain.list"
+    listing.parent.mkdir(parents=True)
+    listing.write_text("blog\nshop\ndeleted\n", encoding="utf-8")
+
+    sources = da_import._relocate_da_subdomain_sources(tmp_path, ["example.test"])
+
+    # each declared label is present; a label with no files maps to None
+    assert set(sources) == {"blog.example.test", "shop.example.test", "deleted.example.test"}
+    assert sources["deleted.example.test"] is None
+
+    # the subdomain docroots left the parent's public_html ...
+    assert not (public / "blog").exists()
+    assert not (public / "shop").exists()
+    assert (public / "index.php").exists()
+
+    # ... and moved into the opanel-owned staging sibling with their files intact
+    assert sources["blog.example.test"] == tmp_path / "_opanel_subdomains" / "blog.example.test"
+    assert (sources["blog.example.test"] / "index.php").read_text(encoding="utf-8") == "<?php // blog"
+    assert (sources["shop.example.test"] / "index.html").read_text(encoding="utf-8") == "shop"
+
+
+def test_relocate_da_subdomain_sources_no_op_without_subdomains(tmp_path):
+    public = tmp_path / "domains" / "example.test" / "public_html"
+    public.mkdir(parents=True)
+    (tmp_path / "backup").mkdir()
+
+    assert da_import._relocate_da_subdomain_sources(tmp_path, ["example.test"]) == {}
+    assert not (tmp_path / "_opanel_subdomains").exists()
+
+
+def test_helper_has_deferred_vhost_and_waf_subcommands_that_skip_the_reload():
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    # deferred vhost write: same case, guarded reload
+    assert "ols-vhost-write|ols-vhost-write-defer)" in helper
+    assert 'if [[ "$cmd" == "ols-vhost-write" ]]; then' in helper
+    # deferred WAF save
+    assert "waf-site-save-defer)" in helper
+    assert 'save_waf_site_rules "$1" defer' in helper
+    waf_fn = helper.split("save_waf_site_rules() {", 1)[1].split("\n}", 1)[0]
+    assert '[[ "$defer" == "defer" ]] || restart_openlitespeed' in waf_fn

@@ -1002,8 +1002,9 @@ save_waf_custom_rules() {
 }
 
 save_waf_site_rules() {
-  local domain="$1" tmp target backup=""
+  local domain="$1" defer="${2:-}" tmp target backup=""
   require_domain "$domain"
+  [[ "$defer" == "" || "$defer" == "defer" ]] || deny "invalid waf-site-save mode: $defer"
   install -d -o root -g root -m 0755 /usr/local/lsws/conf/opanel/waf /usr/local/lsws/conf/opanel/waf/sites
   write_modsec_base_conf
   tmp="$(mktemp)"
@@ -1023,7 +1024,8 @@ save_waf_site_rules() {
   fi
   install -m 0644 -o root -g root "$tmp" "$target"
   rm -f "$tmp"
-  restart_openlitespeed
+  # "defer" skips the reload so a bulk caller can restart OLS once at the end.
+  [[ "$defer" == "defer" ]] || restart_openlitespeed
   rm -f "$backup" 2>/dev/null || true
   echo "WAF site rules saved: ${domain}"
 }
@@ -2952,7 +2954,7 @@ case "$cmd" in
     install_waf_engine
     ;;
 
-  ols-vhost-write)
+  ols-vhost-write|ols-vhost-write-defer)
     [[ $# -ge 1 ]] || deny "usage: ols-vhost-write <domain> [hostname ...]"
     safe_domain="$1"
     require_domain "$safe_domain"
@@ -2965,8 +2967,13 @@ case "$cmd" in
     chown -R root:opanel "$OLS_VHOSTS_DIR/$safe_domain"
     chmod 2775 "$OLS_VHOSTS_DIR/$safe_domain"
     chmod 0644 "$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
-    ols_sync_main_config
-    restart_openlitespeed 2>/dev/null || true
+    # The -defer variant only stages the vhost file; the caller (e.g. a bulk
+    # DirectAdmin import writing dozens of vhosts) is responsible for a single
+    # `ols-sync-main` afterwards instead of one OLS restart per vhost.
+    if [[ "$cmd" == "ols-vhost-write" ]]; then
+      ols_sync_main_config
+      restart_openlitespeed 2>/dev/null || true
+    fi
     ;;
 
   ols-vhost-delete)
@@ -3049,6 +3056,10 @@ case "$cmd" in
   waf-site-save)
     [[ $# -eq 1 ]] || deny "usage: waf-site-save <domain>"
     save_waf_site_rules "$1"
+    ;;
+  waf-site-save-defer)
+    [[ $# -eq 1 ]] || deny "usage: waf-site-save-defer <domain>"
+    save_waf_site_rules "$1" defer
     ;;
   http-flood-zones-save)
     [[ $# -eq 0 ]] || deny "usage: http-flood-zones-save"

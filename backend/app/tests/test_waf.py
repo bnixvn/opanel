@@ -95,6 +95,22 @@ def test_parse_access_log_line_marks_wp2shell_paths_as_blocked():
     assert entry["reason"] == "Block wp2shell Path"
 
 
+def test_sync_site_rules_uses_the_deferred_subcommand_when_asked(monkeypatch):
+    seen = {}
+
+    def fake_privileged(command, helper_args=None, check=False, fallback=None, **kwargs):
+        seen["command"] = command
+        return waf.CommandResult(command, 0, "", "")
+
+    monkeypatch.setattr(waf.shell, "privileged", fake_privileged)
+
+    waf.sync_site_rules("example.com", set(), "")
+    assert seen["command"] == "waf-site-save"
+
+    waf.sync_site_rules("example.com", set(), "", defer_reload=True)
+    assert seen["command"] == "waf-site-save-defer"
+
+
 def test_access_log_report_filters_and_paginates(monkeypatch):
     payload = "\n".join([
         "opanel_LOG_PATH=example.com\t/var/log/openlitespeed/example.com.access.log",

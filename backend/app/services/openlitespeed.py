@@ -525,9 +525,16 @@ def rewrite_vhost(
     root_path: str,
     **kwargs,
 ) -> str:
-    """Render and write a vhost config to disk, then restart OLS."""
+    """Render and write a vhost config to disk, then restart OLS.
+
+    ``defer_reload=True`` stages the vhost file without syncing the main config
+    or restarting OpenLiteSpeed. A bulk caller (e.g. the DirectAdmin import,
+    which can write dozens of vhosts in one run) must call ``reload_service()``
+    once when it is done instead of paying an OLS restart per vhost.
+    """
     kwargs.pop("preserve_existing_ssl", None)
     kwargs.pop("include_ssl", None)
+    defer_reload = bool(kwargs.pop("defer_reload", False))
     if kwargs.get("ssl_enabled") and not (kwargs.get("ssl_cert_path") and kwargs.get("ssl_key_path")):
         live_dir = Path("/etc/letsencrypt/live") / _safe_domain(domain)
         kwargs["ssl_cert_path"] = str(live_dir / "fullchain.pem")
@@ -535,16 +542,21 @@ def rewrite_vhost(
     content = render_vhost(domain, root_path, **kwargs)
     safe_domain = _safe_domain(domain)
     hostnames = _vhost_hostnames(safe_domain, kwargs.get("aliases"), kwargs.get("redirects"))
+    subcommand = "ols-vhost-write-defer" if defer_reload else "ols-vhost-write"
+    reload_fallback = (
+        "true" if defer_reload else
+        "(systemctl restart lshttpd.service 2>/dev/null || "
+        "/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)"
+    )
     shell.privileged(
-        "ols-vhost-write",
+        subcommand,
         helper_args=[safe_domain, *hostnames],
         input=content,
         fallback=[
             "bash", "-lc",
             "mkdir -p /usr/local/lsws/conf/opanel/vhosts/$1 && "
             "cat > /usr/local/lsws/conf/opanel/vhosts/$1/vhost.conf && "
-            "(systemctl restart lshttpd.service 2>/dev/null || "
-            "/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true)",
+            f"{reload_fallback}",
             "opanel-ols-vhost-write",
             safe_domain,
         ],
