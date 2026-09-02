@@ -1,6 +1,8 @@
 /* ==========================================================================
    OPanel design tokens
-   Brand blue #0065bb (fill) / #00417a (deep)  ·  Typeface: Noto Sans
+   Brand blue #0065bb, built into a six-step scale. Neutrals carry a faint
+   slate undertone; text is a deep slate ink on an off-white ground, not
+   black-on-white. Dark mode uses solid surfaces, no rgba fills. Typeface: Noto Sans.
    Every colour decision lives in the two blocks below. Never add a raw hex
    further down the stylesheets — reuse or extend a token so light and dark
    themes stay in sync.
@@ -36,62 +38,63 @@
 }
 
 :root{
-  /* Brand — the fill blue is the identity colour; the ink blue is the
-     AA-contrast variant used for text, links and icons on light surfaces. */
+  /* Brand blue in six tonal steps so a hover, a link and a selected row each
+     read as their own thing. --primary is the fill; --primary-ink is the
+     AA-contrast step (6.9:1 on white) for links, icons and text on the ground. */
   --primary:#0065bb;
-  --primary-hover:#00539c;
-  --primary-active:#00417a;
-  --primary-ink:#00539c;
-  --primary-ink-hover:#00417a;
+  --primary-hover:#00579e;
+  --primary-active:#014a86;
+  --primary-ink:#0a5aa8;
+  --primary-ink-hover:#014a86;
   --primary-contrast:#ffffff;
-  --primary-light:#dcebfa;
-  --primary-soft:#a3cdf0;
+  --primary-light:#d7e8f8;   /* selected row, active nav, chip */
+  --primary-soft:#aecff0;    /* selected-row border, focus outline */
   --brand-red:#0065bb;
-  --brand-red-deep:#00417a;
-  --brand-ink:#0a0a0a;
-  --accent:#0065bb;
-  /* Semantic status colors — destructive red is deliberately deeper and
-     less saturated than the brand red so "Delete" never reads as "Create".
-     The -bg/-border tints carry real saturation: near-white tints made every
-     badge and callout read as disabled chrome instead of a status. */
-  --danger:#b42318;
-  --danger-hover:#8f1c13;
-  --danger-bg:#fde7e4;
-  --danger-border:#f2a9a1;
-  --danger-text:#8f1d13;
-  --success:#047857;
-  --success-hover:#036549;
-  --success-bg:#d6f4e4;
-  --success-border:#75d2a8;
-  --success-text:#05603a;
-  --warning:#b54708;
-  --warning-bg:#fcefd0;
-  --warning-border:#efc45c;
-  --warning-text:#7c3f07;
-  /* Text and surfaces are pure neutrals -- no hue at all, so the only colour
-     on screen is the brand blue. Tinted greys (warm or cool) were read as
-     washed out; black-on-white with real separation reads as sharp. */
-  --text:#0a0a0a;
-  --text-secondary:#333333;
-  --text-muted:#525252;
-  /* Surfaces */
-  --bg:#ffffff;
+  --brand-red-deep:#014a86;
+  --brand-ink:#1a2230;
+  --accent:#0a5aa8;
+  /* Semantic status — destructive red stays deeper and less saturated than the
+     brand so "Delete" never reads as "Create". The -bg/-border tints keep real
+     saturation so a badge reads as a status, not as disabled chrome. */
+  --danger:#c22d1c;
+  --danger-hover:#a32515;
+  --danger-bg:#fdeae7;
+  --danger-border:#f2b3aa;
+  --danger-text:#8f2417;
+  --success:#087a5b;
+  --success-hover:#066b4f;
+  --success-bg:#dcf3e8;
+  --success-border:#8bd4b4;
+  --success-text:#065f46;
+  --warning:#b25a10;
+  --warning-bg:#fbeecf;
+  --warning-border:#ecc568;
+  --warning-text:#7a4310;
+  /* Neutrals carry a faint slate undertone (hue ~218, 6-12% sat) so they read
+     as chosen next to the blue rather than clinical. Text tops out at a deep
+     slate ink, not black; the ground is a soft off-white so white cards sit
+     above it. Muted text stays past 5:1 on every surface. */
+  --text:#1a2230;
+  --text-secondary:#48525f;
+  --text-muted:#586170;
+  --bg:#f5f7fa;
   --surface:#ffffff;
-  /* Barely-there neutral for static panels, groups and plain badges. */
-  --surface-alt:#f5f5f5;
+  /* Quiet fill for static panels, groups and table stripes. */
+  --surface-alt:#eef1f6;
   /* Hover and selected states are the brand blue at low strength, so "this
-     responds to you" always reads as the accent rather than as a dimmed grey. */
-  --surface-hover:#e8f2fc;
+     responds to you" always reads as the accent rather than a dimmed grey. */
+  --surface-hover:#e7f1fc;
   /* Inert fill for disabled controls: neutral, because a blue disabled button
      still looks clickable. */
-  --surface-muted:#f2f2f2;
-  --border:#d4d4d4;
-  --border-hover:#9e9e9e;
-  --ring:rgba(0,101,187,.28);
-  --shadow-sm:0 1px 2px rgba(0,0,0,.08);
-  --shadow-md:0 10px 28px rgba(0,0,0,.12);
-  --shadow-lg:0 20px 48px rgba(0,0,0,.18);
-  --topbar-bg:rgba(255,255,255,.92);
+  --surface-muted:#e9edf2;
+  --border:#dce1e8;
+  --border-hover:#b7c0cd;
+  --ring:rgba(0,101,187,.30);
+  /* Shadows carry a slate tint instead of pure black -- softer under a card. */
+  --shadow-sm:0 1px 2px rgba(20,32,54,.06);
+  --shadow-md:0 10px 28px rgba(20,32,54,.10);
+  --shadow-lg:0 20px 48px rgba(20,32,54,.16);
+  --topbar-bg:rgba(255,255,255,.85);
   /* Always-dark surfaces (terminals, log panes, code textareas) */
   --console-bg:#111111;
   --console-surface:#1c1c1c;
@@ -116,49 +119,50 @@
 }
 
 :root[data-theme="dark"]{
-  /* The fill blue stays on brand; the ink blue lightens so it keeps AA
-     contrast against the dark surfaces. */
-  --primary:#0065bb;
-  --primary-hover:#1a7fd6;
-  --primary-active:#3390e0;
-  --primary-ink:#5fb0ff;
-  --primary-ink-hover:#8fcbff;
+  /* Blue-charcoal ground (hue ~218). Every fill is solid -- no rgba tints, which
+     turned muddy over the dark surface. The button blue and the ink blue both
+     shift up so they hold their contrast on charcoal. */
+  --primary:#2b74c8;
+  --primary-hover:#3d86da;
+  --primary-active:#5197e0;
+  --primary-ink:#63aaf0;
+  --primary-ink-hover:#8cc3f6;
   --primary-contrast:#ffffff;
-  --primary-light:rgba(0,101,187,.26);
-  --primary-soft:rgba(0,101,187,.5);
-  --brand-red:#0065bb;
-  --brand-red-deep:#00417a;
-  --brand-ink:#ffffff;
-  --accent:#5fb0ff;
-  --danger:#f87171;
-  --danger-hover:#fca5a5;
-  --danger-bg:rgba(248,113,113,.2);
-  --danger-border:rgba(248,113,113,.5);
-  --danger-text:#fca5a5;
-  --success:#4ade80;
-  --success-hover:#6ee7a3;
-  --success-bg:rgba(74,222,128,.18);
-  --success-border:rgba(74,222,128,.48);
-  --success-text:#6ee7a3;
-  --warning:#fbbf24;
-  --warning-bg:rgba(251,191,36,.18);
-  --warning-border:rgba(251,191,36,.48);
-  --warning-text:#fcd34d;
-  --text:#fafafa;
-  --text-secondary:#d4d4d4;
-  --text-muted:#a3a3a3;
-  --bg:#0a0a0a;
-  --surface:#171717;
-  --surface-alt:#1f1f1f;
-  --surface-hover:#13273d;
-  --surface-muted:#242424;
-  --border:#333333;
-  --border-hover:#525252;
-  --ring:rgba(0,101,187,.5);
+  --primary-light:#17324f;   /* solid selected-row / active-nav fill */
+  --primary-soft:#1e4a78;
+  --brand-red:#2b74c8;
+  --brand-red-deep:#1e4a78;
+  --brand-ink:#e9edf2;
+  --accent:#63aaf0;
+  --danger:#f0796b;
+  --danger-hover:#f4938f;
+  --danger-bg:#3a1f1c;
+  --danger-border:#6b3630;
+  --danger-text:#f3a99f;
+  --success:#3ecf8e;
+  --success-hover:#5cdaa2;
+  --success-bg:#16302a;
+  --success-border:#2f5e4c;
+  --success-text:#74dcae;
+  --warning:#e0a533;
+  --warning-bg:#332815;
+  --warning-border:#5f4a22;
+  --warning-text:#f0c471;
+  --text:#e9edf2;
+  --text-secondary:#b3bdc9;
+  --text-muted:#8b95a3;
+  --bg:#0d1117;
+  --surface:#161b22;
+  --surface-alt:#1c222b;
+  --surface-hover:#17293f;
+  --surface-muted:#232a34;
+  --border:#2b323c;
+  --border-hover:#3d4650;
+  --ring:rgba(59,147,230,.45);
   --shadow-sm:0 1px 2px rgba(0,0,0,.4);
-  --shadow-md:0 10px 28px rgba(0,0,0,.55);
-  --shadow-lg:0 20px 48px rgba(0,0,0,.65);
-  --topbar-bg:rgba(23,23,23,.92);
+  --shadow-md:0 10px 28px rgba(0,0,0,.5);
+  --shadow-lg:0 20px 48px rgba(0,0,0,.62);
+  --topbar-bg:rgba(22,27,34,.85);
   --console-bg:#0d0d0d;
   --console-surface:#181818;
   --console-border:#333333;
