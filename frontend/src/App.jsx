@@ -2714,9 +2714,34 @@ function App() {
       return;
     }
     // Poll /updates/status every 2s until the update finishes, then reload.
+    // The API restarts (twice) mid-update, so /updates/status will fail for a
+    // stretch -- tolerate that, but never spin forever: give up after a run of
+    // failed polls or once an overall deadline passes, and clear the spinner so
+    // the page does not get stuck showing "Running ...".
+    const startedAt = Date.now();
+    const DEADLINE_MS = 30 * 60 * 1000;
+    const MAX_CONSECUTIVE_FAILURES = 45; // ~90s of the API being unreachable
+    let consecutiveFailures = 0;
+    let finished = false;
+    const stopPolling = () => {
+      finished = true;
+      if (panelUpdateInterval.current) {
+        clearInterval(panelUpdateInterval.current);
+        panelUpdateInterval.current = null;
+      }
+      setPanelUpdating(false);
+    };
     const pollOnce = async () => {
       const status = await request('/updates/status', {}, null);
-      if (!status) return;
+      if (!status) {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES || Date.now() - startedAt > DEADLINE_MS) {
+          stopPolling();
+          setNotice('Lost contact with the panel while it was updating. It has most likely finished — reload the page (Ctrl+Shift+R) to see the result.');
+        }
+        return;
+      }
+      consecutiveFailures = 0;
       setUpdatesStatus(status);
       if (Array.isArray(status.panel_update_log)) {
         setPanelUpdateLog(status.panel_update_log);
@@ -2726,22 +2751,23 @@ function App() {
       const st = status.panel || {};
       const done = st.last_update_status === 'completed' || st.last_update_status === 'failed';
       if (done) {
-        if (panelUpdateInterval.current) {
-          clearInterval(panelUpdateInterval.current);
-          panelUpdateInterval.current = null;
-        }
-        setPanelUpdating(false);
+        stopPolling();
         if (st.last_update_status === 'completed' && Number(st.progress_percent) === 100) {
           setNotice('Panel update completed. Reloading to apply the new version...');
           setTimeout(() => { window.location.reload(); }, 2000);
         } else if (st.last_update_status === 'failed') {
           setNotice((st.progress_message || st.last_update_message || 'Panel update failed.').trim());
         }
+        return;
+      }
+      if (Date.now() - startedAt > DEADLINE_MS) {
+        stopPolling();
+        setNotice('The panel update is taking longer than expected. Reload the page (Ctrl+Shift+R) to check whether it finished.');
       }
     };
     await pollOnce();
     if (panelUpdateInterval.current) clearInterval(panelUpdateInterval.current);
-    panelUpdateInterval.current = setInterval(pollOnce, 2000);
+    if (!finished) panelUpdateInterval.current = setInterval(pollOnce, 2000);
   }
 
   async function savePanelAutoUpdate() {
@@ -4242,7 +4268,7 @@ function App() {
           <div className="update-log-head"><strong>Update logs</strong><button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={13}/> Refresh</button></div>
           <pre>{statusText}</pre>
         </div>}
-        {(panelUpdating || (Boolean(panelUpdate.progress_percent) && panelUpdate.last_update_status && panelUpdate.last_update_status !== 'completed' && panelUpdate.last_update_status !== 'failed')) && (
+        {panelUpdate.last_update_status !== 'completed' && panelUpdate.last_update_status !== 'failed' && (panelUpdating || (Boolean(panelUpdate.progress_percent) && panelUpdate.last_update_status)) && (
           <div className="info-box firewall-status update-progress-box">
             <div className="update-progress-row">
               <span className={panelUpdate.last_update_status === 'failed' ? 'badge bad' : 'badge ok'}>
