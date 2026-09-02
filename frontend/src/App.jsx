@@ -1293,13 +1293,17 @@ function App() {
 
   async function runMalwareScan() {
     if (!scanTargetWebsiteId) return;
+    if (scanTargetWebsiteId === 'system'
+      && !confirm('Scan the whole server (/) now? The first full scan can run for a long time.')) return;
     setScanResults(null);
     setScanJob(null);
     setScanLoading(true);
     try {
-      const body = scanTargetWebsiteId === 'all'
-        ? { all: true }
-        : { website_id: Number(scanTargetWebsiteId) };
+      const body = scanTargetWebsiteId === 'system'
+        ? { scope: 'system', scan_root: '/' }
+        : scanTargetWebsiteId === 'all'
+          ? { all: true }
+          : { website_id: Number(scanTargetWebsiteId) };
       const data = await request('/panel-settings/malware-scan/run', {
         method: 'POST',
         body: JSON.stringify(body),
@@ -1338,28 +1342,6 @@ function App() {
     if (data && data.system && data.web) {
       setMalwareSchedules(data);
       setNotice(data[scope]?.enabled ? 'Scheduled scan saved.' : 'Scheduled scan disabled.');
-    }
-  }
-
-  async function runSystemScan(scope) {
-    const scanRoot = scope === 'web' ? '/home' : '/';
-    const label = scope === 'web' ? 'every website (/home)' : 'the whole server (/)';
-    if (!confirm(`Scan ${label} now? The first full scan can run for a long time.`)) return;
-    setScanResults(null);
-    setScanJob(null);
-    setScanLoading(true);
-    try {
-      const data = await request('/panel-settings/malware-scan/run', {
-        method: 'POST',
-        body: JSON.stringify({ scope: 'system', scan_root: scanRoot }),
-      }, 'Starting scan...');
-      if (data) {
-        setScanJob(data);
-        await loadMalwareScanJobs();
-        setNotice(scope === 'web' ? 'Website scan started.' : 'Full server scan started.');
-      }
-    } finally {
-      setScanLoading(false);
     }
   }
 
@@ -4439,15 +4421,16 @@ function App() {
           {mw.clamd_running && <div className="malware-scan-runner">
             <div className="malware-scan-head">
               <div>
-                <strong>Scan a website now</strong>
-                <p className="hint">Select a website and run an on-demand malware scan.</p>
+                <strong>Run a scan now</strong>
+                <p className="hint">One website, every website (<code>/home</code>), or the whole server (<code>/</code>). Scheduled scans are set up further down.</p>
               </div>
               <button className="secondary" disabled={!!loading} onClick={loadMalwareScanJobs}><RefreshCw size={14}/> History</button>
             </div>
             <div className="malware-scan-controls">
               <select value={scanTargetWebsiteId} onChange={e => { setScanTargetWebsiteId(e.target.value); setScanResults(null); setScanJob(null); }}>
-                <option value="">-- Select website --</option>
-                <option value="all">All websites</option>
+                <option value="">-- Select target --</option>
+                <option value="all">All websites (/home)</option>
+                <option value="system">Full server (/)</option>
                 {websites.map(w => <option key={w.id} value={w.id}>{w.domain}</option>)}
               </select>
               <button disabled={!!loading || scanRunning || !scanTargetWebsiteId} onClick={runMalwareScan}>
@@ -4527,16 +4510,8 @@ function App() {
             <button className="secondary" disabled={!!loading} onClick={loadMalwareSchedule}><RefreshCw size={14}/> Refresh</button>
           </div>
           <div className="info-box">
-            <div className="malware-scan-controls">
-              <code style={{alignSelf:'center'}}>{root}</code>
-              <button disabled={!!loading || scanRunning || !mw.clamd_running} onClick={() => runSystemScan(scope)}>
-                {scanRunning ? <><RefreshCw size={14} className="spin"/> Scanning...</> : <><Search size={14}/> Scan now</>}
-              </button>
-            </div>
-          </div>
-          <div className="info-box">
-            <strong>Scheduled scan</strong>
-            <p className="hint">Runs automatically on the server clock, even when nobody is logged in to the panel.</p>
+            <strong>Scheduled scan <code>{root}</code></strong>
+            <p className="hint">Runs automatically on the server clock, even when nobody is logged in to the panel. Use “Run a scan now” above for an on-demand scan.</p>
             <div className="firewall-form">
               <label><span>Enabled</span>
                 <select value={sched.enabled ? 'on' : 'off'} onChange={e => setField({ enabled: e.target.value === 'on' })}>
