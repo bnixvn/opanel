@@ -3959,16 +3959,19 @@ PY
     ;;
 
   # ---- WP-CLI as www-data ----------------------------------------------
+  # pcre.jit=0 + opcache.jit=disable: the ionCube loader sets a user opcode
+  # handler, which the opcache JIT refuses ("JIT is incompatible with third
+  # party extensions..."). Turning JIT off up front keeps wp-cli output clean.
   wp)
     [[ $# -ge 1 ]] || deny "usage: wp <args...>"
-    exec runuser -u www-data -- env HOME=/var/www WP_CLI_PHP_ARGS='-d pcre.jit=0' php -d pcre.jit=0 /usr/local/bin/wp "$@"
+    exec runuser -u www-data -- env HOME=/var/www WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable' php -d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp "$@"
     ;;
 
   wp-site)
     [[ $# -ge 2 ]] || deny "usage: wp-site <site-user> <args...>"
     user="$1"; shift
     require_linux_user "$user"
-    exec runuser -u "$user" -- env HOME="$HOME_ROOT/$user" WP_CLI_PHP_ARGS='-d pcre.jit=0' php -d pcre.jit=0 /usr/local/bin/wp "$@"
+    exec runuser -u "$user" -- env HOME="$HOME_ROOT/$user" WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable' php -d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp "$@"
     ;;
 
   # ---- crontab managed for www-data ------------------------------------
@@ -4068,9 +4071,11 @@ PY
         exec runuser -u "$user" -- env "${terminal_env[@]}" "$php_bin" artisan "$@"
         ;;
       wp)
-        # WP-CLI as the site user with the selected PHP version
+        # WP-CLI as the site user with the selected PHP version. JIT off (pcre
+        # + opcache) -- the ionCube loader's user opcode handler is incompatible
+        # with the opcache JIT and otherwise prints a warning on every command.
         [[ -x /usr/local/bin/wp ]] || deny "wp-cli not found"
-        exec runuser -u "$user" -- env "${terminal_env[@]}" WP_CLI_PHP_ARGS='-d pcre.jit=0' "$php_bin" -d pcre.jit=0 /usr/local/bin/wp "$@"
+        exec runuser -u "$user" -- env "${terminal_env[@]}" WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable' "$php_bin" -d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp "$@"
         ;;
       *)
         echo "Command not allowed: $cmd" >&2

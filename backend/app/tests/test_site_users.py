@@ -293,3 +293,15 @@ def test_archive_extract_helper_skips_symlinks_instead_of_rejecting():
     assert block.count("member.issym() or member.islnk() or member.isdev() or member.isfifo()") >= 2
     assert "skipped_specials += 1" in block
     assert "skipped %d symlink/special" in block
+
+
+def test_wp_cli_wrapper_disables_jit_for_ioncube_compat():
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    # every wp-cli entrypoint turns opcache JIT off (ionCube user-opcode-handler
+    # conflict) alongside the existing pcre.jit=0
+    for marker in (
+        "WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable'",
+    ):
+        assert helper.count(marker) >= 3, marker
+    assert "-d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp" in helper
+    assert "WP_CLI_PHP_ARGS='-d pcre.jit=0'" not in helper
