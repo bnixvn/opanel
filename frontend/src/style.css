@@ -76,7 +76,7 @@
      above it. Muted text stays past 5:1 on every surface. */
   --text:#1a2230;
   --text-secondary:#48525f;
-  --text-muted:#586170;
+  --text-muted:#515a68;
   --bg:#f5f7fa;
   --surface:#ffffff;
   /* Quiet fill for static panels, groups and table stripes. */
@@ -150,7 +150,7 @@
   --warning-text:#f0c471;
   --text:#e9edf2;
   --text-secondary:#b3bdc9;
-  --text-muted:#8b95a3;
+  --text-muted:#98a2af;
   --bg:#0d1117;
   --surface:#161b22;
   --surface-alt:#1c222b;
