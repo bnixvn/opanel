@@ -1286,6 +1286,14 @@ function App() {
     if (data) { setNotice(data.detail || 'Signatures updated.'); await loadMalwareScanStatus(); }
   }
 
+  async function toggleAutoQuarantine(enable) {
+    const data = await request('/panel-settings/malware-scan/auto-quarantine', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: enable }),
+    }, 'Saving...');
+    if (data) { setPanelSettings(data); setNotice(data.message || ''); await loadMalwareScanStatus(); }
+  }
+
   async function loadQuarantine() {
     const data = await request('/panel-settings/malware-scan/quarantine', { silent: true }, '');
     if (data && Array.isArray(data.entries)) setQuarantine(data.entries);
@@ -4506,8 +4514,8 @@ function App() {
               {activeScanJob.threats.map((t, i) => <div key={i} className="scan-threat-item">
                 <strong>{t.signature}</strong>
                 <span>{t.domain ? `${t.domain}: ` : ''}{t.path}</span>
-                {quarantine.some(q => q.original_path === t.path)
-                  ? <span className="badge">Quarantined</span>
+                {(t.quarantined || quarantine.some(q => q.original_path === t.path))
+                  ? <span className="badge ok">Quarantined</span>
                   : <button className="secondary-light" disabled={!!loading} onClick={() => quarantineThreat(t.path, t.signature)}>Quarantine</button>}
               </div>)}
             </div>}
@@ -4519,10 +4527,19 @@ function App() {
           <div className="malware-scan-head">
             <div>
               <strong>Quarantine {quarantine.length > 0 && <span className="badge">{quarantine.length}</span>}</strong>
-              <p className="hint">Threats found by a scan stay in place — nothing is quarantined automatically. Use “Quarantine” on a scan result to move a file here; it stops being served at once and can be restored byte-for-byte if it was a false positive.</p>
+              <p className="hint">
+                {mw.auto_quarantine
+                  ? 'A file a scan flags as malware is moved here automatically and stops being served at once. Review the list and Restore anything that was a false positive.'
+                  : 'Auto-quarantine is off — scans only report threats. Turn it on below, or use “Quarantine” on a scan result to move a file here manually.'}
+              </p>
             </div>
             <button className="secondary" disabled={!!loading} onClick={loadQuarantine}><RefreshCw size={14}/> Refresh</button>
           </div>
+          <label className="check-line" style={{marginBottom: quarantine.length ? 10 : 0}}>
+            <input type="checkbox" checked={!!mw.auto_quarantine} disabled={!!loading}
+              onChange={e => toggleAutoQuarantine(e.target.checked)} />
+            Automatically quarantine detected malware
+          </label>
           {quarantine.length === 0
             ? <p className="hint">Nothing in quarantine.</p>
             : <div className="scan-history-list">

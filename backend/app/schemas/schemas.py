@@ -654,6 +654,7 @@ class MalwareScanThreat(BaseModel):
     path: str
     signature: str
     domain: Optional[str] = None
+    quarantined: bool = False
 
 
 class QuarantineRequest(BaseModel):
@@ -728,6 +729,7 @@ class MalwareScanStatus(BaseModel):
     lmd_version: str = ""
     realtime_enabled: bool = False
     realtime_active: bool = False
+    auto_quarantine: bool = True
 
 
 class PanelSettingsUpdate(BaseModel):

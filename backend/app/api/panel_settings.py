@@ -164,6 +164,20 @@ def toggle_malware_scan(
     return result
 
 
+@router.post("/malware-scan/auto-quarantine", response_model=PanelSettingsOut)
+def toggle_malware_auto_quarantine(
+    payload: MalwareScanToggle,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    result = panel_settings.set_malware_auto_quarantine(payload.enabled)
+    action = "enable_malware_auto_quarantine" if payload.enabled else "disable_malware_auto_quarantine"
+    log_action(db, current_user.id, action, "malware-scan", request=request)
+    return result
+
+
 @router.get("/malware-scan/quarantine", response_model=QuarantineList)
 def list_quarantine(current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)

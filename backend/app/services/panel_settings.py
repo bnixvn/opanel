@@ -410,6 +410,20 @@ def _add_lmd_flow() -> None:
         _malware_scan._write_status(state)
 
 
+def set_malware_auto_quarantine(enabled: bool) -> dict:
+    """Toggle whether a scan moves a detected file to quarantine automatically."""
+    data = _read_raw()
+    data["malware_auto_quarantine"] = bool(enabled)
+    _write_raw(data)
+    current = current_settings()
+    current["message"] = (
+        "Detected malware will be quarantined automatically"
+        if enabled
+        else "Auto-quarantine off -- scans only report threats now"
+    )
+    return current
+
+
 def _install_and_enable_flow() -> None:
     """Background worker: install ClamAV, then leave the persisted flag on.
 
@@ -668,9 +682,12 @@ def _run_scan_job(job_id: str, targets: list[dict]) -> None:
             scanned += 1
             status = result["status"]
             if status == "infected":
-                threat = {"path": file_path, "signature": result["signature"], "domain": target["domain"]}
-                threats.append(threat)
                 _append_malware_log(job_id, f"INFECTED {target['domain']} {file_path}: {result['signature']}")
+                quarantined = _maybe_quarantine_threat(job_id, file_path, result["signature"], target["domain"])
+                threats.append({
+                    "path": file_path, "signature": result["signature"],
+                    "domain": target["domain"], "quarantined": quarantined,
+                })
             elif status == "error":
                 errors += 1
                 _append_malware_log(job_id, f"ERROR {target['domain']} {file_path}: {result['detail']}")
@@ -1003,6 +1020,28 @@ def _new_malware_job(scope: str, **fields) -> dict:
     return job
 
 
+def _auto_quarantine_enabled() -> bool:
+    return bool(_read_raw().get("malware_auto_quarantine", settings.malware_auto_quarantine))
+
+
+_QUARANTINE_ELIGIBLE_PREFIXES = ("/home/", "/tmp/", "/var/tmp/", "/dev/shm/", "/var/www/")
+
+
+def _maybe_quarantine_threat(job_id: str, path: str, signature: str, domain: str = "") -> bool:
+    """Move a detected malware file to quarantine. Returns True when it was."""
+    if not _auto_quarantine_enabled():
+        return False
+    if not any(path.startswith(p) for p in _QUARANTINE_ELIGIBLE_PREFIXES):
+        return False
+    try:
+        _malware_scan.quarantine_file(path, signature)
+        _append_malware_log(job_id, f"QUARANTINED {(domain + ' ') if domain else ''}{path}")
+        return True
+    except Exception as exc:  # noqa: BLE001 - a failed move must not abort the scan
+        _append_malware_log(job_id, f"QUARANTINE FAILED {path}: {exc}")
+        return False
+
+
 def start_system_scan_job(scan_root: str = "/", trigger: str = "manual", background: bool = True,
                           mode: str = "auto") -> dict:
     """Scan the whole server, not just website roots.
@@ -1083,8 +1122,12 @@ def _run_system_scan_job(job_id: str, scan_root: str, mode: str = "full") -> Non
                 continue
             scanned += 1
             if result["status"] == "infected":
-                threats.append({"path": result["path"], "signature": result["signature"], "domain": ""})
                 _append_malware_log(job_id, f"INFECTED {result['path']}: {result['signature']}")
+                quarantined = _maybe_quarantine_threat(job_id, result["path"], result["signature"])
+                threats.append({
+                    "path": result["path"], "signature": result["signature"],
+                    "domain": "", "quarantined": quarantined,
+                })
             elif result["status"] == "error":
                 errors += 1
                 # Unreadable special files are common and uninteresting; keep a

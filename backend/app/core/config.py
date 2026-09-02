@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     malware_realtime_enabled: bool = False
     # When True, uploaded files are scanned in memory before being accepted.
     malware_scan_on_upload: bool = True
+    # When True, a file a scan flags as malware is moved to quarantine
+    # automatically. It stops being served at once; restore it from the
+    # Quarantine list if it was a false positive.
+    malware_auto_quarantine: bool = True
     # When true, ``app.core.secrets.decrypt`` refuses to read legacy plaintext
     # values (the deprecated migration grace path). Production should leave
     # this True so any unmigrated row surfaces as a hard error instead of
