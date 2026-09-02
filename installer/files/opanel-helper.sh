@@ -1646,6 +1646,18 @@ copy_panel_live_certificate() {
   local domain="$1"
   [[ -n "$domain" ]] || return 0
   is_domain "$domain" || return 0
+  # /etc/opanel/panel-*.pem is the panel's OWN certificate -- it backs the panel
+  # port and the phpMyAdmin tools vhost, which are served for the panel hostname
+  # only. A website's "Install SSL" (certbot-issue <site-domain>) must never
+  # overwrite it, or phpMyAdmin SSO breaks with an SNI cert mismatch. Only copy
+  # when the issued domain IS the panel's hostname.
+  local panel_host
+  panel_host="$(env_get PANEL_DOMAIN)"
+  if [[ -z "$panel_host" ]]; then
+    panel_host="$(env_get PANEL_URL)"
+    panel_host="${panel_host#*://}"; panel_host="${panel_host%%/*}"; panel_host="${panel_host%%:*}"
+  fi
+  [[ -n "$panel_host" && "$domain" == "$panel_host" ]] || return 0
   [[ "$(panel_url_scheme)" == "https" ]] || return 0
   [[ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" && -f "/etc/letsencrypt/live/${domain}/privkey.pem" ]] || return 0
   install -d -o root -g opanel -m 0750 /etc/opanel

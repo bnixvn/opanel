@@ -257,6 +257,19 @@ def test_panel_ssl_webroot_is_served_by_tools_vhost():
     assert "context /.well-known/acme-challenge/ {" in installer
 
 
+def test_website_ssl_does_not_clobber_the_panel_certificate():
+    """certbot-issue <site-domain> (a website's "Install SSL") used to copy that
+    site's cert over /etc/opanel/panel-*.pem, which broke phpMyAdmin SSO with an
+    SNI cert mismatch. copy_panel_live_certificate must only touch the panel
+    cert for the panel's own hostname."""
+    helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    fn = helper.split("copy_panel_live_certificate() {", 1)[1].split("\n}", 1)[0]
+    assert 'panel_host="$(env_get PANEL_DOMAIN)"' in fn
+    assert '[[ -n "$panel_host" && "$domain" == "$panel_host" ]] || return 0' in fn
+    # certbot-issue still calls it (it is a no-op for non-panel domains now)
+    assert "certbot-issue)" in helper
+
+
 def test_panel_ssl_tools_vhost_includes_cert_block():
     helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
     assert "vhssl  {" in helper
