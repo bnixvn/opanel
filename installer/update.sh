@@ -1173,28 +1173,56 @@ if dpkg -s clamav-daemon >/dev/null 2>&1 \
     || echo "  (Linux Malware Detect install skipped; ClamAV scanning still works)"
 fi
 
-log "Running database migrations"
-update_progress 65 "backend" "Running database migrations"
-if id -u opanel >/dev/null 2>&1; then
-  # Run migrations as the opanel user so the SQLite file ownership stays correct.
-  sudo -u opanel "$APP_DIR/backend/.venv/bin/python" -c \
-    "from app.core.database import run_migrations; run_migrations()"
+update_progress 62 "backend" "Checking the database schema"
+MIGRATE_RUNNER="python"
+id -u opanel >/dev/null 2>&1 && MIGRATE_RUNNER="sudo -u opanel $APP_DIR/backend/.venv/bin/python"
+# Almost every update ships no new migration. `alembic upgrade head` still opens
+# the DB, reads alembic_version and walks the script tree every time -- skip that
+# when the DB is already stamped at the head revision.
+SCHEMA_AT_HEAD="$($MIGRATE_RUNNER - <<'PY' 2>/dev/null || echo no
+try:
+    from alembic.script import ScriptDirectory
+    from alembic.runtime.migration import MigrationContext
+    from app.core.database import engine, _alembic_config
+    heads = set(ScriptDirectory.from_config(_alembic_config()).get_heads())
+    with engine.connect() as conn:
+        current = set(MigrationContext.configure(conn).get_current_heads())
+    print("yes" if current and current == heads else "no")
+except Exception:
+    print("no")
+PY
+)"
+if [[ "$(printf '%s' "$SCHEMA_AT_HEAD" | tr -cd 'a-z' | tail -c3)" == "yes" ]]; then
+  log "Database schema already at head -- skipping migrations"
+  update_progress 65 "backend" "Database schema up to date"
 else
-  python -c "from app.core.database import run_migrations; run_migrations()"
+  log "Running database migrations"
+  update_progress 65 "backend" "Running database migrations"
+  # Run migrations as the opanel user so the SQLite file ownership stays correct.
+  $MIGRATE_RUNNER -c "from app.core.database import run_migrations; run_migrations()"
 fi
 systemctl enable --now opanel-backup-scheduler.timer >/dev/null 2>&1 || true
 systemctl enable --now opanel-malware-scheduler.timer >/dev/null 2>&1 || true
 
-log "Refreshing managed site permissions"
-# The per-site refresh (re-harden every site's file tree, rewrite every vhost and
-# WAF file) is the slowest phase of an update -- on a box with many sites it is
-# minutes of `find`/`chown` and, before this, one OLS restart per site. Almost
-# every update is backend-only and changes nothing a site's runtime depends on,
-# so gate the loop on a fingerprint of the files that actually shape per-site
-# output. FORCE_SITE_REFRESH=true (or a site stuck in "provisioning") runs it
-# anyway. When it does run, per-site OLS/WAF writes are deferred and the single
-# `ols-sync-main` near the end of this script is the only reload.
+log "Refreshing managed site config"
+# The per-site refresh has two costs, gated separately:
+#  1. Rewriting every vhost + WAF file (cheap: render + `cmp -s` skip, one
+#     deferred `ols-sync-main` at the end). Runs whenever the code that shapes a
+#     site's generated config changes -- keyed on SITE_FP_FILE.
+#  2. Re-hardening every site's file TREE (recursive chown + setfacl + 4 `find`
+#     walks per site -- this is what makes an update take ~50 min on an 80-site
+#     box). Only needed when the ownership/permission scheme itself changes:
+#     gated on SITE_HARDEN_VERSION, or forced by --refresh-sites / a provisioning
+#     site. A plain backend or malware-scanner change no longer triggers it.
 SITE_FP_FILE="/var/lib/opanel/site-refresh.fingerprint"
+SITE_HARDEN_VERSION=1
+SITE_HARDEN_MARKER="/var/lib/opanel/site-harden.version"
+# harden_existing_panel_users v2 applies the identical tree scheme, so a box
+# already stamped there needs no first-time re-harden from this loop.
+if [[ ! -f "$SITE_HARDEN_MARKER" && "$(cat /var/lib/opanel/harden-sites.version 2>/dev/null || true)" == "2" ]]; then
+  install -d -o opanel -g opanel -m 0750 /var/lib/opanel 2>/dev/null || true
+  printf '%s\n' "$SITE_HARDEN_VERSION" > "$SITE_HARDEN_MARKER" 2>/dev/null || true
+fi
 site_refresh_fingerprint() {
   sha256sum \
     /usr/local/sbin/opanel-helper \
@@ -1203,6 +1231,21 @@ site_refresh_fingerprint() {
     "$APP_DIR/backend/app/services/site_users.py" \
     "$APP_DIR/backend/app/api/websites.py" \
     2>/dev/null | sha256sum | awk '{print $1}'
+}
+_site_refresh_progress() {
+  # Translate `opanel-site-progress <cur> <total>` markers into progress ticks;
+  # pass every other line through to the update log.
+  local line cur tot
+  while IFS= read -r line; do
+    if [[ "$line" == "opanel-site-progress "* ]]; then
+      cur="${line#opanel-site-progress }"; tot="${cur##* }"; cur="${cur%% *}"
+      if [[ "$cur" =~ ^[0-9]+$ && "$tot" =~ ^[0-9]+$ && "$tot" -gt 0 ]]; then
+        update_progress "$(( 66 + cur * 12 / tot ))" "backend" "Refreshing sites (${cur}/${tot})"
+      fi
+    elif [[ -n "$line" ]]; then
+      printf '%s\n' "$line"
+    fi
+  done
 }
 if id -u opanel >/dev/null 2>&1; then
   NEW_SITE_FP="$(site_refresh_fingerprint)"
@@ -1224,10 +1267,24 @@ print(1 if pending else 0)
 PY
 )"
   NEEDS_REFRESH="$(printf '%s' "$NEEDS_REFRESH" | tail -n1 | tr -cd '01')"
-  if [[ "$FORCE_SITE_REFRESH" != "true" && -n "$NEW_SITE_FP" && "$NEW_SITE_FP" == "$OLD_SITE_FP" && "${NEEDS_REFRESH:-1}" == "0" ]]; then
-    log "Site-facing config unchanged since last update -- skipping the per-site refresh (FORCE_SITE_REFRESH=true to override)"
+  SITE_REHARDEN=0
+  if [[ "$FORCE_SITE_REFRESH" == "true" \
+        || "${NEEDS_REFRESH:-1}" == "1" \
+        || "$(cat "$SITE_HARDEN_MARKER" 2>/dev/null || true)" != "$SITE_HARDEN_VERSION" ]]; then
+    SITE_REHARDEN=1
+  fi
+  if [[ "$FORCE_SITE_REFRESH" != "true" && "$SITE_REHARDEN" == "0" \
+        && -n "$NEW_SITE_FP" && "$NEW_SITE_FP" == "$OLD_SITE_FP" ]]; then
+    log "Site config + permissions unchanged since last update -- skipping the per-site refresh (--refresh-sites to override)"
   else
-    sudo -u opanel env HOME="$APP_DIR" opanel_USE_HELPER=true "$APP_DIR/backend/.venv/bin/python" - <<'PY'
+    if [[ "$SITE_REHARDEN" == "1" ]]; then
+      log "Re-applying per-site file permissions + rewriting vhost/WAF config"
+    else
+      log "Rewriting per-site vhost + WAF config (file permissions unchanged)"
+    fi
+    sudo -u opanel env HOME="$APP_DIR" opanel_USE_HELPER=true SITE_REHARDEN="$SITE_REHARDEN" \
+      "$APP_DIR/backend/.venv/bin/python" - <<'PY' | _site_refresh_progress
+import os
 from app.core.database import SessionLocal
 from app.models.entities import Website
 from app.services import site_users, waf
@@ -1238,15 +1295,16 @@ from app.services import site_users, waf
 # HTTPS for every reuse-mode site on the next update.
 from app.api.websites import _rewrite_website_vhost
 
+reharden = os.environ.get("SITE_REHARDEN") == "1"
 with SessionLocal() as db:
     websites = db.query(Website).all()
-    for website in websites:
+    total = len(websites)
+    for i, website in enumerate(websites, 1):
         try:
-            if website.linux_user:
+            if reharden and website.linux_user:
                 runtime_php_version = website.php_version if (website.app_type or "wordpress") in {"wordpress", "php"} else None
-                # ensure_site_runtime already chowns the tree (fix_site_tree);
-                # the standalone fix_site_permissions call was a redundant second
-                # recursive chown per site.
+                # The recursive chown/chmod tree fix. Skipped unless the scheme
+                # changed (SITE_HARDEN_VERSION) or --refresh-sites was passed.
                 site_users.ensure_site_runtime(website.domain, website.root_path, runtime_php_version, website.linux_user)
                 site_users.ensure_document_root(
                     website.root_path,
@@ -1258,9 +1316,12 @@ with SessionLocal() as db:
                 print(f"WARNING: could not refresh WAF rules for {website.domain}: {result.stderr or result.stdout}")
             _rewrite_website_vhost(website, defer_reload=True)
         except Exception as exc:
-            print(f"WARNING: could not refresh permissions for {website.domain}: {exc}")
+            print(f"WARNING: could not refresh {website.domain}: {exc}")
+        if i % 5 == 0 or i == total:
+            print(f"opanel-site-progress {i} {total}", flush=True)
 PY
     printf '%s\n' "$NEW_SITE_FP" > "$SITE_FP_FILE" 2>/dev/null || true
+    [[ "$SITE_REHARDEN" == "1" ]] && printf '%s\n' "$SITE_HARDEN_VERSION" > "$SITE_HARDEN_MARKER" 2>/dev/null || true
   fi
 fi
 

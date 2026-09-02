@@ -263,12 +263,35 @@ def test_update_skips_per_site_refresh_when_nothing_site_facing_changed():
     assert "waf.sync_website_rules(website, defer_reload=True)" in update
     assert "_rewrite_website_vhost(website, defer_reload=True)" in update
     # the redundant second recursive chown per site is gone from that loop
-    loop = update.split("Refreshing managed site permissions", 1)[1].split("Compiling backend modules", 1)[0]
+    loop = update.split("Refreshing managed site config", 1)[1].split("Compiling backend modules", 1)[0]
     assert "site_users.fix_site_permissions(" not in loop
     # the recursive panel-user re-harden is version-gated too
     assert "HARDEN_SITES_VERSION=" in update
     assert 'harden_marker="/var/lib/opanel/harden-sites.version"' in update
     assert 'if [[ "$do_recursive" == 1 ]]; then' in update
+
+
+def test_the_expensive_tree_reharden_is_gated_separately_from_the_config_rewrite():
+    update = UPDATE_SCRIPT.read_text(encoding="utf-8")
+    loop = update.split("Refreshing managed site config", 1)[1].split("Compiling backend modules", 1)[0]
+    # the recursive fix_site_tree call (via ensure_site_runtime) runs only when
+    # re-hardening; the vhost + WAF rewrite always runs when the loop executes
+    assert "SITE_HARDEN_VERSION=" in update
+    assert 'SITE_HARDEN_MARKER="/var/lib/opanel/site-harden.version"' in update
+    assert "if reharden and website.linux_user:" in loop
+    assert "site_users.ensure_site_runtime(" in loop
+    # a box already hardened by harden_existing_panel_users v2 is seeded, not redone
+    assert '"$(cat /var/lib/opanel/harden-sites.version 2>/dev/null || true)" == "2"' in update
+    # the phase reports progress instead of sitting frozen at 65%
+    assert "opanel-site-progress" in update
+    assert "_site_refresh_progress" in update
+
+
+def test_update_skips_migrations_when_the_schema_is_already_at_head():
+    update = UPDATE_SCRIPT.read_text(encoding="utf-8")
+    assert "Database schema already at head -- skipping migrations" in update
+    assert "get_current_heads()" in update
+    assert "from app.core.database import run_migrations; run_migrations()" in update
 
 
 def test_helper_skips_ols_restart_when_generated_config_is_unchanged():
