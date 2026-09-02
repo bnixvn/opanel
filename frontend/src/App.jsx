@@ -435,7 +435,10 @@ function App() {
   const [scanJob, setScanJob] = useState(null);
   const [scanJobs, setScanJobs] = useState([]);
   const [networkStatus, setNetworkStatus] = useState({ ipv4: [], ipv6: [], ipv6_available: false, ipv6_enabled: false });
-  const [malwareSchedule, setMalwareSchedule] = useState({ enabled: false, frequency: 'weekly', hour: 3, minute: 0, weekday: 0, day: 1, scan_root: '/' });
+  const [malwareSchedules, setMalwareSchedules] = useState({
+    system: { scope: 'system', scan_root: '/', enabled: false, frequency: 'weekly', weekday: 0, hour: 2, minute: 0, day: 1 },
+    web: { scope: 'web', scan_root: '/home', enabled: false, frequency: 'daily', weekday: 0, hour: 3, minute: 30, day: 1 },
+  });
   const [scanLoading, setScanLoading] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -1307,32 +1310,35 @@ function App() {
 
   async function loadMalwareSchedule() {
     const data = await request('/panel-settings/malware-scan/schedule', { silent: true }, '');
-    if (data) setMalwareSchedule(data);
+    if (data && data.system && data.web) setMalwareSchedules(data);
     return data;
   }
 
-  async function saveMalwareSchedule() {
+  async function saveMalwareSchedule(scope) {
+    const s = malwareSchedules[scope] || {};
     const data = await request('/panel-settings/malware-scan/schedule', {
       method: 'PUT',
       body: JSON.stringify({
-        enabled: !!malwareSchedule.enabled,
-        frequency: malwareSchedule.frequency || 'weekly',
-        hour: Number(malwareSchedule.hour) || 0,
-        minute: Number(malwareSchedule.minute) || 0,
-        weekday: Number(malwareSchedule.weekday) || 0,
-        day: Number(malwareSchedule.day) || 1,
-        scan_root: (malwareSchedule.scan_root || '/').trim() || '/',
+        [scope]: {
+          enabled: !!s.enabled,
+          frequency: s.frequency || 'weekly',
+          hour: Number(s.hour) || 0,
+          minute: Number(s.minute) || 0,
+          weekday: Number(s.weekday) || 0,
+          day: Number(s.day) || 1,
+        },
       }),
     }, 'Saving scan schedule...');
-    if (data) {
-      setMalwareSchedule(data);
-      setNotice(data.enabled ? 'Scheduled scan saved.' : 'Scheduled scan disabled.');
+    if (data && data.system && data.web) {
+      setMalwareSchedules(data);
+      setNotice(data[scope]?.enabled ? 'Scheduled scan saved.' : 'Scheduled scan disabled.');
     }
   }
 
-  async function runSystemScan() {
-    const scanRoot = (malwareSchedule.scan_root || '/').trim() || '/';
-    if (!confirm(`Scan ${scanRoot} on this server now? A full scan can run for hours.`)) return;
+  async function runSystemScan(scope) {
+    const scanRoot = scope === 'web' ? '/home' : '/';
+    const label = scope === 'web' ? 'every website (/home)' : 'the whole server (/)';
+    if (!confirm(`Scan ${label} now? The first full scan can run for a long time.`)) return;
     setScanResults(null);
     setScanJob(null);
     setScanLoading(true);
@@ -1340,11 +1346,11 @@ function App() {
       const data = await request('/panel-settings/malware-scan/run', {
         method: 'POST',
         body: JSON.stringify({ scope: 'system', scan_root: scanRoot }),
-      }, 'Starting full server scan...');
+      }, 'Starting scan...');
       if (data) {
         setScanJob(data);
         await loadMalwareScanJobs();
-        setNotice('Full server scan started.');
+        setNotice(scope === 'web' ? 'Website scan started.' : 'Full server scan started.');
       }
     } finally {
       setScanLoading(false);
@@ -4480,65 +4486,78 @@ function App() {
         </div>}
       </section>}
 
-      {isAdmin && <section className="section">
-        <div className="section-title">
-          <div>
-            <h2>Full server scan</h2>
-            <p className="hint">Website scans only cover document roots. This walks the whole VPS as root, so malware parked in /tmp, /root or a home folder outside public_html is found too.</p>
+      {isAdmin && [
+        {
+          scope: 'system',
+          title: 'Full server scan',
+          root: '/',
+          intro: 'Walks the whole VPS as root, so malware parked in /tmp, /root or a home folder outside public_html is found too. Skips /proc, /sys, /dev, /run, /snap, the ClamAV signature database and panel backup archives. The first run can take hours; best run weekly or monthly.',
+        },
+        {
+          scope: 'web',
+          title: 'Website scan (/home)',
+          root: '/home',
+          intro: 'Scans every website’s files under /home. With Linux Malware Detect installed this runs incrementally (only files changed in the last few days) between full runs, so a daily schedule stays cheap.',
+        },
+      ].map(({ scope, title, root, intro }) => {
+        const sched = malwareSchedules[scope] || {};
+        const setField = (patch) => setMalwareSchedules(prev => ({ ...prev, [scope]: { ...prev[scope], ...patch } }));
+        return <section className="section" key={scope}>
+          <div className="section-title">
+            <div>
+              <h2>{title}</h2>
+              <p className="hint">{intro}</p>
+            </div>
+            <button className="secondary" disabled={!!loading} onClick={loadMalwareSchedule}><RefreshCw size={14}/> Refresh</button>
           </div>
-          <button className="secondary" disabled={!!loading} onClick={loadMalwareSchedule}><RefreshCw size={14}/> Refresh</button>
-        </div>
-        <div className="info-box">
-          <div className="malware-scan-controls">
-            <input value={malwareSchedule.scan_root || '/'} onChange={e => setMalwareSchedule(prev => ({ ...prev, scan_root: e.target.value }))} placeholder="/" />
-            <button disabled={!!loading || scanRunning || !mw.clamd_running} onClick={runSystemScan}>
-              {scanRunning ? <><RefreshCw size={14} className="spin"/> Scanning...</> : <><Search size={14}/> Scan now</>}
-            </button>
+          <div className="info-box">
+            <div className="malware-scan-controls">
+              <code style={{alignSelf:'center'}}>{root}</code>
+              <button disabled={!!loading || scanRunning || !mw.clamd_running} onClick={() => runSystemScan(scope)}>
+                {scanRunning ? <><RefreshCw size={14} className="spin"/> Scanning...</> : <><Search size={14}/> Scan now</>}
+              </button>
+            </div>
           </div>
-          <p className="hint" style={{marginTop:8}}>Skips /proc, /sys, /dev, /run, the ClamAV signature database and panel backup archives. A full scan of a busy server can run for hours.</p>
-        </div>
-        <div className="info-box">
-          <strong>Scheduled scan</strong>
-          <p className="hint">Runs automatically on the server clock. The scan starts even when nobody is logged in to the panel.</p>
-          <div className="firewall-form">
-            <label><span>Enabled</span>
-              <select value={malwareSchedule.enabled ? 'on' : 'off'} onChange={e => setMalwareSchedule(prev => ({ ...prev, enabled: e.target.value === 'on' }))}>
-                <option value="off">Off</option>
-                <option value="on">On</option>
-              </select>
-            </label>
-            <label><span>Frequency</span>
-              <select value={malwareSchedule.frequency || 'weekly'} onChange={e => setMalwareSchedule(prev => ({ ...prev, frequency: e.target.value }))}>
-                <option value="hourly">Hourly</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-            </label>
-            {malwareSchedule.frequency === 'weekly' && <label><span>Day of week</span>
-              <select value={Number(malwareSchedule.weekday) || 0} onChange={e => setMalwareSchedule(prev => ({ ...prev, weekday: Number(e.target.value) }))}>
-                {WEEKDAY_LABELS.map((label, index) => <option key={label} value={index}>{label}</option>)}
-              </select>
-            </label>}
-            {malwareSchedule.frequency === 'monthly' && <label><span>Day of month</span>
-              <input type="number" min="1" max="28" value={Number(malwareSchedule.day) || 1} onChange={e => setMalwareSchedule(prev => ({ ...prev, day: Number(e.target.value) }))} />
-            </label>}
-            {malwareSchedule.frequency !== 'hourly' && <label><span>Hour</span>
-              <input type="number" min="0" max="23" value={Number(malwareSchedule.hour) || 0} onChange={e => setMalwareSchedule(prev => ({ ...prev, hour: Number(e.target.value) }))} />
-            </label>}
-            <label><span>Minute</span>
-              <input type="number" min="0" max="59" value={Number(malwareSchedule.minute) || 0} onChange={e => setMalwareSchedule(prev => ({ ...prev, minute: Number(e.target.value) }))} />
-            </label>
-            <label><span>Path</span>
-              <input value={malwareSchedule.scan_root || '/'} onChange={e => setMalwareSchedule(prev => ({ ...prev, scan_root: e.target.value }))} placeholder="/" />
-            </label>
-            <button disabled={!!loading} onClick={saveMalwareSchedule}><Clock size={14}/> Save schedule</button>
+          <div className="info-box">
+            <strong>Scheduled scan</strong>
+            <p className="hint">Runs automatically on the server clock, even when nobody is logged in to the panel.</p>
+            <div className="firewall-form">
+              <label><span>Enabled</span>
+                <select value={sched.enabled ? 'on' : 'off'} onChange={e => setField({ enabled: e.target.value === 'on' })}>
+                  <option value="off">Off</option>
+                  <option value="on">On</option>
+                </select>
+              </label>
+              <label><span>Frequency</span>
+                <select value={sched.frequency || 'weekly'} onChange={e => setField({ frequency: e.target.value })}>
+                  <option value="hourly">Hourly</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </label>
+              {sched.frequency === 'weekly' && <label><span>Day of week</span>
+                <select value={Number(sched.weekday) || 0} onChange={e => setField({ weekday: Number(e.target.value) })}>
+                  {WEEKDAY_LABELS.map((label, index) => <option key={label} value={index}>{label}</option>)}
+                </select>
+              </label>}
+              {sched.frequency === 'monthly' && <label><span>Day of month</span>
+                <input type="number" min="1" max="28" value={Number(sched.day) || 1} onChange={e => setField({ day: Number(e.target.value) })} />
+              </label>}
+              {sched.frequency !== 'hourly' && <label><span>Hour</span>
+                <input type="number" min="0" max="23" value={Number(sched.hour) || 0} onChange={e => setField({ hour: Number(e.target.value) })} />
+              </label>}
+              <label><span>Minute</span>
+                <input type="number" min="0" max="59" value={Number(sched.minute) || 0} onChange={e => setField({ minute: Number(e.target.value) })} />
+              </label>
+              <button disabled={!!loading} onClick={() => saveMalwareSchedule(scope)}><Clock size={14}/> Save schedule</button>
+            </div>
+            {sched.last_run_at && <p className="hint" style={{marginTop:8}}>
+              Last scheduled run: {sched.last_run_at} — <span className={sched.last_status === 'infected' ? 'badge danger' : sched.last_status === 'error' ? 'badge bad' : 'badge ok'}>{sched.last_status || 'unknown'}</span> {sched.last_message || ''}
+            </p>}
           </div>
-          {malwareSchedule.last_run_at && <p className="hint" style={{marginTop:8}}>
-            Last scheduled run: {malwareSchedule.last_run_at} — <span className={malwareSchedule.last_status === 'infected' ? 'badge danger' : malwareSchedule.last_status === 'error' ? 'badge bad' : 'badge ok'}>{malwareSchedule.last_status || 'unknown'}</span> {malwareSchedule.last_message || ''}
-          </p>}
-        </div>
-      </section>}
+        </section>;
+      })}
     </>;
   }
 

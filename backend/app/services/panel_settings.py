@@ -741,11 +741,17 @@ def set_ipv6(enabled: bool) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Scheduled full-system scans
+# Scheduled scans
 # ---------------------------------------------------------------------------
-MALWARE_SCHEDULE_KEY = "malware_scan_schedule"
+# Two independent schedules, each with a fixed scope:
+#   "system" -> "/"     the whole VPS (clamdscan + a prune list, always full)
+#   "web"    -> "/home"  every website's files (LMD, incremental between full runs)
+# scan_root is derived from the scope and never taken from the client.
+MALWARE_SCHEDULE_KEY = "malware_scan_schedule"          # legacy single schedule
+MALWARE_SCHEDULES_KEY = "malware_scan_schedules"        # {scope: schedule}
 MALWARE_SCHEDULE_STATE_FILE = SETTINGS_DIR / "malware-scan-schedule-state.json"
 MALWARE_SCHEDULE_FREQUENCIES = ("hourly", "daily", "weekly", "monthly")
+MALWARE_SCAN_SCOPES = {"system": "/", "web": "/home"}
 MALWARE_SCHEDULE_DEFAULTS = {
     "enabled": False,
     "frequency": "weekly",
@@ -754,6 +760,10 @@ MALWARE_SCHEDULE_DEFAULTS = {
     "weekday": 0,
     "day": 1,
     "scan_root": "/",
+}
+MALWARE_SCHEDULE_SCOPE_DEFAULTS = {
+    "system": {"enabled": False, "frequency": "weekly", "weekday": 0, "hour": 2, "minute": 0, "day": 1},
+    "web": {"enabled": False, "frequency": "daily", "hour": 3, "minute": 30, "weekday": 0, "day": 1},
 }
 
 
@@ -765,17 +775,31 @@ def _clamp_int(value, low: int, high: int, default: int) -> int:
     return max(low, min(high, number))
 
 
-def normalize_malware_schedule(raw) -> dict:
-    """Coerce stored or posted schedule fields into a complete, valid schedule."""
+def _scope_scan_root(scope: str) -> str:
+    try:
+        return MALWARE_SCAN_SCOPES[scope]
+    except KeyError:
+        raise ValueError(f"Unknown scan scope: {scope}") from None
+
+
+def normalize_malware_schedule(raw, scope: str | None = None) -> dict:
+    """Coerce stored or posted schedule fields into a complete, valid schedule.
+
+    When *scope* is given, scan_root is forced to that scope's fixed path and
+    any scan_root in *raw* is ignored.
+    """
     data = raw if isinstance(raw, dict) else {}
     frequency = str(data.get("frequency") or MALWARE_SCHEDULE_DEFAULTS["frequency"]).strip().lower()
     if frequency not in MALWARE_SCHEDULE_FREQUENCIES:
         frequency = MALWARE_SCHEDULE_DEFAULTS["frequency"]
-    scan_root = str(data.get("scan_root") or "/").strip() or "/"
-    if not scan_root.startswith("/"):
-        raise ValueError("Scan path must be absolute")
-    if len(scan_root) > 1:
-        scan_root = scan_root.rstrip("/") or "/"
+    if scope is not None:
+        scan_root = _scope_scan_root(scope)
+    else:
+        scan_root = str(data.get("scan_root") or "/").strip() or "/"
+        if not scan_root.startswith("/"):
+            raise ValueError("Scan path must be absolute")
+        if len(scan_root) > 1:
+            scan_root = scan_root.rstrip("/") or "/"
     return {
         "enabled": bool(data.get("enabled", MALWARE_SCHEDULE_DEFAULTS["enabled"])),
         "frequency": frequency,
@@ -789,6 +813,12 @@ def normalize_malware_schedule(raw) -> dict:
     }
 
 
+def _legacy_schedule_scope(legacy: dict) -> str:
+    """Which of the two scopes an old single schedule maps onto."""
+    root = str((legacy or {}).get("scan_root") or "/").rstrip("/") or "/"
+    return "web" if root.startswith("/home") else "system"
+
+
 def _read_malware_schedule_state() -> dict:
     try:
         if MALWARE_SCHEDULE_STATE_FILE.exists():
@@ -799,15 +829,7 @@ def _read_malware_schedule_state() -> dict:
     return {}
 
 
-def write_malware_schedule_state(**updates) -> dict:
-    """Record the outcome of the last scheduled run.
-
-    Kept out of panel-settings.json on purpose: the scheduler process writes
-    this after every run, and a read-modify-write race against the settings API
-    would otherwise be able to drop an unrelated setting.
-    """
-    state = _read_malware_schedule_state()
-    state.update(updates)
+def _write_malware_schedule_state(state: dict) -> None:
     try:
         SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", encoding="utf-8", dir=str(SETTINGS_DIR), delete=False) as tmp:
@@ -816,27 +838,80 @@ def write_malware_schedule_state(**updates) -> dict:
         tmp_path.replace(MALWARE_SCHEDULE_STATE_FILE)
     except OSError:
         pass
+
+
+def write_malware_schedule_state(**updates) -> dict:
+    """Record top-level scheduler state (currently just the last full-scan
+    baseline that the incremental/full decision reads).
+
+    Kept out of panel-settings.json on purpose: the scheduler process writes
+    this after every run, and a read-modify-write race against the settings API
+    would otherwise be able to drop an unrelated setting.
+    """
+    state = _read_malware_schedule_state()
+    state.update(updates)
+    _write_malware_schedule_state(state)
     return state
 
 
-def malware_schedule() -> dict:
-    schedule = normalize_malware_schedule(_read_raw().get(MALWARE_SCHEDULE_KEY))
+def write_malware_schedule_scope_state(scope: str, **updates) -> dict:
+    """Record the outcome of one scope's last scheduled run."""
     state = _read_malware_schedule_state()
-    schedule.update(
-        last_run_at=state.get("last_run_at") or "",
-        last_status=state.get("last_status") or "",
-        last_message=state.get("last_message") or "",
-        last_job_id=state.get("last_job_id") or "",
-    )
-    return schedule
+    entry = state.get(scope)
+    entry = dict(entry) if isinstance(entry, dict) else {}
+    entry.update(updates)
+    state[scope] = entry
+    _write_malware_schedule_state(state)
+    return state
 
 
-def set_malware_schedule(payload) -> dict:
-    schedule = normalize_malware_schedule(payload)
-    data = _read_raw()
-    data[MALWARE_SCHEDULE_KEY] = schedule
-    _write_raw(data)
-    return malware_schedule()
+def _schedule_scope_state(state: dict, scope: str) -> dict:
+    entry = state.get(scope)
+    return entry if isinstance(entry, dict) else {}
+
+
+def malware_schedules() -> dict:
+    """Return both scan schedules, keyed by scope, each with its last-run info."""
+    raw = _read_raw()
+    stored = raw.get(MALWARE_SCHEDULES_KEY)
+    legacy = raw.get(MALWARE_SCHEDULE_KEY)
+    legacy_scope = _legacy_schedule_scope(legacy) if isinstance(legacy, dict) else None
+    state = _read_malware_schedule_state()
+    out: dict[str, dict] = {}
+    for scope in MALWARE_SCAN_SCOPES:
+        base = dict(MALWARE_SCHEDULE_SCOPE_DEFAULTS[scope])
+        if isinstance(stored, dict) and isinstance(stored.get(scope), dict):
+            base.update(stored[scope])
+        elif legacy_scope == scope and isinstance(legacy, dict):
+            base.update({k: v for k, v in legacy.items() if k != "scan_root"})
+        schedule = normalize_malware_schedule(base, scope=scope)
+        schedule["scope"] = scope
+        sk = _schedule_scope_state(state, scope)
+        schedule.update(
+            last_run_at=sk.get("last_run_at") or "",
+            last_status=sk.get("last_status") or "",
+            last_message=sk.get("last_message") or "",
+            last_job_id=sk.get("last_job_id") or "",
+        )
+        out[scope] = schedule
+    return out
+
+
+def set_malware_schedules(payload) -> dict:
+    """Persist one or both schedules. Only the scopes present in *payload* are
+    touched; scan_root is always forced from the scope."""
+    data = payload if isinstance(payload, dict) else {}
+    raw = _read_raw()
+    stored = raw.get(MALWARE_SCHEDULES_KEY)
+    stored = dict(stored) if isinstance(stored, dict) else {}
+    for scope in MALWARE_SCAN_SCOPES:
+        entry = data.get(scope)
+        if isinstance(entry, dict):
+            stored[scope] = normalize_malware_schedule(entry, scope=scope)
+    raw[MALWARE_SCHEDULES_KEY] = stored
+    raw.pop(MALWARE_SCHEDULE_KEY, None)  # legacy single schedule folded in
+    _write_raw(raw)
+    return malware_schedules()
 
 
 # A full-filesystem scan walks hundreds of thousands of files. Writing the job
@@ -908,7 +983,8 @@ def start_system_scan_job(scan_root: str = "/", trigger: str = "manual", backgro
     scan_root = (scan_root or "/").strip() or "/"
     if not scan_root.startswith("/"):
         raise ValueError("Scan path must be absolute")
-    resolved = _resolve_scan_mode(mode)
+    # A whole-VPS scan runs through clamdscan, which has no incremental mode.
+    resolved = "full" if scan_root == "/" else _resolve_scan_mode(mode)
     job = _new_malware_job("system", scan_root=scan_root, trigger=trigger, scan_mode=resolved,
                            message=f"Queued {resolved} system scan")
     _remember_malware_job(job)

@@ -621,21 +621,33 @@ class MalwareScanRun(BaseModel):
     scan_root: str = "/"
 
 
-class MalwareScanScheduleIn(BaseModel):
+class MalwareScanScheduleEntryIn(BaseModel):
     enabled: bool = False
     frequency: str = "weekly"
     hour: int = Field(default=3, ge=0, le=23)
     minute: int = Field(default=0, ge=0, le=59)
     weekday: int = Field(default=0, ge=0, le=6)
     day: int = Field(default=1, ge=1, le=28)
+
+
+class MalwareScanScheduleEntryOut(MalwareScanScheduleEntryIn):
+    scope: str = ""
     scan_root: str = "/"
-
-
-class MalwareScanScheduleOut(MalwareScanScheduleIn):
     last_run_at: str = ""
     last_status: str = ""
     last_message: str = ""
     last_job_id: str = ""
+
+
+class MalwareScanSchedulesIn(BaseModel):
+    """Both schedules are optional; only the ones sent are updated."""
+    system: Optional[MalwareScanScheduleEntryIn] = None
+    web: Optional[MalwareScanScheduleEntryIn] = None
+
+
+class MalwareScanSchedulesOut(BaseModel):
+    system: MalwareScanScheduleEntryOut
+    web: MalwareScanScheduleEntryOut
 
 
 class MalwareScanThreat(BaseModel):

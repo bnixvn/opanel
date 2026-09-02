@@ -1238,8 +1238,11 @@ run_malware_lmd_scan() {
 
 run_clamav_system_scan() {
   local scan_root="$1" mode="${2:-full}" list total prune=() path rc=0
-  # LMD present -> use it (LMD + ClamAV signatures, clamd as the engine).
-  if lmd_installed; then
+  # LMD (LMD + ClamAV signatures, clamd as the engine, incremental support)
+  # drives the website-tree scan. A whole-server scan also has to walk /usr,
+  # /var, /etc and friends, which maldet -r is not built for, so "/" stays on
+  # clamdscan with the prune list below.
+  if lmd_installed && [[ "$scan_root" != "/" ]]; then
     run_malware_lmd_scan "$scan_root" "$mode" || rc=$?
     return "$rc"
   fi

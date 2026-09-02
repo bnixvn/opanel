@@ -9,8 +9,8 @@ from app.schemas.schemas import (
     MalwareScanJob,
     MalwareScanJobsOut,
     MalwareScanRun,
-    MalwareScanScheduleIn,
-    MalwareScanScheduleOut,
+    MalwareScanSchedulesIn,
+    MalwareScanSchedulesOut,
     MalwareScanStatus,
     MalwareScanToggle,
     NetworkStatusOut,
@@ -218,26 +218,30 @@ def run_malware_scan(
     return result
 
 
-@router.get("/malware-scan/schedule", response_model=MalwareScanScheduleOut)
+@router.get("/malware-scan/schedule", response_model=MalwareScanSchedulesOut)
 def get_malware_scan_schedule(current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
-    return panel_settings.malware_schedule()
+    return panel_settings.malware_schedules()
 
 
-@router.put("/malware-scan/schedule", response_model=MalwareScanScheduleOut)
+@router.put("/malware-scan/schedule", response_model=MalwareScanSchedulesOut)
 def save_malware_scan_schedule(
-    payload: MalwareScanScheduleIn,
+    payload: MalwareScanSchedulesIn,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     ensure_role(current_user.role, Role.admin)
+    sent = payload.model_dump(exclude_none=True)
+    if not sent:
+        raise HTTPException(status_code=400, detail="No schedule to save")
     try:
-        result = panel_settings.set_malware_schedule(payload.model_dump())
+        result = panel_settings.set_malware_schedules(sent)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    action = "malware_scan_schedule_enable" if payload.enabled else "malware_scan_schedule_disable"
-    log_action(db, current_user.id, action, result.get("scan_root") or "/", request=request)
+    for scope, entry in sent.items():
+        action = "malware_scan_schedule_enable" if entry.get("enabled") else "malware_scan_schedule_disable"
+        log_action(db, current_user.id, action, panel_settings._scope_scan_root(scope), request=request)
     return result
 
 
