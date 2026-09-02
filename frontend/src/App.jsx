@@ -435,6 +435,7 @@ function App() {
   const [scanJob, setScanJob] = useState(null);
   const [scanJobs, setScanJobs] = useState([]);
   const [networkStatus, setNetworkStatus] = useState({ ipv4: [], ipv6: [], ipv6_available: false, ipv6_enabled: false });
+  const [quarantine, setQuarantine] = useState([]);
   const [malwareSchedules, setMalwareSchedules] = useState({
     system: { scope: 'system', scan_root: '/', enabled: false, frequency: 'weekly', weekday: 0, hour: 2, minute: 0, day: 1 },
     web: { scope: 'web', scan_root: '/home', enabled: false, frequency: 'daily', weekday: 0, hour: 3, minute: 30, day: 1 },
@@ -1283,6 +1284,32 @@ function App() {
   async function updateMalwareSignatures() {
     const data = await request('/panel-settings/malware-scan/update-signatures', { method: 'POST' }, 'Updating malware signatures...');
     if (data) { setNotice(data.detail || 'Signatures updated.'); await loadMalwareScanStatus(); }
+  }
+
+  async function loadQuarantine() {
+    const data = await request('/panel-settings/malware-scan/quarantine', { silent: true }, '');
+    if (data && Array.isArray(data.entries)) setQuarantine(data.entries);
+  }
+
+  async function quarantineThreat(path, signature) {
+    if (!confirm(`Move this file out of the site into quarantine?\n\n${path}\n\nIt stops being served immediately. You can restore it from the Quarantine list if it turns out to be a false positive.`)) return;
+    const data = await request('/panel-settings/malware-scan/quarantine', {
+      method: 'POST',
+      body: JSON.stringify({ path, signature: signature || '' }),
+    }, 'Quarantining file...');
+    if (data && Array.isArray(data.entries)) { setQuarantine(data.entries); setNotice('File moved to quarantine.'); }
+  }
+
+  async function restoreQuarantine(id, path) {
+    if (!confirm(`Restore this file to its original location?\n\n${path}\n\nOnly do this if you are sure it is a false positive — it will be served again.`)) return;
+    const data = await request(`/panel-settings/malware-scan/quarantine/${id}/restore`, { method: 'POST' }, 'Restoring file...');
+    if (data && Array.isArray(data.entries)) { setQuarantine(data.entries); setNotice('File restored to its original location.'); }
+  }
+
+  async function deleteQuarantine(id, path) {
+    if (!confirm(`Permanently delete this quarantined file?\n\n${path}\n\nThis cannot be undone.`)) return;
+    const data = await request(`/panel-settings/malware-scan/quarantine/${id}`, { method: 'DELETE' }, 'Deleting quarantined file...');
+    if (data && Array.isArray(data.entries)) { setQuarantine(data.entries); setNotice('Quarantined file deleted.'); }
   }
 
   async function installLmd() {
@@ -2882,6 +2909,7 @@ function App() {
       loadMalwareScanJobs();
       loadLatestMalwareScanJob();
       loadMalwareSchedule();
+      loadQuarantine();
       if (!websites.length) refreshAll();
     }
     if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); loadNetworkStatus(); }
@@ -4478,10 +4506,35 @@ function App() {
               {activeScanJob.threats.map((t, i) => <div key={i} className="scan-threat-item">
                 <strong>{t.signature}</strong>
                 <span>{t.domain ? `${t.domain}: ` : ''}{t.path}</span>
+                {quarantine.some(q => q.original_path === t.path)
+                  ? <span className="badge">Quarantined</span>
+                  : <button className="secondary-light" disabled={!!loading} onClick={() => quarantineThreat(t.path, t.signature)}>Quarantine</button>}
               </div>)}
             </div>}
             {activeScanJob.log && activeScanJob.log.length > 0 && <pre className="malware-scan-log">{activeScanJob.log.join('\n')}</pre>}
           </div>}
+        </div>}
+
+        {mwActive && <div className="info-box">
+          <div className="malware-scan-head">
+            <div>
+              <strong>Quarantine {quarantine.length > 0 && <span className="badge">{quarantine.length}</span>}</strong>
+              <p className="hint">Threats found by a scan stay in place — nothing is quarantined automatically. Use “Quarantine” on a scan result to move a file here; it stops being served at once and can be restored byte-for-byte if it was a false positive.</p>
+            </div>
+            <button className="secondary" disabled={!!loading} onClick={loadQuarantine}><RefreshCw size={14}/> Refresh</button>
+          </div>
+          {quarantine.length === 0
+            ? <p className="hint">Nothing in quarantine.</p>
+            : <div className="scan-history-list">
+                {quarantine.map(q => <div key={q.id} className="scan-threat-item">
+                  <span className="scan-history-main">
+                    <strong>{q.signature || 'quarantined file'}</strong>
+                    <small>{q.original_path} · {q.quarantined_at?.replace('T', ' ').replace('Z', '')} · {Math.max(1, Math.round((q.size || 0) / 1024))} KB</small>
+                  </span>
+                  <button className="secondary-light" disabled={!!loading} onClick={() => restoreQuarantine(q.id, q.original_path)}>Restore</button>
+                  <button className="danger" disabled={!!loading} onClick={() => deleteQuarantine(q.id, q.original_path)}>Delete</button>
+                </div>)}
+              </div>}
         </div>}
       </section>}
 

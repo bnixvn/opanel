@@ -656,6 +656,27 @@ class MalwareScanThreat(BaseModel):
     domain: Optional[str] = None
 
 
+class QuarantineRequest(BaseModel):
+    path: str
+    signature: str = ""
+
+
+class QuarantineEntry(BaseModel):
+    id: str
+    original_path: str
+    signature: str = ""
+    size: int = 0
+    uid: int = 0
+    gid: int = 0
+    mode: int = 0
+    sha256: str = ""
+    quarantined_at: str = ""
+
+
+class QuarantineList(BaseModel):
+    entries: list[QuarantineEntry] = []
+
+
 class MalwareScanResult(BaseModel):
     scanned: int = 0
     infected: int = 0

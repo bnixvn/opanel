@@ -12,6 +12,8 @@ from app.schemas.schemas import (
     MalwareScanSchedulesIn,
     MalwareScanSchedulesOut,
     MalwareScanStatus,
+    QuarantineList,
+    QuarantineRequest,
     MalwareScanToggle,
     NetworkStatusOut,
     Ipv6Toggle,
@@ -160,6 +162,68 @@ def toggle_malware_scan(
     action = "enable_malware_scan" if payload.enabled else "disable_malware_scan"
     log_action(db, current_user.id, action, "malware-scan", request=request)
     return result
+
+
+@router.get("/malware-scan/quarantine", response_model=QuarantineList)
+def list_quarantine(current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    from app.services import malware_scan
+
+    return {"entries": malware_scan.list_quarantine()}
+
+
+@router.post("/malware-scan/quarantine", response_model=QuarantineList)
+def quarantine_a_file(
+    payload: QuarantineRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    from app.services import malware_scan
+
+    try:
+        malware_scan.quarantine_file(payload.path, payload.signature)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_action(db, current_user.id, "malware_quarantine_add", payload.path, request=request)
+    return {"entries": malware_scan.list_quarantine()}
+
+
+@router.post("/malware-scan/quarantine/{quarantine_id}/restore", response_model=QuarantineList)
+def restore_from_quarantine(
+    quarantine_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    from app.services import malware_scan
+
+    try:
+        malware_scan.restore_quarantine(quarantine_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_action(db, current_user.id, "malware_quarantine_restore", quarantine_id, request=request)
+    return {"entries": malware_scan.list_quarantine()}
+
+
+@router.delete("/malware-scan/quarantine/{quarantine_id}", response_model=QuarantineList)
+def delete_from_quarantine(
+    quarantine_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    from app.services import malware_scan
+
+    try:
+        malware_scan.drop_quarantine(quarantine_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_action(db, current_user.id, "malware_quarantine_delete", quarantine_id, request=request)
+    return {"entries": malware_scan.list_quarantine()}
 
 
 @router.post("/malware-scan/install-lmd", response_model=PanelSettingsOut)

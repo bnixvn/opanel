@@ -1187,6 +1187,190 @@ update_malware_signatures() {
   echo "malware signatures updated"
 }
 
+# --- Quarantine -------------------------------------------------------------
+# opanel keeps its own per-file quarantine (LMD's quarantine_hits is left off so
+# a false positive never takes a live site down silently). A quarantined file is
+# moved to a root-only store with its origin, owner and mode recorded, so it can
+# be restored byte-for-byte or dropped for good.
+QUARANTINE_DIR="${opanel_DATA_DIR}/quarantine"
+
+quarantine_dispatch() {
+  install -d -o root -g root -m 0700 "$QUARANTINE_DIR" "$QUARANTINE_DIR/store"
+  [[ -f "$QUARANTINE_DIR/index.json" ]] || { printf '[]' > "$QUARANTINE_DIR/index.json"; chmod 0600 "$QUARANTINE_DIR/index.json"; }
+  python3 - "$QUARANTINE_DIR" "$@" <<'PY'
+import hashlib, json, os, secrets, stat as stat_mod, sys, time
+
+qdir = sys.argv[1]
+store = os.path.join(qdir, "store")
+index_path = os.path.join(qdir, "index.json")
+action = sys.argv[2] if len(sys.argv) > 2 else "list"
+args = sys.argv[3:]
+
+# Malware lands in web content and world-writable spool dirs -- quarantine is
+# limited to those. System paths are handled over SSH, not from the panel.
+SAFE_PREFIXES = ("/home/", "/tmp/", "/var/tmp/", "/dev/shm/", "/var/www/")
+
+
+def die(msg):
+    sys.stderr.write("opanel-helper: " + msg + "\n")
+    sys.exit(1)
+
+
+def load():
+    try:
+        data = json.load(open(index_path, encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def save(entries):
+    tmp = index_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(entries, fh, indent=2, sort_keys=True)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, index_path)
+
+
+def check_path(p):
+    if not p or not p.startswith("/") or "\x00" in p or "\n" in p:
+        die("bad path")
+    n = os.path.normpath(p)
+    if ".." in n.split("/"):
+        die("path traversal not allowed")
+    if not any(n.startswith(pre) for pre in SAFE_PREFIXES):
+        die("not a quarantine-eligible location: " + n)
+    return n
+
+
+def parent_fd(path):
+    return os.open(os.path.dirname(path) or "/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+
+if action == "list":
+    entries = load()
+    changed = False
+    for e in list(entries):
+        if not os.path.isfile(os.path.join(store, e["id"] + ".bin")):
+            entries.remove(e)
+            changed = True
+    if changed:
+        save(entries)
+    json.dump(entries, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+elif action == "add":
+    if not args:
+        die("usage: malware-quarantine add <path> [signature]")
+    src = check_path(args[0])
+    signature = (args[1] if len(args) > 1 else "")[:120]
+    name = os.path.basename(src)
+    if not name or name in (".", ".."):
+        die("bad file name")
+    pfd = parent_fd(src)
+    try:
+        st = os.stat(name, dir_fd=pfd, follow_symlinks=False)
+        if not stat_mod.S_ISREG(st.st_mode):
+            die("not a regular file: " + src)
+        if st.st_size > 512 * 1024 * 1024:
+            die("file too large to quarantine (>512MB): " + src)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=pfd)
+        try:
+            chunks = []
+            while True:
+                buf = os.read(fd, 1 << 20)
+                if not buf:
+                    break
+                chunks.append(buf)
+            data = b"".join(chunks)
+        finally:
+            os.close(fd)
+        qid = secrets.token_hex(16)
+        blob = os.path.join(store, qid + ".bin")
+        wfd = os.open(blob, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(wfd, "wb") as out:
+            out.write(data)
+        entry = {
+            "id": qid,
+            "original_path": src,
+            "signature": signature,
+            "size": st.st_size,
+            "uid": st.st_uid,
+            "gid": st.st_gid,
+            "mode": stat_mod.S_IMODE(st.st_mode),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "quarantined_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        # Record it before removing the original, so a crash never loses the file.
+        entries = load()
+        entries.insert(0, entry)
+        save(entries)
+        os.unlink(name, dir_fd=pfd)
+    finally:
+        os.close(pfd)
+    json.dump(entry, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+elif action == "restore":
+    if not args:
+        die("usage: malware-quarantine restore <id>")
+    qid = args[0]
+    if not (len(qid) == 32 and all(c in "0123456789abcdef" for c in qid)):
+        die("bad id")
+    entries = load()
+    entry = next((e for e in entries if e["id"] == qid), None)
+    if entry is None:
+        die("no such quarantine entry: " + qid)
+    dest = check_path(entry["original_path"])
+    blob = os.path.join(store, qid + ".bin")
+    if not os.path.isfile(blob):
+        die("quarantined blob is missing")
+    with open(blob, "rb") as fh:
+        data = fh.read()
+    pfd = parent_fd(dest)
+    try:
+        name = os.path.basename(dest)
+        try:
+            os.stat(name, dir_fd=pfd, follow_symlinks=False)
+            die("a file already exists at the original path; not overwriting: " + dest)
+        except FileNotFoundError:
+            pass
+        wfd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                      int(entry.get("mode", 0o644)), dir_fd=pfd)
+        try:
+            mv = memoryview(data)
+            while mv:
+                mv = mv[os.write(wfd, mv):]
+            os.fchown(wfd, int(entry.get("uid", 0)), int(entry.get("gid", 0)))
+            os.fchmod(wfd, int(entry.get("mode", 0o644)))
+        finally:
+            os.close(wfd)
+    finally:
+        os.close(pfd)
+    os.unlink(blob)
+    save([e for e in entries if e["id"] != qid])
+    sys.stdout.write("restored " + dest + "\n")
+
+elif action == "drop":
+    if not args:
+        die("usage: malware-quarantine drop <id>")
+    qid = args[0]
+    if not (len(qid) == 32 and all(c in "0123456789abcdef" for c in qid)):
+        die("bad id")
+    entries = load()
+    if not any(e["id"] == qid for e in entries):
+        die("no such quarantine entry: " + qid)
+    blob = os.path.join(store, qid + ".bin")
+    if os.path.isfile(blob):
+        os.unlink(blob)
+    save([e for e in entries if e["id"] != qid])
+    sys.stdout.write("deleted quarantine entry " + qid + "\n")
+
+else:
+    die("unknown quarantine action: " + action)
+PY
+}
+
 # Directories a full-system scan must not walk into: kernel/device trees and
 # live process state (not real files), the signature database (clamd's own
 # working set), and the panel's backup archives, which are multi-GB tarballs of
@@ -3227,6 +3411,12 @@ case "$cmd" in
 
   malware-sigs-update)
     update_malware_signatures
+    ;;
+
+  malware-quarantine)
+    # <list> | <add PATH [SIG]> | <restore ID> | <drop ID>
+    [[ $# -ge 1 && $# -le 3 ]] || deny "usage: malware-quarantine <list|add|restore|drop> [args]"
+    quarantine_dispatch "$@"
     ;;
 
   clamav-start)
