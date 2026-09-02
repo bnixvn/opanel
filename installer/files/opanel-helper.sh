@@ -3662,6 +3662,13 @@ max_items, max_bytes = int(sys.argv[4]), int(sys.argv[5])
 source_archive = os.path.realpath(sys.argv[6])
 destination = os.path.realpath(destination)
 
+# Symlinks, hardlinks and device nodes are never recreated from an archive --
+# they are the classic write-through-a-link escalation vector. Rather than
+# rejecting the whole archive when it contains one (a stock WordPress export
+# ships e.g. Query Monitor's wp-content/db.php symlink), skip those entries and
+# extract everything else. Count them so the extraction can say what it dropped.
+skipped_specials = 0
+
 
 def safe_target(name):
     """Normalize backslash paths and resolve to a safe absolute path."""
@@ -3726,6 +3733,7 @@ def ensure_directory_target(target):
 
 
 def validate_zip():
+    global skipped_specials
     count = 0
     total = 0
     with zipfile.ZipFile(archive_path) as archive:
@@ -3738,7 +3746,8 @@ def validate_zip():
             target, resolved = safe_target(info.filename)
             mode = (info.external_attr >> 16) & 0o170000
             if stat.S_ISLNK(mode):
-                raise ValueError("archive symlinks are not allowed")
+                skipped_specials += 1
+                continue
             if is_source_archive(resolved):
                 continue
             if _is_dir_entry(info, implied_dirs):
@@ -3755,6 +3764,8 @@ def extract_zip():
         infos = archive.infolist()
         implied_dirs = zip_implied_dirs(infos)
         for info in infos:
+            if stat.S_ISLNK((info.external_attr >> 16) & 0o170000):
+                continue
             target, resolved = safe_target(info.filename)
             if is_source_archive(resolved):
                 continue
@@ -3772,6 +3783,7 @@ def extract_zip():
 
 
 def validate_tar():
+    global skipped_specials
     count = 0
     total = 0
     with tarfile.open(archive_path, "r:gz") as archive:
@@ -3779,13 +3791,15 @@ def validate_tar():
             count += 1
             if max_items and count > max_items:
                 raise ValueError("archive has too many files")
+            if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+                skipped_specials += 1
+                continue
             target, resolved = safe_target(member.name)
-            if member.issym() or member.islnk() or member.isdev():
-                raise ValueError("archive links and devices are not allowed")
             if is_source_archive(resolved):
                 continue
             if not member.isdir() and not member.isfile():
-                raise ValueError("archive contains unsupported entries")
+                skipped_specials += 1
+                continue
             if member.isdir():
                 ensure_directory_target(target)
                 continue
@@ -3798,15 +3812,19 @@ def validate_tar():
 def extract_tar():
     with tarfile.open(archive_path, "r:gz") as archive:
         for member in archive:
+            if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+                continue
             target, resolved = safe_target(member.name)
             if is_source_archive(resolved):
                 continue
             if member.isdir():
                 os.makedirs(target, exist_ok=True)
                 continue
+            if not member.isfile():
+                continue
             source = archive.extractfile(member)
             if source is None:
-                raise ValueError("archive entry cannot be extracted")
+                continue
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with source, open(target, "wb") as dst:
                 shutil.copyfileobj(source, dst, length=1024 * 1024)
@@ -3818,6 +3836,12 @@ if archive_kind == "zip":
 else:
     validate_tar()
     extract_tar()
+
+if skipped_specials:
+    sys.stderr.write(
+        "opanel: skipped %d symlink/special entr%s (not extracted for safety)\n"
+        % (skipped_specials, "y" if skipped_specials == 1 else "ies")
+    )
 PY
     # The archive may contain an entry with its own filename. Restore the
     # original source archive after extraction so it cannot overwrite itself.

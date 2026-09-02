@@ -900,7 +900,7 @@ def _zip_uncompressed_size(
             raise ValueError(f"Archive has too many files (limit {MAX_ARCHIVE_ITEMS})")
         mode = (info.external_attr >> 16) & 0o170000
         if stat.S_ISLNK(mode):
-            raise ValueError("Archive symlinks are not allowed")
+            continue  # symlinks are skipped at extract time, not a hard error
         target = _validate_archive_destination(destination, info.filename)
         if _is_source_archive_target(target, archive_file):
             continue
@@ -935,8 +935,8 @@ def _tar_uncompressed_size(
     for index, member in enumerate(archive, start=1):
         if MAX_ARCHIVE_ITEMS is not None and index > MAX_ARCHIVE_ITEMS:
             raise ValueError(f"Archive has too many files (limit {MAX_ARCHIVE_ITEMS})")
-        if member.issym() or member.islnk() or member.isdev():
-            raise ValueError("Archive links and devices are not allowed")
+        if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+            continue  # skipped at extract time, not a hard error
         target = _validate_archive_destination(destination, member.name)
         if _is_source_archive_target(target, archive_file):
             continue
@@ -947,7 +947,7 @@ def _tar_uncompressed_size(
                 raise ValueError("Archive directory conflicts with an existing file")
             continue
         if not member.isfile():
-            raise ValueError("Archive contains unsupported entries")
+            continue
         if target.exists() and target.is_dir():
             raise ValueError("Archive file conflicts with an existing directory")
         _assert_write_allowed(target, "Extracting", allow_executable)
@@ -959,6 +959,10 @@ def _tar_uncompressed_size(
 
 def _extract_zip_archive(archive: zipfile.ZipFile, destination: Path, archive_file: Path, implied_dirs: Optional[set[str]] = None) -> None:
     for info in archive.infolist():
+        # Never recreate a symlink from an archive (write-through-a-link
+        # escalation vector); skip it and keep going.
+        if stat.S_ISLNK((info.external_attr >> 16) & 0o170000):
+            continue
         target = _validate_archive_destination(destination, info.filename)
         if _is_source_archive_target(target, archive_file):
             continue
@@ -994,15 +998,22 @@ def _extract_zip_archive(archive: zipfile.ZipFile, destination: Path, archive_fi
 
 def _extract_tar_archive(archive: tarfile.TarFile, destination: Path, archive_file: Path) -> None:
     for member in archive:
+        # Symlinks, hardlinks and device nodes are never recreated from an
+        # archive -- skip them (a stock WordPress export ships e.g. Query
+        # Monitor's wp-content/db.php symlink) and extract the rest.
+        if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+            continue
         target = _validate_archive_destination(destination, member.name)
         if _is_source_archive_target(target, archive_file):
             continue
         if member.isdir():
             target.mkdir(parents=True, exist_ok=True)
             continue
+        if not member.isfile():
+            continue
         source = archive.extractfile(member)
         if source is None:
-            raise ValueError("Archive entry cannot be extracted")
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         with source, target.open("wb") as output:
             shutil.copyfileobj(source, output, length=1024 * 1024)

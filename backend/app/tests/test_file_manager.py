@@ -278,6 +278,40 @@ def test_extract_tar_does_not_overwrite_source_archive(tmp_path):
         assert archive.getnames() == ["site.tar.gz"]
 
 
+def test_extract_tar_skips_symlink_members_instead_of_failing(tmp_path):
+    """A stock WordPress export ships e.g. Query Monitor's wp-content/db.php
+    symlink. That one entry must not abort the whole extraction."""
+    root = tmp_path / "site"
+    public = root / "public_html"
+    public.mkdir(parents=True)
+    archive_path = public / "site.tar.gz"
+
+    with tarfile.open(archive_path, "w:gz") as archive:
+        body = b"<?php // real file"
+        info = tarfile.TarInfo("wp-content/index.php")
+        info.size = len(body)
+        archive.addfile(info, io.BytesIO(body))
+        link = tarfile.TarInfo("wp-content/db.php")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/var/www/old-server/wp-content/plugins/query-monitor/wp-content/db.php"
+        archive.addfile(link)
+        dev = tarfile.TarInfo("wp-content/null")
+        dev.type = tarfile.CHRTYPE
+        dev.devmajor, dev.devminor = 1, 3
+        archive.addfile(dev)
+
+    file_manager.extract_archive(
+        _website(root),
+        "public_html/site.tar.gz",
+        "public_html",
+        allow_executable=True,
+    )
+
+    assert (public / "wp-content" / "index.php").read_bytes() == b"<?php // real file"
+    assert not (public / "wp-content" / "db.php").exists()
+    assert not (public / "wp-content" / "null").exists()
+
+
 def test_extract_zip_normalizes_backslashes_and_overwrites_existing_files(tmp_path):
     root = tmp_path / "site"
     public = root / "public_html"

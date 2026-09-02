@@ -281,3 +281,15 @@ def test_helper_skips_ols_restart_when_generated_config_is_unchanged():
     # OLS vhost file
     assert 'if [[ -f "$vhost_conf" ]] && cmp -s "$vhost_tmp" "$vhost_conf"; then' in helper
     assert "vhost unchanged:" in helper
+
+
+def test_archive_extract_helper_skips_symlinks_instead_of_rejecting():
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    block = helper.split("site-archive-extract)", 1)[1].split("\nPY\n", 1)[0]
+    # the whole-archive rejection is gone
+    assert 'raise ValueError("archive links and devices are not allowed")' not in block
+    assert 'raise ValueError("archive symlinks are not allowed")' not in block
+    # sym / link / dev / fifo members are skipped in both validate and extract
+    assert block.count("member.issym() or member.islnk() or member.isdev() or member.isfifo()") >= 2
+    assert "skipped_specials += 1" in block
+    assert "skipped %d symlink/special" in block
