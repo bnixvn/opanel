@@ -1285,6 +1285,12 @@ function App() {
     if (data) { setNotice(data.detail || 'Signatures updated.'); await loadMalwareScanStatus(); }
   }
 
+  async function installLmd() {
+    if (!confirm('Add Linux Malware Detect to this server?\n\nLMD layers its web-focused signatures on top of ClamAV (catches PHP shells ClamAV misses) and uses the running clamd as its engine. Install runs in the background.')) return;
+    const data = await request('/panel-settings/malware-scan/install-lmd', { method: 'POST' }, 'Installing Linux Malware Detect...');
+    if (data) { setPanelSettings(data); setNotice(data.message || 'Linux Malware Detect install started.'); await loadMalwareScanStatus(); }
+  }
+
   async function runMalwareScan() {
     if (!scanTargetWebsiteId) return;
     setScanResults(null);
@@ -4402,6 +4408,16 @@ function App() {
             {mwActive && <button className="secondary" disabled={!!loading} onClick={updateMalwareSignatures}><RefreshCw size={14}/> Update signatures</button>}
           </div>
         </div>
+
+        {mwActive && !mw.lmd_installed && <div className="info-box">
+          <div className="malware-scan-head">
+            <div>
+              <strong>Linux Malware Detect <span className="badge">Not installed</span></strong>
+              <p className="hint">This box runs ClamAV only. Add LMD for its web-focused signatures (PHP shells, injected malware ClamAV misses) and the incremental <code>/home</code> scan. It reuses the running clamd, so no extra daemon. Fresh installs get it automatically.</p>
+            </div>
+            <button disabled={!!loading} onClick={installLmd}><Shield size={14}/> Add Linux Malware Detect</button>
+          </div>
+        </div>}
 
         {mwActive && mw.lmd_installed && <div className="info-box">
           <div className="malware-scan-head">

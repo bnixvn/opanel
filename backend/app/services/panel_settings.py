@@ -379,6 +379,37 @@ def set_malware_realtime(enabled: bool) -> dict:
     return current
 
 
+def add_linux_malware_detect() -> dict:
+    """Install LMD on a box that already runs ClamAV but predates the feature.
+
+    Runs the clone + install in the background so the API call returns at once;
+    the Malware Scanner page reflects ``lmd_installed`` once it finishes.
+    """
+    status = _malware_scan.refresh_status()
+    if not status.get("installed"):
+        raise ValueError("Install ClamAV first, then add Linux Malware Detect.")
+    if status.get("lmd_installed"):
+        current = current_settings()
+        current["message"] = "Linux Malware Detect is already installed"
+        return current
+    threading.Thread(target=_add_lmd_flow, daemon=True).start()
+    current = current_settings()
+    current["message"] = (
+        "Linux Malware Detect is being installed in the background. It will show "
+        "as active on this page once the signature download finishes."
+    )
+    return current
+
+
+def _add_lmd_flow() -> None:
+    try:
+        _malware_scan.install_lmd()
+    except Exception as exc:  # noqa: BLE001 - record failure, do not crash thread
+        state = _malware_scan.refresh_status()
+        state["detail"] = f"Linux Malware Detect install failed: {exc}"
+        _malware_scan._write_status(state)
+
+
 def _install_and_enable_flow() -> None:
     """Background worker: install ClamAV, then leave the persisted flag on.
 

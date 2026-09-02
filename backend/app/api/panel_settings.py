@@ -162,6 +162,25 @@ def toggle_malware_scan(
     return result
 
 
+@router.post("/malware-scan/install-lmd", response_model=PanelSettingsOut)
+def install_linux_malware_detect(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add Linux Malware Detect to a box that already runs ClamAV but was set up
+    before LMD was bundled. Fresh installs get LMD with ClamAV automatically."""
+    ensure_role(current_user.role, Role.admin)
+    try:
+        result = panel_settings.add_linux_malware_detect()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    log_action(db, current_user.id, "install_linux_malware_detect", "malware-scan", request=request)
+    return result
+
+
 @router.post("/malware-scan/realtime", response_model=PanelSettingsOut)
 def toggle_malware_realtime(
     payload: MalwareScanToggle,

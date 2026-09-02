@@ -1167,7 +1167,9 @@ if dpkg -s clamav-daemon >/dev/null 2>&1 \
    && grep -qE '"malware_scan_enabled"[[:space:]]*:[[:space:]]*true' /var/lib/opanel/panel-settings.json 2>/dev/null \
    && ! command -v maldet >/dev/null 2>&1; then
   log "Adding Linux Malware Detect to the malware scanner"
-  sudo -n /usr/local/sbin/opanel-helper maldet-ensure >/dev/null 2>&1 \
+  # opanel-helper only accepts calls made *as the opanel user* via sudo -- the
+  # same wrapper every other helper call in this script uses.
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper maldet-ensure >/dev/null 2>&1 \
     || echo "  (Linux Malware Detect install skipped; ClamAV scanning still works)"
 fi
 
