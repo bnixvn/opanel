@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # install of clamav-daemon. Leaving this False keeps opanel lightweight.
     malware_scan_enabled: bool = False
     clamav_socket_path: str = "/run/clamav/clamd.sock"
+    # Real-time protection: an LMD inotify monitor on /home. Off by default --
+    # it costs RAM per watched file and is a deliberate opt-in from the panel.
+    malware_realtime_enabled: bool = False
     # When True, uploaded files are scanned in memory before being accepted.
     malware_scan_on_upload: bool = True
     # When true, ``app.core.secrets.decrypt`` refuses to read legacy plaintext

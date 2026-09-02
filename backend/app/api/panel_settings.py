@@ -162,6 +162,37 @@ def toggle_malware_scan(
     return result
 
 
+@router.post("/malware-scan/realtime", response_model=PanelSettingsOut)
+def toggle_malware_realtime(
+    payload: MalwareScanToggle,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        result = panel_settings.set_malware_realtime(payload.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    action = "enable_malware_realtime" if payload.enabled else "disable_malware_realtime"
+    log_action(db, current_user.id, action, "malware-scan", request=request)
+    return result
+
+
+@router.post("/malware-scan/update-signatures")
+def update_malware_signatures(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    from app.services import malware_scan
+
+    detail = malware_scan.update_signatures()
+    log_action(db, current_user.id, "malware_signatures_update", "malware-scan", request=request)
+    return {"detail": detail}
+
+
 @router.post("/malware-scan/run", response_model=MalwareScanJob)
 def run_malware_scan(
     payload: MalwareScanRun,

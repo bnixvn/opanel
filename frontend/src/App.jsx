@@ -1258,6 +1258,30 @@ function App() {
     }
   }
 
+  async function toggleMalwareRealtime(enable) {
+    if (enable && !confirm(
+      'Turn on real-time protection?\n\n'
+      + '• Linux Malware Detect watches every file under /home (inotify) and scans new or changed files within seconds.\n'
+      + '• It uses more RAM the more files it watches — heavy on a box with many WordPress sites.\n'
+      + '• Hits are NOT auto-quarantined — they are listed for you to act on.\n\n'
+      + 'Turning it off returns to scheduled scans only.'
+    )) return;
+    const data = await request('/panel-settings/malware-scan/realtime', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: enable }),
+    }, enable ? 'Enabling real-time protection...' : 'Disabling real-time protection...');
+    if (data) {
+      setPanelSettings(data);
+      setNotice(data.message || `Real-time protection ${enable ? 'enabled' : 'disabled'}.`);
+      await loadMalwareScanStatus();
+    }
+  }
+
+  async function updateMalwareSignatures() {
+    const data = await request('/panel-settings/malware-scan/update-signatures', { method: 'POST' }, 'Updating malware signatures...');
+    if (data) { setNotice(data.detail || 'Signatures updated.'); await loadMalwareScanStatus(); }
+  }
+
   async function runMalwareScan() {
     if (!scanTargetWebsiteId) return;
     setScanResults(null);
@@ -4321,28 +4345,43 @@ function App() {
       {isAdmin && <section className="section">
         <div className="section-title">
           <div>
-            <h2>Malware Scanner (ClamAV)</h2>
+            <h2>Malware Scanner</h2>
             <p className="hint">
               {mwActive ? <span className="badge ok">Active</span>
                 : mwEnabled && mwInstalled ? <span className="badge warn">Enabled — clamd not running</span>
                 : mwEnabled && !mwInstalled ? <span className="badge warn">Installing ClamAV...</span>
                 : mwInstalled && !mwEnabled ? <span className="badge">Installed — scanning disabled</span>
                 : <span className="badge">Not installed</span>}
+              {mwInstalled && <span className="badge" style={{marginLeft:6}}>Engine: {mw.engine || 'ClamAV'}{mw.lmd_version ? ` (LMD ${mw.lmd_version})` : ''}</span>}
+              {mw.realtime_active && <span className="badge ok" style={{marginLeft:6}}>Real-time on</span>}
             </p>
           </div>
           <button disabled={!!loading} onClick={loadMalwareScanStatus}><RefreshCw size={14}/> Refresh</button>
         </div>
         <div className="info-box">
           <p className="hint">{mw.detail || 'Checking status...'}</p>
-          {!mwInstalled && <p className="hint" style={{marginTop:8}}>When enabled, ClamAV will be installed on this server (~150 MB RAM for the virus database). Uploaded files will be scanned in real-time.</p>}
-          {mwInstalled && mwActive && <p className="hint" style={{marginTop:8}}>All uploaded files are automatically scanned. Infected files are rejected.</p>}
+          {!mwInstalled && <p className="hint" style={{marginTop:8}}>When enabled, ClamAV is installed on this server, and Linux Malware Detect is layered on top of it (its web-focused signatures catch the PHP shells ClamAV misses). Uploaded files are scanned in real-time.</p>}
+          {mwInstalled && mwActive && <p className="hint" style={{marginTop:8}}>Uploaded files are scanned automatically. Scheduled scans default to incremental (files changed recently) once a full baseline scan has run, with a full scan at least weekly.</p>}
           <div className="actions" style={{marginTop:12}}>
             {!mwEnabled
               ? <button disabled={!!loading} onClick={() => toggleMalwareScan(true)}><Shield size={14}/> Enable Malware Scanner</button>
               : <button className="danger" disabled={!!loading} onClick={() => toggleMalwareScan(false)}>Disable Malware Scanner</button>
             }
+            {mwActive && <button className="secondary" disabled={!!loading} onClick={updateMalwareSignatures}><RefreshCw size={14}/> Update signatures</button>}
           </div>
         </div>
+
+        {mwActive && mw.lmd_installed && <div className="info-box">
+          <div className="malware-scan-head">
+            <div>
+              <strong>Real-time protection <span className={mw.realtime_enabled ? 'badge ok' : 'badge'}>{mw.realtime_enabled ? 'On' : 'Off'}</span></strong>
+              <p className="hint">Watches every file under <code>/home</code> and scans new/changed files within seconds — instead of only on schedule. Costs RAM per watched file; hits are surfaced, not auto-quarantined.</p>
+            </div>
+            {mw.realtime_enabled
+              ? <button className="danger" disabled={!!loading} onClick={() => toggleMalwareRealtime(false)}>Turn off</button>
+              : <button disabled={!!loading} onClick={() => toggleMalwareRealtime(true)}><Shield size={14}/> Turn on</button>}
+          </div>
+        </div>}
 
         {mwInstalled && <div className="info-box malware-scan-panel">
           {!mw.clamd_running && <div className="malware-daemon-warning">

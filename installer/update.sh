@@ -1161,6 +1161,16 @@ pip install -r requirements.txt
 log "Refreshing MariaDB grants"
 refresh_opanel_mariadb_grants
 
+# Linux Malware Detect is layered on ClamAV, but only for boxes that already run
+# ClamAV -- a fresh install without malware scanning enabled is left untouched.
+if dpkg -s clamav-daemon >/dev/null 2>&1 \
+   && grep -qE '"malware_scan_enabled"[[:space:]]*:[[:space:]]*true' /var/lib/opanel/panel-settings.json 2>/dev/null \
+   && ! command -v maldet >/dev/null 2>&1; then
+  log "Adding Linux Malware Detect to the malware scanner"
+  sudo -n /usr/local/sbin/opanel-helper maldet-ensure >/dev/null 2>&1 \
+    || echo "  (Linux Malware Detect install skipped; ClamAV scanning still works)"
+fi
+
 log "Running database migrations"
 update_progress 65 "backend" "Running database migrations"
 if id -u opanel >/dev/null 2>&1; then

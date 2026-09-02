@@ -661,6 +661,7 @@ class MalwareScanJob(BaseModel):
     website_id: Optional[int] = None
     domains: list[str] = []
     scan_root: str = ""
+    scan_mode: str = ""
     trigger: str = "manual"
     message: str = ""
     progress_percent: int = 0
@@ -689,6 +690,11 @@ class MalwareScanStatus(BaseModel):
     active: bool = False
     socket: str = "/run/clamav/clamd.sock"
     detail: Optional[str] = None
+    engine: str = "ClamAV"
+    lmd_installed: bool = False
+    lmd_version: str = ""
+    realtime_enabled: bool = False
+    realtime_active: bool = False
 
 
 class PanelSettingsUpdate(BaseModel):

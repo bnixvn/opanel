@@ -4,6 +4,7 @@ import os
 import re
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlparse
@@ -343,6 +344,38 @@ def set_malware_scan(enabled: bool) -> dict:
             if stopped
             else "Malware scanning disabled, but clamav-daemon could not be stopped"
         )
+    return current
+
+
+def set_malware_realtime(enabled: bool) -> dict:
+    """Toggle LMD real-time protection (mode 1 <-> mode 2).
+
+    Persists the flag and (de)activates the inotify monitor. Enabling requires
+    malware scanning to already be on so LMD is installed.
+    """
+    enabled = bool(enabled)
+    data = _read_raw()
+    was = bool(data.get("malware_realtime_enabled", False))
+    if enabled == was:
+        current = current_settings()
+        current["message"] = "Real-time protection unchanged"
+        return current
+    if enabled and not data.get("malware_scan_enabled"):
+        raise ValueError("Enable malware scanning first.")
+    data["malware_realtime_enabled"] = enabled
+    _write_raw(data)
+    try:
+        _malware_scan.set_realtime(enabled)
+    except Exception as exc:  # noqa: BLE001
+        data["malware_realtime_enabled"] = was
+        _write_raw(data)
+        raise ValueError(str(exc)) from exc
+    current = current_settings()
+    current["message"] = (
+        "Real-time protection enabled (LMD inotify monitor on /home)"
+        if enabled
+        else "Real-time protection disabled -- back to scheduled scans"
+    )
     return current
 
 
@@ -812,6 +845,27 @@ def set_malware_schedule(payload) -> dict:
 SYSTEM_SCAN_FLUSH_FILES = 250
 SYSTEM_SCAN_FLUSH_SECONDS = 3.0
 SYSTEM_SCAN_MAX_ERROR_LINES = 100
+# With LMD installed, scans default to incremental (files changed in the last few
+# days). A full scan still runs the first time and at least this often after.
+FULL_SCAN_INTERVAL_DAYS = 7
+
+
+def _resolve_scan_mode(requested: str) -> str:
+    """auto -> full/incremental. Only LMD does incremental; without it, always full."""
+    if requested in ("full", "incremental"):
+        return requested
+    status = _malware_scan._lmd_status()
+    if not status.get("lmd_installed"):
+        return "full"
+    last_full = _read_malware_schedule_state().get("last_full_scan_at") or ""
+    if not last_full:
+        return "full"
+    try:
+        when = datetime.fromisoformat(last_full.replace("Z", "+00:00"))
+        age_days = (datetime.now(when.tzinfo) - when).total_seconds() / 86400
+    except ValueError:
+        return "full"
+    return "full" if age_days >= FULL_SCAN_INTERVAL_DAYS else "incremental"
 
 
 def _new_malware_job(scope: str, **fields) -> dict:
@@ -822,6 +876,7 @@ def _new_malware_job(scope: str, **fields) -> dict:
         "website_id": None,
         "domains": [],
         "scan_root": "",
+        "scan_mode": "",
         "trigger": "manual",
         "message": "Queued",
         "progress_percent": 0,
@@ -842,7 +897,8 @@ def _new_malware_job(scope: str, **fields) -> dict:
     return job
 
 
-def start_system_scan_job(scan_root: str = "/", trigger: str = "manual", background: bool = True) -> dict:
+def start_system_scan_job(scan_root: str = "/", trigger: str = "manual", background: bool = True,
+                          mode: str = "auto") -> dict:
     """Scan the whole server, not just website roots.
 
     Website scans only ever look at document roots, so malware parked in
@@ -852,21 +908,24 @@ def start_system_scan_job(scan_root: str = "/", trigger: str = "manual", backgro
     scan_root = (scan_root or "/").strip() or "/"
     if not scan_root.startswith("/"):
         raise ValueError("Scan path must be absolute")
-    job = _new_malware_job("system", scan_root=scan_root, trigger=trigger, message="Queued full system scan")
+    resolved = _resolve_scan_mode(mode)
+    job = _new_malware_job("system", scan_root=scan_root, trigger=trigger, scan_mode=resolved,
+                           message=f"Queued {resolved} system scan")
     _remember_malware_job(job)
     job_id = job["job_id"]
     if not background:
-        _run_system_scan_job(job_id, scan_root)
+        _run_system_scan_job(job_id, scan_root, resolved)
         return get_malware_scan_job(job_id)
-    thread = threading.Thread(target=_run_system_scan_job, args=(job_id, scan_root), daemon=True)
+    thread = threading.Thread(target=_run_system_scan_job, args=(job_id, scan_root, resolved), daemon=True)
     with MALWARE_JOBS_LOCK:
         MALWARE_JOB_THREADS[job_id] = thread
     thread.start()
     return _public_malware_job(job)
 
 
-def _run_system_scan_job(job_id: str, scan_root: str) -> None:
-    _update_malware_job(job_id, status="running", started_at=_now_iso(), message=f"Starting full scan of {scan_root}")
+def _run_system_scan_job(job_id: str, scan_root: str, mode: str = "full") -> None:
+    _update_malware_job(job_id, status="running", started_at=_now_iso(),
+                        message=f"Starting {mode} scan of {scan_root}")
     total = 0
     scanned = 0
     errors = 0
@@ -874,7 +933,7 @@ def _run_system_scan_job(job_id: str, scan_root: str) -> None:
     threats: list[dict] = []
     unparsed_tail: list[str] = []
     try:
-        process = _malware_scan.system_scan_process(scan_root)
+        process = _malware_scan.system_scan_process(scan_root, mode)
         last_flush = time.monotonic()
 
         def flush(message: str) -> None:
@@ -898,6 +957,16 @@ def _run_system_scan_job(job_id: str, scan_root: str) -> None:
                     total = 0
                 _append_malware_log(job_id, f"Found {total} files to scan under {scan_root}")
                 flush(f"Scanning 0/{total} files")
+                continue
+            if line.startswith(_malware_scan.SYSTEM_SCAN_SCANNED_PREFIX):
+                # LMD reports one total instead of a line per file.
+                try:
+                    scanned = int(line[len(_malware_scan.SYSTEM_SCAN_SCANNED_PREFIX):].strip() or 0)
+                except ValueError:
+                    pass
+                continue
+            if line.startswith(_malware_scan.SYSTEM_SCAN_MODE_PREFIX) or line.startswith(_malware_scan.SYSTEM_SCAN_REPORT_PREFIX):
+                _append_malware_log(job_id, line.strip())
                 continue
             result = _malware_scan.parse_clamdscan_line(line)
             if result is None:
@@ -929,6 +998,8 @@ def _run_system_scan_job(job_id: str, scan_root: str) -> None:
             detail = "; ".join(unparsed_tail) or "no output"
             raise RuntimeError(f"Scan command failed (exit {returncode}): {detail}")
         status = "infected" if threats else "done"
+        if mode == "full":
+            write_malware_schedule_state(last_full_scan_at=_now_iso())
         _update_malware_job(
             job_id,
             status=status,
@@ -938,7 +1009,7 @@ def _run_system_scan_job(job_id: str, scan_root: str) -> None:
             infected=len(threats),
             errors=errors,
             threats=threats,
-            message=f"Scan complete: {scanned} files, {len(threats)} threats, {errors} errors",
+            message=f"{mode.title()} scan complete: {scanned} files, {len(threats)} threats, {errors} errors",
             finished_at=_now_iso(),
         )
         _append_malware_log(job_id, "Scan finished")

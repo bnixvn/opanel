@@ -1078,6 +1078,113 @@ install_clamav_engine() {
   # Triggers an initial signature database refresh in the background.
   freshclam >/dev/null 2>&1 || true
   echo "ClamAV installed and clamav-daemon enabled."
+  # Layer Linux Malware Detect on top -- its web-focused signature set catches
+  # the PHP shells / injections ClamAV's general signatures miss, and it uses the
+  # resident clamd as its scan engine (both signature sets, one fast scanner).
+  install_lmd_engine || echo "NOTE: Linux Malware Detect not installed; ClamAV scanning still works."
+}
+
+# github.com/rfxn/linux-malware-detect. Pinned tag; update deliberately.
+LMD_GIT_TAG="v2.0.1"
+LMD_DIR="/usr/local/maldetect"
+LMD_CONF="${LMD_DIR}/conf.maldet"
+
+lmd_installed() { command -v maldet >/dev/null 2>&1 && [[ -f "$LMD_CONF" ]]; }
+
+install_lmd_engine() {
+  export DEBIAN_FRONTEND=noninteractive
+  command -v clamdscan >/dev/null 2>&1 || { echo "LMD needs ClamAV first"; return 1; }
+  if ! lmd_installed; then
+    apt-get install -y git ca-certificates inotify-tools >/dev/null 2>&1 || true
+    local tmp
+    tmp="$(mktemp -d)" || return 1
+    if ! git clone --depth 1 --branch "$LMD_GIT_TAG" \
+        https://github.com/rfxn/linux-malware-detect.git "$tmp/lmd" >/dev/null 2>&1; then
+      rm -rf -- "$tmp"; echo "failed to clone linux-malware-detect@${LMD_GIT_TAG}"; return 1
+    fi
+    ( cd "$tmp/lmd" && ./install.sh ) >/dev/null 2>&1 || { rm -rf -- "$tmp"; return 1; }
+    rm -rf -- "$tmp"
+  fi
+  lmd_installed || { echo "maldet not on PATH after install"; return 1; }
+  configure_lmd
+  # LMD ships its own daily cron; opanel drives the schedule instead.
+  rm -f /etc/cron.d/maldet /etc/cron.daily/maldet 2>/dev/null || true
+  ( maldet -u >/dev/null 2>&1; maldet -d >/dev/null 2>&1 ) &
+  echo "Linux Malware Detect ${LMD_GIT_TAG} installed (engine: clamd)."
+}
+
+# Opanel's opinionated conf.maldet: use clamd, never auto-quarantine or suspend a
+# user (a false positive on a legit plugin would take a live site down -- hits
+# are surfaced in the panel and the admin decides), keep signatures current.
+set_lmd_conf() {
+  local k="$1" v="$2"
+  if grep -qE "^${k}=" "$LMD_CONF"; then
+    sed -i "s|^${k}=.*|${k}=\"${v}\"|" "$LMD_CONF"
+  else
+    printf '%s="%s"\n' "$k" "$v" >>"$LMD_CONF"
+  fi
+}
+
+configure_lmd() {
+  [[ -f "$LMD_CONF" ]] || return 0
+  set_lmd_conf scan_clamscan 1
+  set_lmd_conf clamav_scan 1
+  set_lmd_conf autoupdate_signatures 1
+  set_lmd_conf autoupdate_version 1
+  set_lmd_conf cron_daily_scan 0
+  set_lmd_conf quarantine_hits 0
+  set_lmd_conf quarantine_clean 0
+  set_lmd_conf quarantine_suspend_user 0
+  set_lmd_conf email_alert 0
+  set_lmd_conf scan_ignore_root 1
+  set_lmd_conf scan_max_filesize 2048k
+  set_lmd_conf scan_tmpdir /var/tmp
+}
+
+LMD_MONITOR_UNIT="/etc/systemd/system/opanel-maldet-monitor.service"
+
+enable_lmd_monitor() {
+  lmd_installed || deny "Linux Malware Detect is not installed"
+  # inotify watches for every file under /home -- a busy shared host has a lot.
+  local wf=/etc/sysctl.d/60-opanel-inotify.conf
+  printf 'fs.inotify.max_user_watches=1048576\nfs.inotify.max_user_instances=1024\n' >"$wf"
+  sysctl -p "$wf" >/dev/null 2>&1 || true
+  cat >"$LMD_MONITOR_UNIT" <<'UNIT'
+[Unit]
+Description=OPanel Linux Malware Detect real-time monitor
+After=clamav-daemon.service
+Wants=clamav-daemon.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/maldet --monitor /home
+ExecStop=/usr/local/sbin/maldet --monitor stop
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable --now opanel-maldet-monitor.service
+  echo "LMD real-time monitor enabled for /home"
+}
+
+disable_lmd_monitor() {
+  systemctl disable --now opanel-maldet-monitor.service >/dev/null 2>&1 || true
+  maldet --monitor stop >/dev/null 2>&1 || true
+  rm -f "$LMD_MONITOR_UNIT"
+  systemctl daemon-reload
+  echo "LMD real-time monitor disabled"
+}
+
+update_malware_signatures() {
+  freshclam >/dev/null 2>&1 || true
+  if lmd_installed; then
+    maldet -u >/dev/null 2>&1 || true
+    maldet -d >/dev/null 2>&1 || true
+  fi
+  echo "malware signatures updated"
 }
 
 # Directories a full-system scan must not walk into: kernel/device trees and
@@ -1086,8 +1193,56 @@ install_clamav_engine() {
 # files the scan already covers in place.
 CLAMAV_SCAN_PRUNE_PATHS=(/proc /sys /dev /run /var/lib/clamav /var/backups/opanel /snap)
 
+# Incremental scans look back this many days of file changes; full scans run at
+# least this often regardless of what the panel asks for.
+LMD_INCREMENTAL_DAYS=7
+
+run_malware_lmd_scan() {
+  local scan_root="$1" mode="${2:-full}" root tmp scanid report total hits total_pre
+  systemctl is-active --quiet clamav-daemon 2>/dev/null || deny "clamav-daemon is not running"
+  root="$scan_root"
+  [[ "$root" == "/" ]] && root=/home
+  [[ -d "$root" ]] || deny "scan path is not a directory: $root"
+
+  # A quick pre-count gives the panel a progress denominator; maldet's own
+  # streamed output keeps the pipe alive while it runs.
+  total_pre="$( { find "$root" -type f 2>/dev/null || true; } | wc -l | tr -d '[:space:]')"
+  echo "opanel-scan-total ${total_pre:-0}"
+  echo "opanel-scan-mode ${mode}"
+
+  tmp="$(mktemp /tmp/opanel-maldet.XXXXXX)" || deny "cannot create scan temp file"
+  trap 'rm -f "$tmp"' RETURN
+  if [[ "$mode" == "incremental" ]]; then
+    { stdbuf -oL maldet -r "$root" "$LMD_INCREMENTAL_DAYS" 2>&1 || true; } | tee "$tmp" || true
+  else
+    { stdbuf -oL maldet -r "$root" 2>&1 || true; } | tee "$tmp" || true
+  fi
+
+  scanid="$(grep -oE '[0-9]{6}-[0-9]{4}\.[0-9]+' "$tmp" | tail -n1)"
+  if [[ -z "$scanid" ]]; then
+    echo "opanel-scan-scanned ${total_pre:-0}"
+    return 0
+  fi
+  report="$(maldet --report "$scanid" 2>/dev/null)"
+  total="$(printf '%s\n' "$report" | sed -nE 's/^TOTAL FILES:[[:space:]]*([0-9]+).*/\1/p' | head -n1)"
+  hits="$(printf '%s\n' "$report" | sed -nE 's/^TOTAL HITS:[[:space:]]*([0-9]+).*/\1/p' | head -n1)"
+
+  # FILE HIT LIST rows:  {HEX}php.base64.v23eb9 : /home/x/public_html/a.php
+  printf '%s\n' "$report" | sed -nE 's|^(\{[^}]*\}[^:]*) : (/.+)$|\2: \1 FOUND|p'
+
+  echo "opanel-scan-scanned ${total:-${total_pre:-0}}"
+  echo "opanel-scan-report ${scanid}"
+  [[ "${hits:-0}" -eq 0 ]] || return 1
+  return 0
+}
+
 run_clamav_system_scan() {
-  local scan_root="$1" list total prune=() path
+  local scan_root="$1" mode="${2:-full}" list total prune=() path rc=0
+  # LMD present -> use it (LMD + ClamAV signatures, clamd as the engine).
+  if lmd_installed; then
+    run_malware_lmd_scan "$scan_root" "$mode" || rc=$?
+    return "$rc"
+  fi
   command -v clamdscan >/dev/null 2>&1 || deny "clamdscan is not installed"
   systemctl is-active --quiet clamav-daemon 2>/dev/null || deny "clamav-daemon is not running"
 
@@ -3041,7 +3196,34 @@ case "$cmd" in
     else
       running=0
     fi
-    echo "installed=${installed} running=${running}"
+    if lmd_installed; then lmd=1; else lmd=0; fi
+    lmd_ver="$( [[ -f /usr/local/maldetect/VERSION ]] && tr -d '[:space:]' </usr/local/maldetect/VERSION || echo '' )"
+    if systemctl is-active --quiet opanel-maldet-monitor.service 2>/dev/null; then monitor=1; else monitor=0; fi
+    echo "installed=${installed} running=${running} lmd=${lmd} lmd_version=${lmd_ver} monitor=${monitor}"
+    ;;
+
+  maldet-ensure)
+    # Add LMD to a box that already runs ClamAV (called from opanel-update).
+    command -v clamdscan >/dev/null 2>&1 || deny "ClamAV is not installed"
+    if lmd_installed; then
+      configure_lmd
+      echo "Linux Malware Detect already present"
+    else
+      install_lmd_engine
+    fi
+    ;;
+
+  maldet-monitor)
+    [[ $# -eq 1 ]] || deny "usage: maldet-monitor <enable|disable>"
+    case "$1" in
+      enable) enable_lmd_monitor ;;
+      disable) disable_lmd_monitor ;;
+      *) deny "usage: maldet-monitor <enable|disable>" ;;
+    esac
+    ;;
+
+  malware-sigs-update)
+    update_malware_signatures
     ;;
 
   clamav-start)
@@ -3056,8 +3238,10 @@ case "$cmd" in
     ;;
 
   clamav-scan-system)
-    [[ $# -le 1 ]] || deny "usage: clamav-scan-system [path]"
+    [[ $# -le 2 ]] || deny "usage: clamav-scan-system [path] [full|incremental]"
     scan_root="${1:-/}"
+    scan_mode="${2:-full}"
+    [[ "$scan_mode" == "full" || "$scan_mode" == "incremental" ]] || deny "invalid scan mode: $scan_mode"
     # Anchored allowlist: absolute, and no whitespace, quotes or shell
     # metacharacters that could survive into a log line or a filename glob.
     [[ "$scan_root" =~ ^/[A-Za-z0-9._/-]*$ ]] || deny "unsafe scan path"
@@ -3066,7 +3250,7 @@ case "$cmd" in
     esac
     scan_root="$(readlink -m "$scan_root")" || deny "cannot resolve $scan_root"
     [[ -d "$scan_root" ]] || deny "scan path is not a directory: $scan_root"
-    run_clamav_system_scan "$scan_root"
+    run_clamav_system_scan "$scan_root" "$scan_mode"
     ;;
 
   waf-update)
