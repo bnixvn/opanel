@@ -989,7 +989,27 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
 .scan-threat-item:last-child{border-bottom:0}
 .scan-threat-item strong{color:var(--danger-text);line-height:1.3}
 .scan-threat-item span{color:var(--text-secondary);overflow-wrap:anywhere}
+.scan-threat-item>button,.scan-threat-item>.badge{justify-self:start;margin-top:4px}
 .malware-scan-log{max-height:360px;margin-top:0;color:var(--console-text);background:var(--console-bg);border-color:var(--console-border)}
+
+/* Quarantine list */
+.quarantine-empty{display:flex;align-items:center;gap:8px;padding:14px 12px;font-size:13px;color:var(--text-muted);background:var(--surface-alt);border-radius:var(--radius-sm)}
+.quarantine-empty svg{color:var(--success);flex:none}
+.quarantine-list{display:grid;gap:8px;max-height:340px;overflow:auto;padding-right:2px}
+.quarantine-item{display:grid;grid-template-columns:minmax(0,1fr) max-content;gap:12px;align-items:center;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.quarantine-info{min-width:0;display:grid;gap:5px}
+.quarantine-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.quarantine-line .badge{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.quarantine-site{font-weight:600;font-size:12px;color:var(--text-secondary)}
+.quarantine-meta{font-size:12px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.quarantine-path{font-family:var(--mono);font-size:12px;color:var(--text-secondary);overflow-wrap:anywhere;line-height:1.45}
+.quarantine-actions{display:flex;gap:6px;flex:none}
+.quarantine-actions button{padding:6px 11px;font-size:12px;white-space:nowrap}
+@media(max-width:640px){
+  .quarantine-item{grid-template-columns:1fr}
+  .quarantine-actions{width:100%}
+  .quarantine-actions button{flex:1}
+}
 
 @media(max-width:1250px){
   .site-card{grid-template-columns:1fr;align-items:start}

@@ -4526,31 +4526,40 @@ function App() {
         {mwActive && <div className="info-box">
           <div className="malware-scan-head">
             <div>
-              <strong>Quarantine {quarantine.length > 0 && <span className="badge">{quarantine.length}</span>}</strong>
+              <strong>Quarantine{quarantine.length > 0 && <span className="badge" style={{marginLeft:6}}>{quarantine.length}</span>}</strong>
               <p className="hint">
                 {mw.auto_quarantine
-                  ? 'A file a scan flags as malware is moved here automatically and stops being served at once. Review the list and Restore anything that was a false positive.'
+                  ? 'A file a scan flags as malware is moved here automatically and stops being served at once. Restore anything that was a false positive.'
                   : 'Auto-quarantine is off — scans only report threats. Turn it on below, or use “Quarantine” on a scan result to move a file here manually.'}
               </p>
             </div>
             <button className="secondary" disabled={!!loading} onClick={loadQuarantine}><RefreshCw size={14}/> Refresh</button>
           </div>
-          <label className="check-line" style={{marginBottom: quarantine.length ? 10 : 0}}>
+          <label className="check-line" style={{marginBottom: 12}}>
             <input type="checkbox" checked={!!mw.auto_quarantine} disabled={!!loading}
               onChange={e => toggleAutoQuarantine(e.target.checked)} />
             Automatically quarantine detected malware
           </label>
           {quarantine.length === 0
-            ? <p className="hint">Nothing in quarantine.</p>
-            : <div className="scan-history-list">
-                {quarantine.map(q => <div key={q.id} className="scan-threat-item">
-                  <span className="scan-history-main">
-                    <strong>{q.signature || 'quarantined file'}</strong>
-                    <small>{q.original_path} · {q.quarantined_at?.replace('T', ' ').replace('Z', '')} · {Math.max(1, Math.round((q.size || 0) / 1024))} KB</small>
-                  </span>
-                  <button className="secondary-light" disabled={!!loading} onClick={() => restoreQuarantine(q.id, q.original_path)}>Restore</button>
-                  <button className="danger" disabled={!!loading} onClick={() => deleteQuarantine(q.id, q.original_path)}>Delete</button>
-                </div>)}
+            ? <div className="quarantine-empty"><CheckCircle size={16}/> Nothing in quarantine{mw.auto_quarantine ? ' — flagged files will show up here for review.' : '.'}</div>
+            : <div className="quarantine-list">
+                {quarantine.map(q => {
+                  const m = /^\/home\/[^/]+\/([^/]+)\/(.+)$/.exec(q.original_path || '');
+                  return <div key={q.id} className="quarantine-item">
+                    <div className="quarantine-info">
+                      <div className="quarantine-line">
+                        <span className="badge danger">{q.signature || 'flagged file'}</span>
+                        {m && <span className="quarantine-site">{m[1]}</span>}
+                        <span className="quarantine-meta">{scanJobStamp({ finished_at: q.quarantined_at })} · {formatBytes(q.size || 0)}</span>
+                      </div>
+                      <code className="quarantine-path" title={q.original_path}>{q.original_path}</code>
+                    </div>
+                    <div className="quarantine-actions">
+                      <button className="secondary-light" disabled={!!loading} onClick={() => restoreQuarantine(q.id, q.original_path)}><RotateCcw size={13}/> Restore</button>
+                      <button className="danger-light" disabled={!!loading} onClick={() => deleteQuarantine(q.id, q.original_path)}><Trash2 size={13}/> Delete</button>
+                    </div>
+                  </div>;
+                })}
               </div>}
         </div>}
       </section>}
