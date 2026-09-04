@@ -855,32 +855,13 @@ def _delete_existing_domain(db, domain: str) -> None:
 
 
 def _available_email(db, username: str, preferred: str) -> tuple[str, str | None]:
-    """Pick an address that is actually free, plus a warning when one was needed.
+    """The archive's contact address, or a placeholder when it has none.
 
-    users.email is UNIQUE but the import only de-duplicates on username, so an
-    archive whose contact address already belongs to a different panel user used
-    to abort the whole run with an IntegrityError. DirectAdmin accounts sharing
-    one contact mailbox is normal, so fall back instead of failing.
+    users.email is not unique, so DirectAdmin accounts that share one contact
+    mailbox are kept as-is. The second tuple element (a warning) is always None
+    now; it is retained for the caller's signature.
     """
-    candidates = []
-    if preferred:
-        candidates.append(preferred)
-    candidates.append(f"{username}@import.local")
-    candidates.extend(f"{username}+{n}@import.local" for n in range(2, 50))
-
-    for candidate in candidates:
-        if db.query(User.id).filter(User.email == candidate).first() is None:
-            if preferred and candidate != preferred:
-                return candidate, (
-                    f"Email {preferred} already belongs to another panel user; "
-                    f"{username} was created with {candidate} instead"
-                )
-            return candidate, None
-
-    fallback = f"{username}+{secrets.token_hex(4)}@import.local"
-    return fallback, (
-        f"Could not reuse {preferred or username}; {username} was created with {fallback}"
-    )
+    return (preferred or f"{username}@import.local"), None
 
 
 def _delete_existing_user(db, username: str) -> None:

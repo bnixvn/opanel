@@ -70,8 +70,10 @@ def _delete_owned_website(db: Session, website: Website) -> None:
 @router.post("", response_model=UserOut)
 def create_user(payload: UserCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
-    if db.query(User).filter((User.username == payload.username) | (User.email == payload.email)).first():
-        raise HTTPException(status_code=409, detail="User already exists")
+    # Only the username has to be unique -- one contact email may be shared by
+    # several panel users.
+    if db.query(User).filter(User.username == payload.username).first():
+        raise HTTPException(status_code=409, detail="Username already taken")
     try:
         site_users.ensure_panel_user(payload.username, payload.password)
     except ValueError as exc:
@@ -107,8 +109,6 @@ def me(db: Session = Depends(get_db), current_user: User = Depends(get_current_u
 def update_me(payload: UserUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Let the current user update their own email."""
     if payload.email is not None and payload.email != current_user.email:
-        if db.query(User).filter(User.email == payload.email, User.id != current_user.id).first():
-            raise HTTPException(status_code=409, detail="Email already in use")
         current_user.email = payload.email
         db.commit()
         db.refresh(current_user)
@@ -129,8 +129,6 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         user.role = payload.role
         role_changed = True
     if payload.email is not None and payload.email != user.email:
-        if db.query(User).filter(User.email == payload.email, User.id != user_id).first():
-            raise HTTPException(status_code=409, detail="Email already in use")
         user.email = payload.email
     if payload.is_active is not None:
         if user_id == current_user.id and payload.is_active is False:

@@ -13,7 +13,10 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # Not unique: several panel users may share one contact address (a reseller
+    # managing many accounts, DirectAdmin imports sharing a mailbox, ...).
+    # Uniqueness is enforced on the username only.
+    email: Mapped[str] = mapped_column(String(255), index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(32), default="end_user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

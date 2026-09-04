@@ -351,8 +351,6 @@ def restore_user_backup(backup_file: str, db) -> dict:
         email = user_info.get("email") or f"{username}@users.opanel.invalid"
         if email.endswith(_PLACEHOLDER_EMAIL_SUFFIXES):
             email = f"{username}@users.opanel.invalid"
-        if db.query(User).filter(User.email == email).first():
-            email = f"{username}-{secrets.token_hex(4)}@users.opanel.invalid"
         backup_role = user_info.get("role") or "end_user"
         try:
             role = normalize_role(backup_role).value
