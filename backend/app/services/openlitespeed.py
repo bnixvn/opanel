@@ -272,6 +272,14 @@ def _log_path(domain: str, kind: str) -> Path:
     return Path("/var/log/openlitespeed") / f"{safe_domain}.{safe_kind}.log"
 
 
+def _php_error_log_path(domain: str) -> Path:
+    """PHP's own error_log. The site's PHP runs as its Linux user, which cannot
+    write the OLS-owned ``<domain>.error.log`` -- so PHP logs into a per-domain
+    directory the site user owns. This is why a site with a PHP fatal used to
+    leave no trace in the panel's Error tab."""
+    return Path("/var/log/openlitespeed") / _safe_domain(domain) / "php_error.log"
+
+
 # ---------------------------------------------------------------------------
 # Custom config validation
 # ---------------------------------------------------------------------------
@@ -463,6 +471,7 @@ def _build_context(
         "linux_user": linux_user or "www-data",
         "access_log": _log_path(safe_domain, "access").as_posix(),
         "error_log": _log_path(safe_domain, "error").as_posix(),
+        "php_error_log": _php_error_log_path(safe_domain).as_posix(),
         "acme_webroot": ACME_WEBROOT,
         "security_headers": SECURITY_HEADERS,
         "hsts_header": HSTS_HEADER if has_ssl else "",
@@ -857,11 +866,21 @@ def read_site_log(domain: str, kind: str = "access", lines: int = 200) -> dict:
     safe_kind = _check_log_kind(kind)
     safe_lines = _check_tail_lines(lines)
     path = _log_path(safe_domain, safe_kind)
+    if safe_kind == "error":
+        # The Error tab merges PHP's error_log (application errors) with the OLS
+        # server error log -- see the helper's read_site_log.
+        php_log = _php_error_log_path(safe_domain)
+        display_path = f"{php_log.as_posix()} + {path.as_posix()}"
+        fallback = ["bash", "-lc",
+                    f"tail -n {safe_lines} {php_log.as_posix()} {path.as_posix()} 2>/dev/null || true"]
+    else:
+        display_path = str(path)
+        fallback = ["tail", "-n", str(safe_lines), str(path)]
     result = shell.privileged(
         "site-log-read",
         helper_args=[safe_domain, safe_kind, str(safe_lines)],
         check=False,
-        fallback=["tail", "-n", str(safe_lines), str(path)],
+        fallback=fallback,
     )
     missing = "opanel_LOG_MISSING=1" in (result.stderr or "")
     if result.returncode != 0 and not missing:
@@ -869,7 +888,7 @@ def read_site_log(domain: str, kind: str = "access", lines: int = 200) -> dict:
     return {
         "domain": safe_domain,
         "kind": safe_kind,
-        "path": str(path),
+        "path": display_path,
         "lines": safe_lines,
         "content": result.stdout or "",
         "exists": not missing,

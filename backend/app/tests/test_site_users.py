@@ -212,6 +212,20 @@ def test_openlitespeed_site_runtime_uses_site_user_and_writable_logs():
     assert "chmod g+s /var/log/openlitespeed" in install_script
 
 
+def test_vhost_write_creates_a_site_owned_php_log_dir():
+    """PHP's error_log lives in /var/log/openlitespeed/<domain>/, owned by the
+    site's Linux user so its PHP process can actually write to it."""
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    assert 's#^[[:space:]]*docRoot[[:space:]]+/home/([^/]+)/.*#\\1#p' in helper
+    assert 'install -d -o "$vhost_site_user" -g "$vhost_site_user" -m 0750 "/var/log/openlitespeed/$safe_domain"' in helper
+    # the Error tab reads the PHP log then the OLS server log
+    assert "PHP error log" in helper
+    assert "OpenLiteSpeed error log" in helper
+    # php_error.log has no built-in rotation -> logrotate handles it
+    assert "/var/log/openlitespeed/*/php_error.log {" in helper
+    assert "/etc/logrotate.d/opanel-sites" in helper
+
+
 def test_manual_ssl_helper_installs_private_key_outside_web_root():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
     assert "install_manual_ssl()" in helper

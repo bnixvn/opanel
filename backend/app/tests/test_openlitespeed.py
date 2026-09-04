@@ -74,6 +74,41 @@ def test_wordpress_vhost_runs_lsphp_as_site_user():
     assert "extGroup              siteuser" in rendered
 
 
+def test_php_error_log_goes_to_a_dir_the_site_user_owns():
+    """PHP runs as the site's Linux user, which cannot write the OLS-owned
+    <domain>.error.log -- so php's error_log must point at a per-domain dir."""
+    rendered = openlitespeed.render_vhost(
+        "example.test", "/home/siteuser/example.test",
+        app_type="wordpress", php_version="8.4", linux_user="siteuser",
+    )
+    assert "php_admin_value   error_log /var/log/openlitespeed/example.test/php_error.log" in rendered
+    # the OLS server error log is unchanged
+    assert "errorlog /var/log/openlitespeed/example.test.error.log {" in rendered
+
+
+def test_read_site_log_error_merges_php_and_server_logs(monkeypatch):
+    captured = {}
+
+    class _R:
+        returncode = 0
+        stdout = "php lines\n"
+        stderr = ""
+
+    def fake_privileged(cmd, helper_args=None, **kw):
+        captured["cmd"] = cmd
+        captured["args"] = helper_args
+        captured["fallback"] = kw.get("fallback")
+        return _R()
+
+    monkeypatch.setattr(openlitespeed.shell, "privileged", fake_privileged)
+    out = openlitespeed.read_site_log("example.test", "error", 100)
+    assert captured["args"] == ["example.test", "error", "100"]
+    assert "example.test/php_error.log" in out["path"]
+    assert "example.test.error.log" in out["path"]
+    # the un-privileged fallback tails both files too
+    assert "php_error.log" in " ".join(captured["fallback"])
+
+
 def test_wordpress_vhost_blocks_xmlrpc_before_php():
     rendered = openlitespeed.render_vhost(
         "example.test",

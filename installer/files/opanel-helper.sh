@@ -2304,16 +2304,40 @@ require_site_domain_segment() {
 }
 
 read_site_log() {
-  local domain="$1" kind="$2" lines="$3" path resolved
+  local domain="$1" kind="$2" lines="$3" resolved php_log php_resolved any=0
   require_domain "$domain"
   [[ "$kind" == "access" || "$kind" == "error" ]] || deny "invalid log kind: $kind"
   require_tail_lines "$lines"
-  path="/var/log/openlitespeed/${domain}.${kind}.log"
-  resolved=$(readlink -m "$path") || deny "cannot resolve log path"
+  resolved=$(readlink -m "/var/log/openlitespeed/${domain}.${kind}.log") || deny "cannot resolve log path"
   case "$resolved" in
     /var/log/openlitespeed/*) ;;
     *) deny "log path outside /var/log/openlitespeed: $resolved" ;;
   esac
+
+  # The Error tab shows PHP's own error_log first (that is where application
+  # errors land), then the OpenLiteSpeed server error log.
+  if [[ "$kind" == "error" ]]; then
+    php_resolved=$(readlink -m "/var/log/openlitespeed/${domain}/php_error.log") || deny "cannot resolve log path"
+    case "$php_resolved" in
+      /var/log/openlitespeed/*) ;;
+      *) deny "log path outside /var/log/openlitespeed: $php_resolved" ;;
+    esac
+    echo "opanel_LOG_PATH=${php_resolved} + ${resolved}" >&2
+    if [[ -s "$php_resolved" ]]; then
+      any=1
+      echo "===== PHP error log (${php_resolved}) ====="
+      tail -n "$lines" -- "$php_resolved"
+      echo
+    fi
+    if [[ -s "$resolved" ]]; then
+      any=1
+      echo "===== OpenLiteSpeed error log (${resolved}) ====="
+      tail -n "$lines" -- "$resolved"
+    fi
+    [[ "$any" == 1 ]] || echo "opanel_LOG_MISSING=1" >&2
+    return 0
+  fi
+
   echo "opanel_LOG_PATH=$resolved" >&2
   if [[ ! -f "$resolved" ]]; then
     echo "opanel_LOG_MISSING=1" >&2
@@ -2586,6 +2610,26 @@ ensure_sites_group() {
   getent group "$opanel_SITES_GROUP" >/dev/null || groupadd --system "$opanel_SITES_GROUP"
   usermod -aG "$opanel_SITES_GROUP" opanel 2>/dev/null || true
   usermod -aG "$opanel_SITES_GROUP" www-data 2>/dev/null || true
+  ensure_site_log_rotation
+}
+
+# OLS rotates its own access/error logs (rollingSize/keepDays in the vhost), but
+# the per-site php_error.log is written by PHP's error_log() and needs help.
+ensure_site_log_rotation() {
+  [[ -f /etc/logrotate.d/opanel-sites ]] && return 0
+  command -v logrotate >/dev/null 2>&1 || return 0
+  cat >/etc/logrotate.d/opanel-sites <<'EOF'
+/var/log/openlitespeed/*/php_error.log {
+    weekly
+    rotate 8
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}
+EOF
+  chmod 0644 /etc/logrotate.d/opanel-sites
 }
 
 ensure_sftp_group() {
@@ -3342,6 +3386,15 @@ case "$cmd" in
       rm -f "$vhost_tmp"
       echo "vhost unchanged: ${safe_domain}"
       exit 0
+    fi
+    # The site's PHP runs as its own Linux user and cannot write the
+    # OLS-owned <domain>.error.log, so PHP's error_log points at a per-domain
+    # directory the site user owns. Create it here (the vhost that references it
+    # is being written right now).
+    vhost_site_user="$(sed -nE 's#^[[:space:]]*docRoot[[:space:]]+/home/([^/]+)/.*#\1#p' "$vhost_tmp" | head -1)"
+    if [[ -n "$vhost_site_user" ]] && id "$vhost_site_user" >/dev/null 2>&1; then
+      [[ -d /var/log/openlitespeed ]] || install -d -o www-data -g opanel-sites -m 2775 /var/log/openlitespeed
+      install -d -o "$vhost_site_user" -g "$vhost_site_user" -m 0750 "/var/log/openlitespeed/$safe_domain"
     fi
     install -d -o root -g opanel -m 2775 "$OLS_VHOSTS_DIR/$safe_domain"
     install -m 0644 -o root -g opanel "$vhost_tmp" "$vhost_conf"

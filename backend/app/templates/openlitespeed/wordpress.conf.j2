@@ -119,7 +119,7 @@ END_RULES
 
     phpIniOverride  {
         php_admin_flag    log_errors on
-        php_admin_value   error_log {{ error_log }}
+        php_admin_value   error_log {{ php_error_log }}
     }
 
     rewrite {

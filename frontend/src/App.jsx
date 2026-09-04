@@ -3283,7 +3283,7 @@ function App() {
       <div className="log-toolbar">
         <div className="segmented-control">
           <button className={logViewer.kind === 'access' ? 'active' : ''} disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, 'access', logViewer.lines, logViewer.domain)}>Access</button>
-          <button className={logViewer.kind === 'error' ? 'active' : ''} disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, 'error', logViewer.lines, logViewer.domain)}>Error</button>
+          <button className={logViewer.kind === 'error' ? 'active' : ''} disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, 'error', logViewer.lines, logViewer.domain)}>Errors (PHP + server)</button>
         </div>
         <select value={logViewer.lines} onChange={e => loadWebsiteLog(logViewer.id, logViewer.kind, Number(e.target.value), logViewer.domain)} disabled={!!loading}>
           <option value={100}>100 lines</option>
@@ -3294,7 +3294,9 @@ function App() {
         </select>
         <button disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, logViewer.kind, logViewer.lines, logViewer.domain)}><RefreshCw size={14}/> Refresh</button>
       </div>
-      <pre className="log-output">{logViewer.exists ? (logViewer.content || 'Log is empty.') : 'Log file has not been created yet.'}</pre>
+      <pre className="log-output">{logViewer.exists
+        ? (logViewer.content || 'Log is empty.')
+        : (logViewer.kind === 'error' ? 'No errors logged yet.' : 'Log file has not been created yet.')}</pre>
     </section>;
   }
 
