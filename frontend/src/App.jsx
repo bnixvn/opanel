@@ -13,7 +13,7 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Archive, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
+import { Archive, ArrowLeft, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import './style.css';
 import './brand.css';
@@ -2599,14 +2599,14 @@ function App() {
 
   async function loadWafRules() {
     const data = await request('/waf/rules', {}, 'Loading WAF rules...');
-    if (data) {
-      setWafRules(data);
-      const firstWebsiteId = selectedWafWebsiteId || selectedWebsiteId || websites[0]?.id || '';
-      if (firstWebsiteId) {
-        setSelectedWafWebsiteId(String(firstWebsiteId));
-        await loadWebsiteWafConfig(firstWebsiteId, false);
-      }
-    }
+    if (data) setWafRules(data);
+  }
+
+  function closeWafSiteConfig() {
+    setWafSiteConfig(null);
+    setSelectedWafWebsiteId('');
+    setWafCustomRules('');
+    setWafBotExtra('');
   }
 
   async function loadWebsiteWafConfig(websiteId = selectedWafWebsiteId, showLoading = true) {
@@ -2968,11 +2968,6 @@ function App() {
     poll();
     return () => window.clearInterval(timer);
   }, [scanJob?.job_id, scanJob?.status]);
-
-  useEffect(() => {
-    if (!isAuthenticated || page !== 'waf' || selectedWafWebsiteId || websites.length === 0) return;
-    loadWebsiteWafConfig(websites[0].id, false);
-  }, [isAuthenticated, page, selectedWafWebsiteId, websites.length]);
 
   useEffect(() => {
     if (!isAuthenticated || !isAdmin || page !== 'wafLogs' || !wafAccessAutoRefresh) return undefined;
@@ -4143,109 +4138,130 @@ function App() {
       return groups;
     }, {});
     return <>
-      <section className="section">
-        <div className="section-title">
-          <div><h2>WAF</h2><p className="hint">WAF engine is installed by the panel. Rules are configured per website.</p></div>
-          <button disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> Refresh</button>
-        </div>
-        <div className="info-box firewall-status"><strong>Status</strong><pre>{statusText}</pre></div>
-      </section>
-      <section className="section">
-        <div className="section-title"><h2>Website WAF</h2></div>
-        {websites.length === 0 && <EmptyState icon={Globe} message="No websites yet." />}
-        {websites.length > 0 && <div className="firewall-form waf-website-selector">
-          <label><span>Website</span><select value={selectedWafWebsiteId} onChange={e => loadWebsiteWafConfig(e.target.value)}>
-            <option value="">Select website</option>
-            {websites.map(site => <option key={site.id} value={site.id}>{site.domain}</option>)}
-          </select></label>
-          <button disabled={!selectedWafWebsiteId || !!loading} onClick={() => selectedSite && toggleWebsiteWaf(selectedSite)}><Shield size={14}/> {selectedSite?.waf_enabled ? 'Disable WAF' : 'Enable WAF'}</button>
-        </div>}
-        <div className="table waf-site-list">
-          {websites.map(site => <div className="firewall-rule" key={site.id}>
-            <span><strong>{site.domain}</strong></span>
-            <div className="firewall-rule-actions">
-              <span className={site.waf_enabled ? 'badge ok' : 'badge'}>{site.waf_enabled ? 'Enabled' : 'Disabled'}</span>
-              <span className={site.http_flood_enabled ? 'badge ok' : 'badge'}>{site.http_flood_enabled ? 'Flood On' : 'Flood Off'}</span>
-              <button disabled={!!loading} onClick={() => loadWebsiteWafConfig(site.id)}>Rules</button>
+      {!wafSiteConfig && <>
+        <section className="section">
+          <div className="section-title">
+            <div><h2>WAF</h2><p className="hint">Engine status. Rules are configured per website below.</p></div>
+            <button disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> Refresh</button>
+          </div>
+          <div className="info-box firewall-status"><strong>Status</strong><pre>{statusText}</pre></div>
+        </section>
+
+        <section className="section">
+          <div className="section-title">
+            <div>
+              <h2>Global bad bot <span className="badge">{badBots.patterns.length}</span></h2>
+              <p className="hint">One bot per line, applied to every website. A request whose User-Agent contains the text gets 403 — plain text, no regex.</p>
             </div>
-          </div>)}
-        </div>
-      </section>
-      <section className="section">
-        <div className="section-title">
-          <div>
-            <h2>Global bad bot <span className="badge">{badBots.patterns.length}</span></h2>
-            <p className="hint">One bot per line, applied to every website. A request whose User-Agent contains the text gets 403 — plain text, no regex.</p>
+            <button className="secondary" disabled={!!loading} onClick={loadBadBots}><RefreshCw size={14}/> Refresh</button>
           </div>
-          <button className="secondary" disabled={!!loading} onClick={loadBadBots}><RefreshCw size={14}/> Refresh</button>
-        </div>
-        <textarea className="code-editor badbot-input" value={badBotText} onChange={e => setBadBotText(e.target.value)}
-          spellCheck={false}
-          placeholder={"AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider"} />
-        <div className="actions"><button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> Save and apply to all websites</button></div>
-      </section>
-      {wafSiteConfig && <section className="section">
-        <div className="section-title">
-          <div>
-            <h2>Bad bot - {wafSiteConfig.domain}</h2>
-            <p className="hint">
-              {wafSiteConfig.bot_blocking_enabled
-                ? `Global list (${(wafSiteConfig.global_bad_bots || []).length}) plus anything below.`
-                : 'Off — the global list is ignored on this website.'}
-            </p>
+          <textarea className="code-editor badbot-input" value={badBotText} onChange={e => setBadBotText(e.target.value)}
+            spellCheck={false}
+            placeholder={"AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider"} />
+          <div className="actions"><button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> Save and apply to all websites</button></div>
+        </section>
+
+        <section className="section">
+          <div className="section-title">
+            <div><h2>Websites</h2><p className="hint">Open a website to configure its rules, bad bots and flood limits.</p></div>
           </div>
-          <span className={wafSiteConfig.bot_blocking_enabled ? 'badge ok' : 'badge'}>
-            {wafSiteConfig.bot_blocking_enabled ? 'On' : 'Off'}
-          </span>
-        </div>
-        <label className="check-line">
-          <input type="checkbox" checked={!!wafSiteConfig.bot_blocking_enabled}
-            onChange={e => setWafSiteConfig(prev => ({ ...prev, bot_blocking_enabled: e.target.checked }))} />
-          Block bad bots on this website
-        </label>
-        <label className="badbot-site-extra"><span>Extra bots, this website only</span>
-          <textarea className="code-editor badbot-input" value={wafBotExtra} onChange={e => setWafBotExtra(e.target.value)}
-            spellCheck={false} placeholder={"ScrapyBot\nSomeOtherBot"} />
-        </label>
-        <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}><Shield size={14}/> Save bad bot config</button></div>
-      </section>}
-      {wafSiteConfig && <section className="section http-flood-panel">
-        <div className="section-title">
-          <h2>HTTP Flood - {wafSiteConfig.domain}</h2>
-          <span className={httpFloodForm.http_flood_enabled ? 'badge ok' : 'badge'}>{httpFloodForm.http_flood_enabled ? 'Enabled' : 'Disabled'}</span>
-        </div>
-        <label className="schedule-toggle http-flood-toggle">
-          <input type="checkbox" checked={!!httpFloodForm.http_flood_enabled} onChange={e => setHttpFloodForm(prev => ({ ...prev, http_flood_enabled: e.target.checked }))} />
-          Enabled
-        </label>
-        <div className="http-flood-grid">
-          <label><span>Requests</span><input type="number" min="1" max="100000" value={httpFloodForm.access_limit_requests} onChange={e => setHttpFloodForm(prev => ({ ...prev, access_limit_requests: e.target.value }))} /></label>
-          <label><span>Window (sec)</span><input type="number" min="1" max="3600" value={httpFloodForm.access_limit_window} onChange={e => setHttpFloodForm(prev => ({ ...prev, access_limit_window: e.target.value }))} /></label>
-          <label><span>Burst</span><input type="number" min="0" max="100000" value={httpFloodForm.access_limit_burst} onChange={e => setHttpFloodForm(prev => ({ ...prev, access_limit_burst: e.target.value }))} /></label>
-          <label><span>Connections/IP</span><input type="number" min="1" max="10000" value={httpFloodForm.connection_limit} onChange={e => setHttpFloodForm(prev => ({ ...prev, connection_limit: e.target.value }))} /></label>
-          <button disabled={!!loading} onClick={saveWebsiteHttpFlood}><Shield size={14}/> Save HTTP Flood</button>
-        </div>
-      </section>}
-      {wafSiteConfig && <section className="section waf-rules-grid">
-        <div className="waf-rule-panel">
-          <div className="section-title"><h2>Default rules - {wafSiteConfig.domain}</h2></div>
-          <div className="waf-default-groups">
-            {Object.entries(groupedRules).map(([category, rules]) => <div className="waf-rule-group" key={category}>
-              <h3>{category}</h3>
-              {rules.map(rule => <label className="waf-rule-toggle" key={rule.id}>
-                <input type="checkbox" checked={!!rule.enabled} onChange={e => toggleWafDefaultRule(rule.id, e.target.checked)} />
-                <span><strong>{rule.title}</strong><small>{rule.description}</small></span>
-              </label>)}
-            </div>)}
+          {websites.length === 0
+            ? <EmptyState icon={Globe} message="No websites yet." />
+            : <div className="waf-site-table">
+                {websites.map(site => <button key={site.id} type="button" className="waf-site-row"
+                  disabled={!!loading} onClick={() => loadWebsiteWafConfig(site.id)}>
+                  <span className="waf-site-domain">{site.domain}</span>
+                  <span className="waf-site-badges">
+                    <span className={site.waf_enabled ? 'badge ok' : 'badge'}>{site.waf_enabled ? 'WAF on' : 'WAF off'}</span>
+                    <span className={site.http_flood_enabled ? 'badge ok' : 'badge'}>{site.http_flood_enabled ? 'Flood on' : 'Flood off'}</span>
+                  </span>
+                  <span className="waf-site-open">Configure</span>
+                </button>)}
+              </div>}
+        </section>
+      </>}
+
+      {wafSiteConfig && <>
+        <section className="section">
+          <div className="section-title waf-detail-head">
+            <div className="waf-detail-title">
+              <button className="secondary-light" onClick={closeWafSiteConfig}><ArrowLeft size={14}/> All websites</button>
+              <div><h2>{wafSiteConfig.domain}</h2><p className="hint">WAF configuration for this website.</p></div>
+            </div>
+            <div className="waf-detail-actions">
+              <span className={selectedSite?.waf_enabled ? 'badge ok' : 'badge'}>{selectedSite?.waf_enabled ? 'WAF on' : 'WAF off'}</span>
+              <button disabled={!!loading} onClick={() => selectedSite && toggleWebsiteWaf(selectedSite)}>
+                <Shield size={14}/> {selectedSite?.waf_enabled ? 'Disable WAF' : 'Enable WAF'}
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="waf-rule-panel">
-          <div className="section-title"><h2>Custom rules - {wafSiteConfig.domain}</h2></div>
-          <textarea className="code-editor" value={wafCustomRules} onChange={e => setWafCustomRules(e.target.value)} rows={14} spellCheck={false} placeholder="SecRule ..." />
-          <p className="hint">Saved into {wafSiteConfig.rules_file}</p>
-          <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}>Save website WAF rules</button></div>
-        </div>
-      </section>}
+        </section>
+
+        <section className="section">
+          <div className="section-title">
+            <div>
+              <h2>Bad bot</h2>
+              <p className="hint">
+                {wafSiteConfig.bot_blocking_enabled
+                  ? `Global list (${(wafSiteConfig.global_bad_bots || []).length}) plus anything below.`
+                  : 'Off — the global list is ignored on this website.'}
+              </p>
+            </div>
+            <span className={wafSiteConfig.bot_blocking_enabled ? 'badge ok' : 'badge'}>
+              {wafSiteConfig.bot_blocking_enabled ? 'On' : 'Off'}
+            </span>
+          </div>
+          <label className="check-line">
+            <input type="checkbox" checked={!!wafSiteConfig.bot_blocking_enabled}
+              onChange={e => setWafSiteConfig(prev => ({ ...prev, bot_blocking_enabled: e.target.checked }))} />
+            Block bad bots on this website
+          </label>
+          <label className="badbot-site-extra"><span>Extra bots, this website only</span>
+            <textarea className="code-editor badbot-input" value={wafBotExtra} onChange={e => setWafBotExtra(e.target.value)}
+              spellCheck={false} placeholder={"ScrapyBot\nSomeOtherBot"} />
+          </label>
+          <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}><Shield size={14}/> Save bad bot config</button></div>
+        </section>
+
+        <section className="section http-flood-panel">
+          <div className="section-title">
+            <h2>HTTP Flood</h2>
+            <span className={httpFloodForm.http_flood_enabled ? 'badge ok' : 'badge'}>{httpFloodForm.http_flood_enabled ? 'Enabled' : 'Disabled'}</span>
+          </div>
+          <label className="schedule-toggle http-flood-toggle">
+            <input type="checkbox" checked={!!httpFloodForm.http_flood_enabled} onChange={e => setHttpFloodForm(prev => ({ ...prev, http_flood_enabled: e.target.checked }))} />
+            Enabled
+          </label>
+          <div className="http-flood-grid">
+            <label><span>Requests</span><input type="number" min="1" max="100000" value={httpFloodForm.access_limit_requests} onChange={e => setHttpFloodForm(prev => ({ ...prev, access_limit_requests: e.target.value }))} /></label>
+            <label><span>Window (sec)</span><input type="number" min="1" max="3600" value={httpFloodForm.access_limit_window} onChange={e => setHttpFloodForm(prev => ({ ...prev, access_limit_window: e.target.value }))} /></label>
+            <label><span>Burst</span><input type="number" min="0" max="100000" value={httpFloodForm.access_limit_burst} onChange={e => setHttpFloodForm(prev => ({ ...prev, access_limit_burst: e.target.value }))} /></label>
+            <label><span>Connections/IP</span><input type="number" min="1" max="10000" value={httpFloodForm.connection_limit} onChange={e => setHttpFloodForm(prev => ({ ...prev, connection_limit: e.target.value }))} /></label>
+            <button disabled={!!loading} onClick={saveWebsiteHttpFlood}><Shield size={14}/> Save HTTP Flood</button>
+          </div>
+        </section>
+
+        <section className="section waf-rules-grid">
+          <div className="waf-rule-panel">
+            <div className="section-title"><h2>Default rules</h2></div>
+            <div className="waf-default-groups">
+              {Object.entries(groupedRules).map(([category, rules]) => <div className="waf-rule-group" key={category}>
+                <h3>{category}</h3>
+                {rules.map(rule => <label className="waf-rule-toggle" key={rule.id}>
+                  <input type="checkbox" checked={!!rule.enabled} onChange={e => toggleWafDefaultRule(rule.id, e.target.checked)} />
+                  <span><strong>{rule.title}</strong><small>{rule.description}</small></span>
+                </label>)}
+              </div>)}
+            </div>
+          </div>
+          <div className="waf-rule-panel">
+            <div className="section-title"><h2>Custom rules</h2></div>
+            <textarea className="code-editor" value={wafCustomRules} onChange={e => setWafCustomRules(e.target.value)} rows={14} spellCheck={false} placeholder="SecRule ..." />
+            <p className="hint">Saved into {wafSiteConfig.rules_file}</p>
+            <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}>Save website WAF rules</button></div>
+          </div>
+        </section>
+      </>}
     </>;
   }
 

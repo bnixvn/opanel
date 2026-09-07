@@ -764,6 +764,27 @@ a:hover{color:var(--primary-ink-hover)}
 .badbot-input{width:100%;min-height:170px;resize:vertical;font-family:var(--mono);font-size:13px;line-height:1.6;margin-bottom:12px}
 .badbot-site-extra{display:grid;gap:6px;min-width:0;margin-top:10px}
 .badbot-site-extra .badbot-input{min-height:120px}
+
+/* WAF index: one row per website, the whole row opens that site's config page */
+.waf-site-table{display:grid;gap:6px}
+.waf-site-row{display:grid;grid-template-columns:minmax(0,1fr) max-content max-content;align-items:center;gap:12px;
+  width:100%;padding:10px 12px;text-align:left;background:var(--surface);color:var(--text);
+  border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:none;font-weight:500}
+.waf-site-row:hover:not(:disabled){background:var(--surface-hover);border-color:var(--border-hover);box-shadow:none}
+.waf-site-domain{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.waf-site-badges{display:flex;gap:6px;flex-wrap:wrap}
+.waf-site-open{color:var(--primary-ink);font-size:12px;font-weight:700;white-space:nowrap}
+
+/* WAF detail: back button sits with the domain, controls stay on the right */
+.waf-detail-head{align-items:center}
+.waf-detail-title{display:flex;align-items:center;gap:12px;min-width:0}
+.waf-detail-title h2{margin:0}
+.waf-detail-actions{display:flex;align-items:center;gap:10px;flex:none}
+@media(max-width:640px){
+  .waf-site-row{grid-template-columns:1fr;gap:8px}
+  .waf-site-open{justify-self:start}
+  .waf-detail-head,.waf-detail-title{flex-wrap:wrap}
+}
 .waf-rule-panel{display:grid;gap:10px;min-width:0}
 .waf-site-list{margin-top:4px}
 .waf-website-selector{grid-template-columns:minmax(240px,1fr) max-content}
