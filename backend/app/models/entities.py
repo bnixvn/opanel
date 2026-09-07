@@ -105,7 +105,6 @@ class Website(Base):
     # nothing is blocked until an admin fills it in.
     waf_bot_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
     waf_bot_extra: Mapped[str] = mapped_column(Text, default="", server_default="")
-    waf_bot_allow: Mapped[str] = mapped_column(Text, default="", server_default="")
     http_flood_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     http_flood_config: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -176,7 +176,6 @@ class _Site:
         self.waf_custom_rules = kw.pop("waf_custom_rules", "")
         self.waf_bot_enabled = kw.pop("waf_bot_enabled", True)
         self.waf_bot_extra = kw.pop("waf_bot_extra", "")
-        self.waf_bot_allow = kw.pop("waf_bot_allow", "")
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -196,26 +195,18 @@ def test_bad_bot_rule_blocks_the_pattern_and_is_phase_1():
     assert "REQUEST_HEADERS:User-Agent" in out
 
 
-def test_good_crawlers_survive_even_when_the_admin_blocks_them_outright():
-    """The protection is not advisory: an admin typing Googlebot -- or just
-    'bot' -- must not be able to take Google off the site."""
-    for hostile in (["Googlebot"], ["bot"], ["Googlebot", "bingbot", "coccocbot"]):
-        rendered = waf.render_bad_bot_rules(hostile)
-        exception = rendered.splitlines()[-1]
-        assert exception.lstrip().startswith('SecRule REQUEST_HEADERS:User-Agent "!@rx')
-        for good in ("Googlebot", "bingbot", "coccocbot", "DuckDuckBot", "UptimeRobot"):
-            assert good in exception, f"{good} lost its protection for list {hostile}"
+def test_the_list_is_taken_literally_including_well_known_crawlers():
+    """No allow-list and no protected set: whatever the admin lists is blocked.
+    Unblocking is done by removing the entry, not by a second opposing list."""
+    out = waf.render_bad_bot_rules(["AhrefsBot", "Googlebot"])
+    assert "AhrefsBot|Googlebot" in out
+    assert "!@rx" not in out          # no exception rule at all
+    assert ",chain" not in out
 
 
-def test_the_exception_is_chained_not_a_standalone_allow():
-    """A standalone `allow` in phase 1 would skip every other phase 1 rule, so
-    anyone could bypass the whole WAF by claiming to be Googlebot. The good-bot
-    check must be a chained condition on the deny instead."""
+def test_the_bot_block_is_a_single_flat_rule():
     out = waf.render_bad_bot_rules(["AhrefsBot"])
-    assert ",chain" in out
-    assert "allow" not in out.split("msg:")[0]
-    # exactly two SecRule lines: the deny and its chained condition
-    assert sum(1 for line in out.splitlines() if line.strip().startswith("SecRule")) == 2
+    assert sum(1 for line in out.splitlines() if line.strip().startswith("SecRule")) == 1
 
 
 def test_patterns_are_escaped_so_a_stray_metacharacter_cannot_break_the_config():
@@ -249,19 +240,10 @@ def test_a_site_can_turn_bot_blocking_off_or_add_its_own():
     )
     assert "AhrefsBot" in extra and "ScrapyBot" in extra
 
-    allowed = waf.render_site_rules(
-        "example.test", [], "", global_bots=["AhrefsBot"], bot_allow=["AhrefsBot"]
-    )
-    # still listed as bad, but this site's exception clears it
-    deny, _, rest = allowed.partition(",chain")
-    exception = next(l for l in rest.splitlines() if "!@rx" in l)
-    assert "AhrefsBot" in deny and "AhrefsBot" in exception
-
 
 def test_website_bot_settings_read_the_row():
-    site = _Site(waf_bot_enabled=False, waf_bot_extra="A, B", waf_bot_allow="C")
+    site = _Site(waf_bot_enabled=False, waf_bot_extra="A, B")
     assert waf.website_bot_settings(site) == {
         "bot_blocking_enabled": False,
         "bot_extra": ["A", "B"],
-        "bot_allow": ["C"],
     }

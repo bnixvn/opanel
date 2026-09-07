@@ -21,7 +21,6 @@ class WebsiteWafRulesUpdate(BaseModel):
     # Omitted -> leave this site's bot settings as they are.
     bot_blocking_enabled: bool | None = None
     bot_extra: list[str] | str | None = None
-    bot_allow: list[str] | str | None = None
 
 
 class BadBotListUpdate(BaseModel):
@@ -114,7 +113,6 @@ def save_website_waf(payload: WebsiteWafRulesUpdate, website_id: int, db: Sessio
             payload.custom_rules,
             bot_blocking_enabled=payload.bot_blocking_enabled,
             bot_extra=payload.bot_extra,
-            bot_allow=payload.bot_allow,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -138,8 +136,6 @@ def get_bad_bots(current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
     return {
         "patterns": waf.global_bad_bots(),
-        # Shown in the UI so it is obvious these can never be blocked.
-        "protected": [p.replace("(?!-Extended)", "") for p in waf.PROTECTED_BOTS],
         "max_patterns": waf.MAX_BOT_PATTERNS,
     }
 
@@ -166,7 +162,6 @@ def save_bad_bots(
         message += " Could not update: " + ", ".join(outcome["failed"])
     return {
         "patterns": patterns,
-        "protected": [p.replace("(?!-Extended)", "") for p in waf.PROTECTED_BOTS],
         "applied_to": outcome["total"],
         "failed": outcome["failed"],
         "message": message,

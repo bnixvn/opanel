@@ -417,10 +417,9 @@ function App() {
   const [firewallBlocklists, setFirewallBlocklists] = useState(null);
   const [firewallBlocklistUrl, setFirewallBlocklistUrl] = useState('');
   const [wafRules, setWafRules] = useState({ status: null, default_rules: '', custom_rules: '' });
-  const [badBots, setBadBots] = useState({ patterns: [], protected: [], max_patterns: 400 });
+  const [badBots, setBadBots] = useState({ patterns: [], max_patterns: 400 });
   const [badBotText, setBadBotText] = useState('');
   const [wafBotExtra, setWafBotExtra] = useState('');
-  const [wafBotAllow, setWafBotAllow] = useState('');
   const [wafCustomRules, setWafCustomRules] = useState('');
   const [selectedWafWebsiteId, setSelectedWafWebsiteId] = useState('');
   const [wafSiteConfig, setWafSiteConfig] = useState(null);
@@ -2622,7 +2621,6 @@ function App() {
       setWafSiteConfig(data);
       setWafCustomRules(data.custom_rules || '');
       setWafBotExtra((data.bot_extra || []).join('\n'));
-      setWafBotAllow((data.bot_allow || []).join('\n'));
       setHttpFloodForm({ http_flood_enabled: !!data.http_flood_enabled, ...normalizeHttpFloodConfig(data.http_flood_config) });
     }
   }
@@ -2649,14 +2647,12 @@ function App() {
         custom_rules: wafCustomRules,
         bot_blocking_enabled: !!wafSiteConfig.bot_blocking_enabled,
         bot_extra: wafBotExtra,
-        bot_allow: wafBotAllow,
       }),
     }, 'Saving website WAF rules...');
     if (data) {
       setWafSiteConfig(data);
       setWafCustomRules(data.custom_rules || '');
       setWafBotExtra((data.bot_extra || []).join('\n'));
-      setWafBotAllow((data.bot_allow || []).join('\n'));
       setNotice(data.message || 'Website WAF rules saved.');
       await refreshAll();
     }
@@ -2674,8 +2670,7 @@ function App() {
     const count = badBotText.split(/[\r\n,]+/).map(s => s.trim()).filter(s => s && !s.startsWith('#')).length;
     if (!confirm(
       `Apply this bad bot list to every website?\n\n${count} pattern(s).\n\n`
-      + 'Requests whose User-Agent contains one of them get 403 on every site that has bot blocking on. '
-      + 'Search engines and uptime monitors are protected and cannot be blocked by this list.'
+      + 'Requests whose User-Agent contains one of them get 403 on every site that has bot blocking on.'
     )) return;
     const data = await request('/waf/bad-bots', {
       method: 'PUT',
@@ -4184,18 +4179,9 @@ function App() {
           </div>
           <button className="secondary" disabled={!!loading} onClick={loadBadBots}><RefreshCw size={14}/> Refresh</button>
         </div>
-        <div className="badbot-global">
-          <textarea className="code-editor badbot-input" value={badBotText} onChange={e => setBadBotText(e.target.value)}
-            spellCheck={false}
-            placeholder={"AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider"} />
-          <div className="badbot-protected">
-            <strong>Never blocked</strong>
-            <p className="hint">Protected even if you add them above.</p>
-            <div className="badbot-chips">
-              {(badBots.protected || []).map(b => <span className="badge" key={b}>{b}</span>)}
-            </div>
-          </div>
-        </div>
+        <textarea className="code-editor badbot-input" value={badBotText} onChange={e => setBadBotText(e.target.value)}
+          spellCheck={false}
+          placeholder={"AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider"} />
         <div className="actions"><button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> Save and apply to all websites</button></div>
       </section>
       {wafSiteConfig && <section className="section">
@@ -4217,16 +4203,10 @@ function App() {
             onChange={e => setWafSiteConfig(prev => ({ ...prev, bot_blocking_enabled: e.target.checked }))} />
           Block bad bots on this website
         </label>
-        <div className="badbot-site-grid">
-          <label><span>Extra bots, this website only</span>
-            <textarea className="code-editor badbot-input" value={wafBotExtra} onChange={e => setWafBotExtra(e.target.value)}
-              spellCheck={false} placeholder={"ScrapyBot\nSomeOtherBot"} />
-          </label>
-          <label><span>Never block on this website</span>
-            <textarea className="code-editor badbot-input" value={wafBotAllow} onChange={e => setWafBotAllow(e.target.value)}
-              spellCheck={false} placeholder="PartnerCrawler" />
-          </label>
-        </div>
+        <label className="badbot-site-extra"><span>Extra bots, this website only</span>
+          <textarea className="code-editor badbot-input" value={wafBotExtra} onChange={e => setWafBotExtra(e.target.value)}
+            spellCheck={false} placeholder={"ScrapyBot\nSomeOtherBot"} />
+        </label>
         <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}><Shield size={14}/> Save bad bot config</button></div>
       </section>}
       {wafSiteConfig && <section className="section http-flood-panel">
