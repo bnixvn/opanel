@@ -50,6 +50,10 @@ landing.html
 # Dev / CI / tooling (not part of release)
 .codex/
 .github/
+# ...except the CI workflows, which have to be committed to run at all.
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
 .ruff_cache/
 .vendor/
 skills/

@@ -91,3 +91,18 @@ def test_unknown_backup_kind_is_still_rejected(tmp_path, monkeypatch):
     info = backup.describe_user_backup(str(bad))
     assert info["valid"] is False
     assert info["error"] == "This is not a full user backup"
+
+
+def test_private_key_loader_survives_paramikos_dsskey_removal(monkeypatch):
+    """paramiko 5 dropped DSSKey. The loader used to name it directly, so the
+    whole backup service raised AttributeError on import after the upgrade."""
+    import paramiko
+
+    monkeypatch.delattr(paramiko, "DSSKey", raising=False)
+    # Still reaches the "tried every key type" path instead of AttributeError.
+    try:
+        backup._load_private_key("not-a-key")
+    except ValueError as exc:
+        assert "Cannot load SFTP private key" in str(exc)
+    else:  # pragma: no cover - the junk key must not load
+        raise AssertionError("junk key should not load")

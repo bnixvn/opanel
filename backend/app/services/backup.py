@@ -661,11 +661,19 @@ def list_backups(domain: str) -> List[str]:
 
 def _load_private_key(private_key: str, password: Optional[str] = None):
     key_stream = StringIO(private_key)
-    key_classes = (
-        paramiko.RSAKey,
-        paramiko.ECDSAKey,
-        paramiko.Ed25519Key,
-        paramiko.DSSKey,
+    # paramiko 5 dropped DSSKey: DSA is obsolete and OpenSSH has refused it by
+    # default since 7.0. Look it up dynamically so a box still on paramiko 3.x
+    # (mid-rollout) keeps accepting an old DSA key instead of raising
+    # AttributeError at import time.
+    key_classes = tuple(
+        cls
+        for cls in (
+            paramiko.RSAKey,
+            paramiko.ECDSAKey,
+            paramiko.Ed25519Key,
+            getattr(paramiko, "DSSKey", None),
+        )
+        if cls is not None
     )
     last_error = None
     for key_class in key_classes:
