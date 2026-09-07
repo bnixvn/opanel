@@ -1,6 +1,9 @@
 import pytest
+from pathlib import Path
 
 from app.services import waf
+
+HELPER_SCRIPT = Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh"
 
 
 def test_default_rules_only_cover_wordpress_laravel_and_php():
@@ -130,3 +133,35 @@ def test_access_log_report_filters_and_paginates(monkeypatch):
     assert report["total"] == 1
     assert report["entries"][0]["path"] == "/xmlrpc.php"
     assert report["entries"][0]["reason"] == "Block WordPress XML-RPC"
+
+
+def test_modsec_base_conf_enables_body_access_for_phase2_rules():
+    """libmodsecurity3 skips all of phase 2 when SecRequestBodyAccess is off.
+    With it off, the wp2shell block (1000001/1000002, phase:2), the ?rest_route
+    smuggling block and author enumeration never fired on any site -- verified
+    against a live vhost: 404 with it off, 403 with it on.
+
+    The limits have to come after the distro modsecurity.conf include, which
+    ships SecRequestBodyLimitAction Reject at 13 MB and would break large
+    media/plugin uploads.
+    """
+    helper = HELPER_SCRIPT.read_text(encoding="utf-8")
+    base = helper.split("write_modsec_base_conf()", 1)[1].split("\n}", 1)[0]
+
+    assert 'echo "SecRequestBodyAccess On"' in base
+    assert 'echo "SecRequestBodyAccess Off"' not in helper
+    assert 'echo "SecRequestBodyLimitAction ProcessPartial"' in base
+    assert 'echo "SecRequestBodyNoFilesLimit 1048576"' in base
+
+    include_at = base.index("/etc/modsecurity/modsecurity.conf")
+    limit_at = base.index("SecRequestBodyLimit 134217728")
+    assert include_at < limit_at, "opanel limits must override the distro include"
+
+
+def test_wp2shell_and_arg_rules_are_phase2():
+    """Guards the reason the fix above matters: these rules are phase:2, so
+    they are exactly the ones body access being off switched off."""
+    by_id = {r["id"]: r["rules"] for r in waf.DEFAULT_RULES}
+    assert "id:1000001,phase:2" in by_id["wordpress-wp2shell"]
+    assert "id:1000002,phase:2" in by_id["wordpress-wp2shell"]
+    assert "id:1001103,phase:2" in by_id["wordpress-xmlrpc-author-scan"]

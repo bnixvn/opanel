@@ -941,7 +941,20 @@ write_modsec_base_conf() {
   {
     [[ -f /etc/modsecurity/modsecurity.conf ]] && echo "Include /etc/modsecurity/modsecurity.conf"
     echo "SecRuleEngine On"
-    echo "SecRequestBodyAccess Off"
+    # libmodsecurity3 skips the whole of phase 2 when body access is off, so
+    # `SecRequestBodyAccess Off` silently disabled every phase:2 rule -- not
+    # just the body ones. The wp2shell block, the ?rest_route smuggling block
+    # and author enumeration are all phase:2 and never fired on any site.
+    #
+    # The limits keep large media/plugin uploads working, and must come after
+    # the distro modsecurity.conf include above, which ships a 13 MB limit with
+    # SecRequestBodyLimitAction Reject: only the first 1 MB of non-file content
+    # is buffered, and a body over the total limit is inspected as far as it
+    # goes instead of being rejected outright.
+    echo "SecRequestBodyAccess On"
+    echo "SecRequestBodyLimit 134217728"
+    echo "SecRequestBodyNoFilesLimit 1048576"
+    echo "SecRequestBodyLimitAction ProcessPartial"
   } >/usr/local/lsws/conf/opanel/waf/opanel-base.conf
 }
 
