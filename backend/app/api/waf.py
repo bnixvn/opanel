@@ -18,6 +18,15 @@ class WafCustomRulesUpdate(BaseModel):
 class WebsiteWafRulesUpdate(BaseModel):
     enabled_rule_ids: list[str] = Field(default_factory=list)
     custom_rules: str = ""
+    # Omitted -> leave this site's bot settings as they are.
+    bot_blocking_enabled: bool | None = None
+    bot_extra: list[str] | str | None = None
+    bot_allow: list[str] | str | None = None
+
+
+class BadBotListUpdate(BaseModel):
+    """The server-wide list. Accepts a list or a newline/comma separated blob."""
+    patterns: list[str] | str = Field(default_factory=list)
 
 
 def _require_admin(current_user: User) -> None:
@@ -99,7 +108,14 @@ def save_website_waf(payload: WebsiteWafRulesUpdate, website_id: int, db: Sessio
     _require_admin(current_user)
     website = _website_or_404(db, website_id)
     try:
-        result = waf.save_website_config(website, payload.enabled_rule_ids, payload.custom_rules)
+        result = waf.save_website_config(
+            website,
+            payload.enabled_rule_ids,
+            payload.custom_rules,
+            bot_blocking_enabled=payload.bot_blocking_enabled,
+            bot_extra=payload.bot_extra,
+            bot_allow=payload.bot_allow,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result.returncode != 0:
@@ -115,6 +131,46 @@ def save_website_waf(payload: WebsiteWafRulesUpdate, website_id: int, db: Sessio
     data = waf.site_config(website)
     data["message"] = "Website WAF rules saved."
     return data
+
+
+@router.get("/bad-bots")
+def get_bad_bots(current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    return {
+        "patterns": waf.global_bad_bots(),
+        # Shown in the UI so it is obvious these can never be blocked.
+        "protected": [p.replace("(?!-Extended)", "") for p in waf.PROTECTED_BOTS],
+        "max_patterns": waf.MAX_BOT_PATTERNS,
+    }
+
+
+@router.put("/bad-bots")
+def save_bad_bots(
+    payload: BadBotListUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Save the server-wide list and push it to every site in one pass.
+
+    Without the re-sync the new list would sit in panel-settings.json and not
+    reach a single vhost until each site happened to be saved individually.
+    """
+    _require_admin(current_user)
+    try:
+        patterns = waf.set_global_bad_bots(payload.patterns)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    outcome = waf.resync_all_websites(db)
+    message = f"Bad bot list saved ({len(patterns)} patterns) and applied to {outcome['total']} website(s)."
+    if outcome["failed"]:
+        message += " Could not update: " + ", ".join(outcome["failed"])
+    return {
+        "patterns": patterns,
+        "protected": [p.replace("(?!-Extended)", "") for p in waf.PROTECTED_BOTS],
+        "applied_to": outcome["total"],
+        "failed": outcome["failed"],
+        "message": message,
+    }
 
 
 @router.put("/rules/custom")

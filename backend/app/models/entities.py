@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -101,6 +101,11 @@ class Website(Base):
     waf_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     waf_default_rules: Mapped[str] = mapped_column(Text, default="")
     waf_custom_rules: Mapped[str] = mapped_column(Text, default="")
+    # Bad bot blocking. On by default, but the server-wide list starts empty, so
+    # nothing is blocked until an admin fills it in.
+    waf_bot_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    waf_bot_extra: Mapped[str] = mapped_column(Text, default="", server_default="")
+    waf_bot_allow: Mapped[str] = mapped_column(Text, default="", server_default="")
     http_flood_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     http_flood_config: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

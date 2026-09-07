@@ -165,3 +165,103 @@ def test_wp2shell_and_arg_rules_are_phase2():
     assert "id:1000001,phase:2" in by_id["wordpress-wp2shell"]
     assert "id:1000002,phase:2" in by_id["wordpress-wp2shell"]
     assert "id:1001103,phase:2" in by_id["wordpress-xmlrpc-author-scan"]
+
+
+# --- bad bot blocking ------------------------------------------------------
+class _Site:
+    """Minimal stand-in for a Website row."""
+    def __init__(self, **kw):
+        self.domain = kw.pop("domain", "example.test")
+        self.waf_default_rules = kw.pop("waf_default_rules", "[]")
+        self.waf_custom_rules = kw.pop("waf_custom_rules", "")
+        self.waf_bot_enabled = kw.pop("waf_bot_enabled", True)
+        self.waf_bot_extra = kw.pop("waf_bot_extra", "")
+        self.waf_bot_allow = kw.pop("waf_bot_allow", "")
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+def test_empty_bot_list_emits_no_rule_at_all():
+    """The shipped list is empty, so nothing may change on any site until an
+    admin fills it in."""
+    out = waf.render_site_rules("example.test", [], "", global_bots=[])
+    assert "bad bot" not in out.lower()
+    assert waf.BAD_BOT_RULE_ID not in out
+
+
+def test_bad_bot_rule_blocks_the_pattern_and_is_phase_1():
+    out = waf.render_site_rules("example.test", [], "", global_bots=["AhrefsBot", "SemrushBot"])
+    assert "AhrefsBot|SemrushBot" in out
+    assert f"id:{waf.BAD_BOT_RULE_ID},phase:1,deny,status:403" in out
+    assert "REQUEST_HEADERS:User-Agent" in out
+
+
+def test_good_crawlers_survive_even_when_the_admin_blocks_them_outright():
+    """The protection is not advisory: an admin typing Googlebot -- or just
+    'bot' -- must not be able to take Google off the site."""
+    for hostile in (["Googlebot"], ["bot"], ["Googlebot", "bingbot", "coccocbot"]):
+        rendered = waf.render_bad_bot_rules(hostile)
+        exception = rendered.splitlines()[-1]
+        assert exception.lstrip().startswith('SecRule REQUEST_HEADERS:User-Agent "!@rx')
+        for good in ("Googlebot", "bingbot", "coccocbot", "DuckDuckBot", "UptimeRobot"):
+            assert good in exception, f"{good} lost its protection for list {hostile}"
+
+
+def test_the_exception_is_chained_not_a_standalone_allow():
+    """A standalone `allow` in phase 1 would skip every other phase 1 rule, so
+    anyone could bypass the whole WAF by claiming to be Googlebot. The good-bot
+    check must be a chained condition on the deny instead."""
+    out = waf.render_bad_bot_rules(["AhrefsBot"])
+    assert ",chain" in out
+    assert "allow" not in out.split("msg:")[0]
+    # exactly two SecRule lines: the deny and its chained condition
+    assert sum(1 for line in out.splitlines() if line.strip().startswith("SecRule")) == 2
+
+
+def test_patterns_are_escaped_so_a_stray_metacharacter_cannot_break_the_config():
+    out = waf.render_bad_bot_rules(["evil.bot", "a+b", "x(y"])
+    assert r"evil\.bot" in out
+    assert r"a\+b" in out
+    assert r"x\(y" in out
+
+
+def test_pattern_validation_rejects_what_would_corrupt_the_rule_file():
+    for bad in ['say"hi', "back" + chr(92) + "slash", "ctrl" + chr(1) + "char"]:
+        with pytest.raises(ValueError):
+            waf.normalize_bot_patterns([bad])
+    with pytest.raises(ValueError):
+        waf.normalize_bot_patterns(["x" * (waf.MAX_BOT_PATTERN_LEN + 1)])
+    with pytest.raises(ValueError):
+        waf.normalize_bot_patterns([f"bot{i}" for i in range(waf.MAX_BOT_PATTERNS + 1)])
+
+
+def test_pattern_parsing_handles_blobs_comments_and_duplicates():
+    got = waf.normalize_bot_patterns("AhrefsBot\n# a comment\n\nSemrushBot, ahrefsbot\n")
+    assert got == ["AhrefsBot", "SemrushBot"]  # comment dropped, case-insensitive dedupe
+
+
+def test_a_site_can_turn_bot_blocking_off_or_add_its_own():
+    off = waf.render_site_rules("example.test", [], "", bot_blocking=False, global_bots=["AhrefsBot"])
+    assert waf.BAD_BOT_RULE_ID not in off
+
+    extra = waf.render_site_rules(
+        "example.test", [], "", global_bots=["AhrefsBot"], bot_extra=["ScrapyBot"]
+    )
+    assert "AhrefsBot" in extra and "ScrapyBot" in extra
+
+    allowed = waf.render_site_rules(
+        "example.test", [], "", global_bots=["AhrefsBot"], bot_allow=["AhrefsBot"]
+    )
+    # still listed as bad, but this site's exception clears it
+    deny, _, rest = allowed.partition(",chain")
+    exception = next(l for l in rest.splitlines() if "!@rx" in l)
+    assert "AhrefsBot" in deny and "AhrefsBot" in exception
+
+
+def test_website_bot_settings_read_the_row():
+    site = _Site(waf_bot_enabled=False, waf_bot_extra="A, B", waf_bot_allow="C")
+    assert waf.website_bot_settings(site) == {
+        "bot_blocking_enabled": False,
+        "bot_extra": ["A", "B"],
+        "bot_allow": ["C"],
+    }

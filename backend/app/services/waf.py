@@ -91,6 +91,141 @@ SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:40
     },
 ]
 
+# ---------------------------------------------------------------------------
+# Bad bot blocking
+# ---------------------------------------------------------------------------
+BAD_BOT_RULE_ID = "1002001"
+BAD_BOT_SETTINGS_KEY = "waf_bad_bots"
+MAX_BOT_PATTERNS = 400
+MAX_BOT_PATTERN_LEN = 120
+
+# Crawlers that must never be blockable, whatever an admin types into the list.
+# These are matched in the chained exception rule below, so a pattern like "bot"
+# cannot take Google down with it.
+#
+# The AI-training crawlers Google and Apple run under separate tokens
+# (Google-Extended, Applebot-Extended) are deliberately NOT protected -- blocking
+# those is a legitimate choice, so Applebot carries a lookahead to keep the two
+# apart.
+PROTECTED_BOTS = (
+    r"Googlebot",
+    r"Google-InspectionTool",
+    r"AdsBot-Google",
+    r"Mediapartners-Google",
+    r"APIs-Google",
+    r"FeedFetcher-Google",
+    r"Storebot-Google",
+    r"bingbot",
+    r"BingPreview",
+    r"adidxbot",
+    r"Slurp",
+    r"DuckDuckBot",
+    r"Baiduspider",
+    r"YandexBot",
+    r"Applebot(?!-Extended)",
+    r"coccocbot",          # Cốc Cốc, the Vietnamese search engine
+    r"facebookexternalhit",
+    r"Twitterbot",
+    r"LinkedInBot",
+    r"Discordbot",
+    r"TelegramBot",
+    r"WhatsApp",
+    r"Slackbot",
+    r"UptimeRobot",        # blocking uptime monitors silently kills alerting
+    r"Pingdom",
+    r"StatusCake",
+)
+
+
+def normalize_bot_patterns(raw) -> list[str]:
+    """Accept a list or a newline/comma separated blob and return clean patterns.
+
+    Entries are matched as literal, case-insensitive substrings of the
+    User-Agent -- they are regex-escaped at render time. Treating them as
+    literals keeps a mistyped entry from becoming a broken or catastrophically
+    backtracking regex in every site's config.
+    """
+    if isinstance(raw, str):
+        items = re.split(r"[\r\n,]+", raw)
+    elif isinstance(raw, (list, tuple)):
+        items = []
+        for entry in raw:
+            items.extend(re.split(r"[\r\n,]+", str(entry)))
+    elif raw is None:
+        items = []
+    else:
+        raise ValueError("Bot list must be a list or a string")
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        pattern = item.strip()
+        if not pattern or pattern.startswith("#"):
+            continue
+        if len(pattern) > MAX_BOT_PATTERN_LEN:
+            raise ValueError(f"Bot pattern is too long (max {MAX_BOT_PATTERN_LEN}): {pattern[:40]}...")
+        if '"' in pattern or "\\" in pattern:
+            raise ValueError(f'Bot pattern cannot contain " or \\: {pattern}')
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in pattern):
+            raise ValueError("Bot pattern cannot contain control characters")
+        key = pattern.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(pattern)
+    if len(cleaned) > MAX_BOT_PATTERNS:
+        raise ValueError(f"Too many bot patterns (max {MAX_BOT_PATTERNS})")
+    return cleaned
+
+
+def global_bad_bots() -> list[str]:
+    """The server-wide bot list, applied to every site that has bot blocking on."""
+    from app.services import panel_settings
+
+    try:
+        return normalize_bot_patterns(panel_settings._read_raw().get(BAD_BOT_SETTINGS_KEY) or [])
+    except (ValueError, OSError):
+        return []
+
+
+def set_global_bad_bots(patterns) -> list[str]:
+    from app.services import panel_settings
+
+    cleaned = normalize_bot_patterns(patterns)
+    data = panel_settings._read_raw()
+    data[BAD_BOT_SETTINGS_KEY] = cleaned
+    panel_settings._write_raw(data)
+    return cleaned
+
+
+def website_bot_settings(website: Website) -> dict:
+    return {
+        "bot_blocking_enabled": bool(getattr(website, "waf_bot_enabled", True)),
+        "bot_extra": normalize_bot_patterns(getattr(website, "waf_bot_extra", "") or ""),
+        "bot_allow": normalize_bot_patterns(getattr(website, "waf_bot_allow", "") or ""),
+    }
+
+
+def render_bad_bot_rules(patterns: Iterable[str], allow: Iterable[str] = ()) -> str:
+    """One chained rule: deny when the UA matches a bad pattern AND does not
+    match a protected/allowed one.
+
+    The exception is chained rather than a separate `allow` rule on purpose --
+    a standalone `allow` in phase 1 would skip every other phase 1 rule, so
+    anyone could bypass the whole WAF just by claiming to be Googlebot.
+    """
+    bad = [re.escape(p) for p in normalize_bot_patterns(list(patterns))]
+    if not bad:
+        return ""
+    exempt = list(PROTECTED_BOTS) + [re.escape(p) for p in normalize_bot_patterns(list(allow))]
+    return (
+        f'SecRule REQUEST_HEADERS:User-Agent "@rx (?i)({"|".join(bad)})" '
+        f'"id:{BAD_BOT_RULE_ID},phase:1,deny,status:403,log,'
+        f"msg:'opanel blocked bad bot',chain\"\n"
+        f'    SecRule REQUEST_HEADERS:User-Agent "!@rx (?i)({"|".join(exempt)})" "t:none"'
+    )
+
+
 LEGACY_RULE_ID_MAP = {
     "general-sensitive-files": "php-sensitive-files",
     "general-path-traversal": "php-path-traversal",
@@ -346,7 +481,16 @@ def site_rules_file(domain: str) -> str:
     return f"/usr/local/lsws/conf/opanel/waf/sites/{safe_domain}.conf"
 
 
-def render_site_rules(domain: str, enabled_rule_ids: Iterable[str], custom_rules: str = "") -> str:
+def render_site_rules(
+    domain: str,
+    enabled_rule_ids: Iterable[str],
+    custom_rules: str = "",
+    *,
+    bot_blocking: bool = True,
+    bot_extra: Iterable[str] = (),
+    bot_allow: Iterable[str] = (),
+    global_bots: Iterable[str] | None = None,
+) -> str:
     safe_domain = _validate_domain(domain)
     enabled = set(validate_enabled_rule_ids(enabled_rule_ids))
     custom = _validate_custom_rules(custom_rules)
@@ -363,6 +507,16 @@ def render_site_rules(domain: str, enabled_rule_ids: Iterable[str], custom_rules
         chunks.append(rule["rules"].strip())
         if rule.get("exceptions"):
             chunks.append(rule["exceptions"].strip())
+
+    # Server-wide bot list plus whatever this site adds. An empty list renders
+    # nothing at all, so the feature is inert until an admin fills it in.
+    if bot_blocking:
+        bots = list(global_bots if global_bots is not None else global_bad_bots())
+        bots.extend(bot_extra or ())
+        bot_block = render_bad_bot_rules(bots, bot_allow or ())
+        if bot_block:
+            chunks.extend(["", "# OPanel bad bot blocking", bot_block])
+
     chunks.extend(["", "# OPanel custom rules"])
     if custom:
         chunks.append(custom)
@@ -386,9 +540,17 @@ def sync_site_rules(
     custom_rules: str = "",
     *,
     defer_reload: bool = False,
+    bot_blocking: bool = True,
+    bot_extra: Iterable[str] = (),
+    bot_allow: Iterable[str] = (),
+    global_bots: Iterable[str] | None = None,
 ) -> CommandResult:
     safe_domain = _validate_domain(domain)
-    content = render_site_rules(safe_domain, enabled_rule_ids, custom_rules)
+    content = render_site_rules(
+        safe_domain, enabled_rule_ids, custom_rules,
+        bot_blocking=bot_blocking, bot_extra=bot_extra, bot_allow=bot_allow,
+        global_bots=global_bots,
+    )
     # defer_reload writes the site rules file without restarting OpenLiteSpeed;
     # a bulk caller must trigger one reload afterwards (see da_import).
     return shell.privileged(
@@ -400,13 +562,42 @@ def sync_site_rules(
     )
 
 
-def sync_website_rules(website: Website, *, defer_reload: bool = False) -> CommandResult:
+def sync_website_rules(
+    website: Website,
+    *,
+    defer_reload: bool = False,
+    global_bots: Iterable[str] | None = None,
+) -> CommandResult:
+    bots = website_bot_settings(website)
     return sync_site_rules(
         website.domain,
         website_enabled_rule_ids(website),
         website_custom_rules(website),
         defer_reload=defer_reload,
+        bot_blocking=bots["bot_blocking_enabled"],
+        bot_extra=bots["bot_extra"],
+        bot_allow=bots["bot_allow"],
+        global_bots=global_bots,
     )
+
+
+def resync_all_websites(db) -> dict:
+    """Re-render every site's rules -- what makes an edit to the global bot list
+    actually reach the sites. One OLS reload at the end, not one per site."""
+    from app.services import openlitespeed as webserver
+
+    bots = global_bad_bots()
+    websites = db.query(Website).all()
+    failed: list[str] = []
+    for website in websites:
+        try:
+            result = sync_website_rules(website, defer_reload=True, global_bots=bots)
+            if result.returncode != 0:
+                failed.append(website.domain)
+        except (ValueError, RuntimeError):
+            failed.append(website.domain)
+    webserver.reload_service()
+    return {"total": len(websites), "failed": failed}
 
 
 def site_config(website: Website) -> dict:
@@ -432,15 +623,38 @@ def site_config(website: Website) -> dict:
         ],
         "enabled_rule_ids": [rule["id"] for rule in DEFAULT_RULES if rule["id"] in enabled],
         "custom_rules": website_custom_rules(website),
+        **website_bot_settings(website),
+        "global_bad_bots": global_bad_bots(),
+        "protected_bots": [p.replace("(?!-Extended)", "") for p in PROTECTED_BOTS],
     }
 
 
-def save_website_config(website: Website, enabled_rule_ids: Iterable[str], custom_rules: str) -> CommandResult:
+def save_website_config(
+    website: Website,
+    enabled_rule_ids: Iterable[str],
+    custom_rules: str,
+    *,
+    bot_blocking_enabled: bool | None = None,
+    bot_extra=None,
+    bot_allow=None,
+) -> CommandResult:
     selected = validate_enabled_rule_ids(enabled_rule_ids)
     custom = _validate_custom_rules(custom_rules)
     website.waf_default_rules = json.dumps(selected, ensure_ascii=True)
     website.waf_custom_rules = custom
-    return sync_site_rules(website.domain, selected, custom)
+    if bot_blocking_enabled is not None:
+        website.waf_bot_enabled = bool(bot_blocking_enabled)
+    if bot_extra is not None:
+        website.waf_bot_extra = "\n".join(normalize_bot_patterns(bot_extra))
+    if bot_allow is not None:
+        website.waf_bot_allow = "\n".join(normalize_bot_patterns(bot_allow))
+    bots = website_bot_settings(website)
+    return sync_site_rules(
+        website.domain, selected, custom,
+        bot_blocking=bots["bot_blocking_enabled"],
+        bot_extra=bots["bot_extra"],
+        bot_allow=bots["bot_allow"],
+    )
 
 
 def access_log_report(
