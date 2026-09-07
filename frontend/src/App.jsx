@@ -4179,23 +4179,56 @@ function App() {
       <section className="section">
         <div className="section-title">
           <div>
-            <h2>Bad bot blocking <span className="badge">{badBots.patterns.length} pattern{badBots.patterns.length === 1 ? '' : 's'}</span></h2>
-            <p className="hint">Applies to every website that has bot blocking on. A request whose User-Agent contains one of these gets 403. Matched as case-insensitive text, one per line — no regex needed.</p>
+            <h2>Global bad bot <span className="badge">{badBots.patterns.length}</span></h2>
+            <p className="hint">One bot per line, applied to every website. A request whose User-Agent contains the text gets 403 — plain text, no regex.</p>
           </div>
           <button className="secondary" disabled={!!loading} onClick={loadBadBots}><RefreshCw size={14}/> Refresh</button>
         </div>
-        <textarea className="code-editor" value={badBotText} onChange={e => setBadBotText(e.target.value)}
-          rows={10} spellCheck={false}
-          placeholder={"AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider"} />
-        <div className="info-box" style={{marginTop:10}}>
-          <strong>Always allowed, whatever you type here</strong>
-          <p className="hint">Search engines, social link previews and uptime monitors are protected by a chained exception, so putting one of these in the list above cannot take it down:</p>
-          <p className="hint" style={{fontFamily:'var(--mono)',fontSize:12,overflowWrap:'anywhere'}}>{(badBots.protected || []).join(' · ')}</p>
+        <div className="badbot-global">
+          <textarea className="code-editor badbot-input" value={badBotText} onChange={e => setBadBotText(e.target.value)}
+            spellCheck={false}
+            placeholder={"AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider"} />
+          <div className="badbot-protected">
+            <strong>Never blocked</strong>
+            <p className="hint">Protected even if you add them above.</p>
+            <div className="badbot-chips">
+              {(badBots.protected || []).map(b => <span className="badge" key={b}>{b}</span>)}
+            </div>
+          </div>
         </div>
-        <div className="actions" style={{marginTop:10}}>
-          <button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> Save and apply to all websites</button>
-        </div>
+        <div className="actions"><button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> Save and apply to all websites</button></div>
       </section>
+      {wafSiteConfig && <section className="section">
+        <div className="section-title">
+          <div>
+            <h2>Bad bot - {wafSiteConfig.domain}</h2>
+            <p className="hint">
+              {wafSiteConfig.bot_blocking_enabled
+                ? `Global list (${(wafSiteConfig.global_bad_bots || []).length}) plus anything below.`
+                : 'Off — the global list is ignored on this website.'}
+            </p>
+          </div>
+          <span className={wafSiteConfig.bot_blocking_enabled ? 'badge ok' : 'badge'}>
+            {wafSiteConfig.bot_blocking_enabled ? 'On' : 'Off'}
+          </span>
+        </div>
+        <label className="check-line">
+          <input type="checkbox" checked={!!wafSiteConfig.bot_blocking_enabled}
+            onChange={e => setWafSiteConfig(prev => ({ ...prev, bot_blocking_enabled: e.target.checked }))} />
+          Block bad bots on this website
+        </label>
+        <div className="badbot-site-grid">
+          <label><span>Extra bots, this website only</span>
+            <textarea className="code-editor badbot-input" value={wafBotExtra} onChange={e => setWafBotExtra(e.target.value)}
+              spellCheck={false} placeholder={"ScrapyBot\nSomeOtherBot"} />
+          </label>
+          <label><span>Never block on this website</span>
+            <textarea className="code-editor badbot-input" value={wafBotAllow} onChange={e => setWafBotAllow(e.target.value)}
+              spellCheck={false} placeholder="PartnerCrawler" />
+          </label>
+        </div>
+        <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}><Shield size={14}/> Save bad bot config</button></div>
+      </section>}
       {wafSiteConfig && <section className="section http-flood-panel">
         <div className="section-title">
           <h2>HTTP Flood - {wafSiteConfig.domain}</h2>
@@ -4230,28 +4263,6 @@ function App() {
           <div className="section-title"><h2>Custom rules - {wafSiteConfig.domain}</h2></div>
           <textarea className="code-editor" value={wafCustomRules} onChange={e => setWafCustomRules(e.target.value)} rows={14} spellCheck={false} placeholder="SecRule ..." />
           <p className="hint">Saved into {wafSiteConfig.rules_file}</p>
-        </div>
-        <div className="waf-rule-panel">
-          <div className="section-title"><h2>Bad bots - {wafSiteConfig.domain}</h2></div>
-          <label className="check-line">
-            <input type="checkbox" checked={!!wafSiteConfig.bot_blocking_enabled}
-              onChange={e => setWafSiteConfig(prev => ({ ...prev, bot_blocking_enabled: e.target.checked }))} />
-            Block bad bots on this website
-          </label>
-          <p className="hint" style={{marginTop:6}}>
-            {wafSiteConfig.bot_blocking_enabled
-              ? <>Uses the server list ({(wafSiteConfig.global_bad_bots || []).length} pattern{(wafSiteConfig.global_bad_bots || []).length === 1 ? '' : 's'}) plus anything added below.</>
-              : <>Off — the server list is ignored for this website.</>}
-          </p>
-          <label><span>Extra bots for this website</span>
-            <textarea className="code-editor" value={wafBotExtra} onChange={e => setWafBotExtra(e.target.value)}
-              rows={5} spellCheck={false} placeholder={"ScrapyBot\nSomeOtherBot"} />
-          </label>
-          <label><span>Never block on this website</span>
-            <textarea className="code-editor" value={wafBotAllow} onChange={e => setWafBotAllow(e.target.value)}
-              rows={4} spellCheck={false} placeholder="PartnerCrawler" />
-          </label>
-          <p className="hint">One per line. Matched as case-insensitive text inside the User-Agent.</p>
           <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}>Save website WAF rules</button></div>
         </div>
       </section>}

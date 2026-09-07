@@ -757,6 +757,23 @@ a:hover{color:var(--primary-ink-hover)}
 .firewall-blocklist-table{margin-top:10px}
 .firewall-rule span{min-width:0;word-break:break-all}
 .waf-rules-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+
+/* Bad bot blocking. Its own classes, deliberately not .waf-rule-panel -- that
+   forces every textarea inside it to min-height:260px, which is right for a
+   rules editor and far too tall for a short bot list. */
+/* stretch, not start: the protected panel is the taller column, and with
+   align-items:start the textarea kept its min-height and left a dead gap
+   underneath it. */
+.badbot-global{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,340px);gap:12px;align-items:stretch;margin-bottom:12px}
+.badbot-input{width:100%;min-height:150px;resize:vertical;font-family:var(--mono);font-size:13px;line-height:1.6}
+.badbot-protected{display:grid;gap:6px;align-content:start;padding:12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.badbot-protected strong{font-size:13px;color:var(--text)}
+/* no max-height: an inner scrollbar hid half the list and read as broken */
+.badbot-chips{display:flex;flex-wrap:wrap;gap:5px}
+.badbot-chips .badge{font-weight:600;font-size:11px}
+.badbot-site-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start;margin:10px 0 12px}
+.badbot-site-grid label{display:grid;gap:6px;min-width:0}
+.badbot-site-grid .badbot-input{min-height:110px}
 .waf-rule-panel{display:grid;gap:10px;min-width:0}
 .waf-site-list{margin-top:4px}
 .waf-website-selector{grid-template-columns:minmax(240px,1fr) max-content}
@@ -770,6 +787,7 @@ a:hover{color:var(--primary-ink-hover)}
 
 @media(max-width:950px){
   .site-stack,.waf-rules-grid{grid-template-columns:1fr}
+  .badbot-global,.badbot-site-grid{grid-template-columns:1fr}
   .firewall-blocklist-form,.waf-website-selector{grid-template-columns:1fr}
 }
 @media(max-width:1150px){.create-site-row{grid-template-columns:1fr 1fr}}
