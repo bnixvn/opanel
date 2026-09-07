@@ -1408,7 +1408,12 @@ run_malware_lmd_scan() {
   echo "opanel-scan-mode ${mode}"
 
   tmp="$(mktemp /tmp/opanel-maldet.XXXXXX)" || deny "cannot create scan temp file"
-  trap 'rm -f "$tmp"' RETURN
+  # A RETURN trap is not scoped to the function that sets it: it stays armed and
+  # fires again when the *caller* returns, by which point this local is gone and
+  # `set -u` kills the helper. run_clamav_system_scan calls this function, so
+  # that fired on every LMD scan. Clear the trap as it runs, and read the path
+  # defensively so a stray firing is a harmless no-op.
+  trap 'rm -f "${tmp:-}"; trap - RETURN' RETURN
   if [[ "$mode" == "incremental" ]]; then
     { stdbuf -oL maldet -r "$root" "$LMD_INCREMENTAL_DAYS" 2>&1 || true; } | tee "$tmp" || true
   else
@@ -1451,7 +1456,7 @@ run_clamav_system_scan() {
   done
 
   list="$(mktemp /tmp/opanel-clamav-list.XXXXXX)" || deny "cannot create scan list"
-  trap 'rm -f "$list"' RETURN
+  trap 'rm -f "${list:-}"; trap - RETURN' RETURN
   find "$scan_root" \( "${prune[@]}" -false \) -prune -o -type f -print >"$list" 2>/dev/null || true
   total="$(wc -l <"$list" | tr -d "[:space:]")"
   # The panel reads this first line to size its progress bar; clamdscan itself
@@ -2091,7 +2096,7 @@ install_manual_ssl() {
   require_domain "$domain"
   base="/usr/local/lsws/conf/opanel/ssl/sites/${domain}"
   tmpdir="$(mktemp -d /tmp/opanel-manual-ssl.XXXXXX)"
-  trap 'rm -rf "$tmpdir"' RETURN
+  trap 'rm -rf "${tmpdir:-}"; trap - RETURN' RETURN
   local payload_file="$tmpdir/payload.json"
   cat >"$payload_file"
   python3 - "$tmpdir" "$payload_file" <<'PY'
