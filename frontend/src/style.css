@@ -940,7 +940,10 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
 .loading{background:var(--primary-light);color:var(--brand-ink);border:1px solid var(--border-hover);border-radius:var(--radius-lg);box-shadow:none}
 .error{background:var(--danger-bg);color:var(--danger-text);border:1px solid var(--danger-border);border-radius:var(--radius-lg)}
 .notice{background:var(--success-bg);color:var(--success-text);border:1px solid var(--success-border);border-radius:var(--radius-lg)}
-.app-toast-stack{position:fixed;bottom:20px;right:20px;z-index:34;display:grid;gap:10px;width:min(390px,calc(100vw - 24px));pointer-events:none}
+/* align-content:start so the toast rows never stretch to fill the stack --
+   without it a stack that is tall for any reason turns each toast into a
+   full-height panel. */
+.app-toast-stack{position:fixed;bottom:20px;right:20px;z-index:34;display:grid;align-content:start;gap:10px;width:min(390px,calc(100vw - 24px));pointer-events:none}
 .app-toast{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:10px;padding:12px;background:var(--surface);border:1px solid var(--border);border-left-width:4px;border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);pointer-events:auto;animation:toastIn .18s ease}
 .app-toast-success{border-left-color:var(--success)}
 .app-toast-error{border-left-color:var(--danger)}
@@ -1092,7 +1095,9 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
   .scan-history-item>.badge{grid-column:2;justify-self:start}
   .scan-status-summary{grid-template-columns:1fr}
   .notice,.error,.loading{font-size:13px}
-  .app-toast-stack{top:68px;right:10px;width:calc(100vw - 20px)}
+  /* bottom:auto is load-bearing: the base rule sets bottom:20px, and a fixed
+     box with both top and bottom set stretches to the full viewport height. */
+  .app-toast-stack{top:68px;bottom:auto;right:10px;width:calc(100vw - 20px)}
   .user-edit-grid{grid-template-columns:1fr}
   .user-edit-actions{display:grid;grid-template-columns:1fr 1fr}
   .user-edit-actions button{width:100%}
