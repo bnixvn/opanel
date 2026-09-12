@@ -8,15 +8,6 @@ server {
     disable_symlinks if_not_owner from={{ root_path }};
     include /etc/nginx/opanel/ip-blocklist-server.conf;
 
-{% if http_flood_enabled %}
-    # OPanel HTTP FLOOD BEGIN
-    limit_req zone={{ http_flood_zone }}{% if http_flood_burst > 0 %} burst={{ http_flood_burst }}{% endif %};
-    limit_conn opanel_conn_flood {{ http_flood_connections }};
-    limit_req_status 429;
-    limit_conn_status 429;
-{{ http_flood_challenge_block }}
-    # OPanel HTTP FLOOD END
-{% endif %}
 
 {% if waf_enabled %}
     # OPanel WAF BEGIN

@@ -81,7 +81,7 @@ def test_helper_blocklist_apply_ensures_iptables_jump():
     helper = Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh"
     content = helper.read_text(encoding="utf-8")
     start = content.index("firewall_blocklist_apply()")
-    end = content.index("write_http_flood_ols_conf()", start)
+    end = content.index("firewall_blocklist_status()", start)
     block = content[start:end]
 
     assert "iptables -N OPANEL_BLOCKLIST" in block

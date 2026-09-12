@@ -95,7 +95,3 @@ context /.well-known/acme-challenge/ {
 }
 
 {# Domain redirects are emitted in the single rewrite block near the top. #}
-
-{% if http_flood_enabled %}
-{{ http_flood_block }}
-{% endif %}

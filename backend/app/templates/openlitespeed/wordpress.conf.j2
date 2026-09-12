@@ -150,9 +150,4 @@ END_HEADERS
 
 {# Domain redirects are emitted in the single rewrite block near the top. #}
 
-{# HTTP flood protection via rewrite-level throttling #}
-{% if http_flood_enabled %}
-{{ http_flood_block }}
-{% endif %}
-
 {# LSCache markers are emitted in the single rewrite block near the top. #}

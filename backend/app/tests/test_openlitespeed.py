@@ -180,19 +180,20 @@ def test_vhost_ignores_custom_directives():
     assert "context /danger" not in rendered
 
 
-def test_http_flood_uses_dedicated_block_not_app_rewrite():
+def test_http_flood_is_gone_from_rendered_vhosts():
+    # It only ever emitted an extprocessor nothing referenced. Keep it out.
     rendered = openlitespeed.render_vhost(
         "example.test",
         "/home/siteuser/example.test",
         app_type="php",
         php_version="8.4",
         rewrite_mode="front_controller",
-        http_flood_enabled=True,
-        http_flood_config={"access_limit_requests": 20, "access_limit_window": 10, "access_limit_burst": 5, "connection_limit": 9},
     )
 
-    assert "# OPANEL HTTP FLOOD BEGIN" in rendered
-    assert "maxConns                9" in rendered
+    assert "HTTP FLOOD" not in rendered
+    assert "extprocessor opanel_hf_" not in rendered
+    assert not hasattr(openlitespeed, "update_http_flood_block")
+    assert not hasattr(openlitespeed, "sync_http_flood_zones")
 
 
 def test_update_waf_block_rerenders_existing_vhost_without_custom_directives(monkeypatch):

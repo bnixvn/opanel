@@ -560,14 +560,10 @@ def site_config(website: Website) -> dict:
     from app.services import openlitespeed as webserver
 
     enabled = website_enabled_rule_ids(website)
-    http_flood_config = webserver.http_flood_config_for_website(website)
     return {
         "website_id": website.id,
         "domain": website.domain,
         "waf_enabled": bool(website.waf_enabled),
-        "http_flood_enabled": bool(getattr(website, "http_flood_enabled", False)),
-        "http_flood_config": http_flood_config,
-        "http_flood_zone": webserver.http_flood_zone_name(website.domain),
         "rules_file": site_rules_file(website.domain),
         "default_rules": [
             {

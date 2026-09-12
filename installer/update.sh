@@ -1314,7 +1314,7 @@ from app.core.database import SessionLocal
 from app.models.entities import Website
 from app.services import site_users, waf
 # _rewrite_website_vhost resolves SSL from ssl_mode (letsencrypt / reuse / manual)
-# and carries aliases, redirects, WAF and flood settings. Calling
+# and carries aliases, redirects and WAF settings. Calling
 # openlitespeed.rewrite_vhost by hand here dropped ssl_mode="reuse" -- it fell
 # back to /etc/letsencrypt/live/<own-domain>/ (which does not exist) and broke
 # HTTPS for every reuse-mode site on the next update.

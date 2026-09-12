@@ -21,13 +21,6 @@ ALLOWED_REWRITE_MODES = {"none", "front_controller", "laravel", "codeigniter", "
 ALLOWED_LOG_KINDS = {"access", "error"}
 DOMAIN_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+")
 MAX_FULL_CONFIG_BYTES = 128 * 1024
-HTTP_FLOOD_DEFAULTS = {
-    "access_limit_requests": 100,
-    "access_limit_window": 10,
-    "access_limit_burst": 100,
-    "connection_limit": 60,
-}
-HTTP_FLOOD_ZONES_FALLBACK = ["bash", "-lc", "cat >/tmp/opanel-http-flood-zones.conf && echo HTTP flood zones saved"]
 WORDPRESS_CSP = (
     "default-src 'self' https: data: blob:; "
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
@@ -48,121 +41,6 @@ WORDPRESS_CSP_HEADER = f'    add_header Content-Security-Policy "{WORDPRESS_CSP}
 def waf_rules_file(domain: str) -> str:
     safe_domain = _safe_domain(domain)
     return f"/etc/nginx/modsec/sites/{safe_domain}.conf"
-
-
-def _http_flood_value(value, default: int, minimum: int, maximum: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        number = default
-    return max(minimum, min(maximum, number))
-
-
-def validate_http_flood_config(raw=None) -> dict:
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw) if raw.strip() else {}
-        except (TypeError, ValueError):
-            raw = {}
-    if not isinstance(raw, dict):
-        raw = {}
-    return {
-        "access_limit_requests": _http_flood_value(raw.get("access_limit_requests"), HTTP_FLOOD_DEFAULTS["access_limit_requests"], 1, 100000),
-        "access_limit_window": _http_flood_value(raw.get("access_limit_window"), HTTP_FLOOD_DEFAULTS["access_limit_window"], 1, 3600),
-        "access_limit_burst": _http_flood_value(raw.get("access_limit_burst"), HTTP_FLOOD_DEFAULTS["access_limit_burst"], 0, 100000),
-        "connection_limit": _http_flood_value(raw.get("connection_limit"), HTTP_FLOOD_DEFAULTS["connection_limit"], 1, 10000),
-    }
-
-
-def http_flood_config_for_website(website) -> dict:
-    return validate_http_flood_config(getattr(website, "http_flood_config", "") or "")
-
-
-def http_flood_zone_name(domain: str) -> str:
-    safe_domain = _safe_domain(domain)
-    digest = hashlib.sha1(safe_domain.encode("utf-8")).hexdigest()[:12]
-    return f"opanel_hf_{digest}"
-
-
-def _http_flood_rate(config: dict) -> str:
-    requests = max(1, int(config["access_limit_requests"]))
-    window = max(1, int(config["access_limit_window"]))
-    if requests >= window:
-        return f"{max(1, math.ceil(requests / window))}r/s"
-    return f"{max(1, math.ceil((requests * 60) / window))}r/m"
-
-
-def _http_flood_zone_line(domain: str, config: dict) -> str:
-    return f"limit_req_zone $opanel_http_flood_key zone={http_flood_zone_name(domain)}:10m rate={_http_flood_rate(config)};"
-
-
-def _http_flood_challenge_block() -> str:
-    challenge_html = (
-        '<!doctype html><html><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<title>Checking browser</title>'
-        '<style>body{font-family:system-ui,sans-serif;background:#f8fafc;color:#0f172a;display:grid;place-items:center;min-height:100vh;margin:0}'
-        'main{max-width:420px;padding:24px;text-align:center}'
-        'strong{display:block;font-size:20px;margin-bottom:8px}</style>'
-        '<script>setTimeout(function(){document.cookie="opanel_http_flood_ok=1; Max-Age=3600; Path=/; SameSite=Lax";'
-        'window.location.replace(window.location.href)},3000)</script>'
-        '</head><body><main><strong>Checking browser</strong><p>Please wait a moment and refresh automatically.</p></main></body></html>'
-    )
-    return f"""    error_page 429 = @opanel_http_flood_challenge;
-    location @opanel_http_flood_challenge {{
-        default_type text/html;
-        add_header Cache-Control "no-store" always;
-        return 200 '{challenge_html}';
-    }}"""
-
-
-def _http_flood_block(domain: str, config: dict | None = None) -> str:
-    safe_config = validate_http_flood_config(config)
-    zone = http_flood_zone_name(domain)
-    burst = safe_config["access_limit_burst"]
-    connections = safe_config["connection_limit"]
-    limit_req = f"limit_req zone={zone};"
-    if burst > 0:
-        limit_req = f"limit_req zone={zone} burst={burst};"
-    return f"""    # OPanel HTTP FLOOD BEGIN
-    {limit_req}
-    limit_conn opanel_conn_flood {connections};
-    limit_req_status 429;
-    limit_conn_status 429;
-{_http_flood_challenge_block()}
-    # OPanel HTTP FLOOD END"""
-
-
-def render_http_flood_zones(websites) -> str:
-    lines = [
-        "# Managed by opanel. Shared zones for per-website HTTP flood protection.",
-        "map $cookie_opanel_http_flood_ok $opanel_http_flood_key {",
-        "    default $binary_remote_addr;",
-        "    1 \"\";",
-        "}",
-        "limit_conn_zone $opanel_http_flood_key zone=opanel_conn_flood:10m;",
-    ]
-    seen = set()
-    for website in websites:
-        if not bool(getattr(website, "http_flood_enabled", False)):
-            continue
-        domain = _safe_domain(getattr(website, "domain", ""))
-        zone = http_flood_zone_name(domain)
-        if zone in seen:
-            continue
-        seen.add(zone)
-        lines.append(_http_flood_zone_line(domain, http_flood_config_for_website(website)))
-    return "\n".join(lines).strip() + "\n"
-
-
-def sync_http_flood_zones(websites):
-    content = render_http_flood_zones(websites)
-    return shell.privileged(
-        "http-flood-zones-save",
-        check=False,
-        input=content,
-        fallback=HTTP_FLOOD_ZONES_FALLBACK,
-    )
 
 
 def _waf_block(domain: str) -> str:
@@ -868,28 +746,6 @@ def _replace_waf_block(content: str, enabled: bool, domain: str | None = None) -
     raise ValueError("Cannot find server block for WAF directives")
 
 
-def _replace_http_flood_block(content: str, enabled: bool, domain: str | None = None, config: dict | str | None = None) -> str:
-    pattern = re.compile(
-        r"\n?    # OPanel HTTP FLOOD BEGIN\n.*?\n    # OPanel HTTP FLOOD END",
-        re.DOTALL,
-    )
-    cleaned = pattern.sub("", content)
-    if not enabled:
-        return cleaned.rstrip() + "\n"
-    block = _http_flood_block(domain or _domain_from_vhost(cleaned), validate_http_flood_config(config))
-    if "    # OPanel WAF BEGIN" in cleaned:
-        return cleaned.replace("    # OPanel WAF BEGIN", f"{block}\n\n    # OPanel WAF BEGIN", 1)
-    if "    server_tokens off;" in cleaned:
-        return cleaned.replace("    server_tokens off;", f"    server_tokens off;\n{block}", 1)
-    if "    server_name " in cleaned:
-        return re.sub(r"(    server_name [^;]+;)", f"\\1\n{block}", cleaned, count=1)
-    match = re.search(r"server\s*\{", cleaned)
-    if match:
-        insert_at = match.end()
-        return cleaned[:insert_at] + "\n" + block + cleaned[insert_at:]
-    raise ValueError("Cannot find server block for HTTP flood directives")
-
-
 def _replace_fastcgi_cache_blocks(content: str, enabled: bool = True) -> str:
     server_pattern = re.compile(
         r"\n?    # OPanel FASTCGI CACHE SERVER BEGIN\n.*?\n    # OPanel FASTCGI CACHE SERVER END",
@@ -965,8 +821,6 @@ def render_vhost(
     custom_directives: str = "",
     php_fpm_socket_override: Optional[str] = None,
     waf_enabled: bool = True,
-    http_flood_enabled: bool = False,
-    http_flood_config: dict | str | None = None,
     document_root: str = "public_html",
     rewrite_mode: str | None = None,
     ssl_cert_path: str | None = None,
@@ -996,7 +850,6 @@ def render_vhost(
     }[app_type]
     template = env.get_template(template_name)
     php_fpm_socket = php_fpm_socket_override or _php_fpm_socket(php_version)
-    safe_http_flood_config = validate_http_flood_config(http_flood_config)
 
     rendered = template.render(
         domain=safe_domain,
@@ -1007,11 +860,6 @@ def render_vhost(
         custom_include_path=include_path,
         waf_enabled=bool(waf_enabled),
         waf_rules_file=waf_rules_file(safe_domain),
-        http_flood_enabled=bool(http_flood_enabled),
-        http_flood_zone=http_flood_zone_name(safe_domain),
-        http_flood_burst=safe_http_flood_config["access_limit_burst"],
-        http_flood_connections=safe_http_flood_config["connection_limit"],
-        http_flood_challenge_block=_http_flood_challenge_block(),
         rewrite_mode=safe_rewrite_mode,
     )
     if ssl_cert_path or ssl_key_path:
@@ -1032,8 +880,6 @@ def write_vhost(
     custom_directives: str = "",
     php_fpm_socket_override: Optional[str] = None,
     waf_enabled: bool = True,
-    http_flood_enabled: bool = False,
-    http_flood_config: dict | str | None = None,
     document_root: str = "public_html",
     rewrite_mode: str | None = None,
     ssl_cert_path: str | None = None,
@@ -1051,8 +897,6 @@ def write_vhost(
         custom_directives=custom_directives,
         php_fpm_socket_override=php_fpm_socket_override,
         waf_enabled=waf_enabled,
-        http_flood_enabled=http_flood_enabled,
-        http_flood_config=http_flood_config,
         document_root=document_root,
         rewrite_mode=rewrite_mode,
         ssl_cert_path=ssl_cert_path,
@@ -1076,8 +920,6 @@ def rewrite_vhost(
     custom_directives: str = "",
     php_fpm_socket_override: Optional[str] = None,
     waf_enabled: bool = True,
-    http_flood_enabled: bool = False,
-    http_flood_config: dict | str | None = None,
     document_root: str = "public_html",
     rewrite_mode: str | None = None,
     ssl_cert_path: str | None = None,
@@ -1097,8 +939,6 @@ def rewrite_vhost(
         custom_directives=custom_directives,
         php_fpm_socket_override=php_fpm_socket_override,
         waf_enabled=waf_enabled,
-        http_flood_enabled=http_flood_enabled,
-        http_flood_config=http_flood_config,
         rewrite_mode=rewrite_mode,
         ssl_cert_path=ssl_cert_path,
         ssl_key_path=ssl_key_path,
@@ -1181,8 +1021,6 @@ def harden_existing_wordpress_vhost(
     custom_directives: str = "",
     php_fpm_socket_override: Optional[str] = None,
     waf_enabled: bool = True,
-    http_flood_enabled: bool = False,
-    http_flood_config: dict | str | None = None,
     document_root: str = "public_html",
     rewrite_mode: str | None = None,
     ssl_cert_path: str | None = None,
@@ -1199,8 +1037,6 @@ def harden_existing_wordpress_vhost(
         custom_directives=custom_directives,
         php_fpm_socket_override=php_fpm_socket_override,
         waf_enabled=waf_enabled,
-        http_flood_enabled=http_flood_enabled,
-        http_flood_config=http_flood_config,
         document_root=document_root,
         rewrite_mode=rewrite_mode,
         ssl_cert_path=ssl_cert_path,
@@ -1279,20 +1115,6 @@ def update_waf_block(domain: str, enabled: bool) -> str:
     _test_and_reload(target, existing)
     return str(target)
 
-
-def update_http_flood_block(domain: str, enabled: bool, config: dict | str | None = None) -> str:
-    target = _vhost_path(domain)
-    safe_config = validate_http_flood_config(config)
-    if settings.command_dry_run:
-        return _replace_http_flood_block("server {\n    server_name example.com;\n}\n", enabled, domain="example.com", config=safe_config)
-    if not target.exists():
-        raise FileNotFoundError(str(target))
-    existing = target.read_text(encoding="utf-8")
-    new_content = _replace_http_flood_block(existing, enabled, domain, safe_config)
-    _write_backup(target, existing)
-    target.write_text(new_content, encoding="utf-8")
-    _test_and_reload(target, existing)
-    return str(target)
 
 
 def ensure_wordpress_fastcgi_cache(domain: str) -> str:

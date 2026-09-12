@@ -1031,8 +1031,6 @@ def _process_archive(
                 waf_enabled=True,
                 waf_default_rules="",
                 waf_custom_rules="",
-                http_flood_enabled=False,
-                http_flood_config="",
             )
             db.add(website)
             db.flush()
@@ -1153,8 +1151,6 @@ def _process_archive(
                 linux_user=linux_user,
                 lsphp_socket_override=lsphp_socket,
                 waf_enabled=website.waf_enabled,
-                http_flood_enabled=website.http_flood_enabled,
-                http_flood_config=website.http_flood_config or "",
                 document_root=document_root,
                 rewrite_mode=nginx_rewrite_mode,
                 aliases=[],

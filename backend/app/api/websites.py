@@ -14,7 +14,7 @@ from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
-from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCreate, WebsiteHttpFloodUpdate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
+from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCreate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
 from app.services import file_manager, mariadb, openlitespeed, site_users, ssl, storage_quota, waf, wordpress
 from app.services.audit import log_action
 
@@ -55,13 +55,6 @@ def _ensure_default_waf_file(domain: str) -> None:
         raise RuntimeError(_command_error(result))
 
 
-def _sync_http_flood_zones(db: Session) -> None:
-    db.flush()
-    result = openlitespeed.sync_http_flood_zones(db.query(Website).all())
-    if result.returncode != 0:
-        raise RuntimeError(_command_error(result))
-
-
 def _write_placeholder_page(domain: str, root_path: str, linux_user: str | None, php_version: str) -> None:
     placeholder = site_users.document_root(root_path) / "index.html"
     if placeholder.exists():
@@ -83,10 +76,6 @@ def _write_placeholder_page(domain: str, root_path: str, linux_user: str | None,
         tmpl.render(domain=domain),
         allow_executable=True,
     )
-
-
-def _website_http_flood_config(website: Website) -> dict:
-    return openlitespeed.http_flood_config_for_website(website)
 
 
 def _rewrite_ssl_kwargs(website: Website) -> dict:
@@ -205,8 +194,6 @@ def _rewrite_website_vhost(website: Website, **overrides) -> str:
         "linux_user": linux_user,
         "lsphp_socket_override": lsphp_socket_override,
         "waf_enabled": overrides.pop("waf_enabled", website.waf_enabled),
-        "http_flood_enabled": overrides.pop("http_flood_enabled", website.http_flood_enabled),
-        "http_flood_config": overrides.pop("http_flood_config", website.http_flood_config or ""),
         "document_root": overrides.pop("document_root", website.document_root or "public_html"),
         "rewrite_mode": overrides.pop("rewrite_mode", _website_rewrite_mode(website)),
         "aliases": overrides.pop("aliases", _alias_domains(website)),
@@ -257,15 +244,6 @@ def _sync_live_ssl_flags(db: Session, websites: list[Website]) -> list[Website]:
         for website in websites:
             db.refresh(website)
     return websites
-
-
-def _http_flood_payload_config(payload: WebsiteHttpFloodUpdate) -> dict:
-    return openlitespeed.validate_http_flood_config({
-        "access_limit_requests": payload.access_limit_requests,
-        "access_limit_window": payload.access_limit_window,
-        "access_limit_burst": payload.access_limit_burst,
-        "connection_limit": payload.connection_limit,
-    })
 
 
 def _read_ssl_input(upload: UploadFile | None, text: str | None, label: str, required: bool = True) -> bytes:
@@ -524,8 +502,6 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
             result = waf.sync_website_rules(website)
             if result.returncode != 0:
                 raise RuntimeError(_command_error(result))
-            if website.http_flood_enabled:
-                _sync_http_flood_zones(db)
             app_type = website.app_type or "wordpress"
             _rewrite_website_vhost(
                 website,
@@ -549,8 +525,6 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
             result = waf.sync_website_rules(website)
             if result.returncode != 0:
                 raise RuntimeError(_command_error(result))
-            if website.http_flood_enabled:
-                _sync_http_flood_zones(db)
             next_rewrite_mode = (
                 "front_controller" if next_app_type == "wordpress"
                 else "none" if next_app_type == "static"
@@ -580,8 +554,6 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
             result = waf.sync_website_rules(website)
             if result.returncode != 0:
                 raise RuntimeError(_command_error(result))
-            if website.http_flood_enabled:
-                _sync_http_flood_zones(db)
             _rewrite_website_vhost(
                 website,
                 app_type=app_type,
@@ -613,8 +585,6 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
                 result = waf.sync_website_rules(website)
                 if result.returncode != 0:
                     raise RuntimeError(_command_error(result))
-                if website.http_flood_enabled:
-                    _sync_http_flood_zones(db)
                 _rewrite_website_vhost(
                     website,
                     root_path=new_root_path,
@@ -639,8 +609,6 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
             result = waf.sync_website_rules(website)
             if result.returncode != 0:
                 raise RuntimeError(_command_error(result))
-            if website.http_flood_enabled:
-                _sync_http_flood_zones(db)
             _rewrite_website_vhost(
                 website,
                 app_type=app_type,
@@ -661,19 +629,6 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
         except (RuntimeError, ValueError, FileNotFoundError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         website.waf_enabled = payload.waf_enabled
-    if payload.http_flood_enabled is not None:
-        ensure_role(current_user.role, Role.admin)
-        next_enabled = bool(payload.http_flood_enabled)
-        try:
-            website.http_flood_enabled = next_enabled
-            if next_enabled:
-                _sync_http_flood_zones(db)
-                openlitespeed.update_http_flood_block(website.domain, True, _website_http_flood_config(website))
-            else:
-                openlitespeed.update_http_flood_block(website.domain, False, _website_http_flood_config(website))
-                _sync_http_flood_zones(db)
-        except (RuntimeError, ValueError, FileNotFoundError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     db.refresh(website)
     log_action(db, current_user.id, "update_website", website.domain)
@@ -720,8 +675,6 @@ def reset_website_webserver_config(website_id: int, request: Request, db: Sessio
         result = waf.sync_website_rules(website)
         if result.returncode != 0:
             raise RuntimeError(_command_error(result))
-        if website.http_flood_enabled:
-            _sync_http_flood_zones(db)
         _rewrite_website_vhost(
             website,
             custom_directives="",
@@ -753,31 +706,6 @@ def set_website_waf(website_id: int, payload: WebsiteWafUpdate, request: Request
     db.commit()
     db.refresh(website)
     log_action(db, current_user.id, "update_waf", website.domain, "enabled" if payload.waf_enabled else "disabled", request=request)
-    return website
-
-
-@router.patch("/{website_id}/http-flood", response_model=WebsiteOut)
-def set_website_http_flood(website_id: int, payload: WebsiteHttpFloodUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.admin)
-    website = db.query(Website).filter(Website.id == website_id).first()
-    if not website:
-        raise HTTPException(status_code=404, detail="Website not found")
-    config = _http_flood_payload_config(payload)
-    next_enabled = bool(payload.http_flood_enabled)
-    try:
-        website.http_flood_enabled = next_enabled
-        website.http_flood_config = json.dumps(config, ensure_ascii=True)
-        if next_enabled:
-            _sync_http_flood_zones(db)
-            openlitespeed.update_http_flood_block(website.domain, True, config)
-        else:
-            openlitespeed.update_http_flood_block(website.domain, False, config)
-            _sync_http_flood_zones(db)
-    except (RuntimeError, ValueError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    db.commit()
-    db.refresh(website)
-    log_action(db, current_user.id, "update_http_flood", website.domain, "enabled" if next_enabled else "disabled", request=request)
     return website
 
 
@@ -833,13 +761,7 @@ def delete_website(website_id: int, request: Request, delete_files: bool = True,
             wordpress.delete_wordpress(website.root_path)
     if db_item:
         db.delete(db_item)
-    had_http_flood = bool(website.http_flood_enabled)
     db.delete(website)
-    if had_http_flood:
-        try:
-            _sync_http_flood_zones(db)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     log_action(db, current_user.id, "delete_website", website.domain, request=request)
     return {"ok": True}
@@ -855,11 +777,6 @@ def fix_webserver_security(website_id: int, db: Session = Depends(get_db), curre
     result = waf.sync_website_rules(website)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=_command_error(result))
-    if website.http_flood_enabled:
-        try:
-            _sync_http_flood_zones(db)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
     target = _rewrite_website_vhost(website)
     log_action(db, current_user.id, "fix_webserver_security", website.domain)
     return {"message": f"Rewrote webserver security template for {website.domain}", "path": target}
@@ -955,8 +872,6 @@ async def install_manual_ssl(
         result = waf.sync_website_rules(website)
         if result.returncode != 0:
             raise RuntimeError(_command_error(result))
-        if website.http_flood_enabled:
-            _sync_http_flood_zones(db)
         _rewrite_website_vhost(website)
     except (RuntimeError, ValueError) as exc:
         ssl.restore_manual_ssl(previous_snapshot)

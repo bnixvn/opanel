@@ -6,9 +6,6 @@ included from the main httpd_config.conf.
 Replaces the former nginx.py service.
 """
 
-import hashlib
-import json
-import math
 import os
 import re
 import tempfile
@@ -41,13 +38,6 @@ ALLOWED_REWRITE_MODES = {"none", "front_controller", "laravel", "codeigniter", "
 ALLOWED_LOG_KINDS = {"access", "error"}
 DOMAIN_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+")
 MAX_FULL_CONFIG_BYTES = 128 * 1024
-
-HTTP_FLOOD_DEFAULTS = {
-    "access_limit_requests": 100,
-    "access_limit_window": 10,
-    "access_limit_burst": 100,
-    "connection_limit": 60,
-}
 
 ACME_WEBROOT = "/var/www/opanel-acme"
 
@@ -234,49 +224,6 @@ def _lsphp_listener_name(php_version: str) -> str:
     return f"lsphp{ver}"
 
 
-def _http_flood_value(value, default: int, minimum: int, maximum: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        number = default
-    return max(minimum, min(maximum, number))
-
-
-def validate_http_flood_config(raw=None) -> dict:
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw) if raw.strip() else {}
-        except (TypeError, ValueError):
-            raw = {}
-    if not isinstance(raw, dict):
-        raw = {}
-    return {
-        "access_limit_requests": _http_flood_value(raw.get("access_limit_requests"), HTTP_FLOOD_DEFAULTS["access_limit_requests"], 1, 100000),
-        "access_limit_window": _http_flood_value(raw.get("access_limit_window"), HTTP_FLOOD_DEFAULTS["access_limit_window"], 1, 3600),
-        "access_limit_burst": _http_flood_value(raw.get("access_limit_burst"), HTTP_FLOOD_DEFAULTS["access_limit_burst"], 0, 100000),
-        "connection_limit": _http_flood_value(raw.get("connection_limit"), HTTP_FLOOD_DEFAULTS["connection_limit"], 1, 10000),
-    }
-
-
-def http_flood_config_for_website(website) -> dict:
-    return validate_http_flood_config(getattr(website, "http_flood_config", "") or "")
-
-
-def http_flood_zone_name(domain: str) -> str:
-    safe_domain = _safe_domain(domain)
-    digest = hashlib.sha1(safe_domain.encode("utf-8")).hexdigest()[:12]
-    return f"opanel_hf_{digest}"
-
-
-def _http_flood_rate(config: dict) -> str:
-    """Convert requests/window to an OLS-compatible rate string."""
-    requests = max(1, int(config["access_limit_requests"]))
-    window = max(1, int(config["access_limit_window"]))
-    # OLS uses req/sec in throttling
-    rate_per_sec = max(1, math.ceil(requests / window))
-    return str(rate_per_sec)
-
-
 # ---------------------------------------------------------------------------
 # WAF paths
 # ---------------------------------------------------------------------------
@@ -438,8 +385,6 @@ def _build_context(
     aliases: list[str] | None = None,
     redirects: list[dict] | None = None,
     waf_enabled: bool = False,
-    http_flood_enabled: bool = False,
-    http_flood_config: dict | None = None,
     linux_user: str | None = None,
     lsphp_socket_override: str | None = None,
 ) -> dict:
@@ -467,7 +412,6 @@ def _build_context(
     # is handed to index.php. Measured on a live install for all four modes.
     rewrite_block = ""
     vhost_rewrite_rules = REWRITE_RULE_LINES.get(checked_rewrite, "")
-    safe_http_flood_config = validate_http_flood_config(http_flood_config)
 
     return {
         "domain": safe_domain,
@@ -491,10 +435,6 @@ def _build_context(
         "redirects": _safe_redirects(redirects, safe_domain),
         "waf_enabled": waf_enabled,
         "waf_rules_file": waf_rules_file(safe_domain) if waf_enabled else "",
-        "http_flood_enabled": http_flood_enabled,
-        "http_flood_config": safe_http_flood_config,
-        "http_flood_block": _http_flood_rewrites(safe_domain, safe_http_flood_config) if http_flood_enabled else "",
-        "http_flood_zone": http_flood_zone_name(safe_domain) if http_flood_enabled else "",
         "linux_user": linux_user or "www-data",
         "access_log": _log_path(safe_domain, "access").as_posix(),
         "error_log": _log_path(safe_domain, "error").as_posix(),
@@ -522,8 +462,6 @@ def render_vhost(
     aliases: list[str] | None = None,
     redirects: list[dict] | None = None,
     waf_enabled: bool = False,
-    http_flood_enabled: bool = False,
-    http_flood_config: dict | None = None,
     linux_user: str | None = None,
     lsphp_socket_override: str | None = None,
 ) -> str:
@@ -542,8 +480,6 @@ def render_vhost(
         aliases=aliases,
         redirects=redirects,
         waf_enabled=waf_enabled,
-        http_flood_enabled=http_flood_enabled,
-        http_flood_config=http_flood_config,
         linux_user=linux_user,
         lsphp_socket_override=lsphp_socket_override,
     )
@@ -765,8 +701,6 @@ def _rewrite_existing_vhost(domain: str, **overrides) -> str:
         ],
         "redirects": _redirects_from_config(existing, safe_domain),
         "waf_enabled": "# OPANEL WAF BEGIN" in existing,
-        "http_flood_enabled": "# OPANEL HTTP FLOOD BEGIN" in existing,
-        "http_flood_config": {},
         "linux_user": _first_match(r"(?m)^\s*extUser\s+(.+?)\s*$", existing) or "www-data",
     }
     cert_path = _first_match(r"(?m)^\s*certFile\s+(.+?)\s*$", existing)
@@ -787,49 +721,10 @@ def update_waf_block(domain: str, enabled: bool) -> str:
     return _rewrite_existing_vhost(domain, waf_enabled=bool(enabled))
 
 
-def update_http_flood_block(domain: str, enabled: bool, config: dict | str | None = None) -> str:
-    """Compatibility API: re-render an OLS vhost with HTTP flood settings."""
-    return _rewrite_existing_vhost(
-        domain,
-        http_flood_enabled=bool(enabled),
-        http_flood_config=validate_http_flood_config(config),
-    )
-
-
 def update_custom_block(domain: str, custom_directives: str) -> str:
     """Per-domain custom OLS directives are disabled; rewrite without them."""
     validate_custom_directives(custom_directives)
     return _rewrite_existing_vhost(domain, custom_directives="")
-
-
-def sync_http_flood_zones(websites):
-    """Compatibility no-op: OLS flood rules are rendered per vhost."""
-    return shell.run(["true"], check=False)
-
-
-# ---------------------------------------------------------------------------
-# HTTP Flood (OLS rewrite-based throttling)
-# ---------------------------------------------------------------------------
-def _http_flood_rewrites(domain: str, config: dict) -> str:
-    """Generate OLS rewrite rules for HTTP flood protection."""
-    zone = http_flood_zone_name(domain)
-    rate = _http_flood_rate(config)
-    burst = config.get("access_limit_burst", 0)
-    connections = config.get("connection_limit", 60)
-    return (
-        f"# OPANEL HTTP FLOOD BEGIN\n"
-        f"# Throttle zone: {zone}, rate: {rate}/s, burst: {burst}, maxConn: {connections}\n"
-        f"# Managed by OPanel — do not edit manually\n"
-        f"extprocessor {zone} {{\n"
-        f"    type                    proxy\n"
-        f"    address                 127.0.0.1:1\n"
-        f"    maxConns                {connections}\n"
-        f"    initTimeout             10\n"
-        f"    retryTimeout            0\n"
-        f"    respBuffer              0\n"
-        f"}}\n"
-        f"# OPANEL HTTP FLOOD END"
-    )
 
 
 # ---------------------------------------------------------------------------
