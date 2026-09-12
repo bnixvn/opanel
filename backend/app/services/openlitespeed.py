@@ -115,6 +115,37 @@ def _safe_alias_domains(aliases: list[str] | tuple[str, ...] | None) -> list[str
     return safe_aliases
 
 
+def _safe_redirects(redirects, target_domain: str) -> list[dict]:
+    """Normalise redirects to the {source,target,code} shape the template reads.
+
+    The API passes plain domain strings. Jinja renders a missing attribute as an
+    empty string, so those produced `RewriteCond %{HTTP_HOST} ^(www\\.)?$` --
+    a condition no real host can match, and the redirect silently did nothing.
+    """
+    normalised: list[dict] = []
+    seen: set[str] = set()
+    for entry in redirects or []:
+        if isinstance(entry, dict):
+            source = _safe_domain(str(entry.get("source", "")))
+            target = str(entry.get("target") or f"https://{target_domain}").rstrip("/")
+            code = int(entry.get("code") or 301)
+        else:
+            source = _safe_domain(str(entry))
+            target = f"https://{target_domain}"
+            code = 301
+        if source in seen:
+            continue
+        seen.add(source)
+        if code not in {301, 302, 307, 308}:
+            code = 301
+        normalised.append(
+            # `host` goes in vhAliases so LiteSpeed routes the old domain to this
+            # vhost at all; `source` is the regex-escaped form for RewriteCond.
+            {"host": source, "source": re.escape(source), "target": target, "code": code}
+        )
+    return normalised
+
+
 def _safe_hostnames(hostnames: Iterable[str]) -> list[str]:
     safe_hosts: list[str] = []
     seen: set[str] = set()
@@ -457,7 +488,7 @@ def _build_context(
         "ssl_key_path": ssl_key_path or "",
         "ssl_ca_path": ssl_ca_path or "",
         "aliases": safe_aliases,
-        "redirects": redirects or [],
+        "redirects": _safe_redirects(redirects, safe_domain),
         "waf_enabled": waf_enabled,
         "waf_rules_file": waf_rules_file(safe_domain) if waf_enabled else "",
         "http_flood_enabled": http_flood_enabled,
@@ -664,7 +695,10 @@ def _rewrite_mode_from_config(content: str, app_type: str) -> str:
         return "codeigniter"
     if "index.php?_url_=$1" in content:
         return "seohburl"
-    if "RewriteRule ^(.*)$ index.php [QSA,L]" in content:
+    # Both spellings: the target gained a leading slash when the rules moved to
+    # vhost scope, and toggling WAF on an older vhost must not read as "none" --
+    # that silently drops the front controller and 404s every route but /.
+    if "$ index.php [QSA,L]" in content or "$ /index.php [QSA,L]" in content:
         return "laravel" if "/public_html/public" in content else "front_controller"
     return "none"
 
@@ -677,18 +711,29 @@ def _php_version_from_config(content: str) -> str | None:
 
 
 def _redirects_from_config(content: str, domain: str) -> list[dict]:
+    """Read redirects back out of a rendered vhost.
+
+    Handles both the current `RewriteRule ^ <target>%{REQUEST_URI}` form and the
+    older `RewriteRule ^(.*)$ <target>$1` one, so re-rendering a vhost written by
+    an earlier build does not silently drop its redirects.
+    """
     redirects: list[dict] = []
     pattern = re.compile(
         r"RewriteCond\s+%\{HTTP_HOST\}\s+\^\(www\\\.\)\?(.+?)\$\s+\[NC\]\s*\n"
-        r"RewriteRule\s+\^\(\.\*\)\$\s+(.+?)\$1\s+\[R=([0-9]+),L\]",
+        r"RewriteRule\s+(?:\^\(\.\*\)\$\s+(?P<old>.+?)\$1|\^\s+(?P<new>.+?)%\{REQUEST_URI\})"
+        r"\s+\[R=([0-9]+),L\]",
         re.MULTILINE,
     )
+    seen: set[str] = set()
     for match in pattern.finditer(content):
         source = match.group(1).replace(r"\.", ".").strip()
-        target = match.group(2).strip()
-        code = int(match.group(3))
-        if source and source != domain:
-            redirects.append({"source": source, "target": target, "code": code})
+        target = (match.group("old") or match.group("new") or "").strip()
+        code = int(match.group(4))
+        if source and source != domain and source not in seen:
+            seen.add(source)
+            redirects.append(
+                {"host": source, "source": source, "target": target, "code": code}
+            )
     return redirects
 
 
@@ -707,7 +752,17 @@ def _rewrite_existing_vhost(domain: str, **overrides) -> str:
         "document_root": document_root,
         "rewrite_mode": _rewrite_mode_from_config(existing, app_type),
         "custom_directives": "",
-        "aliases": re.findall(r"(?m)^\s*vhAliases\s+(.+?)\s*$", existing),
+        # Redirect sources are listed in vhAliases too (LiteSpeed has to route
+        # them here at all), so drop them or a redirect would come back as a
+        # plain alias and stop redirecting.
+        "aliases": [
+            host
+            for host in re.findall(r"(?m)^\s*vhAliases\s+(.+?)\s*$", existing)
+            if host not in {
+                entry.get("host") or entry.get("source")
+                for entry in _redirects_from_config(existing, safe_domain)
+            }
+        ],
         "redirects": _redirects_from_config(existing, safe_domain),
         "waf_enabled": "# OPANEL WAF BEGIN" in existing,
         "http_flood_enabled": "# OPANEL HTTP FLOOD BEGIN" in existing,

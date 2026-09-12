@@ -221,8 +221,12 @@ def test_update_waf_block_rerenders_existing_vhost_without_custom_directives(mon
     assert captured["root_path"] == "/home/siteuser/example.test"
     assert captured["kwargs"]["waf_enabled"] is True
     assert captured["kwargs"]["custom_directives"] == ""
+    # Redirect sources also appear in vhAliases so LiteSpeed routes them here;
+    # they must not come back as plain aliases or the redirect would stop.
     assert captured["kwargs"]["aliases"] == ["alias.test"]
-    assert captured["kwargs"]["redirects"] == [{"source": "old.test", "target": "https://example.test", "code": 301}]
+    assert captured["kwargs"]["redirects"] == [
+        {"host": "old.test", "source": "old.test", "target": "https://example.test", "code": 301}
+    ]
 
 
 def _context_block(rendered: str) -> str:

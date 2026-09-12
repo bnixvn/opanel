@@ -379,8 +379,11 @@ def suspend_account(db: Session, external_id: str, reason: str = "Suspended by W
         _finish_job(db, job, "failed", "User not found")
         raise ValueError("User not found")
 
-    # Disable panel user
+    # Disable panel user. Bumping token_version is what actually ends the
+    # sessions already open -- without it a suspended account keeps full use of
+    # the panel until its JWT expires.
     user.is_active = False
+    user.token_version = (user.token_version or 0) + 1
     db.commit()
 
     # Lock Linux user
@@ -497,8 +500,9 @@ def change_password(db: Session, external_id: str, password: str) -> bool:
         _finish_job(db, job, "failed", "User not found")
         raise ValueError("User not found")
 
-    # Update panel password
+    # Update panel password, and cut the sessions signed with the old one.
     user.hashed_password = hash_password(password)
+    user.token_version = (user.token_version or 0) + 1
     db.commit()
 
     # Update Linux/SFTP password

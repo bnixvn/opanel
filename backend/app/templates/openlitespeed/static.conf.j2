@@ -8,6 +8,9 @@ vhDomain                  {{ domain }}
 {% for alias in aliases %}
 vhAliases                 {{ alias }}
 {% endfor %}
+{% for redirect in redirects %}
+vhAliases                 {{ redirect.host }}
+{% endfor %}
 
 enableGzip                1
 enableBr                  1
@@ -42,14 +45,17 @@ vhssl {
 }
 {% endif %}
 
-{% if ssl_enabled %}
+{# One rewrite block only: LiteSpeed does not merge sibling blocks. #}
+{% if ssl_enabled or redirects %}
 rewrite {
     enable                1
     rewriteRules          <<<END_RULES
-RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+{% if ssl_enabled %}RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
 RewriteCond %{SERVER_PORT} 80
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
-END_RULES
+{% endif %}{% for redirect in redirects %}RewriteCond %{HTTP_HOST} ^(www\.)?{{ redirect.source }}$ [NC]
+RewriteRule ^ {{ redirect.target }}%{REQUEST_URI} [R={{ redirect.code|default(301) }},L]
+{% endfor %}END_RULES
 }
 {% endif %}
 
@@ -88,15 +94,7 @@ context /.well-known/acme-challenge/ {
     addDefaultCharset     off
 }
 
-{% for redirect in redirects %}
-rewrite {
-    enable                1
-    rewriteRules          <<<END_RULES
-RewriteCond %{HTTP_HOST} ^(www\.)?{{ redirect.source }}$ [NC]
-RewriteRule ^(.*)$ {{ redirect.target }}$1 [R={{ redirect.code|default(301) }},L]
-END_RULES
-}
-{% endfor %}
+{# Domain redirects are emitted in the single rewrite block near the top. #}
 
 {% if http_flood_enabled %}
 {{ http_flood_block }}

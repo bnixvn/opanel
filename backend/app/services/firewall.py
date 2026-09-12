@@ -641,11 +641,15 @@ def delete_rule(rule_id: int) -> CommandResult:
     except (TypeError, ValueError):
         pass
     if rule_type == "port" and action == "ALLOW" and port:
+        # int() has to be guarded, but the refusal must not be: raising inside
+        # the try meant the except below swallowed it and the default ports were
+        # deletable after all.
         try:
-            if int(port) in protected_ports:
-                raise ValueError("Default panel, mail, web, and SSH firewall rules cannot be deleted")
+            port_number = int(port)
         except (ValueError, TypeError):
-            pass
+            port_number = None
+        if port_number is not None and port_number in protected_ports:
+            raise ValueError("Default panel, mail, web, and SSH firewall rules cannot be deleted")
     _remove_rule_from_iptables(target)
     rules = [r for r in rules if r.get("id") != rule_id]
     _write_rules(rules)

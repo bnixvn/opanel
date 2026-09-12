@@ -489,7 +489,7 @@ iptables_panel_delete_port_rules() {
   for binary in iptables ip6tables; do
     line_nums="$("$binary" -L OPANEL_INPUT -n --line-numbers 2>/dev/null \
       | awk -v port="$port" -v comment="$comment" '
-          $0 ~ "tcp dpt:"port {
+          $0 ~ ("tcp dpt:" port "([^0-9]|$)") {
             if (comment == "" || $0 ~ comment) {
               gsub(/[^0-9]/, "", $1)
               if ($1 != "") print $1

@@ -468,7 +468,7 @@ def restore_user_backup(backup_file: str, db) -> dict:
                 ).first()
                 if conflict:
                     raise ValueError(f"Database name already belongs to another website: {db_name}")
-                mariadb.create_database_credentials(db_name, db_user, db_password)
+                mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
                 sql_member = db_info.get("sql_member") or f"databases/{domain}.sql"
                 sql_path = _extract_member_to_file(archive, sql_member, tmp_dir)
                 if sql_path:

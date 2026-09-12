@@ -633,8 +633,11 @@ install_panel_runtime() {
   env_set_default RATE_LIMIT_BACKEND "redis"
   if [[ -z "$(env_get ALLOWED_ORIGINS)" ]]; then
     env_set_default ALLOWED_ORIGINS "$panel_url"
-env_set_default PMA_SIGNON_SECRET "$(openssl rand -hex 32)"
   fi
+  # Outside the block above: boxes installed before this key existed already
+  # have ALLOWED_ORIGINS, so nesting it there meant they never got a secret and
+  # phpMyAdmin single sign-on stayed broken for good.
+  env_set_default PMA_SIGNON_SECRET "$(openssl rand -hex 32)"
   panel_domain="$(env_get PANEL_DOMAIN)"
   if [[ -n "$panel_domain" ]] && ! is_domain_name "$panel_domain"; then
     env_set PANEL_DOMAIN ""

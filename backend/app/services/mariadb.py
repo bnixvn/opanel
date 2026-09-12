@@ -22,9 +22,27 @@ def safe_db_identifier(domain: str, prefix: str) -> str:
     return f"{prefix}_{clean}"[:63]
 
 
+# Names the panel must never create, drop or re-password. The panel's own SQL
+# account holds GRANT ALL ON *.* WITH GRANT OPTION, so without this an ordinary
+# panel user could ask for db_user="root" and take the server's root account.
+RESERVED_DB_IDENTIFIERS = frozenset({
+    "root",
+    "mysql",
+    "opanel",
+    "bpanel",
+    "sys",
+    "information_schema",
+    "performance_schema",
+    "debian-sys-maint",
+    "mariadb",
+})
+
+
 def _validate_identifier(value: str) -> str:
     if not value or len(value) > 64 or any(ch not in IDENTIFIER_CHARS for ch in value):
         raise ValueError("Invalid database identifier")
+    if value.lower() in RESERVED_DB_IDENTIFIERS:
+        raise ValueError(f"'{value}' is reserved and cannot be used")
     return value
 
 
@@ -71,18 +89,65 @@ def create_database(seed: str, prefix: str = "wp", db_name: str | None = None, i
     return {"db_name": db_name, "db_user": db_user, "db_password": db_password}
 
 
-def create_database_credentials(db_name: str, db_user: str, db_password: str) -> Dict[str, str]:
+def create_database_credentials(
+    db_name: str,
+    db_user: str,
+    db_password: str,
+    *,
+    allow_existing: bool = False,
+) -> Dict[str, str]:
+    """Create a database and its user.
+
+    By default a name already in use is an error. `allow_existing=True` restores
+    the older re-password-on-collision behaviour and belongs only to the restore
+    and import flows, which recreate accounts they already own; on the
+    user-facing create path it let anyone re-password an existing SQL account.
+    """
     db_name = _validate_identifier(db_name)
     db_user = _validate_identifier(db_user)
-    sql = (
-        f"CREATE DATABASE IF NOT EXISTS {_quote_identifier(db_name)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"
-        f"CREATE USER IF NOT EXISTS {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
-        f"ALTER USER {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
+    if allow_existing:
+        sql = (
+            f"CREATE DATABASE IF NOT EXISTS {_quote_identifier(db_name)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"
+            f"CREATE USER IF NOT EXISTS {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
+            f"ALTER USER {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
+        )
+    else:
+        sql = (
+            f"CREATE DATABASE {_quote_identifier(db_name)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"
+            f"CREATE USER {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
+        )
+    sql += (
         f"GRANT ALL PRIVILEGES ON {_quote_identifier(db_name)}.* TO {_quote_sql_string(db_user)}@'localhost';\n"
         "FLUSH PRIVILEGES;\n"
     )
     _run_sql(sql)
     return {"db_name": db_name, "db_user": db_user, "db_password": db_password}
+
+
+def identifier_in_use(db_name: str, db_user: str) -> str:
+    """Say whether the name or user already exists in MariaDB itself.
+
+    The panel's own table is not enough: a database created outside the panel,
+    or a system account, is invisible there.
+    """
+    db_name = _validate_identifier(db_name)
+    db_user = _validate_identifier(db_user)
+    sql = (
+        "SELECT 'db' FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = "
+        f"{_quote_sql_string(db_name)} UNION ALL SELECT 'user' FROM mysql.user "
+        f"WHERE user = {_quote_sql_string(db_user)} AND host = 'localhost';"
+    )
+    result = shell.run(
+        [*_mysql_args(), "-N", "-B"], check=False, input=sql, sensitive=True
+    )
+    if getattr(result, "returncode", 1) != 0:
+        return ""
+    found = {line.strip() for line in (result.stdout or "").splitlines()}
+    if "db" in found:
+        return "Database name already exists on this server"
+    if "user" in found:
+        return "Database user already exists on this server"
+    return ""
 
 
 def drop_database(db_name: str, db_user: str):

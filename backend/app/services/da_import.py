@@ -1072,7 +1072,7 @@ def _process_archive(
                     temp_sql = _temporary_sql_file(matched_sql)
 
                     # Create database and user
-                    mariadb.create_database_credentials(db_name, db_user, db_password)
+                    mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
 
                     # Import SQL
                     mariadb.import_database(db_name, str(temp_sql))
@@ -1178,7 +1178,7 @@ def _process_archive(
             temp_sql = _temporary_sql_file(sql_path)
             db_user = _normalize_db_identifier(key, key, set())
             db_password, _reused = _import_db_password({}, _da_db_credentials(sql_path, root))
-            mariadb.create_database_credentials(db_name, db_user, db_password)
+            mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
             mariadb.import_database(db_name, str(temp_sql))
             item = DatabaseAccount(
                 owner_id=user.id,

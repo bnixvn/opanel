@@ -388,7 +388,13 @@ write_modsec_base_conf() {
   {
     [[ -f /etc/modsecurity/modsecurity.conf ]] && echo "Include /etc/modsecurity/modsecurity.conf"
     echo "SecRuleEngine On"
-    echo "SecRequestBodyAccess Off"
+    # Off here disables every phase:2 rule, not just body parsing, which left a
+    # fresh install with its path-traversal, author-enumeration and wp2shell
+    # rules silently dead. Must stay in step with opanel-helper.sh.
+    echo "SecRequestBodyAccess On"
+    echo "SecRequestBodyLimit 134217728"
+    echo "SecRequestBodyNoFilesLimit 1048576"
+    echo "SecRequestBodyLimitAction ProcessPartial"
   } >"${modsec_dir}/opanel-base.conf"
 }
 

@@ -68,9 +68,16 @@ def create_database(payload: DatabaseCreate, db: Session = Depends(get_db), curr
         raise HTTPException(status_code=409, detail="Database name already exists")
     if db.query(DatabaseAccount).filter(DatabaseAccount.db_user == db_user).first():
         raise HTTPException(status_code=409, detail="Database user already exists")
+    # The panel table only knows what the panel made. Ask MariaDB as well, or a
+    # name it already holds would be silently taken over.
+    in_use = mariadb.identifier_in_use(db_name, db_user)
+    if in_use:
+        raise HTTPException(status_code=409, detail=in_use)
 
     try:
         mariadb.create_database_credentials(db_name, db_user, db_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to create MariaDB database/user")
         raise HTTPException(status_code=500, detail=f"MariaDB error: {exc}") from exc

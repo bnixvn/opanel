@@ -567,6 +567,9 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
         website.app_type = next_app_type
         website.nginx_rewrite_mode = next_rewrite_mode
     if payload.status is not None:
+        # Suspension is an admin decision; an owner could otherwise flip their
+        # own site back to active.
+        ensure_role(current_user.role, Role.admin)
         website.status = payload.status
     if payload.document_root is not None and payload.document_root != (website.document_root or "public_html"):
         try:
@@ -883,10 +886,15 @@ def enable_ssl(website_id: int, db: Session = Depends(get_db), current_user: Use
     if result.returncode != 0:
         if getattr(website, "ssl_mode", "none") == "manual":
             ssl.restore_manual_ssl(previous_snapshot)
-            try:
-                _rewrite_website_vhost(website)
-            except (RuntimeError, ValueError):
-                pass
+        # The vhost above was rewritten without SSL so certbot could answer on
+        # port 80. Put it back whatever the previous mode was: leaving a site
+        # that already had HTTPS without a certificate drops it out of the 443
+        # listener, and browsers holding HSTS then refuse plain HTTP too, so a
+        # failed renewal would take the site off the air entirely.
+        try:
+            _rewrite_website_vhost(website)
+        except (RuntimeError, ValueError):
+            pass
         raise HTTPException(status_code=500, detail=_command_error(result))
     website.ssl_enabled = True
     website.ssl_mode = "letsencrypt"
