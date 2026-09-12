@@ -49,9 +49,14 @@ _PAGE = f"""<!doctype html>
 <main>
   <h1>OPanel is not serving right now</h1>
   <p>
-    The panel could not load a usable TLS certificate, so it is refusing to
-    serve itself over an unencrypted connection. Signing in here would send
-    your session cookie across the network in clear text.
+    The panel could not load a usable TLS certificate, and generating a
+    self-signed one to fall back on failed too. It will not serve itself over
+    an unencrypted connection: signing in here would send your session cookie
+    across the network in clear text.
+  </p>
+  <p>
+    Something is wrong with the certificate store itself &mdash; it is usually
+    missing, not writable by root, or <code>openssl</code> is unavailable.
   </p>
   <p>Websites on this server are unaffected &mdash; only the panel is down.</p>
   <p>To fix it, over SSH:</p>

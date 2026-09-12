@@ -2,13 +2,16 @@
 
 Runs the API over HTTPS, picking a certificate per requested hostname so any
 site that already has SSL can also reach the panel on the panel port. Falls
-back, in order: the SNI match, then the configured/default certificate.
+back, in order: the SNI match, the configured certificate, the self-signed
+default, and a self-signed default regenerated on the spot. A certificate
+browsers merely warn about is worth far more than an unreachable panel.
 
-If neither works the port still answers -- the panel is the tool used to repair
-the box, so going dark would be its own outage -- but it answers with the
-recovery page in app/core/tls_degraded.py and nothing else. It does not serve
-the panel over plain HTTP: cookie flags follow the request scheme, so that mode
-put admin session cookies on the wire unencrypted.
+Only when even a fresh self-signed certificate cannot be produced does the port
+stop serving the panel. It still answers -- the panel is the tool used to repair
+the box, so going dark would be its own outage -- but with the recovery page in
+app/core/tls_degraded.py and nothing else. It never serves the panel over plain
+HTTP: cookie flags follow the request scheme, so that mode put admin session
+cookies on the wire unencrypted.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
-import ssl
+import subprocess
 from pathlib import Path
 
 import uvicorn
@@ -81,29 +84,70 @@ def listen_socket(host: str, port: int) -> socket.socket:
     return sock
 
 
+SELF_SIGNED_REPAIR = (
+    "sudo", "-n", "/usr/local/sbin/opanel-helper", "panel-cert-selfsigned",
+)
+
+
+def regenerate_self_signed() -> bool:
+    """Ask the helper for a fresh self-signed default certificate.
+
+    This module deliberately stays clear of the application's service layer --
+    it has to run when the app itself will not import -- so it calls the sudo
+    trampoline directly instead of going through app.services.shell.
+    """
+    try:
+        result = subprocess.run(
+            SELF_SIGNED_REPAIR, capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logger.exception("Could not run the certificate repair helper")
+        return False
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        logger.error("Self-signed certificate repair failed: %s", detail[:300])
+        return False
+    return True
+
+
 def usable_cert_pair() -> tuple[Path, Path] | None:
-    """The certificate to start with, or None if TLS cannot come up.
+    """The certificate to start with, or None if TLS cannot come up at all.
 
     uvicorn's Config.load() both builds the SSL context and imports the ASGI
     app, so letting it decide would file an application import error as a
-    certificate problem and hide a real bug behind the recovery page. Prove the
-    certificate loads here, and let an app that will not import crash loudly.
+    certificate problem and hide a real bug behind the recovery page. TLS is
+    settled here, and an app that will not import still crashes loudly.
+
+    A certificate browsers warn about beats no panel, so a broken one falls
+    back to the self-signed default, and a self-signed default that is itself
+    missing or corrupt gets regenerated. Only when even that fails is there
+    nothing left to serve HTTPS with.
     """
-    pair = tls.default_cert_pair(
-        os.environ.get("PANEL_SSL_CERT", ""),
-        os.environ.get("PANEL_SSL_KEY", ""),
+    def _select() -> tuple[Path, Path] | None:
+        return tls.default_cert_pair(
+            os.environ.get("PANEL_SSL_CERT", ""),
+            os.environ.get("PANEL_SSL_KEY", ""),
+        )
+
+    pair = _select()
+    if pair is not None:
+        return pair
+
+    logger.error(
+        "No usable certificate in %s; regenerating the self-signed default",
+        tls.CERT_STORE,
     )
+    if not regenerate_self_signed():
+        return None
+
+    pair = _select()
     if pair is None:
-        # The installer seeds a self-signed default before the panel first
-        # starts, so an empty store is a broken box, not a supported mode.
-        logger.error("No usable panel certificate found in %s", tls.CERT_STORE)
         return None
-    try:
-        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        context.load_cert_chain(str(pair[0]), str(pair[1]))
-    except (ssl.SSLError, OSError, ValueError):
-        logger.exception("Panel certificate %s could not be loaded", pair[0])
-        return None
+    logger.warning(
+        "Panel is serving a freshly generated self-signed certificate from %s. "
+        "Browsers will warn until a real certificate is issued.",
+        pair[0],
+    )
     return pair
 
 

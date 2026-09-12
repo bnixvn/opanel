@@ -178,13 +178,22 @@ def test_a_good_certificate_keeps_the_panel_on_https(cert_store):
     assert pair[0] == cert_store / "_default" / "fullchain.pem"
 
 
-def test_an_empty_store_degrades(cert_store):
+def test_an_empty_store_regenerates_a_self_signed_certificate(cert_store, monkeypatch):
     from app import server
 
-    assert server.usable_cert_pair() is None
+    def fake_repair():
+        _write_self_signed(cert_store / "_default")
+        return True
+
+    monkeypatch.setattr(server, "regenerate_self_signed", fake_repair)
+
+    pair = server.usable_cert_pair()
+
+    assert pair == (cert_store / "_default" / "fullchain.pem",
+                    cert_store / "_default" / "privkey.pem")
 
 
-def test_a_corrupt_certificate_degrades_instead_of_crashing(cert_store):
+def test_a_corrupt_default_is_replaced_rather_than_giving_up(cert_store, monkeypatch):
     from app import server
 
     default = cert_store / "_default"
@@ -192,16 +201,101 @@ def test_a_corrupt_certificate_degrades_instead_of_crashing(cert_store):
     (default / "fullchain.pem").write_text("not a certificate", encoding="utf-8")
     (default / "privkey.pem").write_text("not a key", encoding="utf-8")
 
-    assert server.usable_cert_pair() is None
+    def fake_repair():
+        _write_self_signed(default)
+        return True
+
+    monkeypatch.setattr(server, "regenerate_self_signed", fake_repair)
+
+    assert server.usable_cert_pair() is not None
 
 
-def test_a_certificate_whose_key_does_not_match_degrades(cert_store):
+def test_a_broken_configured_certificate_falls_back_to_the_self_signed_one(cert_store, monkeypatch):
+    """The panel must not lose HTTPS over a file it was never required to use."""
     from app import server
 
     _write_self_signed(cert_store / "_default")
-    other = cert_store / "other"
-    _write_self_signed(other)
-    # Swap in a key belonging to a different certificate.
-    (cert_store / "_default" / "privkey.pem").write_bytes((other / "privkey.pem").read_bytes())
+    broken = cert_store / "configured.pem"
+    broken.write_text("not a certificate", encoding="utf-8")
+    monkeypatch.setenv("PANEL_SSL_CERT", str(broken))
+    monkeypatch.setenv("PANEL_SSL_KEY", str(broken))
+
+    called = []
+    monkeypatch.setattr(server, "regenerate_self_signed", lambda: called.append(1) or True)
+
+    pair = server.usable_cert_pair()
+
+    assert pair == (cert_store / "_default" / "fullchain.pem",
+                    cert_store / "_default" / "privkey.pem")
+    # The self-signed default was already good, so nothing had to be rebuilt.
+    assert called == []
+
+
+def test_a_configured_certificate_that_works_is_preferred(cert_store, monkeypatch):
+    from app import server
+
+    _write_self_signed(cert_store / "_default")
+    configured = cert_store / "configured"
+    _write_self_signed(configured)
+    monkeypatch.setenv("PANEL_SSL_CERT", str(configured / "fullchain.pem"))
+    monkeypatch.setenv("PANEL_SSL_KEY", str(configured / "privkey.pem"))
+
+    assert server.usable_cert_pair() == (configured / "fullchain.pem", configured / "privkey.pem")
+
+
+def test_only_a_failed_regeneration_reaches_the_recovery_page(cert_store, monkeypatch):
+    from app import server
+
+    monkeypatch.setattr(server, "regenerate_self_signed", lambda: False)
 
     assert server.usable_cert_pair() is None
+
+
+def test_regeneration_that_reports_success_but_writes_nothing_still_degrades(cert_store, monkeypatch):
+    from app import server
+
+    monkeypatch.setattr(server, "regenerate_self_signed", lambda: True)
+
+    assert server.usable_cert_pair() is None
+
+
+def test_regenerate_calls_the_helper_through_sudo(monkeypatch):
+    from app import server
+
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["timeout"] = kwargs.get("timeout")
+        return type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+
+    assert server.regenerate_self_signed() is True
+    assert seen["argv"] == ("sudo", "-n", "/usr/local/sbin/opanel-helper", "panel-cert-selfsigned")
+    # sudo -n cannot prompt, and the timeout stops a wedged helper hanging boot.
+    assert seen["timeout"] == 60
+
+
+def test_regenerate_survives_a_missing_helper(monkeypatch):
+    from app import server
+
+    def boom(argv, **kwargs):
+        raise FileNotFoundError("sudo")
+
+    monkeypatch.setattr(server.subprocess, "run", boom)
+
+    assert server.regenerate_self_signed() is False
+
+
+def test_helper_has_a_cheap_self_signed_only_command():
+    helper = (Path(__file__).resolve().parents[3]
+              / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    start = helper.index("  panel-cert-selfsigned)")
+    block = helper[start:helper.index("# ---- certbot", start)]
+
+    assert "panel_self_signed_ensure" in block
+    # A full store sync copies every Let's Encrypt cert on the box; not at boot.
+    assert "panel_cert_store_sync" not in block
+    # The stale pair must go first or checkend passes on the old file.
+    assert 'rm -f "${PANEL_CERT_STORE}/_default/fullchain.pem"' in block

@@ -3656,6 +3656,17 @@ case "$cmd" in
     echo "Panel certificate store synced"
     ;;
 
+  # Regenerate only the self-signed default. The panel calls this at start-up
+  # when no certificate loads, so it must stay cheap: a full store sync copies
+  # every Let's Encrypt certificate on the box, which is 180 files on a busy
+  # server and not what a panel trying to come up needs to wait for.
+  panel-cert-selfsigned)
+    [[ $# -eq 0 ]] || deny "usage: panel-cert-selfsigned"
+    install -d -o root -g opanel -m 0750 "$PANEL_CERT_STORE"
+    rm -f "${PANEL_CERT_STORE}/_default/fullchain.pem" "${PANEL_CERT_STORE}/_default/privkey.pem"
+    panel_self_signed_ensure
+    ;;
+
   # ---- certbot ----------------------------------------------------------
   certbot-issue)
     [[ $# -ge 1 ]] || deny "usage: certbot-issue <domain> [alias-domain ...] [email]"

@@ -122,13 +122,22 @@ def default_cert_pair(explicit_cert: str = "", explicit_key: str = "") -> tuple[
 
     An explicitly configured PANEL_SSL_CERT/KEY wins so existing installs keep
     the certificate their admin chose; otherwise the self-signed fallback.
+
+    Every candidate has to prove it loads, not merely that it exists and is
+    readable. A configured certificate that is present but corrupt -- a
+    truncated renewal, a key that no longer matches its chain -- must give way
+    to the self-signed default, exactly as a missing one does. Checking only
+    readability sent the panel to the recovery page over a file it was never
+    required to use, when a certificate browsers merely warn about was sitting
+    right there.
     """
     if explicit_cert and explicit_key:
-        cert, key = Path(explicit_cert), Path(explicit_key)
-        try:
-            if cert.is_file() and key.is_file() and os.access(cert, os.R_OK) and os.access(key, os.R_OK):
-                return cert, key
-        except OSError:
-            pass
-        logger.warning("PANEL_SSL_CERT/KEY set but unreadable, falling back to %s", DEFAULT_CERT_NAME)
-    return cert_pair(DEFAULT_CERT_NAME)
+        pair = (Path(explicit_cert), Path(explicit_key))
+        if build_context(*pair) is not None:
+            return pair
+        logger.warning("PANEL_SSL_CERT/KEY unusable, falling back to %s", DEFAULT_CERT_NAME)
+
+    pair = cert_pair(DEFAULT_CERT_NAME)
+    if pair is not None and build_context(*pair) is not None:
+        return pair
+    return None
