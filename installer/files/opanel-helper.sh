@@ -540,12 +540,28 @@ iptables_flush_managed_chains() {
 }
 
 iptables_insert_managed_jumps() {
+  # Order matters: OPANEL_INPUT accepts the default ports from any source, and
+  # an ACCEPT inside a user chain ends the traversal. With it ahead of
+  # OPANEL_USER an admin's "block this IP" never ran for ports 22/80/443/the
+  # panel -- which is every port an attacker uses. Admin rules go first.
   iptables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null || iptables -I INPUT 1 -j OPANEL_BLOCKLIST
-  iptables -C INPUT -j OPANEL_INPUT 2>/dev/null || iptables -I INPUT 2 -j OPANEL_INPUT
-  iptables -C INPUT -j OPANEL_USER 2>/dev/null || iptables -I INPUT 3 -j OPANEL_USER
+  iptables -C INPUT -j OPANEL_USER 2>/dev/null || iptables -I INPUT 2 -j OPANEL_USER
+  iptables -C INPUT -j OPANEL_INPUT 2>/dev/null || iptables -I INPUT 3 -j OPANEL_INPUT
   ip6tables -C INPUT -j OPANEL_BLOCKLIST 2>/dev/null || ip6tables -I INPUT 1 -j OPANEL_BLOCKLIST
-  ip6tables -C INPUT -j OPANEL_INPUT 2>/dev/null || ip6tables -I INPUT 2 -j OPANEL_INPUT
-  ip6tables -C INPUT -j OPANEL_USER 2>/dev/null || ip6tables -I INPUT 3 -j OPANEL_USER
+  ip6tables -C INPUT -j OPANEL_USER 2>/dev/null || ip6tables -I INPUT 2 -j OPANEL_USER
+  ip6tables -C INPUT -j OPANEL_INPUT 2>/dev/null || ip6tables -I INPUT 3 -j OPANEL_INPUT
+}
+
+iptables_reorder_managed_jumps() {
+  # Existing installs already have the jumps in the old order; -C above would
+  # find them and leave it. Drop and re-add so the fix reaches them too.
+  local binary
+  for binary in iptables ip6tables; do
+    "$binary" -D INPUT -j OPANEL_BLOCKLIST 2>/dev/null || true
+    "$binary" -D INPUT -j OPANEL_USER 2>/dev/null || true
+    "$binary" -D INPUT -j OPANEL_INPUT 2>/dev/null || true
+  done
+  iptables_insert_managed_jumps
 }
 
 iptables_add_default_allowances() {
@@ -619,6 +635,10 @@ run_managed_iptables_command() {
   [[ -n "$network" ]] && argv+=("-s" "$network")
   argv+=("-j" "$target")
   "${argv[@]}"
+  # Without this the rule lives only in the running kernel: the on-disk snapshot
+  # is taken elsewhere and never refreshed, so every admin rule vanished on the
+  # next reboot while the panel kept listing it.
+  firewall_persist_rules 2>/dev/null || true
 }
 
 run_managed_ipset_command() {
@@ -3745,11 +3765,15 @@ case "$cmd" in
     iptables -P INPUT ACCEPT 2>/dev/null || true
     ip6tables -P INPUT ACCEPT 2>/dev/null || true
     iptables_flush_managed_chains
-    iptables_insert_managed_jumps
+    iptables_reorder_managed_jumps
     iptables_add_default_allowances
     firewall_blocklist_apply 2>/dev/null || true
-    firewall_persist_rules
     echo "opanel iptables chains enabled"
+    ;;
+  iptables-persist)
+    [[ $# -eq 0 ]] || deny "usage: iptables-persist"
+    firewall_persist_rules
+    echo "opanel firewall rules persisted"
     ;;
   iptables-disable)
     # Remove chain references from INPUT (rules inside chains are preserved)

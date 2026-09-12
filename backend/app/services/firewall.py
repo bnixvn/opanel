@@ -432,11 +432,13 @@ def enable() -> CommandResult:
         # Blocklist chain (ipset)
         f"iptables -A {CHAIN_BLOCKLIST} -m set --match-set {IPSET_V4} src -j DROP 2>/dev/null || true\n"
         f"ip6tables -A {CHAIN_BLOCKLIST} -m set --match-set {IPSET_V6} src -j DROP 2>/dev/null || true\n"
-        # Chain ordering: blocklist -> user
-        f"iptables -A {CHAIN_INPUT} -j {CHAIN_BLOCKLIST}\n"
-        f"iptables -A {CHAIN_INPUT} -j {CHAIN_USER}\n"
-        f"ip6tables -A {CHAIN_INPUT} -j {CHAIN_BLOCKLIST}\n"
-        f"ip6tables -A {CHAIN_INPUT} -j {CHAIN_USER}\n"
+        # Blocklist and admin rules are consulted before the default port
+        # allowances, which accept from any source and would otherwise end the
+        # traversal before a block could apply.
+        f"iptables -I {CHAIN_INPUT} 1 -j {CHAIN_USER}\n"
+        f"iptables -I {CHAIN_INPUT} 1 -j {CHAIN_BLOCKLIST}\n"
+        f"ip6tables -I {CHAIN_INPUT} 1 -j {CHAIN_USER}\n"
+        f"ip6tables -I {CHAIN_INPUT} 1 -j {CHAIN_BLOCKLIST}\n"
         # Default policy accept (don't lock out)
         "iptables -P INPUT ACCEPT\n"
         "ip6tables -P INPUT ACCEPT\n"
@@ -444,6 +446,10 @@ def enable() -> CommandResult:
     )
     result = shell.privileged("iptables-enable", check=False, fallback=["bash", "-lc", script])
     _restore_user_rules()
+    # Snapshot after the stored rules are back, not before: persisting inside
+    # iptables-enable captured an empty user chain, so a reboot dropped every
+    # admin rule while the panel still listed them.
+    shell.privileged("iptables-persist", check=False, fallback=["true"])
     return result
 
 
