@@ -113,7 +113,11 @@ function opanel_UnsuspendAccount($params)
 
 function opanel_TerminateAccount($params)
 {
-    $result = opanel_request($params, 'DELETE', '/api/provisioning/v1/accounts/' . rawurlencode(opanel_external_id($params)), null, ['backup' => 'true']);
+    // Terminate is a full teardown: databases dropped, site files and the home
+    // directory removed. It used to send backup=true, which read as "keep the
+    // data" -- the API has never accepted that parameter and silently deleted
+    // everything anyway. Sending nothing says what actually happens.
+    $result = opanel_request($params, 'DELETE', '/api/provisioning/v1/accounts/' . rawurlencode(opanel_external_id($params)));
     return $result['ok'] ? 'success' : $result['error'];
 }
 

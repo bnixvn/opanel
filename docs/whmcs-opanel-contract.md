@@ -153,13 +153,19 @@ Unsuspend account. Re-enables everything.
 
 **Response `data`**: Account object with `status: "active"`.
 
-#### `DELETE /accounts/{external_id}?backup=true`
+#### `DELETE /accounts/{external_id}`
 
-Terminate account. Default: soft delete (keep backups).
+Terminate account. **Destructive and irreversible**: every website owned by the
+account has its database dropped and its files deleted, then the Linux user and
+its whole home directory are removed.
 
-| Query param | Default | Notes |
-|-------------|---------|-------|
-| `backup` | `true` | `false` = hard delete |
+Takes no query parameters. There is no soft-delete mode -- an earlier draft of
+this document described a `backup` parameter that the API never implemented, so
+callers that sent it got a full teardown while believing data was kept.
+
+Backups already written under `/var/backups/opanel` are outside the home
+directory and survive, but only if backups were configured and had run. Do not
+treat them as a rollback path for terminate.
 
 **Response `data`**: `{"terminated": true}`
 
@@ -249,8 +255,13 @@ Generate one-time SSO link. Token expires in 60 seconds.
 4. Set account `status = "active"`.
 
 ### Terminate
-- **Soft** (default): disable user, remove vhost config, keep home dir + backups.
-- **Hard** (`backup=false`): drop DB, delete home dir, remove all configs.
+Full teardown, always. For each website owned by the account: drop its MariaDB
+database and user, remove the vhost, delete the document root. Then delete the
+panel user, the Linux/SFTP user, its crontab and `/home/<user>` entirely.
+
+To stop service without destroying data, use **Suspend** instead -- that
+disables the user, ends open sessions and takes the vhost down while leaving
+files and databases in place.
 
 ### ChangePassword
 - Update `User.hashed_password`.
