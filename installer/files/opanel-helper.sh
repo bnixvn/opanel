@@ -1189,14 +1189,15 @@ After=clamav-daemon.service
 Wants=clamav-daemon.service
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+# `maldet --monitor` stays in the foreground for as long as it watches, so it
+# is a simple service, not a oneshot. As a oneshot systemd waited for it to
+# exit: first killing it at the 120s timeout on a busy host and marking the
+# unit failed, then -- with the timeout lifted -- sitting in "activating"
+# forever, which is_active reports as not running. Either way the panel's
+# real-time status was wrong while the watcher itself was fine.
+Type=simple
 ExecStart=/usr/local/sbin/maldet --monitor /home
 ExecStop=/usr/local/sbin/maldet --monitor stop
-# Placing an inotify watch on every file under /home outlasts any fixed timeout
-# on a busy host: at 120s systemd killed the unit mid-setup and left it failed,
-# while the panel went on reporting real-time protection as on.
-TimeoutStartSec=0
 Restart=on-failure
 RestartSec=30
 
