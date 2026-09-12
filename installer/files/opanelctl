@@ -323,7 +323,13 @@ try:
                 getattr(website, "document_root", "public_html") or "public_html",
                 website.linux_user,
             )
-        site_users.fix_site_permissions(website.root_path, website.linux_user)
+        try:
+            site_users.fix_site_permissions(website.root_path, website.linux_user)
+        except ValueError as exc:
+            # A row whose root_path predates the per-site Linux user layout has
+            # no owner to derive. Say so and carry on -- one unattributable site
+            # must not stop the other 179 from being repaired.
+            print(f"  skipped {website.domain}: {exc}")
         app_type = website.app_type or "wordpress"
         runtime_php_version = website.php_version if app_type in {"wordpress", "php"} else None
         result = waf.sync_website_rules(website)
