@@ -1037,7 +1037,8 @@ def restore_php_config_defaults(payload: PhpConfigRestore, current_user: User = 
 
 @router.get("/php-versions")
 def get_php_versions(current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.admin)
+    # Every user needs this to pick a PHP version for their own site, so it is
+    # not admin-only. Installing a version below still is.
     return {
         "installed": php.list_installed_php(),
         "supported": list(php.SUPPORTED_PHP_VERSIONS),

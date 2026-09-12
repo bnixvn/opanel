@@ -21,12 +21,6 @@ import './file-manager.css';
 
 const API = import.meta.env.VITE_API_URL || '/api';
 const DEFAULT_SERVICE_NAMES = ['opanel-api', 'nginx', 'php8.3-fpm', 'php8.4-fpm', 'mariadb', 'redis-server'];
-const HTTP_FLOOD_DEFAULTS = {
-  access_limit_requests: 100,
-  access_limit_window: 10,
-  access_limit_burst: 100,
-  connection_limit: 60,
-};
 const PHP_VERSION_ORDER = ['7.4', '8.1', '8.2', '8.3', '8.4', '8.5'];
 const NGINX_REWRITE_MODES = [
   { value: 'none', label: 'None / static PHP' },
@@ -75,6 +69,12 @@ function routeForPage(pageName) {
   return PAGE_ROUTES[pageName] || PAGE_ROUTES.dashboard;
 }
 
+function phpVersionOptions(installed = [], current = '') {
+  const list = sortPhpVersions(installed);
+  if (current && !list.includes(current)) return sortPhpVersions([...list, current]);
+  return list;
+}
+
 function sortPhpVersions(versions = []) {
   return [...versions].sort((a, b) => {
     const ai = PHP_VERSION_ORDER.indexOf(a);
@@ -82,18 +82,6 @@ function sortPhpVersions(versions = []) {
     if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
     return String(a).localeCompare(String(b), undefined, { numeric: true });
   });
-}
-
-function normalizeHttpFloodConfig(config = {}) {
-  let value = config;
-  if (typeof value === 'string') {
-    try { value = value.trim() ? JSON.parse(value) : {}; } catch { value = {}; }
-  }
-  if (!value || typeof value !== 'object') value = {};
-  return Object.fromEntries(Object.entries(HTTP_FLOOD_DEFAULTS).map(([key, fallback]) => {
-    const number = value[key] === '' ? NaN : Number(value[key]);
-    return [key, Number.isFinite(number) ? number : fallback];
-  }));
 }
 
 function websiteConfigForm(site = {}) {
@@ -402,7 +390,7 @@ function App() {
   const [editingUser, setEditingUser] = useState(null);
   const [editingUserForm, setEditingUserForm] = useState({ email: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
   const [phpConfig, setPhpConfig] = useState({ php_version: '8.4', display_errors: 'Off', max_execution_time: 300, max_input_time: 600, max_input_vars: 10000, memory_limit: '1024M', post_max_size: '1024M', upload_max_filesize: '1024M', opcache_enable: true });
-  const [phpVersions, setPhpVersions] = useState({ installed: ['8.3', '8.4'], supported: ['7.4', '8.1', '8.2', '8.3', '8.4', '8.5'] });
+  const [phpVersions, setPhpVersions] = useState({ installed: [], supported: [] });
   const [phpTuning, setPhpTuning] = useState(null);
   const [firewallStatus, setFirewallStatus] = useState(null);
   const [firewallPort, setFirewallPort] = useState('80');
@@ -426,7 +414,6 @@ function App() {
   const [wafAccessLogs, setWafAccessLogs] = useState({ entries: [], total: 0, domains: [], limit: 50, offset: 0, paths: {} });
   const [wafAccessFilters, setWafAccessFilters] = useState({ domain: '', verdict: '', q: '', limit: 50, offset: 0 });
   const [wafAccessAutoRefresh, setWafAccessAutoRefresh] = useState(5);
-  const [httpFloodForm, setHttpFloodForm] = useState({ http_flood_enabled: false, ...HTTP_FLOOD_DEFAULTS });
   const [assignUserId, setAssignUserId] = useState('');
   const [assignWebsiteId, setAssignWebsiteId] = useState('');
   const [twoFactorStatus, setTwoFactorStatus] = useState(null);
@@ -870,7 +857,7 @@ function App() {
       if (!selectedWebsiteId && siteData[0]) setSelectedWebsiteId(String(siteData[0].id));
     }
     if (dbData) setDatabases(dbData);
-    if (refreshedUser?.role === 'admin') loadPhpVersions();
+    loadPhpVersions();
   }
 
   async function loadUsers() {
@@ -2612,7 +2599,6 @@ function App() {
   async function loadWebsiteWafConfig(websiteId = selectedWafWebsiteId, showLoading = true) {
     if (!websiteId) {
       setWafSiteConfig(null);
-      setHttpFloodForm({ http_flood_enabled: false, ...HTTP_FLOOD_DEFAULTS });
       return;
     }
     const data = await request(`/waf/websites/${websiteId}`, {}, showLoading ? 'Loading website WAF...' : '');
@@ -2621,7 +2607,6 @@ function App() {
       setWafSiteConfig(data);
       setWafCustomRules(data.custom_rules || '');
       setWafBotExtra((data.bot_extra || []).join('\n'));
-      setHttpFloodForm({ http_flood_enabled: !!data.http_flood_enabled, ...normalizeHttpFloodConfig(data.http_flood_config) });
     }
   }
 
@@ -2682,24 +2667,6 @@ function App() {
       setNotice(data.message || 'Bad bot list saved.');
       if (selectedWafWebsiteId) await loadWebsiteWafConfig(selectedWafWebsiteId, false);
     }
-  }
-
-  async function saveWebsiteHttpFlood() {
-    if (!selectedWafWebsiteId || !wafSiteConfig) return;
-    const config = normalizeHttpFloodConfig(httpFloodForm);
-    const data = await request(`/websites/${selectedWafWebsiteId}/http-flood`, {
-      method: 'PATCH',
-      body: JSON.stringify({ http_flood_enabled: !!httpFloodForm.http_flood_enabled, ...config }),
-    }, 'Saving HTTP Flood settings...');
-    if (data) {
-      setNotice(`HTTP Flood settings saved for ${data.domain}.`);
-      await refreshAll();
-      await loadWebsiteWafConfig(selectedWafWebsiteId, false);
-    }
-  }
-
-  function setWafAccessFilter(key, value) {
-    setWafAccessFilters(prev => ({ ...prev, [key]: value, offset: 0 }));
   }
 
   async function loadWafAccessLogs(nextFilters = wafAccessFilters, showLoading = true) {
@@ -3225,7 +3192,7 @@ function App() {
           onChange={e => setWebsiteSettingsForm(prev => ({ ...prev, php_version: e.target.value }))}
           disabled={!!loading}
         >
-          {phpVersions.installed.map(v => <option key={v} value={v}>PHP {v}</option>)}
+          {phpVersionOptions(phpVersions.installed, websiteSettingsForm.php_version).map(v => <option key={v} value={v}>PHP {v}</option>)}
         </select></label>}
         <label><span>Webserver rewrite</span><select
           value={rewriteDisabled ? (selectedAppType === 'wordpress' ? 'front_controller' : 'none') : websiteSettingsForm.nginx_rewrite_mode}
@@ -3348,7 +3315,7 @@ function App() {
             <option value="php">PHP</option>
           </select>
           <select value={phpVersion} onChange={e => setPhpVersion(e.target.value)}>
-            {phpVersions.installed.map(v => <option key={v} value={v}>PHP {v}</option>)}
+            {phpVersionOptions(phpVersions.installed, phpVersion).map(v => <option key={v} value={v}>PHP {v}</option>)}
           </select>
           {wpFieldsEnabled && <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="admin@domain.com" />}
           {wpFieldsEnabled && <input value={wpAdminUser} onChange={e => setWpAdminUser(e.target.value)} placeholder="WP admin user" />}
@@ -3428,7 +3395,6 @@ function App() {
               <span>PHP <strong>{site.php_version}</strong></span>
               {site.app_type === 'php' && site.nginx_rewrite_mode && site.nginx_rewrite_mode !== 'none' && <span>Rewrite <strong>{site.nginx_rewrite_mode}</strong></span>}
               {site.waf_enabled && <span className="badge ok">WAF</span>}
-              {site.http_flood_enabled && <span className="badge ok">HTTP Flood</span>}
               {(site.aliases || []).length > 0 && <span>Domains <strong>{(site.aliases || []).length + 1}</strong></span>}
             </div>
             <div className="site-actions" aria-label={`Website actions for ${site.domain}`}>
@@ -3993,7 +3959,7 @@ function App() {
       </div>
       <div className="user-create-card">
         <label><span>PHP version</span><select value={phpConfig.php_version} onChange={e => { const v = e.target.value; setPhpConfig(prev => ({ ...prev, php_version: v })); loadPhpConfig(v); }}>
-          {phpVersions.installed.map(v => <option key={v} value={v}>PHP {v}</option>)}
+          {phpVersionOptions(phpVersions.installed, phpConfig.php_version).map(v => <option key={v} value={v}>PHP {v}</option>)}
         </select></label>
         <label><span>display_errors</span><select value={phpConfig.display_errors} onChange={e => setPhpConfig(prev => ({ ...prev, display_errors: e.target.value }))}>
           <option value="Off">Off (production)</option><option value="On">On (debug)</option>
@@ -4163,7 +4129,7 @@ function App() {
 
         <section className="section">
           <div className="section-title">
-            <div><h2>Websites</h2><p className="hint">Open a website to configure its rules, bad bots and flood limits.</p></div>
+            <div><h2>Websites</h2><p className="hint">Open a website to configure its rules and bad bots.</p></div>
           </div>
           {websites.length === 0
             ? <EmptyState icon={Globe} message="No websites yet." />
@@ -4173,7 +4139,6 @@ function App() {
                   <span className="waf-site-domain">{site.domain}</span>
                   <span className="waf-site-badges">
                     <span className={site.waf_enabled ? 'badge ok' : 'badge'}>{site.waf_enabled ? 'WAF on' : 'WAF off'}</span>
-                    <span className={site.http_flood_enabled ? 'badge ok' : 'badge'}>{site.http_flood_enabled ? 'Flood on' : 'Flood off'}</span>
                   </span>
                   <span className="waf-site-open">Configure</span>
                 </button>)}
@@ -4221,24 +4186,6 @@ function App() {
               spellCheck={false} placeholder={"ScrapyBot\nSomeOtherBot"} />
           </label>
           <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}><Shield size={14}/> Save bad bot config</button></div>
-        </section>
-
-        <section className="section http-flood-panel">
-          <div className="section-title">
-            <h2>HTTP Flood</h2>
-            <span className={httpFloodForm.http_flood_enabled ? 'badge ok' : 'badge'}>{httpFloodForm.http_flood_enabled ? 'Enabled' : 'Disabled'}</span>
-          </div>
-          <label className="schedule-toggle http-flood-toggle">
-            <input type="checkbox" checked={!!httpFloodForm.http_flood_enabled} onChange={e => setHttpFloodForm(prev => ({ ...prev, http_flood_enabled: e.target.checked }))} />
-            Enabled
-          </label>
-          <div className="http-flood-grid">
-            <label><span>Requests</span><input type="number" min="1" max="100000" value={httpFloodForm.access_limit_requests} onChange={e => setHttpFloodForm(prev => ({ ...prev, access_limit_requests: e.target.value }))} /></label>
-            <label><span>Window (sec)</span><input type="number" min="1" max="3600" value={httpFloodForm.access_limit_window} onChange={e => setHttpFloodForm(prev => ({ ...prev, access_limit_window: e.target.value }))} /></label>
-            <label><span>Burst</span><input type="number" min="0" max="100000" value={httpFloodForm.access_limit_burst} onChange={e => setHttpFloodForm(prev => ({ ...prev, access_limit_burst: e.target.value }))} /></label>
-            <label><span>Connections/IP</span><input type="number" min="1" max="10000" value={httpFloodForm.connection_limit} onChange={e => setHttpFloodForm(prev => ({ ...prev, connection_limit: e.target.value }))} /></label>
-            <button disabled={!!loading} onClick={saveWebsiteHttpFlood}><Shield size={14}/> Save HTTP Flood</button>
-          </div>
         </section>
 
         <section className="section waf-rules-grid">
