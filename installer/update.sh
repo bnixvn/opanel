@@ -1181,7 +1181,7 @@ fi
 # which systemd either killed at the start timeout or left in "activating"
 # forever. Either way the watcher was not running while the panel said it was.
 # Rewrite and restart it here for boxes that have the feature enabled.
-if [[ -f /etc/systemd/system/opanel-maldet-monitor.service ]]    && grep -q '^Type=oneshot' /etc/systemd/system/opanel-maldet-monitor.service    && grep -qE '"malware_realtime_enabled"[[:space:]]*:[[:space:]]*true' /var/lib/opanel/panel-settings.json 2>/dev/null; then
+if [[ -f /etc/systemd/system/opanel-maldet-monitor.service ]]    && ! grep -q '^ExecStartPre=' /etc/systemd/system/opanel-maldet-monitor.service    && grep -qE '"malware_realtime_enabled"[[:space:]]*:[[:space:]]*true' /var/lib/opanel/panel-settings.json 2>/dev/null; then
   log "Repairing the real-time malware monitor service"
   systemctl stop opanel-maldet-monitor.service >/dev/null 2>&1 || true
   systemctl reset-failed opanel-maldet-monitor.service >/dev/null 2>&1 || true
