@@ -1,10 +1,14 @@
 """Panel entrypoint.
 
-Runs the API over HTTPS by default, picking a certificate per requested
-hostname so any site that already has SSL can also reach the panel on the panel
-port. Falls back, in order: the SNI match, the configured/default certificate,
-then plain HTTP. The panel coming up matters more than the panel coming up
-encrypted -- it is the tool used to repair the box.
+Runs the API over HTTPS, picking a certificate per requested hostname so any
+site that already has SSL can also reach the panel on the panel port. Falls
+back, in order: the SNI match, then the configured/default certificate.
+
+If neither works the port still answers -- the panel is the tool used to repair
+the box, so going dark would be its own outage -- but it answers with the
+recovery page in app/core/tls_degraded.py and nothing else. It does not serve
+the panel over plain HTTP: cookie flags follow the request scheme, so that mode
+put admin session cookies on the wire unencrypted.
 """
 
 from __future__ import annotations
@@ -12,6 +16,8 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import ssl
+from pathlib import Path
 
 import uvicorn
 
@@ -75,49 +81,81 @@ def listen_socket(host: str, port: int) -> socket.socket:
     return sock
 
 
-def build_config() -> uvicorn.Config:
-    host = _bindable_host(os.environ.get("PANEL_BIND_HOST", "0.0.0.0"))
-    port = int(os.environ.get("PANEL_PORT", "2222"))
-    kwargs = dict(
-        app="app.main:app",
-        host=host,
-        port=port,
-        # Only the loopback reverse proxy may set X-Forwarded-*; a direct hit on
-        # the panel port cannot spoof the audit log IP or the rate-limit key.
-        proxy_headers=True,
-        forwarded_allow_ips="127.0.0.1",
-    )
+def usable_cert_pair() -> tuple[Path, Path] | None:
+    """The certificate to start with, or None if TLS cannot come up.
+
+    uvicorn's Config.load() both builds the SSL context and imports the ASGI
+    app, so letting it decide would file an application import error as a
+    certificate problem and hide a real bug behind the recovery page. Prove the
+    certificate loads here, and let an app that will not import crash loudly.
+    """
     pair = tls.default_cert_pair(
         os.environ.get("PANEL_SSL_CERT", ""),
         os.environ.get("PANEL_SSL_KEY", ""),
     )
-    if pair is not None:
-        kwargs["ssl_certfile"] = str(pair[0])
-        kwargs["ssl_keyfile"] = str(pair[1])
-    return uvicorn.Config(**kwargs)
+    if pair is None:
+        # The installer seeds a self-signed default before the panel first
+        # starts, so an empty store is a broken box, not a supported mode.
+        logger.error("No usable panel certificate found in %s", tls.CERT_STORE)
+        return None
+    try:
+        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        context.load_cert_chain(str(pair[0]), str(pair[1]))
+    except (ssl.SSLError, OSError, ValueError):
+        logger.exception("Panel certificate %s could not be loaded", pair[0])
+        return None
+    return pair
+
+
+def build_config(pair: tuple[Path, Path]) -> uvicorn.Config:
+    return uvicorn.Config(
+        app="app.main:app",
+        host=_bindable_host(os.environ.get("PANEL_BIND_HOST", "0.0.0.0")),
+        port=int(os.environ.get("PANEL_PORT", "2222")),
+        # Only the loopback reverse proxy may set X-Forwarded-*; a direct hit on
+        # the panel port cannot spoof the audit log IP or the rate-limit key.
+        proxy_headers=True,
+        forwarded_allow_ips="127.0.0.1",
+        ssl_certfile=str(pair[0]),
+        ssl_keyfile=str(pair[1]),
+    )
+
+
+def degraded_config() -> uvicorn.Config:
+    """Plain HTTP, but serving only the "TLS is broken" page.
+
+    The port has to keep answering or the operator loses the one screen that
+    tells them what went wrong. It must not keep serving the panel: cookie flags
+    follow the request scheme, so over HTTP the session and CSRF cookies go out
+    without Secure and an admin login crosses the network in clear text.
+    """
+    config = uvicorn.Config(
+        app="app.core.tls_degraded:app",
+        host=_bindable_host(os.environ.get("PANEL_BIND_HOST", "0.0.0.0")),
+        port=int(os.environ.get("PANEL_PORT", "2222")),
+        proxy_headers=True,
+        forwarded_allow_ips="127.0.0.1",
+    )
+    config.load()
+    return config
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    config = build_config()
-    try:
-        config.load()
-    except Exception:
-        logger.exception("TLS setup failed; retrying without HTTPS so the panel stays reachable")
-        config = uvicorn.Config(
-            app="app.main:app",
-            host=_bindable_host(os.environ.get("PANEL_BIND_HOST", "0.0.0.0")),
-            port=int(os.environ.get("PANEL_PORT", "2222")),
-            proxy_headers=True,
-            forwarded_allow_ips="127.0.0.1",
-        )
-        config.load()
+    pair = usable_cert_pair()
 
-    if getattr(config, "ssl", None) is not None:
+    if pair is None:
+        config = degraded_config()
+        logger.error(
+            "Panel is serving the TLS recovery page only. Sign-in stays disabled "
+            "until a certificate loads; run `opanel-helper panel-cert-sync` and "
+            "restart opanel-api."
+        )
+    else:
+        config = build_config(pair)
+        config.load()
         config.ssl.sni_callback = tls.SniResolver()
         logger.info("Panel listening with HTTPS; per-domain certificates from %s", tls.CERT_STORE)
-    else:
-        logger.warning("Panel listening WITHOUT HTTPS (no usable certificate found)")
 
     sock = listen_socket(
         _bindable_host(os.environ.get("PANEL_BIND_HOST", "0.0.0.0")),
