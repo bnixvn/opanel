@@ -264,8 +264,8 @@ def test_laravel_without_ssl_still_gets_a_vhost_rewrite_block():
     assert "RewriteRule ^(.*)$ /index.php [QSA,L]" in _vhost_scope(rendered)
 
 
-def test_a_flat_document_root_keeps_its_rules_inside_the_context():
-    """Sites whose docroot is the site root are unaffected by the Laravel fix."""
+def test_a_flat_document_root_also_gets_its_rules_at_vhost_scope():
+    """Context-scope rules broke !-f for flat docroots too, not just nested ones."""
     rendered = openlitespeed.render_vhost(
         "example.test",
         "/home/siteuser/example.test",
@@ -274,5 +274,17 @@ def test_a_flat_document_root_keeps_its_rules_inside_the_context():
         rewrite_mode="front_controller",
     )
     assert "docRoot                   /home/siteuser/example.test/public_html" in rendered
-    assert "REQUEST_FILENAME" in _context_block(rendered)
-    assert "REQUEST_FILENAME" not in _vhost_scope(rendered)
+    assert "REQUEST_FILENAME" not in _context_block(rendered)
+    assert "RewriteRule ^(.*)$ /index.php [QSA,L]" in _vhost_scope(rendered)
+
+
+def test_rewrite_mode_none_emits_no_front_controller_rules():
+    rendered = openlitespeed.render_vhost(
+        "example.test",
+        "/home/siteuser/example.test",
+        app_type="php",
+        php_version="8.4",
+        rewrite_mode="none",
+        ssl_enabled=False,
+    )
+    assert "REQUEST_FILENAME" not in rendered

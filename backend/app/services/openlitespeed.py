@@ -352,50 +352,9 @@ def validate_full_config(content: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 # Rewrite rules per mode
 # ---------------------------------------------------------------------------
-REWRITE_RULES = {
-    "none": "",
-    "front_controller": (
-        "rewrite {\n"
-        "    enable              1\n"
-        "    rewriteRules        <<<END_RULES\n"
-        "RewriteCond %{REQUEST_FILENAME} !-f\n"
-        "RewriteCond %{REQUEST_FILENAME} !-d\n"
-        "RewriteRule ^(.*)$ index.php [QSA,L]\n"
-        "END_RULES\n"
-        "}\n"
-    ),
-    "laravel": (
-        "rewrite {\n"
-        "    enable              1\n"
-        "    rewriteRules        <<<END_RULES\n"
-        "RewriteCond %{REQUEST_FILENAME} !-f\n"
-        "RewriteCond %{REQUEST_FILENAME} !-d\n"
-        "RewriteRule ^(.*)$ index.php [QSA,L]\n"
-        "END_RULES\n"
-        "}\n"
-    ),
-    "codeigniter": (
-        "rewrite {\n"
-        "    enable              1\n"
-        "    rewriteRules        <<<END_RULES\n"
-        "RewriteCond %{REQUEST_FILENAME} !-f\n"
-        "RewriteCond %{REQUEST_FILENAME} !-d\n"
-        "RewriteCond $1 !^(index\\.php)\n"
-        "RewriteRule ^(.*)$ index.php/$1 [QSA,L]\n"
-        "END_RULES\n"
-        "}\n"
-    ),
-    "seohburl": (
-        "rewrite {\n"
-        "    enable              1\n"
-        "    rewriteRules        <<<END_RULES\n"
-        "RewriteCond %{REQUEST_FILENAME} !-f\n"
-        "RewriteCond %{REQUEST_FILENAME} !-d\n"
-        "RewriteRule ^([^?]*) index.php?_url_=$1 [QSA,L]\n"
-        "END_RULES\n"
-        "}\n"
-    ),
-}
+# Kept for callers that still read it; the renderer no longer emits context-scope
+# rewrites, see REWRITE_RULE_LINES and _build_context.
+REWRITE_RULES = {mode: "" for mode in ALLOWED_REWRITE_MODES}
 
 # The same rules as bare lines, for emitting at vhost scope instead of inside
 # `context /`.  Inside a context, LiteSpeed fails to resolve %{REQUEST_FILENAME}
@@ -471,16 +430,12 @@ def _build_context(
         lsphp_path = _lsphp_binary(checked_php)
         lsphp_socket = lsphp_socket_override or f"/tmp/lshttpd/{lsphp_app}.sock"
 
-    # A document root below the site root (laravel/codeigniter land on
-    # public_html/public) breaks %{REQUEST_FILENAME} inside `context /`, so those
-    # rules have to be emitted at vhost scope instead.
-    nested_doc_root = "/" in safe_doc_root.strip("/")
-    if nested_doc_root and checked_rewrite != "none":
-        rewrite_block = ""
-        vhost_rewrite_rules = REWRITE_RULE_LINES.get(checked_rewrite, "")
-    else:
-        rewrite_block = REWRITE_RULES.get(checked_rewrite, "")
-        vhost_rewrite_rules = ""
+    # Front-controller rules go at vhost scope, never inside `context /`.
+    # Inside the context LiteSpeed stops resolving %{REQUEST_FILENAME}, so the
+    # !-f guard never matches and every request -- real static files included --
+    # is handed to index.php. Measured on a live install for all four modes.
+    rewrite_block = ""
+    vhost_rewrite_rules = REWRITE_RULE_LINES.get(checked_rewrite, "")
     safe_http_flood_config = validate_http_flood_config(http_flood_config)
 
     return {
