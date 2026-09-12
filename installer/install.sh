@@ -65,6 +65,30 @@ fail() {
   exit 1
 }
 
+# Running the installer a second time recreates the environment file and wipes
+# opanel.db, taking every panel user, website record and setting with it. The
+# database is the one thing that cannot be rebuilt from the repo, so treat its
+# presence as proof the box is already installed and refuse to continue.
+if [[ -f "${APP_DIR}/backend/opanel.db" ]]; then
+  echo ""
+  echo "ERROR: OPanel is already installed on this server." >&2
+  echo "" >&2
+  echo "  Found: ${APP_DIR}/backend/opanel.db" >&2
+  echo "" >&2
+  echo "Running the installer again would erase that database and every panel" >&2
+  echo "user, website and setting recorded in it." >&2
+  echo "" >&2
+  echo "  To upgrade an existing install, run:  opanel-update" >&2
+  echo "" >&2
+  echo "If you really do want a clean install, back the database up and remove" >&2
+  echo "it first:" >&2
+  echo "" >&2
+  echo "  cp ${APP_DIR}/backend/opanel.db /root/opanel.db.bak" >&2
+  echo "  rm ${APP_DIR}/backend/opanel.db" >&2
+  echo "" >&2
+  exit 1
+fi
+
 host_has_global_ipv6() {
   # scope 00 in /proc/net/if_inet6 is a global address; loopback never counts.
   awk '$4 == "00" && $6 != "lo" { found = 1 } END { exit found ? 0 : 1 }' /proc/net/if_inet6 2>/dev/null
@@ -409,9 +433,6 @@ write_modsec_main_conf() {
     echo "Include ${modsec_dir}/opanel-custom.conf"
   } >"${modsec_dir}/opanel-main.conf"
 }
-
-# write_http_flood_nginx_conf removed Ã¢â‚¬â€ OLS handles per-vhost connection limits
-# via the openlitespeed.py service module (config written into vhost templates).
 
 ensure_ols_modsecurity_enabled() {
   [[ -f /usr/local/lsws/modules/mod_security.so ]] || return 1
