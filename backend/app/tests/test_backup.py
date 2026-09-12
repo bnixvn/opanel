@@ -34,6 +34,9 @@ def test_restore_backup_for_site_user_uses_privileged_restore(tmp_path, monkeypa
 
     monkeypatch.setattr(settings, "backup_root", str(backup_root))
     monkeypatch.setattr(backup.shell, "privileged", fake_privileged)
+    # restore_backup returns before the helper call when dry-run is on, and the
+    # suite leaves it on; this test is about the privileged path itself.
+    monkeypatch.setattr(settings, "command_dry_run", False)
     website = Website(
         domain="example.test",
         owner_id=1,
