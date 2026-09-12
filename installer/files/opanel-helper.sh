@@ -1859,31 +1859,6 @@ firewall_blocklist_apply() {
   ensure_firewall_rule_store >/dev/null 2>&1 || true
 }
 
-write_http_flood_ols_conf() {
-  ensure_ols_conf_dir_writable
-  # OLS handles HTTP flood protection at the server level via built-in
-  # connection/request throttling. No per-config-file zones are needed.
-  :
-}
-
-save_http_flood_zones() {
-  local tmp
-  ensure_ols_conf_dir_writable
-  tmp="$(mktemp)"
-  cat >"$tmp"
-  if [[ $(wc -c <"$tmp") -gt 131072 ]]; then
-    rm -f "$tmp"
-    deny "HTTP flood zones are too large"
-  fi
-  if file_has_nul "$tmp"; then
-    rm -f "$tmp"
-    deny "HTTP flood zones cannot contain NUL bytes"
-  fi
-  rm -f "$tmp"
-  restart_openlitespeed
-  echo "HTTP flood zones saved"
-}
-
 firewall_blocklist_status() {
   ensure_opanel_data_dir
   touch "$FIREWALL_BLOCKLIST_URLS"
@@ -3594,11 +3569,6 @@ case "$cmd" in
     [[ $# -eq 1 ]] || deny "usage: waf-site-save-defer <domain>"
     save_waf_site_rules "$1" defer
     ;;
-  http-flood-zones-save)
-    [[ $# -eq 0 ]] || deny "usage: http-flood-zones-save"
-    save_http_flood_zones
-    ;;
-
   # ---- PHP installation --------------------------------------------------
   php-install)
     [[ $# -eq 1 ]] || deny "usage: php-install <version>"
@@ -3877,31 +3847,23 @@ case "$cmd" in
 
   # ---- filesystem -------------------------------------------------------
   chown-www)
-    [[ $# -eq 1 ]] || deny "usage: chown-www <path>"
-    target=$(require_managed_path "$1")
-    chown -R www-data:www-data "$target"
-    find "$target" -type d -exec chmod 755 {} +
-    find "$target" -type d -exec chmod a-s {} + 2>/dev/null || true
-    find "$target" -type d -exec chmod -t {} + 2>/dev/null || true
-    find "$target" -type f -exec chmod 644 {} +
+    deny "chown-www has been removed: site files belong to the site's own Linux user, use fix-permissions"
     ;;
 
   fix-permissions)
     [[ $# -ge 1 && $# -le 2 ]] || deny "usage: fix-permissions <path> [site-user]"
     target=$(require_managed_path "$1" "${2:-}")
-    if [[ $# -eq 2 ]]; then
-      fix_site_tree "$target" "$2"
-      exit 0
+    site_user="${2:-}"
+    if [[ -z "$site_user" ]]; then
+      # Every managed site lives at /home/<site-user>/<domain>, so the owning
+      # user is the first path segment. Deriving it beats the old behaviour of
+      # falling back to www-data, which handed one shared account ownership of
+      # the tree and broke isolation between sites.
+      site_user="${target#${HOME_ROOT}/}"
+      site_user="${site_user%%/*}"
     fi
-    chown -R www-data:www-data "$target"
-    if command -v setfacl >/dev/null 2>&1; then
-      setfacl -Rb "$target" 2>/dev/null || true
-      find "$target" -type d -exec setfacl -k {} + 2>/dev/null || true
-    fi
-    find "$target" -type d -exec chmod 755 {} +
-    find "$target" -type d -exec chmod a-s {} + 2>/dev/null || true
-    find "$target" -type d -exec chmod -t {} + 2>/dev/null || true
-    find "$target" -type f -exec chmod 644 {} +
+    require_linux_user "$site_user"
+    fix_site_tree "$target" "$site_user"
     ;;
 
   site-path-fix)

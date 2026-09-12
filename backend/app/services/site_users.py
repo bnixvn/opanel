@@ -232,20 +232,24 @@ def move_site_runtime(old_root_path: str, new_root_path: str, linux_user: str, p
     return new_root_path
 
 
+def site_user_from_path(path: str | Path) -> Optional[str]:
+    """The owning Linux user of a managed site path (/home/<user>/<domain>/...)."""
+    if not is_managed_site_path(path):
+        return None
+    return Path(path).resolve().relative_to(HOME_ROOT.resolve()).parts[0]
+
+
 def fix_site_permissions(root_path: str, linux_user: Optional[str]) -> None:
-    if linux_user:
-        shell.privileged(
-            "fix-permissions",
-            helper_args=[root_path, validate_linux_user(linux_user)],
-            check=False,
-            fallback=["chown", "-R", f"{linux_user}:{linux_user}", root_path],
-        )
-        return
+    # Never fall back to www-data: giving one shared account ownership of a site
+    # tree lets any other site's PHP reach these files.
+    owner = validate_linux_user(linux_user) if linux_user else site_user_from_path(root_path)
+    if not owner:
+        raise ValueError(f"Cannot tell which site user owns {root_path}")
     shell.privileged(
         "fix-permissions",
-        helper_args=[root_path],
+        helper_args=[root_path, owner],
         check=False,
-        fallback=["chown", "-R", "www-data:www-data", root_path],
+        fallback=["chown", "-R", f"{owner}:{owner}", root_path],
     )
 
 
