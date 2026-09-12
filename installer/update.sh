@@ -1176,6 +1176,18 @@ if dpkg -s clamav-daemon >/dev/null 2>&1 \
     || echo "  (Linux Malware Detect install skipped; ClamAV scanning still works)"
 fi
 
+# The real-time monitor unit is only written when someone enables the feature,
+# so boxes that turned it on under an older build kept a Type=oneshot unit --
+# which systemd either killed at the start timeout or left in "activating"
+# forever. Either way the watcher was not running while the panel said it was.
+# Rewrite and restart it here for boxes that have the feature enabled.
+if [[ -f /etc/systemd/system/opanel-maldet-monitor.service ]]    && grep -q '^Type=oneshot' /etc/systemd/system/opanel-maldet-monitor.service    && grep -qE '"malware_realtime_enabled"[[:space:]]*:[[:space:]]*true' /var/lib/opanel/panel-settings.json 2>/dev/null; then
+  log "Repairing the real-time malware monitor service"
+  systemctl stop opanel-maldet-monitor.service >/dev/null 2>&1 || true
+  systemctl reset-failed opanel-maldet-monitor.service >/dev/null 2>&1 || true
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper maldet-monitor enable >/dev/null 2>&1     || echo "  (could not restart the real-time monitor; enable it again from the panel)"
+fi
+
 update_progress 62 "backend" "Checking the database schema"
 MIGRATE_RUNNER="python"
 id -u opanel >/dev/null 2>&1 && MIGRATE_RUNNER="sudo -u opanel $APP_DIR/backend/.venv/bin/python"

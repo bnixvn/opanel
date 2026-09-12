@@ -1196,6 +1196,12 @@ Wants=clamav-daemon.service
 # forever, which is_active reports as not running. Either way the panel's
 # real-time status was wrong while the watcher itself was fine.
 Type=simple
+# maldet refuses to start when another monitor is already running, and one
+# outlives the unit easily -- a killed or crashed start leaves the watcher
+# behind, after which every restart exits 1 with "existing monitor process
+# detected". Clear any stale one first; the leading - keeps a clean start from
+# failing when there is nothing to stop.
+ExecStartPre=-/usr/local/sbin/maldet --monitor stop
 ExecStart=/usr/local/sbin/maldet --monitor /home
 ExecStop=/usr/local/sbin/maldet --monitor stop
 Restart=on-failure
