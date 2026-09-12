@@ -885,6 +885,7 @@ def _process_archive(
     archive_name: str,
     db,
     credentials: list[str],
+    overwrite: bool = False,
 ) -> dict:
     """Import one DirectAdmin backup from its extracted staging directory."""
     root = _find_backup_root(extracted_dir)
@@ -920,6 +921,27 @@ def _process_archive(
         summary["warnings"].append("No domains found")
         _log(f"Skipping {archive_name}: no domains found")
         return summary
+
+    # Refuse to destroy live records unless the admin asked for it. Importing
+    # used to delete any panel user of the same name together with all of their
+    # websites, aliases and database records -- a customer already hosted here
+    # simply disappeared, and because the deletes were committed partway through
+    # the import, a later failure could not bring them back.
+    if not overwrite:
+        clashes = []
+        if db.query(User).filter(User.username == username).first():
+            clashes.append(f"panel user '{username}'")
+        taken = [
+            d for d in domains
+            if db.query(Website).filter(Website.domain == d).first()
+        ]
+        clashes.extend(f"website '{d}'" for d in taken)
+        if clashes:
+            raise DAImportError(
+                "Already on this server: " + ", ".join(clashes)
+                + ". Re-run with overwrite enabled to replace them, or rename the"
+                " DirectAdmin account first."
+            )
 
     # Remove any existing records for these domains / user
     for domain in domains:
@@ -1316,7 +1338,7 @@ def delete_da_backup(backup_file: str) -> str:
     return name
 
 
-def import_da_backup(backup_file: str, db) -> dict:
+def import_da_backup(backup_file: str, db, overwrite: bool = False) -> dict:
     """Import a single DirectAdmin backup archive.
 
     Extracts the archive, discovers DA user/domains, creates panel user,
@@ -1340,7 +1362,7 @@ def import_da_backup(backup_file: str, db) -> dict:
         _log(f"Extracting {archive_name} ...")
         _safe_extract_tar(path, stage)
 
-        summary = _process_archive(stage, archive_name, db, credentials)
+        summary = _process_archive(stage, archive_name, db, credentials, overwrite=overwrite)
 
         # Write credentials file alongside the backup
         cred_file = path.parent / f"{_strip_archive_suffix(archive_name)}-credentials.txt"

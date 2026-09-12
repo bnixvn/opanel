@@ -1193,7 +1193,12 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/maldet --monitor /home
 ExecStop=/usr/local/sbin/maldet --monitor stop
-TimeoutStartSec=120
+# Placing an inotify watch on every file under /home outlasts any fixed timeout
+# on a busy host: at 120s systemd killed the unit mid-setup and left it failed,
+# while the panel went on reporting real-time protection as on.
+TimeoutStartSec=0
+Restart=on-failure
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
@@ -1915,10 +1920,14 @@ firewall_blocklist_run() {
   old_rules="$(mktemp)"
   [[ -f "$FIREWALL_BLOCKLIST_WORK" ]] && cp "$FIREWALL_BLOCKLIST_WORK" "$old_work" || true
   [[ -f "${BLOCKLIST_DIR}/blocklist.set" ]] && cp "${BLOCKLIST_DIR}/blocklist.set" "$old_rules" || true
+  local fetch_failures=0
   while IFS= read -r url; do
     [[ -n "$url" ]] || continue
     require_url "$url"
-    curl -fsSL --connect-timeout 10 --max-time 30 "$url" >>"$fetched" || echo "WARNING: could not fetch $url" >&2
+    if ! curl -fsSL --connect-timeout 10 --max-time 30 "$url" >>"$fetched"; then
+      echo "WARNING: could not fetch $url" >&2
+      fetch_failures=$((fetch_failures + 1))
+    fi
     printf '\n' >>"$fetched"
   done < <(firewall_blocklist_urls)
   python3 - "$fetched" "$tmp" "$rules_tmp" <<'PY'
@@ -1960,10 +1969,19 @@ with open(sys.argv[3], "w", encoding="utf-8") as handle:
     for value in networks:
         handle.write(value + "\n")
 PY
+  # A transient DNS or network failure used to overwrite the stored list with
+  # an empty one and flush the ipset, so one bad night wiped every blocked
+  # network until the next successful run. Keep what we have instead.
+  local new_count old_count
+  new_count="$(sed '/^[[:space:]]*$/d' "$tmp" | wc -l | tr -d '[:space:]')"
+  old_count="$(sed '/^[[:space:]]*$/d' "$old_work" 2>/dev/null | wc -l | tr -d '[:space:]')"
+  if (( fetch_failures > 0 )) && (( new_count * 2 < old_count )); then
+    rm -f "$tmp" "$fetched" "$rules_tmp" "$old_work" "$old_rules"
+    deny "blocklist refresh aborted: ${fetch_failures} source(s) unreachable and the result (${new_count}) is far below the stored list (${old_count}); keeping the existing blocklist"
+  fi
   install -d -o root -g root -m 0755 "$BLOCKLIST_DIR"
   install -m 0644 -o root -g root "$rules_tmp" "${BLOCKLIST_DIR}/blocklist.set"
   install -m 0644 -o root -g root "$tmp" "$FIREWALL_BLOCKLIST_WORK"
-  firewall_blocklist_clear_rules
   firewall_blocklist_apply
   count="$(sed '/^[[:space:]]*$/d' "$FIREWALL_BLOCKLIST_WORK" | wc -l | tr -d '[:space:]')"
   firewall_blocklist_write_timer

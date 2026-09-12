@@ -4532,8 +4532,14 @@ function App() {
         {mwActive && mw.lmd_installed && <div className="info-box">
           <div className="malware-scan-head">
             <div>
-              <strong>Real-time protection <span className={mw.realtime_enabled ? 'badge ok' : 'badge'}>{mw.realtime_enabled ? 'On' : 'Off'}</span></strong>
+              <strong>Real-time protection {mw.realtime_enabled && !mw.realtime_active
+                ? <span className="badge danger">Not running</span>
+                : <span className={mw.realtime_enabled ? 'badge ok' : 'badge'}>{mw.realtime_enabled ? 'On' : 'Off'}</span>}</strong>
               <p className="hint">Watches every file under <code>/home</code> and scans new/changed files within seconds — instead of only on schedule. Costs RAM per watched file; hits are surfaced, not auto-quarantined.</p>
+              {mw.realtime_enabled && !mw.realtime_active && <p className="hint" style={{color:'var(--danger)'}}>
+                Turned on here, but the monitor service is not running — nothing is being watched right now.
+                Turn it off and on again to restart it.
+              </p>}
             </div>
             {mw.realtime_enabled
               ? <button className="danger" disabled={!!loading} onClick={() => toggleMalwareRealtime(false)}>Turn off</button>

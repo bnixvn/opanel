@@ -23,7 +23,7 @@ def test_import_da_backup_resolves_filename_from_da_backup_dir(tmp_path, monkeyp
         seen["archive"] = path
         seen["stage_exists"] = stage.exists()
 
-    def fake_process(stage, archive_name, db, credentials):
+    def fake_process(stage, archive_name, db, credentials, overwrite=False):
         credentials.append("panel-user: password")
         return {"archive": archive_name, "created_users": ["panel-user"]}
 
@@ -317,3 +317,33 @@ def test_helper_has_deferred_vhost_and_waf_subcommands_that_skip_the_reload():
     assert 'save_waf_site_rules "$1" defer' in helper
     waf_fn = helper.split("save_waf_site_rules() {", 1)[1].split("\n}", 1)[0]
     assert '[[ "$defer" == "defer" ]] || restart_openlitespeed' in waf_fn
+
+
+def test_import_refuses_to_delete_a_live_panel_user(tmp_path, monkeypatch):
+    """Importing used to delete a same-named user and all of their websites."""
+    from app.models.entities import User, Website
+    from app.core.database import SessionLocal
+    from app.core.security import hash_password
+
+    db = SessionLocal()
+    try:
+        existing = User(username="clash", email="clash@example.test",
+                        hashed_password=hash_password("PasswordLongEnough1"), role="end_user")
+        db.add(existing)
+        db.commit()
+
+        monkeypatch.setattr(da_import, "_find_backup_root", lambda d: d)
+        monkeypatch.setattr(da_import, "_extract_nested_domain_archives", lambda r: None)
+        monkeypatch.setattr(da_import, "_discover_domains", lambda r: ["clash.test"])
+        monkeypatch.setattr(da_import, "_relocate_da_subdomain_sources", lambda r, d: [])
+        monkeypatch.setattr(da_import, "_discover_username", lambda r, n: ("clash", "clash@example.test"))
+
+        with pytest.raises(da_import.DAImportError, match="Already on this server"):
+            da_import._process_archive(tmp_path, "clash.tar.gz", db, [])
+
+        assert db.query(User).filter(User.username == "clash").first() is not None
+    finally:
+        db.query(Website).filter(Website.domain == "clash.test").delete()
+        db.query(User).filter(User.username == "clash").delete()
+        db.commit()
+        db.close()

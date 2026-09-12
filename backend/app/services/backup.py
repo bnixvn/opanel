@@ -7,6 +7,7 @@ from pathlib import Path
 import posixpath
 import re
 import secrets
+import shutil
 import tarfile
 import tempfile
 from typing import List, Optional
@@ -563,6 +564,41 @@ def save_uploaded_user_backup(filename: str, source_file) -> str:
                 raise ValueError("Backup file is too large")
             buffer.write(chunk)
     return str(target)
+
+
+def archive_has_database(website: Website, backup_file: str) -> bool:
+    """Whether the archive carries a SQL dump at all."""
+    archive = backup_path(website.domain, backup_file)
+    with tarfile.open(archive, "r:gz") as tar:
+        return any(m.name.startswith("database/") and m.name.endswith(".sql") for m in tar.getmembers())
+
+
+def restore_backup_database(website: Website, backup_file: str, db_name: str) -> bool:
+    """Import the SQL dump held in a website backup.
+
+    restore_backup() deliberately skips the database/ member, so for a long time
+    the dump the backup had faithfully captured could not be put back from the
+    panel at all -- the only copy sat unreachable inside the .tar.gz.
+    """
+    archive = backup_path(website.domain, backup_file)
+    with tempfile.TemporaryDirectory(prefix="opanel-db-restore-") as tmp_dir:
+        sql_path = None
+        with tarfile.open(archive, "r:gz") as tar:
+            for member in tar.getmembers():
+                if not (member.isfile() and member.name.startswith("database/")
+                        and member.name.endswith(".sql")):
+                    continue
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    continue
+                sql_path = Path(tmp_dir) / "restore.sql"
+                with open(sql_path, "wb") as handle:
+                    shutil.copyfileobj(extracted, handle)
+                break
+        if sql_path is None:
+            return False
+        mariadb.import_database(db_name, str(sql_path))
+        return True
 
 
 def restore_backup(website: Website, backup_file: str) -> str:

@@ -45,8 +45,10 @@ vhssl {
 }
 {% endif %}
 
-{# One rewrite block only: LiteSpeed does not merge sibling blocks. #}
-{% if ssl_enabled or redirects %}
+{# One rewrite block only: LiteSpeed does not merge sibling blocks, so the
+   HTTPS redirect, the domain redirects and the LSCache markers all live here,
+   in that order. They were three separate blocks, which left the later ones
+   liable to be dropped. #}
 rewrite {
     enable                1
     rewriteRules          <<<END_RULES
@@ -55,9 +57,14 @@ RewriteCond %{SERVER_PORT} 80
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 {% endif %}{% for redirect in redirects %}RewriteCond %{HTTP_HOST} ^(www\.)?{{ redirect.source }}$ [NC]
 RewriteRule ^ {{ redirect.target }}%{REQUEST_URI} [R={{ redirect.code|default(301) }},L]
-{% endfor %}END_RULES
+{% endfor %}RewriteCond %{REQUEST_METHOD} POST
+RewriteRule .* - [E=Cache-Control:v=no-cache]
+RewriteCond %{QUERY_STRING} !=""
+RewriteRule .* - [E=Cache-Control:v=no-cache]
+RewriteCond %{HTTP_COOKIE} (comment_author|wordpress_logged_in|wp-postpass) [NC]
+RewriteRule .* - [E=Cache-Control:v=no-cache]
+END_RULES
 }
-{% endif %}
 
 {% if waf_enabled %}
 # OPANEL WAF BEGIN
@@ -148,17 +155,4 @@ END_HEADERS
 {{ http_flood_block }}
 {% endif %}
 
-{# LSCache for WordPress #}
-rewrite {
-    enable                1
-    rewriteRules          <<<END_RULES
-RewriteCond %{REQUEST_METHOD} POST
-RewriteRule .* - [E=Cache-Control:v=no-cache]
-RewriteCond %{QUERY_STRING} !=""
-RewriteRule .* - [E=Cache-Control:v=no-cache]
-RewriteCond %{HTTP_COOKIE} (comment_author|wordpress_logged_in|wp-postpass) [NC]
-RewriteRule .* - [E=Cache-Control:v=no-cache]
-RewriteRule ^wp-content/cache/ - [L]
-RewriteRule ^wp-admin/ - [L]
-END_RULES
-}
+{# LSCache markers are emitted in the single rewrite block near the top. #}

@@ -561,8 +561,28 @@ def restore_backup(payload: RestoreBackup, db: Session = Depends(get_db), curren
         runtime_php_version = website.php_version if (website.app_type or "wordpress") in {"wordpress", "php"} else None
         site_users.ensure_site_runtime(website.domain, website.root_path, runtime_php_version, website.linux_user)
     wordpress.fix_permissions(website.root_path, website.linux_user)
+    database_restored = False
+    database_note = ""
+    account = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
+    if payload.restore_database:
+        if not account:
+            database_note = "No database is linked to this website, so only files were restored."
+        else:
+            try:
+                database_restored = backup.restore_backup_database(
+                    website, payload.backup_file, account.db_name
+                )
+                if not database_restored:
+                    database_note = "This backup contains no SQL dump, so only files were restored."
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"Files restored, but the database import failed: {exc}"
+                ) from exc
+    elif backup.archive_has_database(website, payload.backup_file):
+        database_note = ("Files restored. This backup also holds a database dump, which was "
+                         "left alone -- re-run with restore_database to import it.")
     log_action(db, current_user.id, "restore", website.domain, payload.backup_file)
-    return {"restored_to": path}
+    return {"restored_to": path, "database_restored": database_restored, "note": database_note}
 
 
 @router.get("/backups/{website_id}")
@@ -682,12 +702,12 @@ def _remember_da_import_job(job: dict) -> dict:
     return _public_da_import_job(job)
 
 
-def _run_da_import_job(job_id: str, backup_file: str) -> None:
+def _run_da_import_job(job_id: str, backup_file: str, overwrite: bool = False) -> None:
     _set_da_import_job(job_id, status="running", started_at=datetime.utcnow().isoformat() + "Z",
                        message="Starting DirectAdmin import...")
     db = SessionLocal()
     try:
-        summary = da_import.import_da_backup(backup_file, db)
+        summary = da_import.import_da_backup(backup_file, db, overwrite=overwrite)
         imported = len(summary.get("imported_domains", []))
         subs = len(summary.get("subdomains", []))
         message = f"Imported {imported} domain(s)"
@@ -755,6 +775,7 @@ def delete_da_backup(backup_file: str, request: Request, db: Session = Depends(g
 
 @router.post("/da-import")
 def start_da_import(backup_file: str, request: Request, db: Session = Depends(get_db),
+                    overwrite: bool = False,
                     current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
     # Validate file exists
@@ -775,7 +796,7 @@ def start_da_import(backup_file: str, request: Request, db: Session = Depends(ge
         "finished_at": "",
     }
     _remember_da_import_job(job)
-    _da_import_job_executor.submit(_run_da_import_job, job_id, backup_file)
+    _da_import_job_executor.submit(_run_da_import_job, job_id, backup_file, overwrite)
     log_action(db, current_user.id, "start_da_import", backup_file, request=request)
     return _public_da_import_job(job)
 

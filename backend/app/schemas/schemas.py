@@ -935,6 +935,9 @@ class SftpBackupRun(BaseModel):
 class RestoreBackup(BaseModel):
     website_id: int
     backup_file: str
+    # Off by default: importing the dump overwrites whatever the live database
+    # holds now, which is rarely what someone restoring a few files wants.
+    restore_database: bool = False
 
 
 class PhpConfigUpdate(BaseModel):
