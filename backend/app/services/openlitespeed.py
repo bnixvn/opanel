@@ -397,6 +397,37 @@ REWRITE_RULES = {
     ),
 }
 
+# The same rules as bare lines, for emitting at vhost scope instead of inside
+# `context /`.  Inside a context, LiteSpeed fails to resolve %{REQUEST_FILENAME}
+# once the document root sits below the site root (Laravel's public_html/public),
+# so !-f never matches and *every* request — including real static assets — is
+# rewritten to index.php.  At vhost scope the file tests resolve correctly.
+# Targets are absolute here because there is no context prefix to resolve against.
+REWRITE_RULE_LINES = {
+    "none": "",
+    "front_controller": (
+        "RewriteCond %{REQUEST_FILENAME} !-f\n"
+        "RewriteCond %{REQUEST_FILENAME} !-d\n"
+        "RewriteRule ^(.*)$ /index.php [QSA,L]"
+    ),
+    "laravel": (
+        "RewriteCond %{REQUEST_FILENAME} !-f\n"
+        "RewriteCond %{REQUEST_FILENAME} !-d\n"
+        "RewriteRule ^(.*)$ /index.php [QSA,L]"
+    ),
+    "codeigniter": (
+        "RewriteCond %{REQUEST_FILENAME} !-f\n"
+        "RewriteCond %{REQUEST_FILENAME} !-d\n"
+        "RewriteCond $1 !^(index\\.php)\n"
+        "RewriteRule ^(.*)$ /index.php/$1 [QSA,L]"
+    ),
+    "seohburl": (
+        "RewriteCond %{REQUEST_FILENAME} !-f\n"
+        "RewriteCond %{REQUEST_FILENAME} !-d\n"
+        "RewriteRule ^([^?]*) /index.php?_url_=$1 [QSA,L]"
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Core rendering
@@ -440,7 +471,16 @@ def _build_context(
         lsphp_path = _lsphp_binary(checked_php)
         lsphp_socket = lsphp_socket_override or f"/tmp/lshttpd/{lsphp_app}.sock"
 
-    rewrite_block = REWRITE_RULES.get(checked_rewrite, "")
+    # A document root below the site root (laravel/codeigniter land on
+    # public_html/public) breaks %{REQUEST_FILENAME} inside `context /`, so those
+    # rules have to be emitted at vhost scope instead.
+    nested_doc_root = "/" in safe_doc_root.strip("/")
+    if nested_doc_root and checked_rewrite != "none":
+        rewrite_block = ""
+        vhost_rewrite_rules = REWRITE_RULE_LINES.get(checked_rewrite, "")
+    else:
+        rewrite_block = REWRITE_RULES.get(checked_rewrite, "")
+        vhost_rewrite_rules = ""
     safe_http_flood_config = validate_http_flood_config(http_flood_config)
 
     return {
@@ -454,6 +494,7 @@ def _build_context(
         "lsphp_socket": lsphp_socket,
         "rewrite_mode": checked_rewrite,
         "rewrite_block": rewrite_block,
+        "vhost_rewrite_rules": vhost_rewrite_rules,
         "custom_directives": "",
         "ssl_enabled": ssl_enabled,
         "has_ssl": has_ssl,

@@ -223,3 +223,56 @@ def test_update_waf_block_rerenders_existing_vhost_without_custom_directives(mon
     assert captured["kwargs"]["custom_directives"] == ""
     assert captured["kwargs"]["aliases"] == ["alias.test"]
     assert captured["kwargs"]["redirects"] == [{"source": "old.test", "target": "https://example.test", "code": 301}]
+
+
+def _context_block(rendered: str) -> str:
+    return rendered.split("context / {", 1)[1]
+
+
+def _vhost_scope(rendered: str) -> str:
+    return rendered.split("context / {", 1)[0]
+
+
+def test_laravel_front_controller_rules_live_at_vhost_scope_not_in_the_context():
+    """A nested document root breaks %{REQUEST_FILENAME} inside `context /`.
+
+    With the rules in the context, !-f never matched, so every request -- real
+    static assets included -- was rewritten to index.php and Laravel 404'd them.
+    """
+    rendered = openlitespeed.render_vhost(
+        "example.test",
+        "/home/siteuser/example.test",
+        app_type="php",
+        php_version="8.4",
+        rewrite_mode="laravel",
+    )
+    assert "docRoot                   /home/siteuser/example.test/public_html/public" in rendered
+    assert "REQUEST_FILENAME" not in _context_block(rendered)
+    assert "RewriteRule ^(.*)$ /index.php [QSA,L]" in _vhost_scope(rendered)
+
+
+def test_laravel_without_ssl_still_gets_a_vhost_rewrite_block():
+    """The vhost rewrite block used to be emitted only when SSL was on."""
+    rendered = openlitespeed.render_vhost(
+        "example.test",
+        "/home/siteuser/example.test",
+        app_type="php",
+        php_version="8.4",
+        rewrite_mode="laravel",
+        ssl_enabled=False,
+    )
+    assert "RewriteRule ^(.*)$ /index.php [QSA,L]" in _vhost_scope(rendered)
+
+
+def test_a_flat_document_root_keeps_its_rules_inside_the_context():
+    """Sites whose docroot is the site root are unaffected by the Laravel fix."""
+    rendered = openlitespeed.render_vhost(
+        "example.test",
+        "/home/siteuser/example.test",
+        app_type="php",
+        php_version="8.4",
+        rewrite_mode="front_controller",
+    )
+    assert "docRoot                   /home/siteuser/example.test/public_html" in rendered
+    assert "REQUEST_FILENAME" in _context_block(rendered)
+    assert "REQUEST_FILENAME" not in _vhost_scope(rendered)

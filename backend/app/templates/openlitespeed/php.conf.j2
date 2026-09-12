@@ -42,14 +42,15 @@ vhssl {
 }
 {% endif %}
 
-{% if ssl_enabled %}
+{% if ssl_enabled or vhost_rewrite_rules %}
 rewrite {
     enable                1
     rewriteRules          <<<END_RULES
-RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+{% if ssl_enabled %}RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
 RewriteCond %{SERVER_PORT} 80
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
-END_RULES
+{% endif %}{% if vhost_rewrite_rules %}{{ vhost_rewrite_rules }}
+{% endif %}END_RULES
 }
 {% endif %}
 
@@ -103,7 +104,7 @@ context / {
     allowOverride         all
 
 {% if lsphp_app %}
-{% if rewrite_mode != 'none' %}
+{% if rewrite_block %}
 {{ rewrite_block }}
 {% endif %}
 {% endif %}
