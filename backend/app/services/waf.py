@@ -36,8 +36,8 @@ DEFAULT_RULES = [
         "id": "php-path-traversal",
         "category": "PHP",
         "title": "Path traversal",
-        "description": "Blocks ../ and encoded traversal probes in URLs and query/form arguments.",
-        "rules": """SecRule REQUEST_URI|ARGS "@rx (?i)(?:\\.\\./|\\.\\.\\\\|%2e%2e%2f|%252e%252e%252f)" "id:1001302,phase:2,deny,status:403,log,msg:'opanel blocked PHP path traversal'"
+        "description": "Blocks ../ and encoded traversal, plus direct reads of /etc/passwd and /proc/self/environ, in the URL and in GET or POST arguments.",
+        "rules": r"""SecRule REQUEST_URI|ARGS "@rx (?i)(?:\.\./|\.\.\\|\.\.%2f|%2e%2e%2f|%252e%252e%252f|/etc/(?:passwd|shadow|hosts)\b|/proc/self/(?:environ|cmdline)\b)" "id:1001302,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked PHP path traversal'"
 """,
     },
     {
@@ -110,8 +110,8 @@ SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:40
         "id": "sql-injection",
         "category": "Injection",
         "title": "SQL injection",
-        "description": "Blocks classic SQL injection payloads in the URL and query string. Deliberately narrow: it looks for statement structure, not stray quotes.",
-        "rules": r"""SecRule REQUEST_URI|ARGS_GET "@rx (?i)(?:\bunion\b\s+(?:all\s+)?\bselect\b|\bselect\b[^;]{0,120}?\bfrom\s+information_schema\b|\b(?:sleep|benchmark|load_file|updatexml|extractvalue)\s*\(|\binto\s+(?:out|dump)file\b|\bor\b\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+|;\s*(?:drop|truncate|alter)\s+table\b)" "id:1001501,phase:2,deny,status:403,log,msg:'opanel blocked SQL injection attempt'"
+        "description": "Blocks SQL injection in the URL and in GET or POST arguments. Comments and padding are stripped first, so UN/**/ION and UNION(SELECT(1)) are caught too.",
+        "rules": r"""SecRule REQUEST_URI|ARGS "@rx (?i)(?:\bunion\b[\s(),]*(?:all[\s(),]*)?\bselect\b|\bselect\b.{0,120}?\bfrom\b[\s(]*information_schema\b|\b(?:sleep|benchmark|load_file|updatexml|extractvalue|pg_sleep)\b[\s(]*\(|\binto\s+(?:out|dump)file\b|\b(?:or|and)\s+(['\"]?)(\w+)\1\s*(?:=|<>|!=|\blike\b)\s*\1?\2\1?|\b(?:or|and)\s+\d+\s*(?:=|<>|!=|<|>)\s*\d+|;[\s(]*(?:drop|truncate|alter)\s+(?:table|database)\b)" "id:1001501,phase:2,t:none,t:urlDecodeUni,t:removeComments,t:compressWhitespace,deny,status:403,log,msg:'opanel blocked SQL injection attempt'"
 """,
     },
     {
@@ -120,15 +120,15 @@ SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:40
         "category": "Injection",
         "title": "Cross-site scripting",
         "description": "Blocks script tags, javascript: URLs and inline event handlers in the URL and query string.",
-        "rules": r"""SecRule REQUEST_URI|ARGS_GET "@rx (?i)(?:<\s*script[\s>]|<\s*/\s*script\s*>|javascript\s*:|vbscript\s*:|\bon(?:error|load|click|mouseover|focus|submit)\s*=|<\s*iframe[\s>]|<\s*svg[\s>]|document\s*\.\s*cookie)" "id:1001601,phase:2,deny,status:403,log,msg:'opanel blocked cross-site scripting attempt'"
+        "rules": r"""SecRule REQUEST_URI|ARGS_GET "@rx (?i)(?:<\s*script[\s>]|<\s*/\s*script\s*>|javascript\s*:|vbscript\s*:|\bon(?:error|load|click|mouseover|focus|submit)\s*=|<\s*iframe[\s>]|<\s*svg[\s>]|document\s*\.\s*cookie)" "id:1001601,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked cross-site scripting attempt'"
 """,
     },
     {
         "id": "command-injection",
         "category": "Injection",
         "title": "Command injection and PHP wrappers",
-        "description": "Blocks shell metacharacters followed by a command, and php:// data:// phar:// stream wrappers used for remote code execution.",
-        "rules": r"""SecRule REQUEST_URI|ARGS_GET "@rx (?i)(?:\b(?:php|data|expect|phar|zip|glob)://|[;|`]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh|python|perl)\b|\$\(\s*\w|\|\s*(?:sh|bash)\b)" "id:1001701,phase:2,deny,status:403,log,msg:'opanel blocked command injection attempt'"
+        "description": "Blocks shell metacharacters followed by a command, php:// data:// file:// stream wrappers, and ${jndi:} lookups, in the URL and in GET or POST arguments.",
+        "rules": r"""SecRule REQUEST_URI|ARGS "@rx (?i)(?:\b(?:php|data|expect|phar|zip|glob|file|gopher|dict)://|[;|`]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh|python|perl|chmod)\b|&&\s*\w|\|\|\s*\w|[\n\r]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh)\b|\$\(\s*\w|\|\s*(?:sh|bash)\b|\$\{\s*(?:jndi|env|sys|lower|upper|date)\s*:)" "id:1001701,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked command injection attempt'"
 """,
     },
 ]
