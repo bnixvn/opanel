@@ -395,3 +395,4 @@ label span em{font-style:normal;font-weight:600;font-size:11px;color:var(--text-
 /* PHP OPcache switch: the button carries the state, so it must line up with the
    inputs beside it rather than sit at the default control height. */
 .php-opcache-toggle button{width:100%;justify-content:flex-start}
+.waf-custom-readonly{margin:0;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}

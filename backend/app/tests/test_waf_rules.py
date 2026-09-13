@@ -74,8 +74,14 @@ def test_every_rule_declares_a_phase_and_an_action():
 # Defaults
 # --------------------------------------------------------------------------
 
-def test_injection_groups_are_opt_in():
-    assert waf._default_enabled_ids().isdisjoint({"sql-injection", "xss"})
+def test_sql_injection_is_on_by_default():
+    # Required on by the operator: it protects the databases behind every site,
+    # and it measured zero false positives over 149,078 real requests.
+    assert "sql-injection" in waf._default_enabled_ids()
+
+
+def test_xss_stays_opt_in():
+    assert "xss" not in waf._default_enabled_ids()
 
 
 def test_an_unsaved_selection_keeps_every_previously_shipped_group():
@@ -85,13 +91,13 @@ def test_an_unsaved_selection_keeps_every_previously_shipped_group():
     assert SHIPPED_BEFORE <= waf._parse_enabled_rule_ids('{"not": "a list"}')
 
 
-def test_an_unsaved_selection_renders_no_opt_in_rule():
+def test_an_unsaved_selection_renders_the_default_set():
     content = waf.render_site_rules("example.test", waf._parse_enabled_rule_ids(""))
 
-    assert "id:1001501" not in content   # sql-injection
-    assert "id:1001601" not in content   # xss
-    assert "id:1001401" in content       # credential files, on by default
-    assert "id:1001701" in content       # command injection, on by default
+    assert "id:1001401" in content       # credential files
+    assert "id:1001501" in content       # sql injection
+    assert "id:1001701" in content       # command injection
+    assert "id:1001601" not in content   # xss, still opt-in
 
 
 def test_an_admin_can_still_turn_the_opt_in_groups_on():
@@ -104,7 +110,8 @@ def test_an_admin_can_still_turn_the_opt_in_groups_on():
 def test_site_config_reports_the_real_default_not_a_hardcoded_true():
     definitions = {rule["id"]: rule for rule in waf.default_rule_definitions()}
 
-    assert definitions["sql-injection"]["enabled_default"] is False
+    assert definitions["xss"]["enabled_default"] is False
+    assert definitions["sql-injection"]["enabled_default"] is True
     assert definitions["generic-sensitive-files"]["enabled_default"] is True
 
 

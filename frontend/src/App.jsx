@@ -2855,7 +2855,7 @@ function App() {
   }, [isAuthenticated, page]);
 
   useEffect(() => {
-    if (!isAuthenticated || !isAdmin || page !== 'wafLogs') {
+    if (!isAuthenticated || page !== 'wafLogs') {
       wafAccessFiltersRef.current = wafAccessFilters;
       return undefined;
     }
@@ -2937,7 +2937,7 @@ function App() {
   }, [scanJob?.job_id, scanJob?.status]);
 
   useEffect(() => {
-    if (!isAuthenticated || !isAdmin || page !== 'wafLogs' || !wafAccessAutoRefresh) return undefined;
+    if (!isAuthenticated || page !== 'wafLogs' || !wafAccessAutoRefresh) return undefined;
     const timer = window.setInterval(() => {
       loadWafAccessLogs({ ...wafAccessFilters, offset: 0 }, false);
     }, wafAccessAutoRefresh * 1000);
@@ -2980,8 +2980,8 @@ function App() {
     ...(isAdmin ? [['malware', 'Malware Scanner', Search]] : []),
     ...(isAdmin ? [['php', 'PHP config', Code2]] : []),
     ...(isAdmin ? [['firewall', 'Firewall', Shield]] : []),
-    ...(isAdmin ? [['waf', 'WAF', Shield]] : []),
-    ...(isAdmin ? [['wafLogs', 'Access Logs', FileText]] : []),
+    ['waf', 'WAF', Shield],
+    ['wafLogs', 'Access Logs', FileText],
     ...(isAdmin ? [['updates', 'Updates', RefreshCw]] : []),
     ['services', 'Services Status', Server],
   ];
@@ -4094,7 +4094,6 @@ function App() {
   }
 
   function renderWaf() {
-    if (!isAdmin) return <section className="section"><h2>WAF</h2><p className="hint">No permission.</p></section>;
     const statusText = wafRules.status?.stdout || wafRules.status?.stderr || 'Click Refresh to load WAF status.';
     const selectedSite = websites.find(site => String(site.id) === String(selectedWafWebsiteId));
     const groupedRules = (wafSiteConfig?.default_rules || wafRules.default_rule_definitions || []).reduce((groups, rule) => {
@@ -4105,15 +4104,15 @@ function App() {
     }, {});
     return <>
       {!wafSiteConfig && <>
-        <section className="section">
+        {isAdmin && <section className="section">
           <div className="section-title">
             <div><h2>WAF</h2><p className="hint">Engine status. Rules are configured per website below.</p></div>
             <button disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> Refresh</button>
           </div>
           <div className="info-box firewall-status"><strong>Status</strong><pre>{statusText}</pre></div>
-        </section>
+        </section>}
 
-        <section className="section">
+        {isAdmin && <section className="section">
           <div className="section-title">
             <div>
               <h2>Global bad bot <span className="badge">{badBots.patterns.length}</span></h2>
@@ -4125,11 +4124,11 @@ function App() {
             spellCheck={false}
             placeholder={"AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider"} />
           <div className="actions"><button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> Save and apply to all websites</button></div>
-        </section>
+        </section>}
 
         <section className="section">
           <div className="section-title">
-            <div><h2>Websites</h2><p className="hint">Open a website to configure its rules and bad bots.</p></div>
+            <div><h2>{isAdmin ? 'Websites' : 'Your websites'}</h2><p className="hint">Open a website to configure its rules and bad bots.</p></div>
           </div>
           {websites.length === 0
             ? <EmptyState icon={Globe} message="No websites yet." />
@@ -4203,8 +4202,17 @@ function App() {
           </div>
           <div className="waf-rule-panel">
             <div className="section-title"><h2>Custom rules</h2></div>
-            <textarea className="code-editor" value={wafCustomRules} onChange={e => setWafCustomRules(e.target.value)} rows={14} spellCheck={false} placeholder="SecRule ..." />
-            <p className="hint">Saved into {wafSiteConfig.rules_file}</p>
+            {isAdmin
+              ? <>
+                  <textarea className="code-editor" value={wafCustomRules} onChange={e => setWafCustomRules(e.target.value)} rows={14} spellCheck={false} placeholder="SecRule ..." />
+                  <p className="hint">Saved into {wafSiteConfig.rules_file}</p>
+                </>
+              : <>
+                  {wafCustomRules
+                    ? <pre className="code-editor waf-custom-readonly">{wafCustomRules}</pre>
+                    : <p className="hint">No custom rules on this website.</p>}
+                  <p className="hint">Custom rules are written by an administrator. Everything else on this page is yours to change.</p>
+                </>}
             <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}>Save website WAF rules</button></div>
           </div>
         </section>
@@ -4213,7 +4221,8 @@ function App() {
   }
 
   function renderWafAccessLogs() {
-    if (!isAdmin) return <section className="section"><h2>Access Logs</h2><p className="hint">No permission.</p></section>;
+    // The API scopes every report to the caller's own domains, so an end user
+    // sees what was blocked on their sites and nothing from anyone else's.
     const entries = wafAccessLogs.entries || [];
     const total = Number(wafAccessLogs.total || 0);
     const limit = Number(wafAccessFilters.limit || wafAccessLogs.limit || 50);

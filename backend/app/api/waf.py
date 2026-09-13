@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.permissions import Role, ensure_role
+from app.core.permissions import Role, ensure_role, is_admin_role
 from app.models.entities import User, Website
 from app.services import openlitespeed, waf
 
@@ -32,11 +32,33 @@ def _require_admin(current_user: User) -> None:
     ensure_role(current_user.role, Role.admin)
 
 
+def _is_admin(current_user: User) -> bool:
+    # is_admin_role, not a string compare: it also maps the legacy super_admin.
+    return is_admin_role(current_user.role)
+
+
 def _website_or_404(db: Session, website_id: int) -> Website:
     website = db.query(Website).filter(Website.id == website_id).first()
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
     return website
+
+
+def _authorized_website(db: Session, website_id: int, current_user: User) -> Website:
+    """A site the caller may configure: their own, or anything for an admin."""
+    website = _website_or_404(db, website_id)
+    if website.owner_id != current_user.id:
+        ensure_role(current_user.role, Role.admin)
+    return website
+
+
+def _readable_domains(db: Session, current_user: User) -> list[str]:
+    """The domains whose logs this caller may read. Also the allow-list that
+    stops a `domain=` parameter reaching someone else's site."""
+    query = db.query(Website)
+    if not _is_admin(current_user):
+        query = query.filter(Website.owner_id == current_user.id)
+    return [website.domain for website in query.order_by(Website.domain.asc()).all()]
 
 
 @router.get("/status")
@@ -47,15 +69,17 @@ def get_waf_status(current_user: User = Depends(get_current_user)):
 
 @router.get("/rules")
 def get_waf_rules(current_user: User = Depends(get_current_user)):
-    _require_admin(current_user)
-    status = waf.status()
-    default_rules = waf.default_rules()
-    custom_rules = waf.custom_rules()
+    # Anyone may read the rule catalogue -- it is what the per-site checkboxes
+    # are drawn from. The engine status and the server-wide rule file stay
+    # admin-only: they describe the machine, not the caller's sites.
+    definitions = waf.default_rule_definitions()
+    if not _is_admin(current_user):
+        return {"default_rule_definitions": definitions}
     return {
-        "status": status.__dict__,
-        "default_rules": default_rules.stdout,
-        "default_rule_definitions": waf.default_rule_definitions(),
-        "custom_rules": custom_rules.stdout,
+        "status": waf.status().__dict__,
+        "default_rules": waf.default_rules().stdout,
+        "default_rule_definitions": definitions,
+        "custom_rules": waf.custom_rules().stdout,
     }
 
 
@@ -70,8 +94,7 @@ def get_waf_access_logs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
-    domains = [website.domain for website in db.query(Website).order_by(Website.domain.asc()).all()]
+    domains = _readable_domains(db, current_user)
     try:
         return waf.access_log_report(domains, domain=domain, verdict=verdict, query=q, limit=limit, offset=offset, lines=lines)
     except (RuntimeError, ValueError) as exc:
@@ -84,8 +107,7 @@ def clear_waf_access_logs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
-    domains = [website.domain for website in db.query(Website).order_by(Website.domain.asc()).all()]
+    domains = _readable_domains(db, current_user)
     try:
         result = waf.clear_access_logs(domains, domain=domain)
     except ValueError as exc:
@@ -97,20 +119,31 @@ def clear_waf_access_logs(
 
 @router.get("/websites/{website_id}")
 def get_website_waf(website_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    _require_admin(current_user)
-    website = _website_or_404(db, website_id)
+    website = _authorized_website(db, website_id, current_user)
     return waf.site_config(website)
 
 
 @router.put("/websites/{website_id}")
 def save_website_waf(payload: WebsiteWafRulesUpdate, website_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    _require_admin(current_user)
-    website = _website_or_404(db, website_id)
+    website = _authorized_website(db, website_id, current_user)
+    # Custom rules are raw ModSecurity config written into a file the web
+    # server includes. ModSecurity actions can run programs, and a rule that
+    # fails to parse can stop the server coming back up, so a site owner picks
+    # from the rule catalogue and never writes directives.
+    custom_rules = payload.custom_rules
+    if not _is_admin(current_user):
+        stored = waf.website_custom_rules(website)
+        if (custom_rules or "").strip() != stored.strip():
+            raise HTTPException(
+                status_code=403,
+                detail="Custom WAF rules can only be changed by an administrator.",
+            )
+        custom_rules = stored
     try:
         result = waf.save_website_config(
             website,
             payload.enabled_rule_ids,
-            payload.custom_rules,
+            custom_rules,
             bot_blocking_enabled=payload.bot_blocking_enabled,
             bot_extra=payload.bot_extra,
         )
@@ -133,7 +166,6 @@ def save_website_waf(payload: WebsiteWafRulesUpdate, website_id: int, db: Sessio
 
 @router.get("/bad-bots")
 def get_bad_bots(current_user: User = Depends(get_current_user)):
-    _require_admin(current_user)
     return {
         "patterns": waf.global_bad_bots(),
         "max_patterns": waf.MAX_BOT_PATTERNS,

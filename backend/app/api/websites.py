@@ -691,10 +691,9 @@ def reset_website_webserver_config(website_id: int, request: Request, db: Sessio
 
 @router.patch("/{website_id}/waf", response_model=WebsiteOut)
 def set_website_waf(website_id: int, payload: WebsiteWafUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.admin)
-    website = db.query(Website).filter(Website.id == website_id).first()
-    if not website:
-        raise HTTPException(status_code=404, detail="Website not found")
+    # A site owner runs their own WAF, including turning it off -- the blast
+    # radius of that is their site and nothing else.
+    website = _get_authorized_website(db, website_id, current_user)
     try:
         result = waf.sync_website_rules(website)
         if result.returncode != 0:

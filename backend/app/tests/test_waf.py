@@ -12,10 +12,10 @@ def test_default_rules_cover_the_app_stacks_plus_server_and_injection():
     assert {rule["category"] for rule in definitions} == {
         "Laravel", "PHP", "WordPress", "Server", "Injection",
     }
-    # Everything is on out of the box except the two injection groups, which an
-    # admin turns on per site -- see test_waf_rules.py for why.
+    # Everything is on out of the box except XSS, which stays opt-in because
+    # its predecessor was dropped on purpose -- see test_waf_rules.py.
     off = {rule["id"] for rule in definitions if not rule["enabled_default"]}
-    assert off == {"sql-injection", "xss"}
+    assert off == {"xss"}
 
 
 def test_legacy_heavy_rule_ids_are_mapped_or_ignored():

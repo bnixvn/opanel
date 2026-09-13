@@ -108,7 +108,6 @@ SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:40
     },
     {
         "id": "sql-injection",
-        "enabled_default": False,
         "category": "Injection",
         "title": "SQL injection",
         "description": "Blocks classic SQL injection payloads in the URL and query string. Deliberately narrow: it looks for statement structure, not stray quotes.",
