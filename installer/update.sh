@@ -1198,6 +1198,25 @@ if command -v iptables >/dev/null 2>&1    && iptables -L INPUT -n --line-numbers
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-enable >/dev/null 2>&1     || echo "  (could not reorder firewall chains; run Reload on the Firewall page)"
 fi
 
+# Deleting a website removed its vhost but left its WAF rules file behind, so
+# boxes accumulate one orphan per site ever deleted. The helper drops the file
+# with the vhost from now on; clear out what earlier deletes left.
+WAF_SITES_DIR="/usr/local/lsws/conf/opanel/waf/sites"
+OLS_VHOSTS_DIR_CLEAN="/usr/local/lsws/conf/opanel/vhosts"
+if [[ -d "$WAF_SITES_DIR" && -d "$OLS_VHOSTS_DIR_CLEAN" ]]; then
+  orphans=0
+  for rules_file in "$WAF_SITES_DIR"/*.conf; do
+    [[ -f "$rules_file" ]] || continue
+    rules_domain="$(basename "$rules_file" .conf)"
+    # Only ever remove a file whose vhost is provably gone.
+    if [[ -n "$rules_domain" && ! -d "$OLS_VHOSTS_DIR_CLEAN/$rules_domain" ]]; then
+      rm -f "$rules_file"
+      orphans=$((orphans + 1))
+    fi
+  done
+  [[ "$orphans" -gt 0 ]] && log "Removed $orphans orphaned WAF rule file(s) from deleted sites"
+fi
+
 update_progress 62 "backend" "Checking the database schema"
 MIGRATE_RUNNER="python"
 id -u opanel >/dev/null 2>&1 && MIGRATE_RUNNER="sudo -u opanel $APP_DIR/backend/.venv/bin/python"

@@ -3454,6 +3454,10 @@ case "$cmd" in
     safe_domain="$1"
     require_domain "$safe_domain"
     rm -rf "$OLS_VHOSTS_DIR/$safe_domain"
+    # The site's WAF rules are written per vhost and referenced by nothing else,
+    # so they go with it. Leaving them behind accumulated orphaned rule files --
+    # 42 of them on a box that had deleted that many sites.
+    rm -f "/usr/local/lsws/conf/opanel/waf/sites/${safe_domain}.conf"
     ols_sync_main_config
     restart_openlitespeed 2>/dev/null || true
     ;;

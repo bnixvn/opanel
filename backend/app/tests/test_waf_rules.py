@@ -225,3 +225,31 @@ def test_command_injection_payloads_match(query):
 ])
 def test_ordinary_queries_are_not_command_injection(query):
     assert not _operand("command-injection").search(query), query
+
+
+# --------------------------------------------------------------------------
+# Housekeeping: a deleted site must not leave its rules behind
+# --------------------------------------------------------------------------
+
+def test_deleting_a_vhost_also_removes_its_waf_rules():
+    from pathlib import Path
+
+    helper = (Path(__file__).resolve().parents[3]
+              / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    start = helper.index("  ols-vhost-delete)")
+    block = helper[start:helper.index("  # ---- ClamAV", start)]
+
+    assert 'rm -f "/usr/local/lsws/conf/opanel/waf/sites/${safe_domain}.conf"' in block
+
+
+def test_the_updater_clears_rule_files_left_by_earlier_deletes():
+    from pathlib import Path
+
+    updater = (Path(__file__).resolve().parents[3]
+               / "installer" / "update.sh").read_text(encoding="utf-8")
+    start = updater.index('WAF_SITES_DIR="/usr/local/lsws/conf/opanel/waf/sites"')
+    block = updater[start:updater.index("update_progress 62", start)]
+
+    # It may only delete a rules file whose vhost directory is gone.
+    assert 'if [[ -n "$rules_domain" && ! -d "$OLS_VHOSTS_DIR_CLEAN/$rules_domain" ]]' in block
+    assert "rm -rf" not in block
