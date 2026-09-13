@@ -29,42 +29,48 @@ DEFAULT_RULES = [
         "category": "PHP",
         "title": "PHP sensitive files",
         "description": "Blocks direct probes for PHP app secrets, Composer metadata, git data, and phpinfo files.",
-        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/\\.env(?:\\.|$)|/\\.user\\.ini(?:\\.|$)|/\\.git/|/composer\\.(?:json|lock)(?:$|[?])|/(?:phpinfo|info)\\.php(?:$|[?])|/(?:config|database|db)\\.php\\.(?:bak|old|save|txt)(?:$|[?]))" "id:1001301,phase:1,deny,status:403,log,msg:'opanel blocked PHP sensitive file probe'""",
+        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/\\.env(?:\\.|$)|/\\.user\\.ini(?:\\.|$)|/\\.git/|/composer\\.(?:json|lock)(?:$|[?])|/(?:phpinfo|info)\\.php(?:$|[?])|/(?:config|database|db)\\.php\\.(?:bak|old|save|txt)(?:$|[?]))" "id:1001301,phase:1,deny,status:403,log,msg:'opanel blocked PHP sensitive file probe'"
+""",
     },
     {
         "id": "php-path-traversal",
         "category": "PHP",
         "title": "Path traversal",
         "description": "Blocks ../ and encoded traversal probes in URLs and query/form arguments.",
-        "rules": """SecRule REQUEST_URI|ARGS "@rx (?i)(?:\\.\\./|\\.\\.\\\\|%2e%2e%2f|%252e%252e%252f)" "id:1001302,phase:2,deny,status:403,log,msg:'opanel blocked PHP path traversal'""",
+        "rules": """SecRule REQUEST_URI|ARGS "@rx (?i)(?:\\.\\./|\\.\\.\\\\|%2e%2e%2f|%252e%252e%252f)" "id:1001302,phase:2,deny,status:403,log,msg:'opanel blocked PHP path traversal'"
+""",
     },
     {
         "id": "php-runtime-probes",
         "category": "PHP",
         "title": "PHP runtime probes",
         "description": "Blocks direct probes for common PHP webshell names and old PHPUnit RCE paths.",
-        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/(?:c99|r57|shell|cmd|wso)\\.php(?:$|[?])|/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin\\.php(?:$|[?]))" "id:1001303,phase:1,deny,status:403,log,msg:'opanel blocked PHP runtime probe'""",
+        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/(?:c99|r57|shell|cmd|wso)\\.php(?:$|[?])|/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin\\.php(?:$|[?]))" "id:1001303,phase:1,deny,status:403,log,msg:'opanel blocked PHP runtime probe'"
+""",
     },
     {
         "id": "laravel-sensitive-files",
         "category": "Laravel",
         "title": "Laravel sensitive files",
         "description": "Blocks probes for Laravel environment files, logs, artisan, and cached PHP config.",
-        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/\\.env(?:\\.|$)|/artisan(?:$|[?])|/server\\.php(?:$|[?])|/storage/logs/[^?]*\\.log(?:$|[?])|/bootstrap/cache/[^?]*\\.php(?:$|[?]))" "id:1001201,phase:1,deny,status:403,log,msg:'opanel blocked Laravel sensitive path'""",
+        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/\\.env(?:\\.|$)|/artisan(?:$|[?])|/server\\.php(?:$|[?])|/storage/logs/[^?]*\\.log(?:$|[?])|/bootstrap/cache/[^?]*\\.php(?:$|[?]))" "id:1001201,phase:1,deny,status:403,log,msg:'opanel blocked Laravel sensitive path'"
+""",
     },
     {
         "id": "laravel-ignition-rce",
         "category": "Laravel",
         "title": "Laravel Ignition RCE probes",
         "description": "Blocks direct probes for the old Laravel Ignition execute-solution endpoint.",
-        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/_ignition/execute-solution(?:$|[?]))" "id:1001202,phase:1,deny,status:403,log,msg:'opanel blocked Laravel Ignition RCE probe'""",
+        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/_ignition/execute-solution(?:$|[?]))" "id:1001202,phase:1,deny,status:403,log,msg:'opanel blocked Laravel Ignition RCE probe'"
+""",
     },
     {
         "id": "wordpress-sensitive-files",
         "category": "WordPress",
         "title": "WordPress sensitive files",
         "description": "Blocks wp-config probes, uploads PHP execution probes, and internal WordPress PHP paths.",
-        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/wp-config\\.php(?:\\.|$|[?])|/wp-content/(?:uploads|cache|upgrade)/[^?]*\\.php(?:$|[?])|/wp-admin/includes/[^?]*\\.php(?:$|[?])|/wp-includes/[^?]*\\.php(?:$|[?]))" "id:1001101,phase:1,deny,status:403,log,msg:'opanel blocked WordPress sensitive path'""",
+        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/wp-config\\.php(?:\\.|$|[?])|/wp-content/(?:uploads|cache|upgrade)/[^?]*\\.php(?:$|[?])|/wp-admin/includes/[^?]*\\.php(?:$|[?])|/wp-includes/[^?]*\\.php(?:$|[?]))" "id:1001101,phase:1,deny,status:403,log,msg:'opanel blocked WordPress sensitive path'"
+""",
     },
     {
         "id": "wordpress-xmlrpc-author-scan",
@@ -72,14 +78,16 @@ DEFAULT_RULES = [
         "title": "WordPress XML-RPC and author scans",
         "description": "Blocks XML-RPC access and ?author= enumeration scans.",
         "rules": """SecRule REQUEST_URI "@rx (?i)(?:/xmlrpc\\.php(?:$|[?]))" "id:1001102,phase:1,deny,status:403,log,msg:'opanel blocked WordPress XML-RPC access'"
-SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'opanel blocked WordPress author enumeration'""",
+SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'opanel blocked WordPress author enumeration'"
+""",
     },
     {
         "id": "wordpress-install-upgrade",
         "category": "WordPress",
         "title": "WordPress installer probes",
         "description": "Blocks direct access to WordPress installation scripts after deployment.",
-        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/wp-admin/install\\.php(?:$|[?])|/wp-admin/setup-config\\.php(?:$|[?]))" "id:1001104,phase:1,deny,status:403,log,msg:'opanel blocked WordPress installer probe'""",
+        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/wp-admin/install\\.php(?:$|[?])|/wp-admin/setup-config\\.php(?:$|[?]))" "id:1001104,phase:1,deny,status:403,log,msg:'opanel blocked WordPress installer probe'"
+""",
     },
     {
         "id": "wordpress-wp2shell",
@@ -87,7 +95,42 @@ SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'
         "title": "WordPress wp2shell probes",
         "description": "Blocks the wp2shell batch API paths used by the published exploit chain.",
         "rules": """SecRule REQUEST_URI "@contains /wp-json/batch/v1" "id:1000001,phase:2,deny,status:403,msg:'Block wp2shell Path'"
-SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:403,msg:'Block wp2shell Query'""",
+SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:403,msg:'Block wp2shell Query'"
+""",
+    },
+    {
+        "id": "generic-sensitive-files",
+        "category": "Server",
+        "title": "Credential and backup files",
+        "description": "Blocks probes for SSH and cloud credentials, version-control data, database dumps, and editor backup copies.",
+        "rules": r"""SecRule REQUEST_URI "@rx (?i)(?:/\.(?:ssh|aws|svn|hg|idea|vscode)/|/\.(?:npmrc|netrc|htpasswd|DS_Store)(?:$|[?/])|/id_rsa(?:\.pub)?(?:$|[?])|/[^?]*\.(?:sql|sqlite|sqlite3|rdb)(?:\.(?:gz|zip|bz2|tar))?(?:$|[?])|/[^?]*\.(?:bak|old|orig|save|swp|swo)(?:$|[?])|/[^?]*~(?:$|[?]))" "id:1001401,phase:1,deny,status:403,log,msg:'opanel blocked credential or backup file probe'"
+""",
+    },
+    {
+        "id": "sql-injection",
+        "enabled_default": False,
+        "category": "Injection",
+        "title": "SQL injection",
+        "description": "Blocks classic SQL injection payloads in the URL and query string. Deliberately narrow: it looks for statement structure, not stray quotes.",
+        "rules": r"""SecRule REQUEST_URI|ARGS_GET "@rx (?i)(?:\bunion\b\s+(?:all\s+)?\bselect\b|\bselect\b[^;]{0,120}?\bfrom\s+information_schema\b|\b(?:sleep|benchmark|load_file|updatexml|extractvalue)\s*\(|\binto\s+(?:out|dump)file\b|\bor\b\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+|;\s*(?:drop|truncate|alter)\s+table\b)" "id:1001501,phase:2,deny,status:403,log,msg:'opanel blocked SQL injection attempt'"
+""",
+    },
+    {
+        "id": "xss",
+        "enabled_default": False,
+        "category": "Injection",
+        "title": "Cross-site scripting",
+        "description": "Blocks script tags, javascript: URLs and inline event handlers in the URL and query string.",
+        "rules": r"""SecRule REQUEST_URI|ARGS_GET "@rx (?i)(?:<\s*script[\s>]|<\s*/\s*script\s*>|javascript\s*:|vbscript\s*:|\bon(?:error|load|click|mouseover|focus|submit)\s*=|<\s*iframe[\s>]|<\s*svg[\s>]|document\s*\.\s*cookie)" "id:1001601,phase:2,deny,status:403,log,msg:'opanel blocked cross-site scripting attempt'"
+""",
+    },
+    {
+        "id": "command-injection",
+        "category": "Injection",
+        "title": "Command injection and PHP wrappers",
+        "description": "Blocks shell metacharacters followed by a command, and php:// data:// phar:// stream wrappers used for remote code execution.",
+        "rules": r"""SecRule REQUEST_URI|ARGS_GET "@rx (?i)(?:\b(?:php|data|expect|phar|zip|glob)://|[;|`]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh|python|perl)\b|\$\(\s*\w|\|\s*(?:sh|bash)\b)" "id:1001701,phase:2,deny,status:403,log,msg:'opanel blocked command injection attempt'"
+""",
     },
 ]
 
@@ -392,13 +435,13 @@ def _domains_for_log(website_domains: Iterable[str], domain: str = "") -> list[s
 def _parse_enabled_rule_ids(value: str | None) -> set[str]:
     valid = _rule_ids()
     if not value:
-        return set(valid)
+        return _default_enabled_ids()
     try:
         raw = json.loads(value)
     except (TypeError, ValueError):
-        return set(valid)
+        return _default_enabled_ids()
     if not isinstance(raw, list):
-        return set(valid)
+        return _default_enabled_ids()
     selected = {
         LEGACY_RULE_ID_MAP.get(rule_id, rule_id)
         for item in raw
@@ -422,6 +465,11 @@ def validate_enabled_rule_ids(rule_ids: Iterable[str]) -> list[str]:
     return selected
 
 
+def _default_enabled_ids() -> set[str]:
+    """Rule groups a site gets when its selection has never been saved."""
+    return {rule["id"] for rule in DEFAULT_RULES if rule.get("enabled_default", True)}
+
+
 def default_rule_definitions() -> list[dict]:
     return [
         {
@@ -429,7 +477,7 @@ def default_rule_definitions() -> list[dict]:
             "category": rule["category"],
             "title": rule["title"],
             "description": rule["description"],
-            "enabled_default": True,
+            "enabled_default": bool(rule.get("enabled_default", True)),
         }
         for rule in DEFAULT_RULES
     ]
@@ -569,7 +617,6 @@ def site_config(website: Website) -> dict:
             {
                 **rule,
                 "enabled": rule["id"] in enabled,
-                "enabled_default": True,
             }
             for rule in default_rule_definitions()
         ],

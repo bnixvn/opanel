@@ -6,11 +6,16 @@ from app.services import waf
 HELPER_SCRIPT = Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh"
 
 
-def test_default_rules_only_cover_wordpress_laravel_and_php():
+def test_default_rules_cover_the_app_stacks_plus_server_and_injection():
     definitions = waf.default_rule_definitions()
 
-    assert {rule["category"] for rule in definitions} == {"Laravel", "PHP", "WordPress"}
-    assert all(rule["enabled_default"] for rule in definitions)
+    assert {rule["category"] for rule in definitions} == {
+        "Laravel", "PHP", "WordPress", "Server", "Injection",
+    }
+    # Everything is on out of the box except the two injection groups, which an
+    # admin turns on per site -- see test_waf_rules.py for why.
+    off = {rule["id"] for rule in definitions if not rule["enabled_default"]}
+    assert off == {"sql-injection", "xss"}
 
 
 def test_legacy_heavy_rule_ids_are_mapped_or_ignored():
