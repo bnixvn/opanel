@@ -131,6 +131,25 @@ SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:40
         "rules": r"""SecRule REQUEST_URI|ARGS "@rx (?i)(?:\b(?:php|data|expect|phar|zip|glob|file|gopher|dict)://|[;|`]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh|python|perl|chmod)\b|&&\s*\w|\|\|\s*\w|[\n\r]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh)\b|\$\(\s*\w|\|\s*(?:sh|bash)\b|\$\{\s*(?:jndi|env|sys|lower|upper|date)\s*:)" "id:1001701,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked command injection attempt'"
 """,
     },
+    {
+        "id": "ssrf",
+        "category": "Injection",
+        "title": "Server-side request forgery",
+        "description": "Blocks URLs pointing at cloud metadata services, loopback and private networks, including the userinfo@ and decimal-IP forms used to disguise them.",
+        "rules": r"""SecRule REQUEST_URI|ARGS "@rx (?i)(?:https?:)?//(?:[^/@\s]*@)?(?:169\.254\.169\.254|169\.254\.170\.2|metadata\.google\.internal|metadata\.azure\.com|100\.100\.200\.200|localhost(?::\d+)?(?![\w.-])|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|0\.0\.0\.0|\[::1?\]|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|0x[0-9a-f]{8}(?![0-9a-f])|\d{8,10}(?![\d.]))" "id:1001801,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked server-side request forgery attempt'"
+""",
+    },
+    {
+        "id": "ssti",
+        "category": "Injection",
+        "title": "Template injection",
+        "description": "Blocks template expressions that carry a probe or a known gadget -- {{7*7}}, __class__ traversal, and Java EL Runtime/ProcessBuilder chains. Plain {{ }} is left alone: it is ordinary front-end syntax.",
+        # No t:removeComments here. It treats # as a comment and deletes the
+        # rest of the value, and OGNL uses # as syntax: ${(#a=@java.lang.
+        # Runtime@getRuntime().exec(...))} was erased before the rule saw it.
+        "rules": r"""SecRule REQUEST_URI|ARGS "@rx (?i)(?:\{\{\s*\d+\s*[*+\-/]\s*\d+\s*\}\}|\{\{[^}]{0,60}?__(?:class|globals|subclasses|mro|init|builtins|import)__|\{\{\s*(?:config|self|request|session|settings|cycler|joiner|namespace|lipsum|url_for)\b|\{%\s*(?:import|include|extends)\b|<%=[^%]{0,60}?(?:system|exec|eval|IO\.popen|`)|\$\{[^}]{0,120}?(?:Runtime|ProcessBuilder|getClass|forName|javax\.script)|#\{[^}]{0,60}?(?:T\(|java\.lang))" "id:1001901,phase:2,t:none,t:urlDecodeUni,deny,status:403,log,msg:'opanel blocked template injection attempt'"
+""",
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -431,23 +450,68 @@ def _domains_for_log(website_domains: Iterable[str], domain: str = "") -> list[s
     return allowed
 
 
+# The rule ids that existed while selections were stored as a flat list of
+# enabled ids. Anything outside this set post-dates that format, so a legacy
+# list not mentioning it means "did not exist yet", never "turned off".
+HISTORICAL_RULE_IDS = frozenset({
+    "php-sensitive-files",
+    "php-path-traversal",
+    "php-runtime-probes",
+    "laravel-sensitive-files",
+    "laravel-ignition-rce",
+    "wordpress-sensitive-files",
+    "wordpress-xmlrpc-author-scan",
+    "wordpress-install-upgrade",
+    "wordpress-wp2shell",
+})
+
+
+def _clean_ids(items, valid: set[str]) -> set[str]:
+    return {
+        mapped
+        for item in items or []
+        for mapped in [LEGACY_RULE_ID_MAP.get(str(item), str(item))]
+        if mapped in valid
+    }
+
+
+def selection_payload(enabled_rule_ids: Iterable[str]) -> dict:
+    """What gets stored: which defaults were switched off, and which opt-in
+    groups were switched on. Recording the deltas rather than the full list is
+    what lets a rule group added later arrive at its own default."""
+    valid = _rule_ids()
+    selected = _clean_ids(enabled_rule_ids, valid)
+    defaults = _default_enabled_ids()
+    return {
+        "disabled": sorted(defaults - selected),
+        "enabled": sorted(selected - defaults),
+    }
+
+
 def _parse_enabled_rule_ids(value: str | None) -> set[str]:
     valid = _rule_ids()
+    defaults = _default_enabled_ids()
     if not value:
-        return _default_enabled_ids()
+        return set(defaults)
     try:
         raw = json.loads(value)
     except (TypeError, ValueError):
-        return _default_enabled_ids()
-    if not isinstance(raw, list):
-        return _default_enabled_ids()
-    selected = {
-        LEGACY_RULE_ID_MAP.get(rule_id, rule_id)
-        for item in raw
-        for rule_id in [str(item)]
-        if LEGACY_RULE_ID_MAP.get(rule_id, rule_id) in valid
-    }
-    return selected
+        return set(defaults)
+
+    if isinstance(raw, dict):
+        disabled = _clean_ids(raw.get("disabled"), valid)
+        enabled = _clean_ids(raw.get("enabled"), valid)
+        return (defaults - disabled) | enabled
+
+    if isinstance(raw, list):
+        # Legacy format. Only the groups that existed back then can have been
+        # deselected; everything newer takes its own default.
+        listed = _clean_ids(raw, valid)
+        disabled = (HISTORICAL_RULE_IDS & valid) - listed
+        enabled = listed - defaults
+        return (defaults - disabled) | enabled
+
+    return set(defaults)
 
 
 def validate_enabled_rule_ids(rule_ids: Iterable[str]) -> list[str]:
@@ -636,7 +700,7 @@ def save_website_config(
 ) -> CommandResult:
     selected = validate_enabled_rule_ids(enabled_rule_ids)
     custom = _validate_custom_rules(custom_rules)
-    website.waf_default_rules = json.dumps(selected, ensure_ascii=True)
+    website.waf_default_rules = json.dumps(selection_payload(selected), ensure_ascii=True)
     website.waf_custom_rules = custom
     if bot_blocking_enabled is not None:
         website.waf_bot_enabled = bool(bot_blocking_enabled)

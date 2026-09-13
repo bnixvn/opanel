@@ -353,3 +353,150 @@ def test_command_injection_does_not_compress_whitespace():
 def test_real_post_bodies_are_not_injections(body):
     for rule_id in ("sql-injection", "command-injection", "php-path-traversal"):
         assert not _match(rule_id, body), f"{rule_id}: {body}"
+
+
+# --------------------------------------------------------------------------
+# A saved selection stores deltas, so a rule group added later still arrives.
+# --------------------------------------------------------------------------
+
+import json as _json
+
+LEGACY_WORDPRESS_ONLY = _json.dumps([
+    "wordpress-sensitive-files", "wordpress-xmlrpc-author-scan",
+    "wordpress-install-upgrade", "wordpress-wp2shell",
+])
+
+
+def test_a_legacy_list_still_receives_rules_added_since():
+    """Two real sites were frozen this way: saved when only the WordPress
+    groups existed, so every group added afterwards was silently off."""
+    enabled = waf._parse_enabled_rule_ids(LEGACY_WORDPRESS_ONLY)
+
+    assert {"sql-injection", "ssrf", "ssti", "generic-sensitive-files",
+            "command-injection"} <= enabled
+
+
+def test_a_legacy_list_keeps_what_was_deliberately_deselected():
+    enabled = waf._parse_enabled_rule_ids(LEGACY_WORDPRESS_ONLY)
+
+    # These existed when the list was saved and were left out on purpose.
+    for rule_id in ("php-sensitive-files", "php-path-traversal", "laravel-ignition-rce"):
+        assert rule_id not in enabled, rule_id
+
+
+def test_a_legacy_list_does_not_switch_on_an_opt_in_group():
+    assert "xss" not in waf._parse_enabled_rule_ids(LEGACY_WORDPRESS_ONLY)
+
+
+def test_a_saved_selection_round_trips():
+    for wanted in (
+        ["sql-injection", "xss"],
+        [],
+        [rule["id"] for rule in waf.DEFAULT_RULES],
+        ["wordpress-wp2shell", "ssrf"],
+    ):
+        payload = _json.dumps(waf.selection_payload(wanted))
+        assert waf._parse_enabled_rule_ids(payload) == set(wanted), wanted
+
+
+def test_turning_a_default_off_survives_a_later_rule_being_added():
+    payload = waf.selection_payload([r["id"] for r in waf.DEFAULT_RULES if r["id"] != "ssrf"])
+
+    assert "ssrf" in payload["disabled"]
+    assert "ssrf" not in waf._parse_enabled_rule_ids(_json.dumps(payload))
+
+
+def test_the_stored_shape_is_deltas_not_a_full_list():
+    payload = waf.selection_payload(["sql-injection"])
+
+    assert set(payload) == {"disabled", "enabled"}
+    # Storing the full enabled list is what caused the freeze in the first place.
+    assert "sql-injection" not in payload["disabled"]
+
+
+def test_historical_ids_are_exactly_the_pre_delta_rule_set():
+    # If this drifts, a legacy list would start re-enabling groups its owner
+    # had actually deselected.
+    assert waf.HISTORICAL_RULE_IDS <= {rule["id"] for rule in waf.DEFAULT_RULES}
+    assert "generic-sensitive-files" not in waf.HISTORICAL_RULE_IDS
+    assert "sql-injection" not in waf.HISTORICAL_RULE_IDS
+
+
+# --------------------------------------------------------------------------
+# SSRF and SSTI
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("payload", [
+    "?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+    "?uri=http%3A%2F%2F169.254.169.254%2Fmetadata%2Fidentity%2Foauth2%2Ftoken",
+    "?url=http://metadata.google.internal/computeMetadata/v1/",
+    "?url=http://127.0.0.1:8080/admin",
+    "?url=http://localhost/server-status",
+    "?url=http://[::1]/",
+    "?url=http://10.0.0.5/internal",
+    "?url=http://192.168.1.1/",
+    "?url=http://172.16.0.1/",
+    "?url=http://expected.com@169.254.169.254/",   # userinfo disguise
+    "?url=http://2130706433/",                      # decimal 127.0.0.1
+    "?url=http://0x7f000001/",                      # hex 127.0.0.1
+])
+def test_ssrf_targets_are_blocked(payload):
+    assert _match("ssrf", payload), payload
+
+
+@pytest.mark.parametrize("payload", [
+    "?url=https://example.com/page",
+    "?url=https://cdn.shopify.com/assets/x.png",
+    "?redirect_to=https://shop.example.com/gio-hang",
+    "?url=https://api.stripe.com/v1/charges",
+    "?s=localhost la gi",                      # the word, not a URL
+    "?url=https://1027.example.com/",
+])
+def test_ordinary_urls_are_not_ssrf(payload):
+    assert not _match("ssrf", payload), payload
+
+
+@pytest.mark.parametrize("payload", [
+    "?x={{7*7}}",
+    "?x={{ 7 * 7 }}",
+    "?x={{config.items()}}",
+    "?x={{''.__class__.__mro__}}",
+    "?x={{request.application.__globals__}}",
+    "?x=${(#a=@java.lang.Runtime@getRuntime().exec('id'))}",
+    "?x=<%= system('id') %>",
+    "?x={% import os %}",
+])
+def test_template_injection_probes_are_blocked(payload):
+    assert _match("ssti", payload), payload
+
+
+@pytest.mark.parametrize("payload", [
+    "?s=ao so mi nam",
+    "?tpl={{name}}",                           # plain interpolation, no gadget
+    "?x={{ user }}",
+    "?price=${amount}",
+    "?q=cach dung {{ }} trong Vue",
+])
+def test_ordinary_braces_are_not_template_injection(payload):
+    assert not _match("ssti", payload), payload
+
+
+def test_ssti_does_not_remove_comments():
+    """t:removeComments treats # as a comment start and deletes the rest of the
+    value. OGNL uses # as syntax, so with it on, the real Struts payload found
+    in this server's own logs was erased before the rule could match it --
+    verified live: 403 without the transformation, 200 with it."""
+    assert "t:removeComments" not in _rule("ssti")["rules"]
+    assert "t:urlDecodeUni" in _rule("ssti")["rules"]
+
+
+def test_ssti_catches_the_ognl_payload_seen_in_production():
+    payload = "?x=${(#a=@org.apache.commons.io.IOUtils@toString(@java.lang.Runtime@getRuntime().exec('id')))}"
+
+    assert _match("ssti", payload)
+
+
+def test_sql_injection_keeps_remove_comments():
+    # There # and -- really are comment syntax, and stripping them is what
+    # defeats UN/**/ION splitting.
+    assert "t:removeComments" in _rule("sql-injection")["rules"]
