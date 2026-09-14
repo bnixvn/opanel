@@ -159,3 +159,43 @@ def test_helper_exposes_it_as_one_subcommand():
 
     for call in ("ensure_site_log_rotation", "ensure_ols_server_log_level", "ensure_journal_cap"):
         assert call in block, call
+
+
+# --------------------------------------------------------------------------
+# JIT on an existing box, where nothing rewrites 99-opanel.ini
+# --------------------------------------------------------------------------
+
+def test_php_tuning_no_longer_asks_for_jit():
+    """recommend_php_config is what kept putting opcache.jit back: it wrote
+    1255 into 99-opanel.ini every time the panel applied PHP tuning."""
+    from app.services import php
+
+    config = php.recommend_php_config()
+
+    assert config["opcache_jit"] == "disable"
+    assert config["opcache_jit_buffer_size"] == 0
+
+
+def test_rendered_tuning_ini_disables_jit():
+    from app.services import php
+
+    source = (PROJECT_ROOT / "backend" / "app" / "services" / "php.py").read_text(encoding="utf-8")
+
+    assert "opcache.jit              = {cfg['opcache_jit']}" in source
+    # No M suffix: the value is 0, and "0M" would only be confusing.
+    assert "{cfg['opcache_jit_buffer_size']}M" not in source
+
+
+def test_existing_installs_get_jit_turned_off():
+    start = HELPER.index("ensure_php_jit_disabled() {")
+    block = HELPER[start:HELPER.index("\n}", start)]
+
+    # Keeps the key name. Writing the replacement without the backreference
+    # would have left a bare " disable" line and broken every php.ini.
+    assert r"s/^([[:space:]]*opcache\.jit[[:space:]]*=).*/\1 disable/" in block
+    assert r"s/^([[:space:]]*opcache\.jit_buffer_size[[:space:]]*=).*/\1 0/" in block
+    # Adds the keys when the file predates them.
+    assert r"printf '\nopcache.jit = disable\nopcache.jit_buffer_size = 0\n'" in block
+    # Does nothing on a second run.
+    assert "disable' \"$ini\" && continue" in block
+    assert "ensure_php_jit_disabled" in HELPER[HELPER.index("  log-hygiene)"):][:400]

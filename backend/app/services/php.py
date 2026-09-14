@@ -293,8 +293,14 @@ def recommend_php_config() -> dict:
         "opcache_revalidate_freq": revalidate,
         "opcache_validate_timestamps": 1,
         "opcache_save_comments": 1,
-        "opcache_jit": 1255,
-        "opcache_jit_buffer_size": max(16, min(256, ram_mb // 16)),
+        # opanel installs the ionCube loader for every PHP version it manages,
+        # and ionCube registers a user opcode handler, so PHP switches JIT off
+        # at startup and writes a warning to stderr for every worker it spawns.
+        # That warning alone built a 60 GB stderr.log on a live server. Asking
+        # for JIT here buys nothing on this stack and costs a log line per
+        # process, so do not ask.
+        "opcache_jit": "disable",
+        "opcache_jit_buffer_size": 0,
         # LSAPI process manager
         "lsapi_children": lsapi_children,
         "lsapi_max_idle": lsapi_idle,
@@ -335,7 +341,7 @@ def render_php_ini(cfg: dict | None = None) -> str:
         f"opcache.validate_timestamps = {cfg['opcache_validate_timestamps']}",
         f"opcache.save_comments   = {cfg['opcache_save_comments']}",
         f"opcache.jit              = {cfg['opcache_jit']}",
-        f"opcache.jit_buffer_size  = {cfg['opcache_jit_buffer_size']}M",
+        f"opcache.jit_buffer_size  = {cfg['opcache_jit_buffer_size']}",
         "",
         "; LSAPI process manager",
         f"lsapi_children             = {cfg['lsapi_children']}",

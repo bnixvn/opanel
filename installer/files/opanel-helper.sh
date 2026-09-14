@@ -2722,6 +2722,28 @@ ensure_ols_server_log_level() {
   echo "OpenLiteSpeed server logLevel: DEBUG -> WARN"
 }
 
+# 99-opanel.ini is only written when a PHP version is installed, so an existing
+# box never receives a change to it. The panel's own PHP tuning also writes
+# opcache.jit into this file, which is where the value being fixed came from.
+ensure_php_jit_disabled() {
+  local ini changed=0
+  for ini in /usr/local/lsws/lsphp*/etc/php/*/mods-available/99-opanel.ini; do
+    [[ -f "$ini" ]] || continue
+    grep -qE '^[[:space:]]*opcache\.jit[[:space:]]*=[[:space:]]*disable' "$ini" && continue
+    if grep -qE '^[[:space:]]*opcache\.jit[[:space:]]*=' "$ini"; then
+      sed -i -E 's/^([[:space:]]*opcache\.jit[[:space:]]*=).*/\1 disable/' "$ini"
+      sed -i -E 's/^([[:space:]]*opcache\.jit_buffer_size[[:space:]]*=).*/\1 0/' "$ini"
+    else
+      printf '\nopcache.jit = disable\nopcache.jit_buffer_size = 0\n' >>"$ini"
+    fi
+    changed=1
+  done
+  if (( changed )); then
+    restart_openlitespeed 2>/dev/null || true
+    echo "PHP JIT disabled (ionCube turns it off anyway and warns on every worker start)"
+  fi
+}
+
 # journald defaults to 10% of the filesystem, which is 50 GB on a 500 GB disk.
 ensure_journal_cap() {
   local conf=/etc/systemd/journald.conf
@@ -3721,6 +3743,7 @@ case "$cmd" in
     [[ $# -eq 0 ]] || deny "usage: log-hygiene"
     ensure_site_log_rotation
     ensure_ols_server_log_level
+    ensure_php_jit_disabled
     ensure_journal_cap
     echo "Log hygiene applied"
     ;;
