@@ -1575,6 +1575,13 @@ max_execution_time = 300
 max_input_time = 600
 max_input_vars = 10000
 max_file_uploads = 100
+; The ionCube loader installs a user opcode handler, so PHP turns JIT off by
+; itself and prints a warning to stderr on every worker start. Turning it off
+; here keeps the behaviour and loses the warning -- that warning wrote a 60 GB
+; stderr.log on a live server. jit_buffer_size goes with it: nothing will use
+; the buffer once JIT is off.
+opcache.jit = disable
+opcache.jit_buffer_size = 0
 INI
   chown root:root "${ini_dir}/99-opanel.ini"
   chmod 0644 "${ini_dir}/99-opanel.ini"
@@ -2651,23 +2658,79 @@ ensure_sites_group() {
   ensure_site_log_rotation
 }
 
-# OLS rotates its own access/error logs (rollingSize/keepDays in the vhost), but
-# the per-site php_error.log is written by PHP's error_log() and needs help.
+# Log rotation for everything OpenLiteSpeed and PHP write. The first version of
+# this covered only */php_error.log, weekly, with delaycompress -- so one site
+# in an error loop reached 36 GB in a single uncompressed rotation, the
+# per-site access logs were never rotated at all, and stderr.log was left
+# entirely to OpenLiteSpeed, which rolls it by date and then never deletes it
+# (a 25 GB archive from three weeks earlier was still on disk).
+#
+# Daily, seven days, uncompressed: logs stay greppable without zcat, which is
+# the point of keeping them. maxsize is the safety valve -- a site writing
+# gigabytes a day rotates before the daily run rather than after it.
+LOG_ROTATION_VERSION=2
 ensure_site_log_rotation() {
-  [[ -f /etc/logrotate.d/opanel-sites ]] && return 0
   command -v logrotate >/dev/null 2>&1 || return 0
-  cat >/etc/logrotate.d/opanel-sites <<'EOF'
-/var/log/openlitespeed/*/php_error.log {
-    weekly
-    rotate 8
+  if [[ -f /etc/logrotate.d/opanel-sites ]] \
+     && grep -q "opanel log rotation v${LOG_ROTATION_VERSION}" /etc/logrotate.d/opanel-sites; then
+    return 0
+  fi
+  cat >/etc/logrotate.d/opanel-sites <<EOF
+# opanel log rotation v${LOG_ROTATION_VERSION} -- managed by opanel, edits are overwritten
+/var/log/openlitespeed/*/php_error.log
+/var/log/openlitespeed/*.access.log
+/var/log/openlitespeed/*.error.log {
+    daily
+    rotate 7
+    maxsize 2G
     missingok
     notifempty
-    compress
-    delaycompress
+    nocompress
     copytruncate
+}
+
+/usr/local/lsws/logs/error.log
+/usr/local/lsws/logs/stderr.log {
+    daily
+    rotate 7
+    maxsize 2G
+    missingok
+    notifempty
+    nocompress
+    copytruncate
+    postrotate
+        # OpenLiteSpeed rolls these itself into date-stamped archives and never
+        # removes them. Same seven days.
+        find /usr/local/lsws/logs -maxdepth 1 -type f \\
+             -regextype posix-extended -regex '.*\\.log\\.[0-9]{4}_[0-9]{2}_[0-9]{2}(\\.[0-9]+)?' \\
+             -mtime +7 -delete 2>/dev/null || true
+    endscript
 }
 EOF
   chmod 0644 /etc/logrotate.d/opanel-sites
+}
+
+# OpenLiteSpeed ships logLevel DEBUG in the server error log block. opanel sets
+# WARN on every vhost it writes but never touched the server block, so every
+# install has been writing debug output since the day it was built.
+ensure_ols_server_log_level() {
+  local conf=/usr/local/lsws/conf/httpd_config.conf
+  [[ -f "$conf" ]] || return 0
+  grep -qE '^[[:space:]]*logLevel[[:space:]]+DEBUG[[:space:]]*$' "$conf" || return 0
+  cp -a "$conf" "${conf}.bak.loglevel"
+  sed -i -E 's/^([[:space:]]*)logLevel([[:space:]]+)DEBUG[[:space:]]*$/\1logLevel\2WARN/' "$conf"
+  echo "OpenLiteSpeed server logLevel: DEBUG -> WARN"
+}
+
+# journald defaults to 10% of the filesystem, which is 50 GB on a 500 GB disk.
+ensure_journal_cap() {
+  local conf=/etc/systemd/journald.conf
+  [[ -f "$conf" ]] || return 0
+  grep -qE '^[[:space:]]*SystemMaxUse=' "$conf" && return 0
+  printf '\n# Managed by opanel: journald otherwise grows to 10%% of the disk.\nSystemMaxUse=1G\n' >>"$conf"
+  systemctl restart systemd-journald 2>/dev/null || true
+  journalctl --vacuum-size=1G >/dev/null 2>&1 || true
+  echo "journald capped at 1G"
 }
 
 ensure_sftp_group() {
@@ -3652,6 +3715,14 @@ case "$cmd" in
     refresh_tools_ols
     schedule_panel_restart
     echo "Panel SSL enabled: https://${domain}:${port}"
+    ;;
+
+  log-hygiene)
+    [[ $# -eq 0 ]] || deny "usage: log-hygiene"
+    ensure_site_log_rotation
+    ensure_ols_server_log_level
+    ensure_journal_cap
+    echo "Log hygiene applied"
     ;;
 
   panel-cert-sync)

@@ -1198,6 +1198,12 @@ if command -v iptables >/dev/null 2>&1    && iptables -L INPUT -n --line-numbers
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-enable >/dev/null 2>&1     || echo "  (could not reorder firewall chains; run Reload on the Firewall page)"
 fi
 
+# Log hygiene. Every box built before this shipped OpenLiteSpeed's stock
+# logLevel DEBUG, a weekly-only rotation that covered just php_error.log, and an
+# uncapped journal. One live server had 97 GB under /usr/local/lsws/logs and
+# 43 GB under /var/log/openlitespeed against 3.7 MB of actual cache.
+sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper log-hygiene 2>/dev/null   || echo "  (could not apply log hygiene; run: opanel-helper log-hygiene)"
+
 # Deleting a website removed its vhost but left its WAF rules file behind, so
 # boxes accumulate one orphan per site ever deleted. The helper drops the file
 # with the vhost from now on; clear out what earlier deletes left.

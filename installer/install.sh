@@ -859,6 +859,7 @@ SERVICE
   systemctl enable --now opanel-backup-scheduler.timer
   systemctl enable --now opanel-malware-scheduler.timer
   if id -u opanel >/dev/null 2>&1; then
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper log-hygiene >/dev/null 2>&1 || true
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper certbot-auto-renew-install >/dev/null 2>&1 || true
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper blocklist-timer-install >/dev/null 2>&1 || true
   fi
