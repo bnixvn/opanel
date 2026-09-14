@@ -221,8 +221,9 @@ def test_vhost_write_creates_a_site_owned_php_log_dir():
     # the Error tab reads the PHP log then the OLS server log
     assert "PHP error log" in helper
     assert "OpenLiteSpeed error log" in helper
-    # php_error.log has no built-in rotation -> logrotate handles it
-    assert "/var/log/openlitespeed/*/php_error.log {" in helper
+    # php_error.log has no built-in rotation -> logrotate handles it. The path
+    # is one of several in the stanza now, so match the path, not the brace.
+    assert "/var/log/openlitespeed/*/php_error.log" in helper
     assert "/etc/logrotate.d/opanel-sites" in helper
 
 
