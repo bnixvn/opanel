@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -150,3 +151,30 @@ def test_allow_port_is_idempotent_for_a_custom_port(monkeypatch, tmp_path):
     assert first.stdout == "Port allowed"
     assert "already allowed" in second.stdout
     assert len(firewall._read_rules()) == 1
+
+
+def test_installer_and_helper_agree_on_the_jump_order():
+    """The installer carries its own copy of the firewall setup. When the order
+    was fixed in the helper, that copy was missed, so every fresh install since
+    shipped with OPANEL_INPUT ahead of OPANEL_USER -- which means an admin's
+    "block this IP" did nothing for 22, 80, 443 or the panel port. Found by
+    installing on a clean box and reading the live chain.
+    """
+    root = Path(__file__).resolve().parents[3] / "installer"
+    helper = (root / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    install = (root / "install.sh").read_text(encoding="utf-8")
+
+    def order(text: str, binary: str) -> list[str]:
+        """The chains in the position each is inserted at."""
+        found = re.findall(rf"(?<![6a-z]){binary} -I INPUT (\d) -j (OPANEL_\w+)", text)
+        return [chain for _, chain in sorted(found, key=lambda pair: pair[0])]
+
+    # Scope to the function that owns the managed jumps; the helper inserts the
+    # blocklist jump on its own elsewhere too.
+    start = helper.index("iptables_insert_managed_jumps() {")
+    helper_block = helper[start:helper.index(chr(10) + "}", start)]
+
+    expected = ["OPANEL_BLOCKLIST", "OPANEL_USER", "OPANEL_INPUT"]
+    for binary in ("iptables", "ip6tables"):
+        assert order(helper_block, binary) == expected, f"helper {binary}"
+        assert order(install, binary) == expected, f"install.sh {binary}"

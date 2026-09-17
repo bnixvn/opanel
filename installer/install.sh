@@ -1129,12 +1129,17 @@ setup_firewall() {
   fw ipset create opanel_blocklist4 hash:net family inet -exist || true
   fw ipset create opanel_blocklist6 hash:net family inet6 -exist || true
 
+  # Order matters, and it must match iptables_insert_managed_jumps in the
+  # helper. OPANEL_INPUT accepts the default ports from any source, and an
+  # ACCEPT inside a user chain ends the traversal, so with it ahead of
+  # OPANEL_USER an admin's "block this IP" never runs for 22/80/443/the panel
+  # port -- every port an attacker actually uses. Admin rules go first.
   fw iptables -C INPUT -j OPANEL_BLOCKLIST || fw iptables -I INPUT 1 -j OPANEL_BLOCKLIST || true
-  fw iptables -C INPUT -j OPANEL_INPUT || fw iptables -I INPUT 2 -j OPANEL_INPUT || true
-  fw iptables -C INPUT -j OPANEL_USER || fw iptables -I INPUT 3 -j OPANEL_USER || true
+  fw iptables -C INPUT -j OPANEL_USER || fw iptables -I INPUT 2 -j OPANEL_USER || true
+  fw iptables -C INPUT -j OPANEL_INPUT || fw iptables -I INPUT 3 -j OPANEL_INPUT || true
   fw ip6tables -C INPUT -j OPANEL_BLOCKLIST || fw ip6tables -I INPUT 1 -j OPANEL_BLOCKLIST || true
-  fw ip6tables -C INPUT -j OPANEL_INPUT || fw ip6tables -I INPUT 2 -j OPANEL_INPUT || true
-  fw ip6tables -C INPUT -j OPANEL_USER || fw ip6tables -I INPUT 3 -j OPANEL_USER || true
+  fw ip6tables -C INPUT -j OPANEL_USER || fw ip6tables -I INPUT 2 -j OPANEL_USER || true
+  fw ip6tables -C INPUT -j OPANEL_INPUT || fw ip6tables -I INPUT 3 -j OPANEL_INPUT || true
 
   fw iptables -A OPANEL_INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT || true
   fw iptables -A OPANEL_INPUT -i lo -j ACCEPT || true
