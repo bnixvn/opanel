@@ -875,20 +875,35 @@ class BackupScheduleOut(BaseModel):
         from_attributes = True
 
 
-class SftpBackupTargetCreate(BaseModel):
+class BackupTargetCreate(BaseModel):
+    """Create either kind. Validation is per kind, because an S3 target has no
+    host and an SFTP target has no bucket, and accepting half-filled rows just
+    moves the failure to 2am on the first scheduled run."""
+
     name: str = Field(min_length=2, max_length=100, pattern=r"^[A-Za-z0-9._ -]+$")
-    host: str = Field(min_length=2, max_length=255)
+    kind: Literal["sftp", "s3"] = "sftp"
+    remote_path: str = Field(default="/backups/opanel", min_length=1, max_length=500)
+
+    # --- SFTP ---
+    host: str = Field(default="", max_length=255)
     port: int = Field(default=22, ge=1, le=65535)
-    username: str = Field(min_length=1, max_length=128)
+    username: str = Field(default="", max_length=128)
     password: Optional[str] = Field(default=None, max_length=4096)
     private_key: Optional[str] = Field(default=None, max_length=20000)
-    remote_path: str = Field(default="/backups/opanel", min_length=1, max_length=500)
+
+    # --- S3 compatible ---
+    s3_endpoint: str = Field(default="", max_length=255)
+    s3_region: str = Field(default="us-east-1", max_length=64)
+    s3_bucket: str = Field(default="", max_length=255)
+    s3_access_key: str = Field(default="", max_length=255)
+    s3_secret_key: Optional[str] = Field(default=None, max_length=4096)
+    s3_use_path_style: bool = False
 
     @field_validator("host")
     @classmethod
     def validate_host(cls, value: str) -> str:
         value = value.strip()
-        if not re.fullmatch(r"[A-Za-z0-9._:-]+", value):
+        if value and not re.fullmatch(r"[A-Za-z0-9._:-]+", value):
             raise ValueError("Invalid SFTP host")
         return value
 
@@ -896,24 +911,85 @@ class SftpBackupTargetCreate(BaseModel):
     @classmethod
     def validate_remote_path(cls, value: str) -> str:
         value = value.strip()
-        if "\x00" in value or "\n" in value or "\r" in value:
+        if not value:
+            raise ValueError("Remote path is required")
+        if "\x00" in value:
             raise ValueError("Invalid remote path")
-        return value.rstrip("/") or "/"
+        return value
+
+    @field_validator("s3_endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        bare = re.sub(r"^https?://", "", value)
+        if not re.fullmatch(r"[A-Za-z0-9._:-]+(/[A-Za-z0-9._-]*)*", bare):
+            raise ValueError("Invalid S3 endpoint")
+        return value
+
+    @field_validator("s3_bucket")
+    @classmethod
+    def validate_bucket(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        # The S3 naming rules every compatible store shares.
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", value):
+            raise ValueError(
+                "Bucket name must be 3-63 characters, lowercase letters, digits, dots or dashes"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def check_kind(self):
+        if self.kind == "s3":
+            missing = [
+                label for label, value in (
+                    ("bucket", self.s3_bucket),
+                    ("access key", self.s3_access_key),
+                    ("secret key", self.s3_secret_key),
+                ) if not (value or "").strip()
+            ]
+            if missing:
+                raise ValueError("S3 target needs a " + ", ".join(missing))
+        else:
+            if not self.host.strip():
+                raise ValueError("SFTP target needs a host")
+            if not self.username.strip():
+                raise ValueError("SFTP target needs a username")
+            if not self.password and not self.private_key:
+                raise ValueError("SFTP password or private key is required")
+        return self
 
 
-class SftpBackupTargetOut(BaseModel):
+class BackupTargetOut(BaseModel):
     id: int
     name: str
-    host: str
-    port: int
-    username: str
+    kind: str = "sftp"
     remote_path: str
     is_active: bool
+
+    host: str = ""
+    port: int = 22
+    username: str = ""
     host_key_type: Optional[str] = None
     host_key_fingerprint: Optional[str] = None
 
+    s3_endpoint: str = ""
+    s3_region: str = ""
+    s3_bucket: str = ""
+    s3_access_key: str = ""
+    s3_use_path_style: bool = False
+    # s3_secret_key is deliberately absent: it never leaves the server.
+
     class Config:
         from_attributes = True
+
+
+# The names callers used before targets had kinds.
+SftpBackupTargetCreate = BackupTargetCreate
+SftpBackupTargetOut = BackupTargetOut
 
 
 class SftpBackupRun(BaseModel):

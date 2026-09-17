@@ -1,10 +1,13 @@
 from datetime import datetime
 import json
+import logging
 
 from app.core.database import SessionLocal
 from app.core.secrets import decrypt
-from app.models.entities import BackupSchedule, SftpBackupTarget, User
+from app.models.entities import BackupSchedule, BackupTarget, User
 from app.services import backup
+
+logger = logging.getLogger(__name__)
 
 
 def _field_matches(field: str, value: int) -> bool:
@@ -40,12 +43,59 @@ def _cron_due(schedule: str, now: datetime) -> bool:
     )
 
 
-def _upload_if_configured(db, schedule: BackupSchedule, archive: str) -> str:
+def _s3_secret(target) -> str:
+    try:
+        return decrypt(target.s3_secret_key) if target.s3_secret_key else ""
+    except RuntimeError:
+        raise RuntimeError(
+            "Failed to decrypt S3 secret key; please re-save the target in panel settings"
+        )
+
+
+def _upload_to_s3(db, target, archive: str, keep: int, username: str) -> str:
+    result = backup.upload_to_s3(
+        archive,
+        endpoint=target.s3_endpoint,
+        region=target.s3_region,
+        bucket=target.s3_bucket,
+        access_key=target.s3_access_key,
+        secret_key=_s3_secret(target),
+        prefix=target.remote_path,
+        use_path_style=bool(target.s3_use_path_style),
+    )
+    # Object storage bills for every byte kept, so retention has to reach the
+    # far end too -- unlike SFTP, where only the local copies are pruned.
+    # Scoped by username so one account's retention never deletes another's.
+    if keep and keep > 0:
+        try:
+            backup.prune_s3_backups(
+                endpoint=target.s3_endpoint,
+                region=target.s3_region,
+                bucket=target.s3_bucket,
+                access_key=target.s3_access_key,
+                secret_key=_s3_secret(target),
+                prefix=target.remote_path,
+                use_path_style=bool(target.s3_use_path_style),
+                keep=keep,
+                name_contains=username,
+            )
+        except Exception:
+            # The upload succeeded. A failed prune costs storage, not a backup,
+            # so it must not turn a good run into a failed one.
+            logger.warning("S3 prune failed for target %s", target.name, exc_info=True)
+    return f"{target.name}:{result['remote_file']}"
+
+
+def _upload_if_configured(db, schedule: BackupSchedule, archive: str, username: str = "") -> str:
     if not schedule.target_id:
         return archive
-    target = db.query(SftpBackupTarget).filter(SftpBackupTarget.id == schedule.target_id, SftpBackupTarget.is_active == True).first()  # noqa: E712
+    target = db.query(BackupTarget).filter(BackupTarget.id == schedule.target_id, BackupTarget.is_active == True).first()  # noqa: E712
     if not target:
-        raise ValueError("SFTP target not found")
+        raise ValueError("Backup target not found")
+
+    if (target.kind or "sftp") == "s3":
+        return _upload_to_s3(db, target, archive, schedule.retention, username)
+
     try:
         password = decrypt(target.password) if target.password else None
     except RuntimeError:
@@ -129,7 +179,7 @@ def run_due_schedules(now: datetime | None = None) -> int:
             for user in users:
                 try:
                     archive = backup.create_user_backup(user, db)
-                    target = _upload_if_configured(db, schedule, archive)
+                    target = _upload_if_configured(db, schedule, archive, user.username)
                     backup.prune_user_backups(user.username, schedule.retention)
                     messages.append(f"{user.username}: {target}")
                 except Exception as exc:  # pragma: no cover - operational path

@@ -17,7 +17,7 @@ from app.api.deps import get_current_user
 from app.core.database import SessionLocal, get_db
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
-from app.models.entities import BackupSchedule, DatabaseAccount, SftpBackupTarget, User, Website
+from app.models.entities import BackupSchedule, BackupTarget, DatabaseAccount, User, Website
 from app.schemas.schemas import (
     BackupScheduleCreate,
     BackupScheduleOut,
@@ -27,9 +27,9 @@ from app.schemas.schemas import (
     PhpConfigUpdate,
     PhpConfigRestore,
     RestoreBackup,
+    BackupTargetCreate,
+    BackupTargetOut,
     SftpBackupRun,
-    SftpBackupTargetCreate,
-    SftpBackupTargetOut,
     UserBackupCreate,
     UserRestoreBackup,
     WpAction,
@@ -342,18 +342,57 @@ def get_backup_user(db: Session, current_user: User, user_id: int) -> User:
     return user
 
 
+def _decrypted(value, label: str):
+    """A secret that will not decrypt means the key changed under us. Say that,
+    rather than letting a NULL reach the transport as an empty password."""
+    if not value:
+        return None
+    try:
+        return decrypt(value)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not decrypt the {label} for this target. Re-save it in panel settings.",
+        ) from exc
+
+
+def _upload_to_s3_target(target, archive: str) -> tuple[str, str]:
+    result = backup.upload_to_s3(
+        archive,
+        endpoint=target.s3_endpoint,
+        region=target.s3_region,
+        bucket=target.s3_bucket,
+        access_key=target.s3_access_key,
+        secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
+        prefix=target.remote_path,
+        use_path_style=bool(target.s3_use_path_style),
+    )
+    return target.name, result["remote_file"]
+
+
 def upload_archive_to_target(db: Session, target_id: int, archive: str) -> tuple[str, str]:
-    target = db.query(SftpBackupTarget).filter(SftpBackupTarget.id == target_id).first()
+    target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
     if not target or not target.is_active:
-        raise HTTPException(status_code=404, detail="SFTP target not found")
+        raise HTTPException(status_code=404, detail="Backup target not found")
+
+    if (target.kind or "sftp") == "s3":
+        try:
+            return _upload_to_s3_target(target, archive)
+        except backup.S3Error as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     try:
         result = backup.upload_to_sftp(
             archive,
             host=target.host,
             port=target.port,
             username=target.username,
-            password=decrypt(target.password) if target.password else None,
-            private_key=decrypt(target.private_key) if target.private_key else None,
+            password=_decrypted(target.password, "SFTP password"),
+            private_key=_decrypted(target.private_key, "SFTP private key"),
             remote_path=target.remote_path,
             expected_host_key_type=target.host_key_type,
             expected_host_key_fingerprint=target.host_key_fingerprint,
@@ -833,9 +872,9 @@ def create_user_backup(payload: UserBackupCreate, request: Request, db: Session 
     user = get_backup_user(db, current_user, payload.user_id)
     if payload.target_id:
         ensure_role(current_user.role, Role.admin)
-        target_exists = db.query(SftpBackupTarget).filter(SftpBackupTarget.id == payload.target_id, SftpBackupTarget.is_active == True).first()  # noqa: E712
+        target_exists = db.query(BackupTarget).filter(BackupTarget.id == payload.target_id, BackupTarget.is_active == True).first()  # noqa: E712
         if not target_exists:
-            raise HTTPException(status_code=404, detail="SFTP target not found")
+            raise HTTPException(status_code=404, detail="Backup target not found")
     log_action(db, current_user.id, "queue_backup_user", user.username, request=request)
     return _queue_user_backup(current_user, user, payload.target_id)
 
@@ -900,8 +939,8 @@ def create_backup_schedule(payload: BackupScheduleCreate, request: Request, db: 
         missing_ids = [str(user_id) for user_id in user_ids if user_id not in found_ids]
         if missing_ids:
             raise HTTPException(status_code=404, detail=f"User not found: {', '.join(missing_ids)}")
-    if payload.target_id and not db.query(SftpBackupTarget).filter(SftpBackupTarget.id == payload.target_id, SftpBackupTarget.is_active == True).first():  # noqa: E712
-        raise HTTPException(status_code=404, detail="SFTP target not found")
+    if payload.target_id and not db.query(BackupTarget).filter(BackupTarget.id == payload.target_id, BackupTarget.is_active == True).first():  # noqa: E712
+        raise HTTPException(status_code=404, detail="Backup target not found")
     item = BackupSchedule(
         user_id=user_ids[0] if user_ids else None,
         user_ids=json.dumps(user_ids),
@@ -932,56 +971,104 @@ def delete_backup_schedule(schedule_id: int, request: Request, db: Session = Dep
     return {"ok": True}
 
 
-@router.get("/sftp-targets", response_model=list[SftpBackupTargetOut])
-def list_sftp_targets(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+@router.get("/backup-targets", response_model=list[BackupTargetOut])
+def list_backup_targets(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
-    return db.query(SftpBackupTarget).order_by(SftpBackupTarget.id.desc()).all()
+    return db.query(BackupTarget).order_by(BackupTarget.id.desc()).all()
 
 
-@router.post("/sftp-targets", response_model=SftpBackupTargetOut)
-def create_sftp_target(
-    payload: SftpBackupTargetCreate,
+@router.post("/backup-targets", response_model=BackupTargetOut)
+def create_backup_target(
+    payload: BackupTargetCreate,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     ensure_role(current_user.role, Role.admin)
-    if db.query(SftpBackupTarget).filter(SftpBackupTarget.name == payload.name).first():
-        raise HTTPException(status_code=409, detail="SFTP target name already exists")
-    if not payload.password and not payload.private_key:
-        raise HTTPException(status_code=400, detail="SFTP password or private key is required")
-    target = SftpBackupTarget(
+    if db.query(BackupTarget).filter(BackupTarget.name == payload.name).first():
+        raise HTTPException(status_code=409, detail="Backup target name already exists")
+
+    target = BackupTarget(
         name=payload.name,
+        kind=payload.kind,
+        remote_path=payload.remote_path,
+        is_active=True,
+        # SFTP
         host=payload.host,
         port=payload.port,
         username=payload.username,
         password=encrypt(payload.password) if payload.password else None,
         private_key=encrypt(payload.private_key) if payload.private_key else None,
-        remote_path=payload.remote_path,
-        is_active=True,
+        # S3 compatible
+        s3_endpoint=payload.s3_endpoint,
+        s3_region=payload.s3_region,
+        s3_bucket=payload.s3_bucket,
+        s3_access_key=payload.s3_access_key,
+        s3_secret_key=encrypt(payload.s3_secret_key) if payload.s3_secret_key else None,
+        s3_use_path_style=payload.s3_use_path_style,
     )
     db.add(target)
     db.commit()
     db.refresh(target)
-    log_action(db, current_user.id, "create_sftp_target", target.name, request=request)
+    log_action(db, current_user.id, "create_backup_target", f"{target.kind}:{target.name}", request=request)
     return target
 
 
-@router.delete("/sftp-targets/{target_id}")
-def delete_sftp_target(
+@router.post("/backup-targets/{target_id}/test")
+def test_backup_target(
+    target_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Prove the target can be written to before a schedule depends on it.
+
+    Endpoint, region and path-style addressing are easy to get wrong and all
+    three fail in ways that look like something else, so this writes a small
+    object and deletes it rather than only checking that the bucket exists.
+    """
+    ensure_role(current_user.role, Role.admin)
+    target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Backup target not found")
+    if (target.kind or "sftp") != "s3":
+        raise HTTPException(
+            status_code=400,
+            detail="Only S3 targets can be tested. Run a backup to verify an SFTP target.",
+        )
+    try:
+        backup.test_s3_target(
+            endpoint=target.s3_endpoint,
+            region=target.s3_region,
+            bucket=target.s3_bucket,
+            access_key=target.s3_access_key,
+            secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
+            use_path_style=bool(target.s3_use_path_style),
+            prefix=target.remote_path,
+        )
+    except backup.S3Error as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "message": f"Wrote and removed a test object in {target.s3_bucket}."}
+
+
+@router.delete("/backup-targets/{target_id}")
+def delete_backup_target(
     target_id: int,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     ensure_role(current_user.role, Role.admin)
-    target = db.query(SftpBackupTarget).filter(SftpBackupTarget.id == target_id).first()
+    target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
     if not target:
-        raise HTTPException(status_code=404, detail="SFTP target not found")
+        raise HTTPException(status_code=404, detail="Backup target not found")
     name = target.name
     db.delete(target)
     db.commit()
-    log_action(db, current_user.id, "delete_sftp_target", name, request=request)
+    log_action(db, current_user.id, "delete_backup_target", name, request=request)
     return {"ok": True}
 
 
@@ -994,9 +1081,9 @@ def create_sftp_backup(
 ):
     ensure_role(current_user.role, Role.admin)
     website = get_owned_website(db, current_user, payload.website_id)
-    target = db.query(SftpBackupTarget).filter(SftpBackupTarget.id == payload.target_id).first()
+    target = db.query(BackupTarget).filter(BackupTarget.id == payload.target_id).first()
     if not target or not target.is_active:
-        raise HTTPException(status_code=404, detail="SFTP target not found")
+        raise HTTPException(status_code=404, detail="Backup target not found")
     log_action(db, current_user.id, "queue_backup_sftp", website.domain, target.name, request=request)
     return _queue_sftp_backup(current_user, website, target.id)
 

@@ -165,14 +165,35 @@ class RevokedToken(Base):
     revoked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
-class SftpBackupTarget(Base):
-    __tablename__ = "sftp_backup_targets"
+class BackupTarget(Base):
+    """Somewhere a backup can be sent. `kind` decides which columns matter.
+
+    The table was called sftp_backup_targets when SFTP was the only option;
+    0027 renames it. Columns for the other kind stay empty rather than null so
+    an existing row needs no rewrite.
+    """
+
+    __tablename__ = "backup_targets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    host: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(16), default="sftp")
+
+    # --- S3 compatible (AWS, Wasabi, Backblaze B2, MinIO, Ceph, R2) ---------
+    # endpoint empty means AWS itself; anything else needs the URL.
+    s3_endpoint: Mapped[str] = mapped_column(String(255), default="")
+    s3_region: Mapped[str] = mapped_column(String(64), default="us-east-1")
+    s3_bucket: Mapped[str] = mapped_column(String(255), default="")
+    s3_access_key: Mapped[str] = mapped_column(String(255), default="")
+    s3_secret_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # MinIO and Ceph serve buckets as a path, not a subdomain. Getting this
+    # wrong looks exactly like a DNS failure, so it is a switch, not a guess.
+    s3_use_path_style: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # --- SFTP ---------------------------------------------------------------
+    host: Mapped[str] = mapped_column(String(255), default="")
     port: Mapped[int] = mapped_column(Integer, default=22)
-    username: Mapped[str] = mapped_column(String(128))
+    username: Mapped[str] = mapped_column(String(128), default="")
     password: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     private_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     remote_path: Mapped[str] = mapped_column(String(500), default="/backups/opanel")
@@ -185,6 +206,10 @@ class SftpBackupTarget(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+# The name every caller used before targets had kinds.
+SftpBackupTarget = BackupTarget
+
+
 class BackupSchedule(Base):
     __tablename__ = "backup_schedules"
 
@@ -192,7 +217,7 @@ class BackupSchedule(Base):
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
     user_ids: Mapped[str] = mapped_column(Text, default="")
     all_users: Mapped[bool] = mapped_column(Boolean, default=False)
-    target_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sftp_backup_targets.id"), nullable=True)
+    target_id: Mapped[Optional[int]] = mapped_column(ForeignKey("backup_targets.id"), nullable=True)
     schedule: Mapped[str] = mapped_column(String(100), default="0 2 * * *")
     retention: Mapped[int] = mapped_column(Integer, default=7)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

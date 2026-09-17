@@ -5,6 +5,7 @@ import json
 import logging
 from pathlib import Path
 import posixpath
+import time
 import re
 import secrets
 import shutil
@@ -884,3 +885,254 @@ def _decode_pinned_key(key_type: str, fingerprint: str) -> Optional[PKey]:
     possible. Returns ``None`` to indicate the caller should rely on the
     in-policy fingerprint comparison instead."""
     return None
+
+
+# ---------------------------------------------------------------------------
+# S3-compatible object storage
+# ---------------------------------------------------------------------------
+# boto3 is imported lazily. It is a large dependency and nothing on the request
+# path needs it, so a box that has not finished installing requirements yet
+# still serves the panel instead of failing to import the backup module.
+
+S3_KEY_RE = re.compile(r"^[A-Za-z0-9!_.*'()/-]*$")
+
+
+class S3Error(RuntimeError):
+    """Anything the object store refused, phrased for the panel."""
+
+
+def _s3_client(
+    *,
+    endpoint: str,
+    region: str,
+    access_key: str,
+    secret_key: str,
+    use_path_style: bool,
+):
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError as exc:  # pragma: no cover - only on a half-installed box
+        raise S3Error(
+            "boto3 is not installed on this server. Run opanel-update to install it."
+        ) from exc
+
+    if not access_key or not secret_key:
+        raise ValueError("S3 access key and secret key are required")
+
+    endpoint = (endpoint or "").strip()
+    if endpoint and not endpoint.startswith(("http://", "https://")):
+        endpoint = f"https://{endpoint}"
+
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint or None,
+        region_name=(region or "us-east-1").strip(),
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=Config(
+            # Every S3-compatible store speaks v4 now, and several refuse v2.
+            signature_version="s3v4",
+            # MinIO and Ceph serve the bucket as a path rather than a subdomain.
+            s3={"addressing_style": "path" if use_path_style else "auto"},
+            retries={"max_attempts": 3, "mode": "standard"},
+            connect_timeout=20,
+            read_timeout=120,
+        ),
+    )
+
+
+def s3_prefix_for(prefix: str) -> str:
+    """Normalise a user-typed prefix into an S3 key prefix.
+
+    S3 has no directories. A leading slash makes an object whose name starts
+    with a slash, which then displays as an empty folder in every console, so
+    strip it here rather than leaving each caller to remember.
+    """
+    cleaned = (prefix or "").strip().strip("/")
+    if not cleaned:
+        return ""
+    if not S3_KEY_RE.match(cleaned):
+        raise ValueError("S3 prefix may only contain letters, digits and ! _ . * ' ( ) / -")
+    if ".." in cleaned.split("/"):
+        raise ValueError("S3 prefix cannot contain ..")
+    return cleaned
+
+
+def _s3_key(prefix: str, filename: str) -> str:
+    safe_prefix = s3_prefix_for(prefix)
+    return f"{safe_prefix}/{filename}" if safe_prefix else filename
+
+
+def _s3_failure(exc: Exception, bucket: str) -> S3Error:
+    """Turn botocore's error shapes into something an admin can act on."""
+    from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
+
+    if isinstance(exc, EndpointConnectionError):
+        return S3Error("Could not reach the S3 endpoint. Check the endpoint URL.")
+    if isinstance(exc, NoCredentialsError):
+        return S3Error("S3 credentials were rejected as empty.")
+    if isinstance(exc, ClientError):
+        error = exc.response.get("Error", {})
+        code = str(error.get("Code", "")).strip()
+        message = str(error.get("Message", "")).strip()
+        known = {
+            "NoSuchBucket": f"Bucket '{bucket}' does not exist.",
+            "AccessDenied": "Access denied. Check the key's permissions on this bucket.",
+            "InvalidAccessKeyId": "Access key not recognised by this endpoint.",
+            "SignatureDoesNotMatch": "Secret key does not match the access key.",
+            "PermanentRedirect": "Wrong region for this bucket.",
+            "AuthorizationHeaderMalformed": "Wrong region for this bucket.",
+            "401": "Credentials were rejected.",
+            "403": "Access denied. Check the key's permissions on this bucket.",
+            "404": f"Bucket '{bucket}' does not exist.",
+        }
+        if code in known:
+            return S3Error(known[code])
+        return S3Error(f"S3 error {code}: {message}" if code else f"S3 error: {message or exc}")
+    return S3Error(str(exc))
+
+
+def test_s3_target(
+    *,
+    endpoint: str,
+    region: str,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+    use_path_style: bool = False,
+    prefix: str = "",
+) -> dict:
+    """Prove the credentials can actually write, not just connect.
+
+    HeadBucket alone passes for a read-only key, which then fails at 2am on the
+    first scheduled run. This writes a small object and deletes it again.
+    """
+    client = _s3_client(
+        endpoint=endpoint, region=region, access_key=access_key,
+        secret_key=secret_key, use_path_style=use_path_style,
+    )
+    probe_key = _s3_key(prefix, f".opanel-write-test-{int(time.time())}")
+    try:
+        client.head_bucket(Bucket=bucket)
+        client.put_object(Bucket=bucket, Key=probe_key, Body=b"opanel write test")
+        client.delete_object(Bucket=bucket, Key=probe_key)
+    except Exception as exc:
+        raise _s3_failure(exc, bucket) from exc
+    return {"ok": True, "bucket": bucket, "prefix": s3_prefix_for(prefix)}
+
+
+def upload_to_s3(
+    local_file: str,
+    *,
+    endpoint: str,
+    region: str,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+    prefix: str = "",
+    use_path_style: bool = False,
+) -> dict:
+    """Upload one archive. Multipart is handled by boto3's transfer manager,
+    which matters: these files run to gigabytes and a single PUT caps at 5 GB."""
+    local_path = Path(local_file).resolve()
+    if not local_path.exists() or not local_path.is_file():
+        raise FileNotFoundError("Local backup file not found")
+
+    client = _s3_client(
+        endpoint=endpoint, region=region, access_key=access_key,
+        secret_key=secret_key, use_path_style=use_path_style,
+    )
+    key = _s3_key(prefix, local_path.name)
+    try:
+        client.upload_file(str(local_path), bucket, key)
+    except Exception as exc:
+        raise _s3_failure(exc, bucket) from exc
+
+    return {
+        "remote_file": f"s3://{bucket}/{key}",
+        "bucket": bucket,
+        "key": key,
+        "size": local_path.stat().st_size,
+    }
+
+
+def list_s3_backups(
+    *,
+    endpoint: str,
+    region: str,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+    prefix: str = "",
+    use_path_style: bool = False,
+) -> list[dict]:
+    client = _s3_client(
+        endpoint=endpoint, region=region, access_key=access_key,
+        secret_key=secret_key, use_path_style=use_path_style,
+    )
+    safe_prefix = s3_prefix_for(prefix)
+    lookup = f"{safe_prefix}/" if safe_prefix else ""
+    entries: list[dict] = []
+    try:
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=lookup):
+            for item in page.get("Contents", []) or []:
+                entries.append({
+                    "key": item["Key"],
+                    "size": int(item.get("Size", 0)),
+                    "modified": item.get("LastModified"),
+                })
+    except Exception as exc:
+        raise _s3_failure(exc, bucket) from exc
+    entries.sort(key=lambda row: row["modified"] or 0, reverse=True)
+    return entries
+
+
+def prune_s3_backups(
+    *,
+    endpoint: str,
+    region: str,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+    prefix: str = "",
+    use_path_style: bool = False,
+    keep: int = 7,
+    name_contains: str = "",
+) -> int:
+    """Keep the newest ``keep`` archives under the prefix, delete the rest.
+
+    Object storage bills for every byte kept, so unlike the SFTP target this
+    one prunes the far end. ``name_contains`` scopes a prune to one user's
+    archives, so one account's retention never deletes another's.
+    """
+    if keep < 1:
+        return 0
+    entries = list_s3_backups(
+        endpoint=endpoint, region=region, bucket=bucket, access_key=access_key,
+        secret_key=secret_key, prefix=prefix, use_path_style=use_path_style,
+    )
+    if name_contains:
+        entries = [row for row in entries if name_contains in row["key"].rsplit("/", 1)[-1]]
+    stale = entries[keep:]
+    if not stale:
+        return 0
+
+    client = _s3_client(
+        endpoint=endpoint, region=region, access_key=access_key,
+        secret_key=secret_key, use_path_style=use_path_style,
+    )
+    removed = 0
+    try:
+        # delete_objects takes 1000 keys at a time.
+        for start in range(0, len(stale), 1000):
+            chunk = stale[start:start + 1000]
+            client.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": [{"Key": row["key"]} for row in chunk], "Quiet": True},
+            )
+            removed += len(chunk)
+    except Exception as exc:
+        raise _s3_failure(exc, bucket) from exc
+    return removed

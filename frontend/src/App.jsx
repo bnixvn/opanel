@@ -358,7 +358,13 @@ function App() {
   const [newBackupSchedule, setNewBackupSchedule] = useState({ user_ids: [], all_users: false, schedule: '0 2 * * *', target_id: '', retention: 7 });
   const [sftpTargets, setSftpTargets] = useState([]);
   const [selectedSftpTargetId, setSelectedSftpTargetId] = useState('');
-  const [newSftpTarget, setNewSftpTarget] = useState({ name: '', host: '', port: 22, username: '', password: '', private_key: '', remote_path: '/backups/opanel' });
+  const BLANK_TARGET = {
+    name: '', kind: 'sftp', remote_path: '/backups/opanel',
+    host: '', port: 22, username: '', password: '', private_key: '',
+    s3_endpoint: '', s3_region: 'us-east-1', s3_bucket: '',
+    s3_access_key: '', s3_secret_key: '', s3_use_path_style: false,
+  };
+  const [newSftpTarget, setNewSftpTarget] = useState(BLANK_TARGET);
   const [daBackups, setDaBackups] = useState([]);
   const [daBackupDir, setDaBackupDir] = useState('');
   const [daImportJobs, setDaImportJobs] = useState([]);
@@ -2127,7 +2133,7 @@ function App() {
   }
 
   async function loadSftpTargets() {
-    const data = await request('/maintenance/sftp-targets');
+    const data = await request('/maintenance/backup-targets');
     if (data) {
       setSftpTargets(data);
       if (!selectedSftpTargetId && data[0]) setSelectedSftpTargetId(String(data[0].id));
@@ -2140,19 +2146,25 @@ function App() {
       port: Number(newSftpTarget.port || 22),
       password: newSftpTarget.password || null,
       private_key: newSftpTarget.private_key || null,
+      s3_secret_key: newSftpTarget.s3_secret_key || null,
     };
-    const data = await request('/maintenance/sftp-targets', { method: 'POST', body: JSON.stringify(body) }, 'Saving SFTP target...');
+    const data = await request('/maintenance/backup-targets', { method: 'POST', body: JSON.stringify(body) }, 'Saving backup destination...');
     if (data) {
-      setNotice(`Saved SFTP target ${data.name}`);
-      setNewSftpTarget({ name: '', host: '', port: 22, username: '', password: '', private_key: '', remote_path: '/backups/opanel' });
+      setNotice(`Saved ${data.kind === 's3' ? 'S3' : 'SFTP'} destination ${data.name}`);
+      setNewSftpTarget(BLANK_TARGET);
       await loadSftpTargets();
     }
   }
 
   async function deleteSftpTarget(id) {
-    if (!confirm('Delete this SFTP target?')) return;
-    const data = await request(`/maintenance/sftp-targets/${id}`, { method: 'DELETE' }, 'Deleting SFTP target...');
+    if (!confirm('Delete this backup destination?')) return;
+    const data = await request(`/maintenance/backup-targets/${id}`, { method: 'DELETE' }, 'Deleting destination...');
     if (data) await loadSftpTargets();
+  }
+
+  async function testBackupTarget(id) {
+    const data = await request(`/maintenance/backup-targets/${id}/test`, { method: 'POST' }, 'Testing destination...');
+    if (data?.ok) setNotice(data.message || 'Destination works.');
   }
 
   async function createSftpBackup() {
@@ -3900,24 +3912,55 @@ function App() {
 
       {isAdmin && activeBackupTab === 'destination' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
-          <div><h3>Backup Destination</h3><p className="hint">Manage SFTP destinations used for off-server backup copies.</p></div>
+          <div><h3>Backup Destination</h3><p className="hint">Where off-server backup copies are sent. SFTP, or any S3-compatible object storage.</p></div>
           <button disabled={!!loading} onClick={loadSftpTargets}><RefreshCw size={14}/> Refresh</button>
         </div>
         <div className="sftp-form sftp-target-form">
-          <input value={newSftpTarget.name} onChange={e => setNewSftpTarget(prev => ({ ...prev, name: e.target.value }))} placeholder="Target name" />
-          <input value={newSftpTarget.host} onChange={e => setNewSftpTarget(prev => ({ ...prev, host: e.target.value }))} placeholder="Host" />
-          <input value={newSftpTarget.port} onChange={e => setNewSftpTarget(prev => ({ ...prev, port: e.target.value }))} placeholder="22" inputMode="numeric" />
-          <input value={newSftpTarget.username} onChange={e => setNewSftpTarget(prev => ({ ...prev, username: e.target.value }))} placeholder="Username" />
-          <input value={newSftpTarget.password} onChange={e => setNewSftpTarget(prev => ({ ...prev, password: e.target.value }))} placeholder="Password" type="password" />
-          <input value={newSftpTarget.remote_path} onChange={e => setNewSftpTarget(prev => ({ ...prev, remote_path: e.target.value }))} placeholder="/backups/opanel" />
-          <textarea value={newSftpTarget.private_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, private_key: e.target.value }))} placeholder="Private key (optional)" rows={4} />
-          <button disabled={!!loading || !newSftpTarget.name || !newSftpTarget.host || !newSftpTarget.username || (!newSftpTarget.password && !newSftpTarget.private_key)} onClick={createSftpTarget}><Plus size={14}/> Save target</button>
+          <input value={newSftpTarget.name} onChange={e => setNewSftpTarget(prev => ({ ...prev, name: e.target.value }))} placeholder="Destination name" />
+          <select value={newSftpTarget.kind} onChange={e => setNewSftpTarget(prev => ({ ...prev, kind: e.target.value }))}>
+            <option value="sftp">SFTP</option>
+            <option value="s3">S3 compatible</option>
+          </select>
+
+          {newSftpTarget.kind === 'sftp' ? <>
+            <input value={newSftpTarget.host} onChange={e => setNewSftpTarget(prev => ({ ...prev, host: e.target.value }))} placeholder="Host" />
+            <input value={newSftpTarget.port} onChange={e => setNewSftpTarget(prev => ({ ...prev, port: e.target.value }))} placeholder="22" inputMode="numeric" />
+            <input value={newSftpTarget.username} onChange={e => setNewSftpTarget(prev => ({ ...prev, username: e.target.value }))} placeholder="Username" />
+            <input value={newSftpTarget.password} onChange={e => setNewSftpTarget(prev => ({ ...prev, password: e.target.value }))} placeholder="Password" type="password" />
+            <input value={newSftpTarget.remote_path} onChange={e => setNewSftpTarget(prev => ({ ...prev, remote_path: e.target.value }))} placeholder="/backups/opanel" />
+            <textarea value={newSftpTarget.private_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, private_key: e.target.value }))} placeholder="Private key (optional)" rows={4} />
+          </> : <>
+            <input value={newSftpTarget.s3_bucket} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_bucket: e.target.value }))} placeholder="Bucket" />
+            <input value={newSftpTarget.s3_endpoint} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_endpoint: e.target.value }))} placeholder="Endpoint - leave empty for AWS" />
+            <input value={newSftpTarget.s3_region} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_region: e.target.value }))} placeholder="us-east-1" />
+            <input value={newSftpTarget.s3_access_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_access_key: e.target.value }))} placeholder="Access key" />
+            <input value={newSftpTarget.s3_secret_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_secret_key: e.target.value }))} placeholder="Secret key" type="password" />
+            <input value={newSftpTarget.remote_path} onChange={e => setNewSftpTarget(prev => ({ ...prev, remote_path: e.target.value }))} placeholder="Key prefix, e.g. opanel/backups" />
+            <label className="check-line">
+              <input type="checkbox" checked={!!newSftpTarget.s3_use_path_style}
+                onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_use_path_style: e.target.checked }))} />
+              Path-style addressing (MinIO, Ceph)
+            </label>
+          </>}
+
+          <button disabled={!!loading || !newSftpTarget.name || (newSftpTarget.kind === 's3'
+            ? (!newSftpTarget.s3_bucket || !newSftpTarget.s3_access_key || !newSftpTarget.s3_secret_key)
+            : (!newSftpTarget.host || !newSftpTarget.username || (!newSftpTarget.password && !newSftpTarget.private_key)))}
+            onClick={createSftpTarget}><Plus size={14}/> Save destination</button>
         </div>
         {sftpTargets.length === 0 && <EmptyState icon={Network} message="No backup destinations found." />}
         <div className="backup-list">
           {sftpTargets.map(target => <div className="backup-item" key={target.id}>
-            <span>{target.name} - {target.username}@{target.host}:{target.remote_path}</span>
-            <button className="danger" disabled={!!loading} onClick={() => deleteSftpTarget(target.id)}><Trash2 size={14}/></button>
+            <span>
+              <span className="badge">{target.kind === 's3' ? 'S3' : 'SFTP'}</span>{' '}
+              {target.name} &mdash; {target.kind === 's3'
+                ? `${target.s3_bucket}/${target.remote_path.replace(/^\/+/, '')}${target.s3_endpoint ? ` @ ${target.s3_endpoint}` : ''}`
+                : `${target.username}@${target.host}:${target.remote_path}`}
+            </span>
+            <span className="backup-item-actions">
+              {target.kind === 's3' && <button className="secondary" disabled={!!loading} onClick={() => testBackupTarget(target.id)}>Test</button>}
+              <button className="danger" disabled={!!loading} onClick={() => deleteSftpTarget(target.id)}><Trash2 size={14}/></button>
+            </span>
           </div>)}
         </div>
       </div>}
