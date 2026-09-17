@@ -1054,6 +1054,92 @@ def test_backup_target(
     return {"ok": True, "message": f"Wrote and removed a test object in {target.s3_bucket}."}
 
 
+@router.get("/backup-targets/{target_id}/objects")
+def list_backup_target_objects(
+    target_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """What this destination is actually holding.
+
+    Without this the panel could send a backup to S3 and never mention it
+    again: nothing listed the bucket, so nothing could be restored from it or
+    removed by hand.
+    """
+    ensure_role(current_user.role, Role.admin)
+    target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Backup target not found")
+    if (target.kind or "sftp") != "s3":
+        raise HTTPException(status_code=400, detail="Only S3 destinations can be listed.")
+    try:
+        rows = backup.list_s3_backups(
+            endpoint=target.s3_endpoint,
+            region=target.s3_region,
+            bucket=target.s3_bucket,
+            access_key=target.s3_access_key,
+            secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
+            prefix=target.remote_path,
+            use_path_style=bool(target.s3_use_path_style),
+        )
+    except backup.S3Error as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "bucket": target.s3_bucket,
+        "prefix": target.remote_path,
+        "items": [
+            {
+                "key": row["key"],
+                "name": row["key"].rsplit("/", 1)[-1],
+                "size": row["size"],
+                "modified": row["modified"].isoformat() if row.get("modified") else "",
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.delete("/backup-targets/{target_id}/objects")
+def delete_backup_target_object(
+    target_id: int,
+    key: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Backup target not found")
+    if (target.kind or "sftp") != "s3":
+        raise HTTPException(status_code=400, detail="Only S3 destinations can be deleted from.")
+    try:
+        deleted = backup.delete_s3_object(
+            endpoint=target.s3_endpoint,
+            region=target.s3_region,
+            bucket=target.s3_bucket,
+            access_key=target.s3_access_key,
+            secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
+            key=key,
+            prefix=target.remote_path,
+            use_path_style=bool(target.s3_use_path_style),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except backup.S3Error as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    log_action(db, current_user.id, "delete_s3_backup", target.name, deleted, request=request)
+    return {"deleted": deleted}
+
+
 @router.delete("/backup-targets/{target_id}")
 def delete_backup_target(
     target_id: int,

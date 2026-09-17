@@ -1193,9 +1193,14 @@ fi
 # ran for 22/80/443/the panel port. Existing boxes keep the old jump order --
 # the -C check inside the helper finds it and leaves it -- so re-run the enable
 # path here, which drops and re-adds the jumps in the right order.
-if command -v iptables >/dev/null 2>&1    && iptables -L INPUT -n --line-numbers 2>/dev/null       | awk '/OPANEL_INPUT/{i=NR} /OPANEL_USER/{u=NR} END{exit !(i && u && i < u)}'; then
-  log "Reordering firewall chains so IP blocks take effect"
-  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-enable >/dev/null 2>&1     || echo "  (could not reorder firewall chains; run Reload on the Firewall page)"
+# Also catches the jumps being gone entirely, not just out of order.
+# iptables-enable used to build the chains without saving them, so a reboot
+# restored whatever netfilter-persistent last had: on one live box that left
+# OPANEL_INPUT and OPANEL_USER at zero references with an INPUT policy of
+# ACCEPT, and nothing was being filtered at all.
+if command -v iptables >/dev/null 2>&1    && iptables -L INPUT -n --line-numbers 2>/dev/null       | awk '/OPANEL_INPUT/{i=NR} /OPANEL_USER/{u=NR} END{exit !(!i || !u || i < u)}'; then
+  log "Repairing firewall chain jumps"
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-enable >/dev/null 2>&1     || echo "  (could not repair firewall chains; run Reload on the Firewall page)"
 fi
 
 # Log hygiene. Every box built before this shipped OpenLiteSpeed's stock

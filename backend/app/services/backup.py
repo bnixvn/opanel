@@ -1136,3 +1136,40 @@ def prune_s3_backups(
     except Exception as exc:
         raise _s3_failure(exc, bucket) from exc
     return removed
+
+
+def delete_s3_object(
+    *,
+    endpoint: str,
+    region: str,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+    key: str,
+    prefix: str = "",
+    use_path_style: bool = False,
+) -> str:
+    """Delete one object, and only one that belongs to this target.
+
+    The key arrives from the browser. Without the prefix check an admin who
+    mistyped -- or anyone who reached the endpoint -- could remove anything
+    else the bucket holds, which may be nothing to do with opanel.
+    """
+    safe_prefix = s3_prefix_for(prefix)
+    wanted = (key or "").strip().lstrip("/")
+    if not wanted:
+        raise ValueError("Object key is required")
+    if safe_prefix and not wanted.startswith(f"{safe_prefix}/"):
+        raise ValueError("That object is outside this destination's prefix")
+    if ".." in wanted.split("/"):
+        raise ValueError("Invalid object key")
+
+    client = _s3_client(
+        endpoint=endpoint, region=region, access_key=access_key,
+        secret_key=secret_key, use_path_style=use_path_style,
+    )
+    try:
+        client.delete_object(Bucket=bucket, Key=wanted)
+    except Exception as exc:
+        raise _s3_failure(exc, bucket) from exc
+    return wanted

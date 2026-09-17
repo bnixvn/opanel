@@ -178,3 +178,26 @@ def test_installer_and_helper_agree_on_the_jump_order():
     for binary in ("iptables", "ip6tables"):
         assert order(helper_block, binary) == expected, f"helper {binary}"
         assert order(install, binary) == expected, f"install.sh {binary}"
+
+
+def test_iptables_enable_saves_what_it_builds():
+    """It built the chains in memory and never wrote them out, so a reboot
+    restored whatever netfilter-persistent last had. One live box came back
+    with OPANEL_INPUT and OPANEL_USER at zero references and INPUT policy
+    ACCEPT -- filtering nothing. Only the blocklist jump survived, because the
+    blocklist timer saves its own.
+    """
+    helper = (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    start = helper.index("  iptables-enable)")
+    block = helper[start:helper.index(";;", start)]
+
+    assert "firewall_persist_rules" in block
+    assert block.index("iptables_reorder_managed_jumps") < block.index("firewall_persist_rules")
+
+
+def test_the_updater_repairs_missing_jumps_not_only_a_wrong_order():
+    updater = (Path(__file__).resolve().parents[3] / "installer" / "update.sh").read_text(encoding="utf-8")
+
+    # !i || !u covers the jumps being gone; i < u covers them being swapped.
+    assert "END{exit !(!i || !u || i < u)}" in updater
+    assert "END{exit !(i && u && i < u)}" not in updater

@@ -365,6 +365,7 @@ function App() {
     s3_access_key: '', s3_secret_key: '', s3_use_path_style: false,
   };
   const [newSftpTarget, setNewSftpTarget] = useState(BLANK_TARGET);
+  const [targetObjects, setTargetObjects] = useState({ id: null, bucket: '', items: [] });
   const [daBackups, setDaBackups] = useState([]);
   const [daBackupDir, setDaBackupDir] = useState('');
   const [daImportJobs, setDaImportJobs] = useState([]);
@@ -2160,6 +2161,22 @@ function App() {
     if (!confirm('Delete this backup destination?')) return;
     const data = await request(`/maintenance/backup-targets/${id}`, { method: 'DELETE' }, 'Deleting destination...');
     if (data) await loadSftpTargets();
+  }
+
+  async function loadTargetObjects(id) {
+    if (targetObjects.id === id) { setTargetObjects({ id: null, bucket: '', items: [] }); return; }
+    const data = await request(`/maintenance/backup-targets/${id}/objects`, {}, 'Reading destination...');
+    if (data) setTargetObjects({ id, bucket: data.bucket, items: data.items || [] });
+  }
+
+  async function deleteTargetObject(id, key) {
+    if (!confirm(`Delete this backup from the bucket?\n${key}`)) return;
+    const data = await request(`/maintenance/backup-targets/${id}/objects?key=${encodeURIComponent(key)}`,
+      { method: 'DELETE' }, 'Deleting from bucket...');
+    if (data?.deleted) {
+      setNotice(`Deleted ${data.deleted}`);
+      setTargetObjects(prev => ({ ...prev, items: prev.items.filter(item => item.key !== data.deleted) }));
+    }
   }
 
   async function testBackupTarget(id) {
@@ -3958,10 +3975,22 @@ function App() {
                 : `${target.username}@${target.host}:${target.remote_path}`}
             </span>
             <span className="backup-item-actions">
+              {target.kind === 's3' && <button className="secondary" disabled={!!loading} onClick={() => loadTargetObjects(target.id)}>
+                {targetObjects.id === target.id ? 'Hide files' : 'Files'}
+              </button>}
               {target.kind === 's3' && <button className="secondary" disabled={!!loading} onClick={() => testBackupTarget(target.id)}>Test</button>}
               <button className="danger" disabled={!!loading} onClick={() => deleteSftpTarget(target.id)}><Trash2 size={14}/></button>
             </span>
           </div>)}
+          {targetObjects.id && <div className="backup-list target-objects">
+            {targetObjects.items.length === 0
+              ? <p className="hint">Nothing in {targetObjects.bucket} under this prefix yet.</p>
+              : targetObjects.items.map(item => <div className="backup-item" key={item.key}>
+                  <span>{item.name} <small>{formatBytes(item.size)} &middot; {item.modified.slice(0, 19).replace('T', ' ')}</small></span>
+                  <button className="danger" disabled={!!loading}
+                    onClick={() => deleteTargetObject(targetObjects.id, item.key)}><Trash2 size={14}/></button>
+                </div>)}
+          </div>}
         </div>
       </div>}
     </section>;

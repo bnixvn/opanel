@@ -465,3 +465,62 @@ def test_an_sftp_target_still_takes_an_absolute_remote_path():
     )
 
     assert target.remote_path == "/backups/opanel"
+
+
+# --------------------------------------------------------------------------
+# Deleting from the bucket. Without this the panel could send a backup to S3
+# and then never list it or remove it -- retention on a scheduled run was the
+# only way anything ever left.
+# --------------------------------------------------------------------------
+
+def test_delete_removes_one_object(fake_s3):
+    key = backup.delete_s3_object(key="opanel/alice-1.tar.gz", prefix="opanel", **CREDS)
+
+    assert key == "opanel/alice-1.tar.gz"
+    name, kwargs = fake_s3["client"].calls[0]
+    assert name == "delete_object"
+    assert kwargs["Key"] == "opanel/alice-1.tar.gz"
+    assert kwargs["Bucket"] == "opanel-backups"
+
+
+@pytest.mark.parametrize("key", [
+    "somewhere-else/important.tar.gz",
+    "opanel-other/x.tar.gz",
+    "/etc/passwd",
+    "opanel/../secrets/x",
+    "",
+])
+def test_delete_refuses_anything_outside_the_prefix(fake_s3, key):
+    """The key comes from the browser. A bucket usually holds more than opanel's
+    backups, and a mistyped key must not be able to reach it."""
+    with pytest.raises(ValueError):
+        backup.delete_s3_object(key=key, prefix="opanel", **CREDS)
+
+    assert fake_s3["client"].calls == []
+
+
+def test_delete_with_no_prefix_still_rejects_traversal(fake_s3):
+    with pytest.raises(ValueError):
+        backup.delete_s3_object(key="a/../../b", prefix="", **CREDS)
+
+
+def test_delete_accepts_a_leading_slash_from_the_browser(fake_s3):
+    key = backup.delete_s3_object(key="/opanel/alice-1.tar.gz", prefix="opanel", **CREDS)
+
+    assert key == "opanel/alice-1.tar.gz"
+
+
+def test_the_panel_exposes_list_and_delete_for_a_destination():
+    """The gap that started this: uploads worked and nothing could be removed."""
+    from app.api import maintenance
+
+    paths = {route.path for route in maintenance.router.routes}
+    assert "/maintenance/backup-targets/{target_id}/objects" in paths
+
+    methods = {
+        method
+        for route in maintenance.router.routes
+        if route.path == "/maintenance/backup-targets/{target_id}/objects"
+        for method in route.methods
+    }
+    assert {"GET", "DELETE"} <= methods

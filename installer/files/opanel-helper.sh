@@ -3872,6 +3872,11 @@ case "$cmd" in
     iptables_reorder_managed_jumps
     iptables_add_default_allowances
     firewall_blocklist_apply 2>/dev/null || true
+    # Without this the chains live only in memory. A box that reboots comes
+    # back with whatever netfilter-persistent last saved -- which on one live
+    # server meant OPANEL_INPUT and OPANEL_USER at zero references and an
+    # INPUT policy of ACCEPT, so nothing was being filtered at all.
+    firewall_persist_rules
     echo "opanel iptables chains enabled"
     ;;
   iptables-persist)
