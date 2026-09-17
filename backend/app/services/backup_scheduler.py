@@ -52,7 +52,19 @@ def _s3_secret(target) -> str:
         )
 
 
+def _account_prefix(target, username: str) -> str:
+    """One folder per account under the destination's prefix.
+
+    Scoping by folder is what makes a prune safe. Matching names instead meant
+    a schedule for "acme" also matched user-acme2-*.tar.gz and deleted another
+    account's archives.
+    """
+    base = (target.remote_path or "").strip().strip("/")
+    return f"{base}/{username}" if base else username
+
+
 def _upload_to_s3(db, target, archive: str, keep: int, username: str) -> str:
+    prefix = _account_prefix(target, username)
     result = backup.upload_to_s3(
         archive,
         endpoint=target.s3_endpoint,
@@ -60,29 +72,36 @@ def _upload_to_s3(db, target, archive: str, keep: int, username: str) -> str:
         bucket=target.s3_bucket,
         access_key=target.s3_access_key,
         secret_key=_s3_secret(target),
-        prefix=target.remote_path,
+        prefix=prefix,
         use_path_style=bool(target.s3_use_path_style),
     )
-    # Object storage bills for every byte kept, so retention has to reach the
-    # far end too -- unlike SFTP, where only the local copies are pruned.
-    # Scoped by username so one account's retention never deletes another's.
+    # With weekday slots the folder cannot grow past seven, so this is only
+    # here to clear archives written under the old timestamped scheme. It runs
+    # against the account's own folder and against the legacy flat names,
+    # anchored on the account prefix so a longer username is never swept up.
     if keep and keep > 0:
-        try:
-            backup.prune_s3_backups(
-                endpoint=target.s3_endpoint,
-                region=target.s3_region,
-                bucket=target.s3_bucket,
-                access_key=target.s3_access_key,
-                secret_key=_s3_secret(target),
-                prefix=target.remote_path,
-                use_path_style=bool(target.s3_use_path_style),
-                keep=keep,
-                name_contains=username,
-            )
-        except Exception:
-            # The upload succeeded. A failed prune costs storage, not a backup,
-            # so it must not turn a good run into a failed one.
-            logger.warning("S3 prune failed for target %s", target.name, exc_info=True)
+        for scope, name_prefix in (
+            (prefix, ""),
+            (target.remote_path, f"user-{username}-"),
+        ):
+            try:
+                backup.prune_s3_backups(
+                    endpoint=target.s3_endpoint,
+                    region=target.s3_region,
+                    bucket=target.s3_bucket,
+                    access_key=target.s3_access_key,
+                    secret_key=_s3_secret(target),
+                    prefix=scope,
+                    use_path_style=bool(target.s3_use_path_style),
+                    keep=keep,
+                    name_prefix=name_prefix,
+                )
+            except Exception:
+                # The upload succeeded. A failed prune costs storage, not a
+                # backup, so it must not turn a good run into a failed one --
+                # which is exactly why the names rotate rather than relying on
+                # this running.
+                logger.warning("S3 prune failed for target %s", target.name, exc_info=True)
     return f"{target.name}:{result['remote_file']}"
 
 
@@ -178,7 +197,14 @@ def run_due_schedules(now: datetime | None = None) -> int:
             errors = []
             for user in users:
                 try:
-                    archive = backup.create_user_backup(user, db)
+                    # DirectAdmin-style rotation: a week of dailies occupies
+                    # seven files named for the day, each overwritten a week
+                    # later, so the destination cannot grow without bound even
+                    # if the prune below never succeeds.
+                    slot = backup.weekday_slot(now)
+                    archive = backup.create_user_backup(
+                        user, db, filename=f"{user.username}-{slot}.tar.gz"
+                    )
                     target = _upload_if_configured(db, schedule, archive, user.username)
                     backup.prune_user_backups(user.username, schedule.retention)
                     messages.append(f"{user.username}: {target}")

@@ -651,12 +651,12 @@ def delete_backup(
     current_user: User = Depends(get_current_user),
 ):
     website = get_owned_website(db, current_user, website_id)
-    name = backup_file.rsplit("/", 1)[-1]
+    relative_key = _remote_relative_key(backup_file)
     try:
         deleted = backup.delete_backup(website.domain, backup_file)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Backup not found")
-    removed_remote = _delete_remote_copies(db, name) if also_remote else []
+    removed_remote = _delete_remote_copies(db, relative_key) if also_remote else []
     log_action(db, current_user.id, "delete_backup", website.domain, deleted)
     return {"deleted": deleted, "removed_remote": removed_remote}
 
@@ -918,12 +918,30 @@ def restore_user_backup(payload: UserRestoreBackup, request: Request, db: Sessio
     return result
 
 
-def _remote_copies(db: Session, filename: str) -> list[dict]:
-    """Every S3 destination that currently holds an object with this name.
+def _remote_relative_key(local_path: str) -> str:
+    """The key a local backup occupies under a destination's prefix.
 
-    A backup is not recorded against the destination it was sent to, so the
-    name under each active destination's prefix is what identifies it. Listing
-    first means the caller can be told exactly what will go.
+    A full user backup lives at <backup_root>/users/<account>/<file>, and it is
+    uploaded to <prefix>/<account>/<file>. The account has to stay in the key:
+    weekday rotation names every account's Monday copy "monday.tar.gz", so a
+    filename on its own identifies one object per account rather than one
+    object.
+    """
+    parts = Path(local_path).parts
+    if "users" in parts:
+        index = len(parts) - 1 - parts[::-1].index("users")
+        tail = parts[index + 1:]
+        if len(tail) >= 2:
+            return "/".join(tail[-2:])
+    return parts[-1] if parts else local_path
+
+
+def _remote_copies(db: Session, relative_key: str) -> list[dict]:
+    """Every S3 destination holding the object at this relative key.
+
+    A backup is not recorded against the destination it was sent to, so its
+    position under each active destination's prefix is what identifies it.
+    Listing first means the caller can be told exactly what will go.
     """
     found = []
     targets = db.query(BackupTarget).filter(
@@ -943,17 +961,18 @@ def _remote_copies(db: Session, filename: str) -> list[dict]:
         except Exception:
             # A destination that cannot be reached must not block deleting the
             # local file; say nothing about it rather than failing the request.
-            logger.warning("Could not list S3 target %s while deleting %s", target.name, filename)
+            logger.warning("Could not list S3 target %s while deleting %s", target.name, relative_key)
             continue
         for row in rows:
-            if row["key"].rsplit("/", 1)[-1] == filename:
-                found.append({"target": target, "key": row["key"]})
+            key = row["key"]
+            if key == relative_key or key.endswith(f"/{relative_key}"):
+                found.append({"target": target, "key": key})
     return found
 
 
-def _delete_remote_copies(db: Session, filename: str) -> list[str]:
+def _delete_remote_copies(db: Session, relative_key: str) -> list[str]:
     removed = []
-    for item in _remote_copies(db, filename):
+    for item in _remote_copies(db, relative_key):
         target = item["target"]
         try:
             backup.delete_s3_object(
@@ -980,11 +999,10 @@ def find_remote_copies(
 ):
     """What the confirm dialog needs to name the offsite copies before asking."""
     ensure_role(current_user.role, Role.admin)
-    name = backup_file.rsplit("/", 1)[-1]
     return {
         "items": [
             {"target": item["target"].name, "bucket": item["target"].s3_bucket, "key": item["key"]}
-            for item in _remote_copies(db, name)
+            for item in _remote_copies(db, _remote_relative_key(backup_file))
         ]
     }
 
@@ -1000,12 +1018,12 @@ def delete_user_backup(
     current_user: User = Depends(get_current_user),
 ):
     ensure_role(current_user.role, Role.admin)
-    name = backup_file.rsplit("/", 1)[-1]
+    relative_key = _remote_relative_key(backup_file)
     try:
         deleted = backup.delete_user_backup(backup_file)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Backup not found") from exc
-    removed_remote = _delete_remote_copies(db, name) if also_remote else []
+    removed_remote = _delete_remote_copies(db, relative_key) if also_remote else []
     log_action(db, current_user.id, "delete_user_backup", "user", deleted, request=request)
     return {"deleted": deleted, "removed_remote": removed_remote}
 

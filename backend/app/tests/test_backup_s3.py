@@ -238,7 +238,7 @@ def test_prune_is_scoped_to_one_account(fake_s3):
     _seed(fake_s3["client"], [f"opanel/alice-{n}.tar.gz" for n in range(5)]
           + [f"opanel/bob-{n}.tar.gz" for n in range(5)])
 
-    backup.prune_s3_backups(prefix="opanel", keep=2, name_contains="alice", **CREDS)
+    backup.prune_s3_backups(prefix="opanel", keep=2, name_prefix="alice", **CREDS)
 
     deleted = [call for call in fake_s3["client"].calls if call[0] == "delete_objects"][0][1]
     gone = {row["Key"] for row in deleted["Delete"]["Objects"]}
@@ -608,3 +608,223 @@ def test_an_unreachable_destination_does_not_block_the_local_delete(monkeypatch)
     monkeypatch.setattr(maintenance.backup, "list_s3_backups", boom)
 
     assert maintenance._remote_copies(_DB(), "alice.tar.gz") == []
+
+
+# --------------------------------------------------------------------------
+# Weekly rotation, DirectAdmin style: seven slots per account, each overwritten
+# a week later. Bounded by construction -- the prune can fail and nothing
+# accumulates, because next Monday's run writes over last Monday's object.
+# --------------------------------------------------------------------------
+
+def test_weekday_slot_covers_the_week():
+    from datetime import datetime
+
+    names = [backup.weekday_slot(datetime(2026, 9, 14 + n)) for n in range(7)]
+
+    assert names == ["monday", "tuesday", "wednesday", "thursday",
+                     "friday", "saturday", "sunday"]
+    assert len(set(names)) == 7
+
+
+def test_the_same_weekday_next_week_lands_on_the_same_slot():
+    from datetime import datetime
+
+    assert backup.weekday_slot(datetime(2026, 9, 14)) == backup.weekday_slot(datetime(2026, 9, 21))
+
+
+def test_the_scheduler_names_the_archive_for_the_account_and_the_day():
+    import inspect
+    from app.services import backup_scheduler
+
+    source = inspect.getsource(backup_scheduler.run_due_schedules)
+
+    assert 'filename=f"{user.username}-{slot}.tar.gz"' in source
+    assert "backup.weekday_slot(now)" in source
+
+
+def test_a_manual_backup_keeps_its_timestamp():
+    """It must never land on a scheduled slot and overwrite that day's copy."""
+    import inspect
+
+    source = inspect.getsource(backup.create_user_backup)
+
+    assert 'f"user-{user.username}-{stamp}.tar.gz"' in source
+    assert "if filename:" in source
+
+
+def test_a_rotation_filename_has_to_be_one_of_the_slots(tmp_path, monkeypatch):
+    class _User:
+        username = "acme"
+
+    monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path)
+
+    for bad in ("../../etc/passwd.tar.gz", "acme-funday.tar.gz",
+                "other-monday.tar.gz", "monday.tar.gz"):
+        with pytest.raises(ValueError, match="Invalid rotation filename"):
+            backup.create_user_backup(_User(), None, filename=bad)
+
+
+def test_each_account_gets_its_own_folder_on_the_destination():
+    from app.services import backup_scheduler
+
+    class _T:
+        remote_path = "opanel/backups"
+
+    assert backup_scheduler._account_prefix(_T(), "acme") == "opanel/backups/acme"
+
+    class _Bare:
+        remote_path = ""
+
+    assert backup_scheduler._account_prefix(_Bare(), "acme") == "acme"
+
+
+def test_prune_scoping_is_anchored_not_a_substring(fake_s3):
+    """A schedule for "acme" used to treat every user-acme2-*.tar.gz as its own
+    and delete another account's backups."""
+    for name in [f"user-acme-2026091{n}.tar.gz" for n in range(4)]:
+        fake_s3["client"].objects[f"opanel/{name}"] = {"size": 1, "modified": name}
+    for name in [f"user-acme2-2026091{n}.tar.gz" for n in range(4)]:
+        fake_s3["client"].objects[f"opanel/{name}"] = {"size": 1, "modified": name}
+
+    backup.prune_s3_backups(prefix="opanel", keep=1, name_prefix="user-acme-", **CREDS)
+
+    deleted = [c for c in fake_s3["client"].calls if c[0] == "delete_objects"][0][1]
+    gone = {row["Key"] for row in deleted["Delete"]["Objects"]}
+    assert all("user-acme-" in key for key in gone)
+    assert not any("acme2" in key for key in gone)
+
+
+@pytest.mark.parametrize("local,expected", [
+    ("/var/backups/opanel/users/acme/acme-monday.tar.gz", "acme/acme-monday.tar.gz"),
+    ("/var/backups/opanel/users/acme2/acme2-monday.tar.gz", "acme2/acme2-monday.tar.gz"),
+    ("/var/backups/opanel/site.com/site.com-20260917.tar.gz", "site.com-20260917.tar.gz"),
+])
+def test_a_remote_copy_is_identified_by_its_path(local, expected):
+    """Deleting one account's Monday copy must not reach another account's."""
+    from app.api.maintenance import _remote_relative_key
+
+    assert _remote_relative_key(local) == expected
+
+
+class _RotUser:
+    id = 1
+    username = "acme"
+    email = "acme@example.test"
+    hashed_password = ""
+    role = "user"
+    is_active = True
+    website_limit = 1
+    storage_limit_mb = 0
+
+
+class _RotQuery:
+    def filter(self, *a, **k):
+        return self
+
+    def order_by(self, *a, **k):
+        return self
+
+    def all(self):
+        return []
+
+    def first(self):
+        return None
+
+
+class _RotDB:
+    def query(self, *a, **k):
+        return _RotQuery()
+
+
+def test_a_failed_run_leaves_last_weeks_copy_intact(tmp_path, monkeypatch):
+    """Overwriting in place is only safe if a half-finished archive never lands
+    on the slot: opening the destination directly truncates it up front, so a
+    run killed by a full disk would destroy the good copy and replace it with a
+    stub."""
+    monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path)
+    slot = tmp_path / "acme-monday.tar.gz"
+    slot.write_bytes(b"last week's good archive")
+
+    def exploding_open(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(backup.tarfile, "open", exploding_open)
+
+    with pytest.raises(OSError):
+        backup.create_user_backup(_RotUser(), _RotDB(), filename="acme-monday.tar.gz")
+
+    assert slot.read_bytes() == b"last week's good archive"
+
+
+def test_a_good_run_replaces_the_slot(tmp_path, monkeypatch):
+    import tarfile as _tarfile
+
+    monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path)
+    slot = tmp_path / "acme-monday.tar.gz"
+    slot.write_bytes(b"last week's good archive")
+
+    written = backup.create_user_backup(_RotUser(), _RotDB(), filename="acme-monday.tar.gz")
+
+    assert written == str(slot)
+    assert _tarfile.is_tarfile(slot)
+    with _tarfile.open(slot) as tar:
+        assert backup.BACKUP_MANIFEST in tar.getnames()
+
+
+def test_no_temporary_directory_is_left_behind(tmp_path, monkeypatch):
+    monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path)
+
+    backup.create_user_backup(_RotUser(), _RotDB(), filename="acme-monday.tar.gz")
+
+    assert [p.name for p in tmp_path.iterdir()] == ["acme-monday.tar.gz"]
+
+
+def test_backups_are_listed_newest_first_by_age_not_by_name(tmp_path, monkeypatch):
+    """Weekday names carry no ordering, so the list has to go by mtime."""
+    import os as _os
+
+    monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path)
+    monkeypatch.setattr(backup.settings, "command_dry_run", False)
+
+    ages = {
+        "acme-monday.tar.gz": 5,
+        "acme-tuesday.tar.gz": 4,
+        "acme-wednesday.tar.gz": 3,
+        "acme-friday.tar.gz": 1,
+    }
+    for name, days in ages.items():
+        path = tmp_path / name
+        path.write_bytes(b"x")
+        stamp = 1_760_000_000 - days * 86_400
+        _os.utime(path, (stamp, stamp))
+
+    listed = [p.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for p in backup.list_user_backups("acme")]
+
+    assert listed == ["acme-friday.tar.gz", "acme-wednesday.tar.gz",
+                      "acme-tuesday.tar.gz", "acme-monday.tar.gz"]
+
+
+def test_the_prune_never_deletes_the_backup_just_taken(tmp_path, monkeypatch):
+    """The regression this guards: on a box with the old timestamped archives,
+    reverse-alphabetical order put every "user-acme-<stamp>" ahead of every
+    rotation file, so the nightly prune deleted the archive it had just
+    written and kept seven stale ones."""
+    import os as _os
+
+    monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path)
+    monkeypatch.setattr(backup.settings, "command_dry_run", False)
+
+    for n in range(7):                       # last week's legacy archives
+        path = tmp_path / f"user-acme-2026091{n}.tar.gz"
+        path.write_bytes(b"x")
+        stamp = 1_760_000_000 - (10 - n) * 86_400
+        _os.utime(path, (stamp, stamp))
+
+    fresh = tmp_path / "acme-monday.tar.gz"  # tonight's rotation slot
+    fresh.write_bytes(b"x")
+    _os.utime(fresh, (1_760_000_000, 1_760_000_000))
+
+    backup.prune_user_backups("acme", 7)
+
+    assert fresh.exists()
+    assert len(list(tmp_path.glob("*.tar.gz"))) == 7

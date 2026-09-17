@@ -2255,7 +2255,9 @@ function App() {
   // remove an offsite copy without being told to.
   async function confirmBackupDelete(file) {
     const name = file.split('/').pop();
-    const found = await request(`/maintenance/backup-remote-copies?backup_file=${encodeURIComponent(name)}`, {}, '');
+    // Send the whole path: weekday rotation names every account's Monday copy
+    // "monday.tar.gz", so the account folder is what tells them apart.
+    const found = await request(`/maintenance/backup-remote-copies?backup_file=${encodeURIComponent(file)}`, {}, '');
     const copies = found?.items || [];
     if (copies.length === 0) {
       return { ok: confirm(`Delete this backup?\n${name}`), alsoRemote: true };
@@ -3932,7 +3934,7 @@ function App() {
 
       {isAdmin && activeBackupTab === 'schedule' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
-          <div><h3>Scheduled backups</h3><p className="hint">Run full user backups automatically with optional off-server destination.</p></div>
+          <div><h3>Scheduled backups</h3><p className="hint">Runs a full user backup on a schedule, with an optional off-server destination. A daily schedule rotates through seven files named for the day &mdash; <code>username-monday.tar.gz</code> and so on &mdash; so you keep a week and the eighth day overwrites the first.</p></div>
           <button disabled={!!loading} onClick={refreshScheduledBackupArea}><RefreshCw size={14}/> Refresh</button>
         </div>
         <div className="sftp-form schedule-form backup-schedule-form">

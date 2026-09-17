@@ -3,6 +3,7 @@ from io import StringIO
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 import posixpath
 import time
@@ -99,11 +100,33 @@ def user_restore_dir() -> str:
     return str(_user_restore_dir())
 
 
-def create_user_backup(user: User, db) -> str:
-    stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+WEEKDAY_SLOTS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def weekday_slot(when: datetime | None = None) -> str:
+    """The rotation slot for a run: monday..sunday.
+
+    A scheduled backup writes over the same weekday from last week, so a week
+    of dailies occupies exactly seven files and stays that way even if the
+    pruning step never runs.
+    """
+    return WEEKDAY_SLOTS[(when or datetime.now()).weekday()]
+
+
+def create_user_backup(user: User, db, filename: str | None = None) -> str:
     backup_dir = _user_backup_dir(user.username)
     backup_dir.mkdir(parents=True, exist_ok=True)
-    archive = backup_dir / f"user-{user.username}-{stamp}.tar.gz"
+    if filename:
+        # <account>-<weekday>.tar.gz, so the name identifies the account even
+        # when the file is looked at outside its folder.
+        if filename not in {f"{user.username}-{slot}.tar.gz" for slot in WEEKDAY_SLOTS}:
+            raise ValueError("Invalid rotation filename")
+        archive = backup_dir / filename
+    else:
+        # A backup taken by hand keeps its timestamp: it must never land on a
+        # scheduled slot and overwrite that day's copy.
+        stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        archive = backup_dir / f"user-{user.username}-{stamp}.tar.gz"
     websites = db.query(Website).filter(Website.owner_id == user.id).order_by(Website.id.asc()).all()
 
     with tempfile.TemporaryDirectory(prefix="opanel-user-backup-", dir=str(backup_dir)) as tmp:
@@ -163,7 +186,12 @@ def create_user_backup(user: User, db) -> str:
 
         manifest_path = tmp_dir / BACKUP_MANIFEST
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2), encoding="utf-8")
-        with tarfile.open(archive, "w:gz") as tar:
+        # Build alongside the target and swap it in only once the archive closed
+        # cleanly. Opening the destination directly would truncate it up front,
+        # so a run that died halfway -- a full disk, a killed process -- would
+        # leave a stub in the slot with last week's good copy already gone.
+        staged = tmp_dir / "archive.tar.gz"
+        with tarfile.open(staged, "w:gz") as tar:
             tar.add(manifest_path, arcname=BACKUP_MANIFEST)
             for website in websites:
                 root = Path(website.root_path)
@@ -172,6 +200,7 @@ def create_user_backup(user: User, db) -> str:
                 sql_path = sql_files.get(website.domain)
                 if sql_path and sql_path.exists():
                     tar.add(sql_path, arcname=f"databases/{website.domain}.sql")
+        os.replace(staged, archive)
     return str(archive)
 
 
@@ -179,7 +208,14 @@ def list_user_backups(username: str) -> List[str]:
     backup_dir = _user_backup_dir(username)
     if settings.command_dry_run or not backup_dir.exists():
         return []
-    return [str(path) for path in sorted(backup_dir.glob("*.tar.gz"), reverse=True)]
+    # Newest first, by modification time. Sorting on the name only ever worked
+    # because every name carried a timestamp; a rotation slot is named for its
+    # weekday, so alphabetical order says nothing about age -- and mixed with
+    # the old names it put every "user-<name>-<stamp>" ahead of every rotation
+    # file, which made the prune below delete the backup just taken.
+    paths = [path for path in backup_dir.glob("*.tar.gz") if path.is_file()]
+    paths.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
+    return [str(path) for path in paths]
 
 
 def list_uploaded_user_backups(username: Optional[str] = None) -> List[str]:
@@ -1099,13 +1135,15 @@ def prune_s3_backups(
     prefix: str = "",
     use_path_style: bool = False,
     keep: int = 7,
-    name_contains: str = "",
+    name_prefix: str = "",
 ) -> int:
     """Keep the newest ``keep`` archives under the prefix, delete the rest.
 
     Object storage bills for every byte kept, so unlike the SFTP target this
-    one prunes the far end. ``name_contains`` scopes a prune to one user's
-    archives, so one account's retention never deletes another's.
+    one prunes the far end. ``name_prefix`` scopes a prune to one account's
+    archives. It is anchored, not a substring: matching "user-acme-" loosely
+    also caught user-acme2-*.tar.gz, so one account's retention deleted
+    another account's backups.
     """
     if keep < 1:
         return 0
@@ -1113,8 +1151,8 @@ def prune_s3_backups(
         endpoint=endpoint, region=region, bucket=bucket, access_key=access_key,
         secret_key=secret_key, prefix=prefix, use_path_style=use_path_style,
     )
-    if name_contains:
-        entries = [row for row in entries if name_contains in row["key"].rsplit("/", 1)[-1]]
+    if name_prefix:
+        entries = [row for row in entries if row["key"].rsplit("/", 1)[-1].startswith(name_prefix)]
     stale = entries[keep:]
     if not stale:
         return 0
