@@ -539,9 +539,10 @@ def test_delete_endpoints_take_an_also_remote_flag():
     for fn in (maintenance.delete_user_backup, maintenance.delete_backup):
         params = inspect.signature(fn).parameters
         assert "also_remote" in params, fn.__name__
-        # Off unless asked: the remote copy is the offsite one, and clearing
-        # local disk space must not quietly destroy it.
-        assert params["also_remote"].default is False, fn.__name__
+        # On by default. Backups rotate daily against a fixed retention, so a
+        # copy the panel cannot remove is one that accumulates until the bucket
+        # is full -- the operator's reason, and the stronger one.
+        assert params["also_remote"].default is True, fn.__name__
 
 
 def test_the_panel_can_report_where_the_offsite_copies_are():

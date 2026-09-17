@@ -2258,16 +2258,13 @@ function App() {
     const found = await request(`/maintenance/backup-remote-copies?backup_file=${encodeURIComponent(name)}`, {}, '');
     const copies = found?.items || [];
     if (copies.length === 0) {
-      return confirm(`Delete this backup?\n${name}`) ? { ok: true, alsoRemote: false } : { ok: false };
+      return { ok: confirm(`Delete this backup?\n${name}`), alsoRemote: true };
     }
     const where = copies.map(item => `  - ${item.target} (${item.bucket}/${item.key})`).join('\n');
-    if (!confirm(`Delete this backup?\n${name}\n\nThere is also a copy on:\n${where}`)) return { ok: false };
-    const alsoRemote = confirm(
-      `Delete the copy on S3 as well?\n\n` +
-      `OK  - remove it from the bucket too\n` +
-      `Cancel - keep the offsite copy, delete only the local file`
-    );
-    return { ok: true, alsoRemote };
+    return {
+      ok: confirm(`Delete this backup?\n${name}\n\nThis also removes the copy on:\n${where}`),
+      alsoRemote: true,
+    };
   }
 
   async function deleteUserBackup(file) {

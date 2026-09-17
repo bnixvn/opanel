@@ -644,7 +644,9 @@ def download_backup(website_id: int, backup_file: str, db: Session = Depends(get
 def delete_backup(
     website_id: int,
     backup_file: str,
-    also_remote: bool = False,
+    # Delete removes both copies. A backup rotating daily against a fixed
+    # retention leaves a copy the panel cannot reach, and the bucket fills.
+    also_remote: bool = True,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -991,7 +993,9 @@ def find_remote_copies(
 def delete_user_backup(
     backup_file: str,
     request: Request,
-    also_remote: bool = False,
+    # Delete removes both copies. A backup rotating daily against a fixed
+    # retention leaves a copy the panel cannot reach, and the bucket fills.
+    also_remote: bool = True,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
