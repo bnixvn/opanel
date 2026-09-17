@@ -440,3 +440,28 @@ def test_the_secret_is_never_returned_to_the_browser():
     assert "s3_secret_key" not in BackupTargetOut.model_fields
     assert "password" not in BackupTargetOut.model_fields
     assert "private_key" not in BackupTargetOut.model_fields
+
+
+@pytest.mark.parametrize("prefix", ["../../etc", "a/../b", "back ups", "b$d"])
+def test_a_bad_s3_prefix_is_refused_at_save_not_at_backup_time(prefix):
+    """Caught live: the API accepted ../../etc and would only have failed when
+    the scheduled backup ran, which is the worst moment to find out."""
+    from app.schemas.schemas import BackupTargetCreate
+
+    with pytest.raises(ValueError):
+        BackupTargetCreate(
+            name="bad-prefix", kind="s3", remote_path=prefix,
+            s3_bucket="opanel-backups", s3_access_key="AK", s3_secret_key="SK",
+        )
+
+
+def test_an_sftp_target_still_takes_an_absolute_remote_path():
+    """The S3 prefix rules must not leak onto the other kind."""
+    from app.schemas.schemas import BackupTargetCreate
+
+    target = BackupTargetCreate(
+        name="offsite", kind="sftp", host="backup.example.test",
+        username="bk", password="pw", remote_path="/backups/opanel",
+    )
+
+    assert target.remote_path == "/backups/opanel"

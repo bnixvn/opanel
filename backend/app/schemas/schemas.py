@@ -944,6 +944,15 @@ class BackupTargetCreate(BaseModel):
     @model_validator(mode="after")
     def check_kind(self):
         if self.kind == "s3":
+            # The same rules the uploader applies to a key prefix. Without this
+            # a bad prefix is accepted here and only fails when the scheduled
+            # backup runs, which is the worst time to find out.
+            from app.services.backup import s3_prefix_for
+
+            try:
+                s3_prefix_for(self.remote_path)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
             missing = [
                 label for label, value in (
                     ("bucket", self.s3_bucket),
