@@ -2249,10 +2249,38 @@ function App() {
     }
   }
 
+  // A backup that went to S3 exists twice. Deleting the local copy on its own
+  // left the offsite one behind with nothing in the panel mentioning it, which
+  // read as "the delete did not work". Ask, name what is out there, and never
+  // remove an offsite copy without being told to.
+  async function confirmBackupDelete(file) {
+    const name = file.split('/').pop();
+    const found = await request(`/maintenance/backup-remote-copies?backup_file=${encodeURIComponent(name)}`, {}, '');
+    const copies = found?.items || [];
+    if (copies.length === 0) {
+      return confirm(`Delete this backup?\n${name}`) ? { ok: true, alsoRemote: false } : { ok: false };
+    }
+    const where = copies.map(item => `  - ${item.target} (${item.bucket}/${item.key})`).join('\n');
+    if (!confirm(`Delete this backup?\n${name}\n\nThere is also a copy on:\n${where}`)) return { ok: false };
+    const alsoRemote = confirm(
+      `Delete the copy on S3 as well?\n\n` +
+      `OK  - remove it from the bucket too\n` +
+      `Cancel - keep the offsite copy, delete only the local file`
+    );
+    return { ok: true, alsoRemote };
+  }
+
   async function deleteUserBackup(file) {
-    if (!confirm(`Delete this full user backup?\n${file}`)) return;
-    const data = await request(`/maintenance/user-backups?backup_file=${encodeURIComponent(file)}`, { method: 'DELETE' }, 'Deleting full user backup...');
+    const choice = await confirmBackupDelete(file);
+    if (!choice.ok) return;
+    const data = await request(
+      `/maintenance/user-backups?backup_file=${encodeURIComponent(file)}&also_remote=${choice.alsoRemote}`,
+      { method: 'DELETE' }, 'Deleting full user backup...');
     if (data) {
+      const remote = data.removed_remote || [];
+      setNotice(remote.length
+        ? `Deleted, including ${remote.length} copy on S3.`
+        : 'Deleted the local backup.');
       await listUserBackups();
       await loadRestoreBackups();
     }
@@ -2426,9 +2454,18 @@ function App() {
   }
 
   async function deleteBackup(file) {
-    if (!confirm(`Delete this backup?\n${file}`)) return;
-    const data = await request(`/maintenance/backups/${selectedWebsiteId}?backup_file=${encodeURIComponent(file)}`, { method: 'DELETE' }, 'Deleting backup...');
-    if (data) await listBackups();
+    const choice = await confirmBackupDelete(file);
+    if (!choice.ok) return;
+    const data = await request(
+      `/maintenance/backups/${selectedWebsiteId}?backup_file=${encodeURIComponent(file)}&also_remote=${choice.alsoRemote}`,
+      { method: 'DELETE' }, 'Deleting backup...');
+    if (data) {
+      const remote = data.removed_remote || [];
+      setNotice(remote.length
+        ? `Deleted, including ${remote.length} copy on S3.`
+        : 'Deleted the local backup.');
+      await listBackups();
+    }
   }
 
   async function uploadBackup(file) {

@@ -641,14 +641,22 @@ def download_backup(website_id: int, backup_file: str, db: Session = Depends(get
 
 
 @router.delete("/backups/{website_id}")
-def delete_backup(website_id: int, backup_file: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def delete_backup(
+    website_id: int,
+    backup_file: str,
+    also_remote: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     website = get_owned_website(db, current_user, website_id)
+    name = backup_file.rsplit("/", 1)[-1]
     try:
         deleted = backup.delete_backup(website.domain, backup_file)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Backup not found")
+    removed_remote = _delete_remote_copies(db, name) if also_remote else []
     log_action(db, current_user.id, "delete_backup", website.domain, deleted)
-    return {"deleted": deleted}
+    return {"deleted": deleted, "removed_remote": removed_remote}
 
 
 @router.post("/backups/{website_id}/upload")
@@ -908,15 +916,94 @@ def restore_user_backup(payload: UserRestoreBackup, request: Request, db: Sessio
     return result
 
 
-@router.delete("/user-backups")
-def delete_user_backup(backup_file: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def _remote_copies(db: Session, filename: str) -> list[dict]:
+    """Every S3 destination that currently holds an object with this name.
+
+    A backup is not recorded against the destination it was sent to, so the
+    name under each active destination's prefix is what identifies it. Listing
+    first means the caller can be told exactly what will go.
+    """
+    found = []
+    targets = db.query(BackupTarget).filter(
+        BackupTarget.kind == "s3", BackupTarget.is_active == True  # noqa: E712
+    ).all()
+    for target in targets:
+        try:
+            rows = backup.list_s3_backups(
+                endpoint=target.s3_endpoint,
+                region=target.s3_region,
+                bucket=target.s3_bucket,
+                access_key=target.s3_access_key,
+                secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
+                prefix=target.remote_path,
+                use_path_style=bool(target.s3_use_path_style),
+            )
+        except Exception:
+            # A destination that cannot be reached must not block deleting the
+            # local file; say nothing about it rather than failing the request.
+            logger.warning("Could not list S3 target %s while deleting %s", target.name, filename)
+            continue
+        for row in rows:
+            if row["key"].rsplit("/", 1)[-1] == filename:
+                found.append({"target": target, "key": row["key"]})
+    return found
+
+
+def _delete_remote_copies(db: Session, filename: str) -> list[str]:
+    removed = []
+    for item in _remote_copies(db, filename):
+        target = item["target"]
+        try:
+            backup.delete_s3_object(
+                endpoint=target.s3_endpoint,
+                region=target.s3_region,
+                bucket=target.s3_bucket,
+                access_key=target.s3_access_key,
+                secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
+                key=item["key"],
+                prefix=target.remote_path,
+                use_path_style=bool(target.s3_use_path_style),
+            )
+            removed.append(f"{target.name}:{item['key']}")
+        except Exception as exc:
+            logger.warning("Could not delete %s from %s: %s", item["key"], target.name, exc)
+    return removed
+
+
+@router.get("/backup-remote-copies")
+def find_remote_copies(
+    backup_file: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """What the confirm dialog needs to name the offsite copies before asking."""
     ensure_role(current_user.role, Role.admin)
+    name = backup_file.rsplit("/", 1)[-1]
+    return {
+        "items": [
+            {"target": item["target"].name, "bucket": item["target"].s3_bucket, "key": item["key"]}
+            for item in _remote_copies(db, name)
+        ]
+    }
+
+
+@router.delete("/user-backups")
+def delete_user_backup(
+    backup_file: str,
+    request: Request,
+    also_remote: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_role(current_user.role, Role.admin)
+    name = backup_file.rsplit("/", 1)[-1]
     try:
         deleted = backup.delete_user_backup(backup_file)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Backup not found") from exc
+    removed_remote = _delete_remote_copies(db, name) if also_remote else []
     log_action(db, current_user.id, "delete_user_backup", "user", deleted, request=request)
-    return {"deleted": deleted}
+    return {"deleted": deleted, "removed_remote": removed_remote}
 
 
 @router.get("/backup-schedules", response_model=list[BackupScheduleOut])

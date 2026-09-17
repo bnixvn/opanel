@@ -524,3 +524,86 @@ def test_the_panel_exposes_list_and_delete_for_a_destination():
         for method in route.methods
     }
     assert {"GET", "DELETE"} <= methods
+
+
+# --------------------------------------------------------------------------
+# A backup that went to S3 exists twice. Deleting the local copy on its own
+# left the offsite one behind, with nothing in the panel mentioning it --
+# reported as "the panel deleted it but S3 still has it".
+# --------------------------------------------------------------------------
+
+def test_delete_endpoints_take_an_also_remote_flag():
+    import inspect
+    from app.api import maintenance
+
+    for fn in (maintenance.delete_user_backup, maintenance.delete_backup):
+        params = inspect.signature(fn).parameters
+        assert "also_remote" in params, fn.__name__
+        # Off unless asked: the remote copy is the offsite one, and clearing
+        # local disk space must not quietly destroy it.
+        assert params["also_remote"].default is False, fn.__name__
+
+
+def test_the_panel_can_report_where_the_offsite_copies_are():
+    """The confirm dialog names them before asking, so nobody deletes an
+    offsite backup without seeing what it is."""
+    from app.api import maintenance
+
+    paths = {route.path for route in maintenance.router.routes}
+    assert "/maintenance/backup-remote-copies" in paths
+
+
+def test_remote_copies_are_matched_by_filename_under_each_prefix(monkeypatch):
+    from app.api import maintenance
+
+    class _Target:
+        id, name, kind, is_active = 1, "wasabi", "s3", True
+        remote_path = "opanel"
+        s3_endpoint, s3_region, s3_bucket = "", "us-east-1", "opanel-backups"
+        s3_access_key, s3_secret_key, s3_use_path_style = "AK", "enc", False
+
+    class _Q:
+        def __init__(self, rows): self._rows = rows
+        def filter(self, *a): return self
+        def all(self): return self._rows
+
+    class _DB:
+        def query(self, _m): return _Q([_Target()])
+
+    monkeypatch.setattr(maintenance, "decrypt", lambda v: "SECRET")
+    monkeypatch.setattr(maintenance.backup, "list_s3_backups", lambda **kw: [
+        {"key": "opanel/alice-20260917.tar.gz", "size": 1, "modified": 1},
+        {"key": "opanel/bob-20260917.tar.gz", "size": 1, "modified": 2},
+    ])
+
+    found = maintenance._remote_copies(_DB(), "alice-20260917.tar.gz")
+
+    assert [item["key"] for item in found] == ["opanel/alice-20260917.tar.gz"]
+
+
+def test_an_unreachable_destination_does_not_block_the_local_delete(monkeypatch):
+    """The local file is the thing being deleted. A destination that is down
+    must not turn that into a failed request."""
+    from app.api import maintenance
+
+    class _Target:
+        id, name, kind, is_active = 1, "down", "s3", True
+        remote_path = "opanel"
+        s3_endpoint, s3_region, s3_bucket = "", "us-east-1", "b"
+        s3_access_key, s3_secret_key, s3_use_path_style = "AK", "enc", False
+
+    class _Q:
+        def filter(self, *a): return self
+        def all(self): return [_Target()]
+
+    class _DB:
+        def query(self, _m): return _Q()
+
+    monkeypatch.setattr(maintenance, "decrypt", lambda v: "SECRET")
+
+    def boom(**kwargs):
+        raise backup.S3Error("Could not reach the S3 endpoint.")
+
+    monkeypatch.setattr(maintenance.backup, "list_s3_backups", boom)
+
+    assert maintenance._remote_copies(_DB(), "alice.tar.gz") == []
