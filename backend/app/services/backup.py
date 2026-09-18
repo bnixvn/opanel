@@ -1,5 +1,5 @@
-from datetime import datetime
-from io import StringIO
+from datetime import datetime, timezone
+from io import BytesIO, StringIO
 import hashlib
 import json
 import logging
@@ -24,12 +24,15 @@ from app.core.security import hash_password
 from app.core.permissions import normalize_role
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.services import mariadb, openlitespeed, site_users, waf, wordpress
+from app.services import ssl as ssl_service
 from app.services.shell import shell
 
 
 logger = logging.getLogger("opanel.backup")
 
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
+# A cert, key or CA bundle is a few KB; anything near this is not one.
+MAX_SSL_MEMBER_BYTES = 256 * 1024
 SITE_RESTORE_MAX_ITEMS = 200000
 SITE_RESTORE_MAX_BYTES = 20 * 1024 * 1024 * 1024
 BACKUP_MANIFEST = "manifest.json"
@@ -101,6 +104,19 @@ def _add_tree(tar: tarfile.TarFile, source, arcname: str, skipped: list) -> None
             continue
         for child in reversed(children):
             stack.append((child, f"{name}/{child.name}"))
+
+
+def _add_bytes(tar: tarfile.TarFile, arcname: str, payload: bytes, mode: int = 0o600) -> None:
+    """Store bytes the caller already holds, without a file on disk.
+
+    A private key must not be written to a temp directory on the way into the
+    archive; it goes straight from memory into the stream.
+    """
+    info = tarfile.TarInfo(arcname)
+    info.size = len(payload)
+    info.mode = mode
+    info.mtime = int(time.time())
+    tar.addfile(info, BytesIO(payload))
 
 
 def describe_skipped(skipped: list) -> str:
@@ -201,9 +217,58 @@ def create_user_backup(user: User, db, filename: str | None = None,
                 "storage_limit_mb": user.storage_limit_mb,
             },
             "websites": [],
+            "databases": [],
         }
 
+        # Every database the account owns, not only the ones a Website row
+        # happens to point at. A database created on the Databases page is
+        # stored with an owner and no website_id, and a site declares the
+        # database it actually uses in its own source -- Laravel in .env -- in
+        # whatever shape it likes. Backing up only what the panel had linked
+        # meant a full user backup could silently contain no data at all.
+        owned_ids = {website.id for website in websites}
+        db_items = [
+            item for item in db.query(DatabaseAccount).order_by(DatabaseAccount.id.asc()).all()
+            if item.owner_id == user.id or (item.website_id and item.website_id in owned_ids)
+        ]
+        domain_of = {website.id: website.domain for website in websites}
+
         sql_files: dict[str, Path] = {}
+        ssl_files: dict[str, dict] = {}
+        database_entries: dict[int, dict] = {}
+        for item in db_items:
+            safe_name = Path(item.db_name or "").name
+            if not safe_name or safe_name != item.db_name:
+                skipped.append({"path": f"database:{item.db_name}", "reason": "Invalid database name"})
+                continue
+            sql_path = tmp_dir / f"{safe_name}.sql"
+            try:
+                mariadb.export_database(item.db_name, str(sql_path))
+            except Exception as exc:
+                # A row left behind by a database that was dropped outside the
+                # panel must not cost the account its whole backup.
+                skipped.append({"path": f"database:{item.db_name}", "reason": str(exc)})
+                continue
+            if settings.command_dry_run and not sql_path.exists():
+                sql_path.write_text(f"-- DRY RUN database dump for {item.db_name}\n", encoding="utf-8")
+            if not sql_path.exists():
+                skipped.append({"path": f"database:{item.db_name}", "reason": "Dump produced no file"})
+                continue
+            try:
+                db_password = decrypt(item.db_password)
+            except RuntimeError:
+                db_password = ""
+            entry = {
+                "db_name": item.db_name,
+                "db_user": item.db_user,
+                "db_password": db_password,
+                "sql_member": f"databases/{safe_name}.sql",
+                "website_domain": domain_of.get(item.website_id, ""),
+            }
+            sql_files[item.db_name] = sql_path
+            database_entries[item.id] = entry
+            manifest["databases"].append(entry)
+
         for website in websites:
             site_entry = {
                 "domain": website.domain,
@@ -219,25 +284,48 @@ def create_user_backup(user: User, db, filename: str | None = None,
                 "waf_custom_rules": website.waf_custom_rules or "",
                 "aliases": [alias.domain for alias in getattr(website, "aliases", []) or [] if getattr(alias, "mode", "alias") == "alias"],
                 "database": None,
+                "ssl": None,
             }
-            db_item = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
-            if db_item:
-                sql_name = f"{website.domain}.sql"
-                sql_path = tmp_dir / sql_name
-                mariadb.export_database(db_item.db_name, str(sql_path))
-                if settings.command_dry_run and not sql_path.exists():
-                    sql_path.write_text(f"-- DRY RUN database dump for {db_item.db_name}\n", encoding="utf-8")
-                sql_files[website.domain] = sql_path
+            # Carry the certificate, not just the fact that there was one. A
+            # restored site has to answer HTTPS as soon as it comes up: the new
+            # box has no certbot account or renewal config for the domain, and
+            # DNS usually still points at the old server, so re-issuing is not
+            # something the restore can fall back on.
+            if getattr(website, "ssl_enabled", False):
                 try:
-                    db_password = decrypt(db_item.db_password)
-                except RuntimeError:
-                    db_password = ""
-                site_entry["database"] = {
-                    "db_name": db_item.db_name,
-                    "db_user": db_item.db_user,
-                    "db_password": db_password,
-                    "sql_member": f"databases/{sql_name}",
-                }
+                    material = ssl_service.read_site_certificate(
+                        website.domain,
+                        mode=getattr(website, "ssl_mode", "") or "",
+                        cert_path=getattr(website, "ssl_cert_path", None),
+                        key_path=getattr(website, "ssl_key_path", None),
+                        ca_path=getattr(website, "ssl_ca_path", None),
+                        reuse_name=getattr(website, "ssl_reuse_name", None),
+                    )
+                except Exception as exc:
+                    material = None
+                    skipped.append({"path": f"ssl:{website.domain}", "reason": str(exc)})
+                if material:
+                    base = f"ssl/{website.domain}"
+                    ssl_files[website.domain] = material
+                    site_entry["ssl"] = {
+                        "issued_as": getattr(website, "ssl_mode", "") or "manual",
+                        "wildcard": bool(getattr(website, "ssl_wildcard", False)),
+                        "member_cert": f"{base}/fullchain.pem",
+                        "member_key": f"{base}/privkey.pem",
+                        "member_ca": f"{base}/ca.pem" if material["ca_bundle"] else "",
+                    }
+                else:
+                    skipped.append({
+                        "path": f"ssl:{website.domain}",
+                        "reason": "No readable certificate on disk",
+                    })
+            # Still recorded per site, so a panel running an older release can
+            # restore this archive; the top-level list is what a current one
+            # reads, because it also carries the databases no site points at.
+            for item in db_items:
+                if item.website_id == website.id and item.id in database_entries:
+                    site_entry["database"] = database_entries[item.id]
+                    break
             manifest["websites"].append(site_entry)
 
         manifest_path = tmp_dir / BACKUP_MANIFEST
@@ -251,9 +339,23 @@ def create_user_backup(user: User, db, filename: str | None = None,
                 root = Path(website.root_path)
                 if root.exists():
                     _add_tree(tar, root, f"sites/{website.domain}/site", skipped)
-                sql_path = sql_files.get(website.domain)
+            # Named for the database, not for a site: one account can own more
+            # databases than it has websites, and more than one per site.
+            for entry in manifest["databases"]:
+                sql_path = sql_files.get(entry["db_name"])
                 if sql_path and sql_path.exists():
-                    tar.add(sql_path, arcname=f"databases/{website.domain}.sql")
+                    tar.add(sql_path, arcname=entry["sql_member"])
+            for site_entry in manifest["websites"]:
+                material = ssl_files.get(site_entry["domain"])
+                if not material or not site_entry.get("ssl"):
+                    continue
+                for member, part in (
+                    (site_entry["ssl"]["member_cert"], material["certificate"]),
+                    (site_entry["ssl"]["member_key"], material["private_key"]),
+                    (site_entry["ssl"]["member_ca"], material["ca_bundle"]),
+                ):
+                    if member and part:
+                        _add_bytes(tar, member, part, mode=0o600)
             # Written last: the manifest records what the walk had to leave out,
             # so the gap travels with the archive and is visible at restore.
             manifest["skipped"] = skipped
@@ -434,6 +536,26 @@ def _extract_member_to_file(archive: Path, member_name: str, output_dir: Path) -
         return target
 
 
+def _read_member_bytes(archive: Path, member_name: str) -> bytes:
+    """Read a small member straight into memory.
+
+    Certificate material never touches a temp file on the way out of the
+    archive, so a private key is not left lying in a directory somewhere if the
+    restore fails partway.
+    """
+    if not member_name:
+        return b""
+    with tarfile.open(archive, "r:gz") as tar:
+        try:
+            member = tar.getmember(member_name)
+        except KeyError:
+            return b""
+        if not member.isfile() or member.size > MAX_SSL_MEMBER_BYTES:
+            raise ValueError(f"Invalid certificate member: {member_name}")
+        source = tar.extractfile(member)
+        return source.read() if source else b""
+
+
 def restore_user_backup(backup_file: str, db) -> dict:
     archive = user_backup_path(backup_file)
     manifest = read_backup_manifest(str(archive))
@@ -470,6 +592,14 @@ def restore_user_backup(backup_file: str, db) -> dict:
     site_users.ensure_panel_user(user.username)
 
     restored_websites = []
+    restored_databases = []
+    restored_certificates: list = []
+    ssl_warnings: list = []
+    website_by_domain: dict = {}
+    # Archives written before databases were backed up by ownership carry them
+    # only per site; newer ones carry every database the account owned, so the
+    # per-site path below must stand down or each one would import twice.
+    owned_databases = manifest.get("databases") or []
     with tempfile.TemporaryDirectory(prefix="opanel-user-restore-") as tmp:
         tmp_dir = Path(tmp)
         for site_info in manifest.get("websites") or []:
@@ -552,7 +682,7 @@ def restore_user_backup(backup_file: str, db) -> dict:
                 if alias_domain not in backup_aliases:
                     db.delete(alias_obj)
 
-            db_info = site_info.get("database") or None
+            db_info = None if owned_databases else (site_info.get("database") or None)
             if db_info:
                 db_name = db_info.get("db_name")
                 db_user = db_info.get("db_user")
@@ -583,6 +713,50 @@ def restore_user_backup(backup_file: str, db) -> dict:
                     db_account.db_user = db_user
                     db_account.db_password = encrypt(db_password)
 
+            # Put the certificate back before the vhost is written, so the site
+            # comes up on HTTPS in the same pass rather than waiting for someone
+            # to notice and re-issue.
+            ssl_kwargs: dict = {}
+            ssl_info = site_info.get("ssl") or None
+            if ssl_info:
+                try:
+                    certificate = _read_member_bytes(archive, ssl_info.get("member_cert") or "")
+                    private_key = _read_member_bytes(archive, ssl_info.get("member_key") or "")
+                    ca_bundle = _read_member_bytes(archive, ssl_info.get("member_ca") or "") or b""
+                    if not certificate or not private_key:
+                        raise ValueError("certificate material missing from the archive")
+                    paths = ssl_service.install_site_certificate(
+                        domain, certificate, private_key, ca_bundle
+                    )
+                    website.ssl_enabled = True
+                    # Manual whatever it was issued as: this box has no renewal
+                    # config for it, so a vhost pointing into /etc/letsencrypt
+                    # would point at nothing. Let's Encrypt can take over once
+                    # DNS moves; until then the site is served, not broken.
+                    website.ssl_mode = "manual"
+                    website.ssl_cert_path = paths.get("cert")
+                    website.ssl_key_path = paths.get("key")
+                    website.ssl_ca_path = paths.get("ca")
+                    website.ssl_updated_at = datetime.utcnow()
+                    ssl_kwargs = {
+                        "ssl_enabled": True,
+                        "ssl_cert_path": paths.get("cert"),
+                        "ssl_key_path": paths.get("key"),
+                    }
+                    expiry = ssl_service.certificate_expiry(certificate)
+                    restored_certificates.append({
+                        "domain": domain,
+                        "issued_as": ssl_info.get("issued_as") or "",
+                        "expires": expiry.isoformat() if expiry else "",
+                        "expired": bool(expiry and expiry < datetime.now(timezone.utc)),
+                    })
+                except Exception as exc:
+                    # A site on plain HTTP is recoverable; a failed restore is
+                    # not. Say which domain and why, and carry on.
+                    website.ssl_enabled = False
+                    website.ssl_mode = "none"
+                    ssl_warnings.append(f"{domain}: {exc}")
+
             result = waf.sync_website_rules(website)
             if result.returncode != 0:
                 raise RuntimeError((result.stderr or result.stdout or "Could not write WAF rules").strip())
@@ -598,12 +772,62 @@ def restore_user_backup(backup_file: str, db) -> dict:
                 document_root=document_root,
                 rewrite_mode=nginx_rewrite_mode,
                 aliases=backup_aliases,
+                **ssl_kwargs,
             )
             wordpress.fix_permissions(root_path, linux_user)
+            website_by_domain[domain] = website
             restored_websites.append({"domain": domain, "created": created_site})
 
+        # Databases last: one can only be attached to a site that exists. A
+        # database with no site of its own is restored all the same -- it is
+        # the account's, and whatever uses it says so in its own source.
+        for entry in owned_databases:
+            db_name = (entry.get("db_name") or "").strip()
+            db_user = (entry.get("db_user") or "").strip()
+            if not db_name or not db_user:
+                continue
+            if Path(db_name).name != db_name:
+                raise ValueError(f"Invalid database name in backup: {db_name}")
+            db_password = entry.get("db_password") or mariadb.random_password()
+            website = website_by_domain.get((entry.get("website_domain") or "").strip().lower())
+            conflict = db.query(DatabaseAccount).filter(
+                DatabaseAccount.db_name == db_name,
+                DatabaseAccount.owner_id != user.id,
+            ).first()
+            if conflict:
+                raise ValueError(f"Database name already belongs to another account: {db_name}")
+            mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
+            sql_path = _extract_member_to_file(
+                archive, entry.get("sql_member") or f"databases/{db_name}.sql", tmp_dir
+            )
+            if sql_path:
+                mariadb.import_database(db_name, str(sql_path))
+            account = db.query(DatabaseAccount).filter(DatabaseAccount.db_name == db_name).first()
+            if account is None:
+                db.add(DatabaseAccount(
+                    owner_id=user.id,
+                    website_id=website.id if website else None,
+                    db_name=db_name,
+                    db_user=db_user,
+                    db_password=encrypt(db_password),
+                ))
+            else:
+                account.owner_id = user.id
+                if website is not None:
+                    account.website_id = website.id
+                account.db_user = db_user
+                account.db_password = encrypt(db_password)
+            restored_databases.append(db_name)
+
     db.commit()
-    return {"created_user": created_user, "username": username, "websites": restored_websites}
+    return {
+        "created_user": created_user,
+        "username": username,
+        "websites": restored_websites,
+        "databases": restored_databases,
+        "certificates": restored_certificates,
+        "ssl_warnings": ssl_warnings,
+    }
 
 
 def save_uploaded_backup(domain: str, filename: str, source_file) -> str:

@@ -103,6 +103,77 @@ def _resolve_da_backup_path(backup_file: str) -> Path:
     return path
 
 
+def _apply_vhost_ssl(vhost_args: dict, website, cert_path, key_path, summary: dict) -> None:
+    """Re-render one vhost now that it has a certificate.
+
+    The vhost is written before SSL is settled, so flipping ssl_enabled in the
+    database on its own leaves OpenLiteSpeed serving plain HTTP -- the panel
+    then shows a site as secured that answers nothing on 443.
+    """
+    args = vhost_args.get(website.domain)
+    if not args:
+        return
+    try:
+        openlitespeed.rewrite_vhost(
+            website.domain,
+            args["root_path"],
+            app_type=args["app_type"],
+            php_version=args["php_version"],
+            custom_directives="",
+            linux_user=args["linux_user"],
+            lsphp_socket_override=args["lsphp_socket_override"],
+            waf_enabled=args["waf_enabled"],
+            document_root=args["document_root"],
+            rewrite_mode=args["rewrite_mode"],
+            aliases=[],
+            ssl_enabled=True,
+            ssl_cert_path=cert_path,
+            ssl_key_path=key_path,
+            defer_reload=True,
+        )
+    except Exception as exc:
+        _log(f"    WARNING: could not put {website.domain} on HTTPS: {exc}")
+        summary["warnings"].append(f"SSL vhost rewrite failed for {website.domain}: {exc}")
+
+
+def _read_da_certificate(root: Path, domain: str) -> Optional[dict]:
+    """The certificate DirectAdmin was already serving this domain with.
+
+    A DA user backup carries it at backup/<domain>/domain.{cert,key,cacert}.
+    Importing it is what lets a site answer HTTPS as soon as it is up: it needs
+    no CA round trip, no DNS pointing here yet, and it does not spend one of
+    the 50 certificates per registered domain per week that Let's Encrypt
+    allows -- which is what the import used to exhaust on an archive full of
+    subdomains.
+    """
+    safe = _normalize_domain(domain)
+    if not safe:
+        return None
+    base = root / "backup" / safe
+    cert_file = base / "domain.cert"
+    key_file = base / "domain.key"
+    ca_file = base / "domain.cacert"
+
+    def _read(path: Path) -> bytes:
+        try:
+            if not path.is_file() or path.stat().st_size > 256 * 1024:
+                return b""
+            raw = path.read_bytes().strip()
+        except OSError:
+            return b""
+        return raw if b"-----BEGIN" in raw else b""
+
+    certificate = _read(cert_file)
+    private_key = _read(key_file)
+    if not certificate or not private_key:
+        return None
+    return {
+        "certificate": certificate + b"\n",
+        "private_key": private_key + b"\n",
+        "ca_bundle": (_read(ca_file) + b"\n") if _read(ca_file) else b"",
+    }
+
+
 def _read_key_values(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists() or not path.is_file():
@@ -980,6 +1051,11 @@ def _process_archive(
     sql_files = _discover_sql_files(root)
     imported_sql_keys: set[str] = set()
     websites = []
+    # What each vhost was rendered with, so it can be rendered again once a
+    # certificate exists for it -- the vhost is written before SSL is sorted
+    # out, and a site whose ssl_enabled flag was flipped without a rewrite
+    # still serves plain HTTP.
+    vhost_args: dict[str, dict] = {}
 
     for domain in domains:
         if domain in subdomain_sources:
@@ -1156,6 +1232,16 @@ def _process_archive(
                 aliases=[],
                 defer_reload=True,
             )
+            vhost_args[domain] = {
+                "root_path": root_path,
+                "app_type": app_type,
+                "php_version": php_version,
+                "linux_user": linux_user,
+                "lsphp_socket_override": lsphp_socket,
+                "waf_enabled": website.waf_enabled,
+                "document_root": document_root,
+                "rewrite_mode": nginx_rewrite_mode,
+            }
             _log(f"    Configured OLS vhost for {domain}")
         except Exception as exc:
             _log(f"    WARNING: OLS vhost config failed for {domain}: {exc}")
@@ -1224,13 +1310,53 @@ def _process_archive(
 
     db.commit()
 
-    # Try to enable SSL when DNS matches server IP. An archive with many
-    # subdomains of one domain can ask Let's Encrypt for dozens of certs in a
-    # row; after a run of failures (typically the LE rate limit -- 50 certs per
-    # registered domain per week) stop trying instead of hammering the CA. The
-    # user can issue one *.<domain> wildcard afterwards and reuse it.
-    consecutive_ssl_failures = 0
+    # SSL. A DirectAdmin backup carries the certificate the site was already
+    # being served with, at backup/<domain>/domain.{cert,key,cacert}. Install
+    # that first: it needs no CA, no DNS pointing here yet, and no rate limit,
+    # and it is what makes an imported site answer HTTPS the moment it is up.
+    # Only a domain with no usable certificate in the archive falls through to
+    # asking Let's Encrypt below.
+    from app.services import ssl as ssl_service
+
+    needs_issue = []
     for website in websites:
+        material = _read_da_certificate(root, website.domain)
+        if not material:
+            needs_issue.append(website)
+            continue
+        try:
+            paths = ssl_service.install_site_certificate(
+                website.domain, material["certificate"], material["private_key"],
+                material["ca_bundle"],
+            )
+        except Exception as exc:
+            _log(f"    SSL: certificate in the archive is unusable for {website.domain}: {exc}")
+            needs_issue.append(website)
+            continue
+        website.ssl_enabled = True
+        website.ssl_mode = "manual"
+        website.ssl_cert_path = paths.get("cert")
+        website.ssl_key_path = paths.get("key")
+        website.ssl_ca_path = paths.get("ca")
+        db.commit()
+        _apply_vhost_ssl(vhost_args, website, paths.get("cert"), paths.get("key"), summary)
+        summary["ssl_enabled_domains"].append(website.domain)
+        summary.setdefault("ssl_imported_domains", []).append(website.domain)
+        expiry = ssl_service.certificate_expiry(material["certificate"])
+        if expiry and expiry < _dt.datetime.now(_dt.timezone.utc):
+            summary["warnings"].append(
+                f"The certificate imported for {website.domain} has expired; "
+                "issue a new one once DNS points at this server"
+            )
+        _log(f"    SSL imported from the backup for {website.domain}")
+
+    # Only what the archive could not supply goes to the CA. An archive with
+    # many subdomains of one domain can ask Let's Encrypt for dozens of certs
+    # in a row; after a run of failures (typically the LE rate limit -- 50
+    # certs per registered domain per week) stop trying instead of hammering
+    # the CA. The user can issue one *.<domain> wildcard afterwards and reuse it.
+    consecutive_ssl_failures = 0
+    for website in needs_issue:
         if consecutive_ssl_failures >= 5:
             _log("    SSL: too many consecutive certbot failures, skipping the rest")
             summary["warnings"].append(
@@ -1251,7 +1377,13 @@ def _process_archive(
                     result = ssl_service.issue_ssl(website.domain, [])
                     if result.returncode == 0:
                         website.ssl_enabled = True
+                        website.ssl_mode = "letsencrypt"
                         db.commit()
+                        # certbot writes the cert; the vhost still has to be
+                        # told about it or the site stays on plain HTTP.
+                        live = f"/etc/letsencrypt/live/{website.domain}"
+                        _apply_vhost_ssl(vhost_args, website,
+                                         f"{live}/fullchain.pem", f"{live}/privkey.pem", summary)
                         summary["ssl_enabled_domains"].append(website.domain)
                         consecutive_ssl_failures = 0
                         _log(f"    SSL enabled for {website.domain}")
@@ -1264,6 +1396,16 @@ def _process_archive(
                     _log(f"    SSL skipped for {website.domain}: {exc}")
         except Exception:
             pass
+
+    # Every SSL vhost above was staged with defer_reload, so one restart puts
+    # the whole import on HTTPS instead of one per certificate.
+    if summary["ssl_enabled_domains"]:
+        try:
+            openlitespeed.reload_service()
+            _log(f"  Reloaded OpenLiteSpeed for {len(summary['ssl_enabled_domains'])} HTTPS vhost(s)")
+        except Exception as exc:
+            _log(f"  WARNING: OpenLiteSpeed reload after SSL failed: {exc}")
+            summary["warnings"].append(f"OpenLiteSpeed reload after SSL failed: {exc}")
 
     return summary
 

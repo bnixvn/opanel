@@ -2241,7 +2241,19 @@ function App() {
     if (!confirm(`Restore this full user backup? Missing panel user and websites will be created.\n${file}`)) return;
     const data = await request('/maintenance/user-restore', { method: 'POST', body: JSON.stringify({ backup_file: file }) }, 'Restoring full user backup...');
     if (data) {
-      setNotice(`Restored user ${data.username}. Websites: ${data.websites?.length || 0}`);
+      const parts = [
+        `Restored user ${data.username}`,
+        `${data.websites?.length || 0} website(s)`,
+        `${data.databases?.length || 0} database(s)`,
+      ];
+      const certs = data.certificates || [];
+      if (certs.length) {
+        const expired = certs.filter(item => item.expired);
+        parts.push(`${certs.length} certificate(s) restored`);
+        if (expired.length) parts.push(`${expired.map(item => item.domain).join(', ')} need a new certificate (expired)`);
+      }
+      if (data.ssl_warnings?.length) parts.push(`SSL not restored for ${data.ssl_warnings.length} site(s)`);
+      setNotice(parts.join('. ') + '.');
       await refreshAll();
       await loadUsers();
       await listUserBackups();

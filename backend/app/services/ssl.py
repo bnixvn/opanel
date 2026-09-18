@@ -250,6 +250,97 @@ def list_available_certificates(target_domain: str | None = None) -> list[dict]:
     return results
 
 
+def read_site_certificate(domain: str, mode: str = "", cert_path: str | None = None,
+                          key_path: str | None = None, ca_path: str | None = None,
+                          reuse_name: str | None = None) -> dict | None:
+    """The certificate material a site is being served with, as bytes.
+
+    Read so a backup can carry it: a restored site has to answer HTTPS the
+    moment it comes up, and on a new box there is no certbot account, no
+    renewal config, and usually no DNS pointing here yet, so re-issuing is not
+    something the restore can fall back on.
+
+    /etc/letsencrypt/live is root-only, so a Let's Encrypt cert is taken from
+    the /etc/opanel/certs mirror the panel can actually read. Returns None when
+    nothing readable is on disk -- an absent cert is not an error here.
+    """
+    safe = _safe_domain(domain)
+    candidates: list[tuple[Path, Path, Path | None]] = []
+
+    if (mode or "") == "manual" and cert_path and key_path:
+        candidates.append((Path(cert_path), Path(key_path), Path(ca_path) if ca_path else None))
+
+    if (mode or "") == "reuse" and reuse_name:
+        try:
+            resolved = reuse_cert_paths(reuse_name)
+        except ValueError:
+            resolved = {}
+        source, _, name = (reuse_name or "").partition(":")
+        if source == "letsencrypt" and name:
+            # The live dir is unreadable; the mirror holds the same bytes.
+            mirror = PANEL_CERT_STORE / _safe_domain(name)
+            candidates.append((mirror / "fullchain.pem", mirror / "privkey.pem", None))
+        if resolved.get("cert") and resolved.get("key"):
+            candidates.append((
+                Path(resolved["cert"]), Path(resolved["key"]),
+                Path(resolved["ca"]) if resolved.get("ca") else None,
+            ))
+
+    mirror = PANEL_CERT_STORE / safe
+    candidates.append((mirror / "fullchain.pem", mirror / "privkey.pem", None))
+    manual = MANUAL_SSL_ROOT / safe
+    fullchain = manual / "fullchain.crt"
+    candidates.append((
+        fullchain if fullchain.is_file() else manual / "cert.crt",
+        manual / "privkey.key",
+        manual / "ca.crt",
+    ))
+
+    for cert_file, key_file, ca_file in candidates:
+        certificate = _read_cert_bytes(cert_file)
+        private_key = _read_cert_bytes(key_file)
+        if not certificate or not private_key:
+            continue
+        bundle = _read_cert_bytes(ca_file) if ca_file else None
+        return {
+            "certificate": certificate,
+            "private_key": private_key,
+            "ca_bundle": bundle or b"",
+        }
+    return None
+
+
+def install_site_certificate(domain: str, certificate: bytes, private_key: bytes,
+                             ca_bundle: bytes = b"") -> dict[str, str | None]:
+    """Put a certificate carried by a backup or an import back on disk.
+
+    Installed as a manual cert whatever it was issued as: the box being
+    restored onto has no renewal config for it, so pointing a vhost at
+    /etc/letsencrypt/live would point it at nothing. The site serves HTTPS
+    immediately and Let's Encrypt can take over later, once DNS moves.
+
+    Validation is deliberately not the panel's full manual-install check -- a
+    cert that is expired, or whose SAN no longer matches, still describes what
+    the site was serving, and refusing it would leave the site on plain HTTP
+    with no way back. Only the key/cert pairing is enforced, because a
+    mismatched pair cannot be served at all.
+    """
+    cert = _load_certificate(certificate, "certificate")
+    key = _load_private_key(private_key)
+    if ca_bundle:
+        try:
+            _load_ca_bundle(ca_bundle)
+        except ValueError:
+            ca_bundle = b""
+    _validate_key_matches_certificate(key, cert)
+    return _write_manual_ssl_files(domain, certificate, private_key, ca_bundle)
+
+
+def certificate_expiry(certificate: bytes) -> datetime | None:
+    _, not_after = _cert_names_and_expiry(certificate)
+    return not_after
+
+
 def reuse_cert_paths(reuse_name: str) -> dict[str, str | None]:
     """Resolve '<source>:<name>' to the cert/key/ca paths OpenLiteSpeed should use."""
     source, _, name = (reuse_name or "").partition(":")
