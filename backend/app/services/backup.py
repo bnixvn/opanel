@@ -68,7 +68,54 @@ def _hostname_conflicts(db, domain: str, exclude_website_id: int | None = None) 
     return safe in reserved or f"www.{safe}" in reserved
 
 
-def create_backup(website: Website, db_name: Optional[str] = None) -> str:
+def _add_tree(tar: tarfile.TarFile, source, arcname: str, skipped: list) -> None:
+    """Add a directory tree, recording what could not be read instead of dying.
+
+    ``tarfile.add()`` walks the tree itself and aborts the whole archive on the
+    first entry it cannot open. Site PHP runs as the site's own user, so it can
+    drop a file the panel cannot read at any moment -- Laravel writes
+    bootstrap/cache/*.php with no permissions for "other" -- and one such file
+    used to cost the operator the entire backup of every site they own.
+
+    A silent gap would be worse than the failure it replaces, so every skipped
+    path is collected: the caller puts the list in the manifest, so it travels
+    with the archive and is visible at restore time, and reports the count.
+    """
+    root = Path(source)
+    stack = [(root, arcname)]
+    while stack:
+        path, name = stack.pop()
+        try:
+            tar.add(path, arcname=name, recursive=False)
+        except (OSError, ValueError) as exc:
+            skipped.append({"path": str(path), "reason": str(exc)})
+            continue
+        # is_dir() follows symlinks; a link was just stored as a link and must
+        # not be walked, or a link pointing up the tree would loop.
+        if path.is_symlink() or not path.is_dir():
+            continue
+        try:
+            children = sorted(path.iterdir())
+        except OSError as exc:
+            skipped.append({"path": str(path), "reason": str(exc)})
+            continue
+        for child in reversed(children):
+            stack.append((child, f"{name}/{child.name}"))
+
+
+def describe_skipped(skipped: list) -> str:
+    """One line naming what was left out, for the panel's run message."""
+    if not skipped:
+        return ""
+    names = ", ".join(item["path"] for item in skipped[:3])
+    if len(skipped) > 3:
+        names += f", and {len(skipped) - 3} more"
+    return (f"{len(skipped)} unreadable file(s) were skipped ({names}). "
+            "Run Fix permissions on the affected site to include them.")
+
+
+def create_backup(website: Website, db_name: Optional[str] = None,
+                  skipped: Optional[list] = None) -> str:
     stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     backup_dir = Path(settings.backup_root) / website.domain
     archive = backup_dir / f"{website.domain}-{stamp}.tar.gz"
@@ -79,10 +126,16 @@ def create_backup(website: Website, db_name: Optional[str] = None) -> str:
         mariadb.export_database(db_name, str(sql_file))
         if settings.command_dry_run and not sql_file.exists():
             sql_file.write_text(f"-- DRY RUN database dump for {db_name}\n", encoding="utf-8")
+    if skipped is None:
+        skipped = []
     with tarfile.open(archive, "w:gz") as tar:
-        tar.add(website.root_path, arcname="site")
+        _add_tree(tar, website.root_path, "site", skipped)
         if sql_file.exists():
             tar.add(sql_file, arcname=f"database/{sql_file.name}")
+    if skipped:
+        logger.warning("Backup of %s skipped %d unreadable path(s): %s",
+                       website.domain, len(skipped),
+                       ", ".join(item["path"] for item in skipped[:5]))
     return str(archive)
 
 
@@ -113,7 +166,10 @@ def weekday_slot(when: datetime | None = None) -> str:
     return WEEKDAY_SLOTS[(when or datetime.now()).weekday()]
 
 
-def create_user_backup(user: User, db, filename: str | None = None) -> str:
+def create_user_backup(user: User, db, filename: str | None = None,
+                       skipped: Optional[list] = None) -> str:
+    if skipped is None:
+        skipped = []
     backup_dir = _user_backup_dir(user.username)
     backup_dir.mkdir(parents=True, exist_ok=True)
     if filename:
@@ -185,22 +241,29 @@ def create_user_backup(user: User, db, filename: str | None = None) -> str:
             manifest["websites"].append(site_entry)
 
         manifest_path = tmp_dir / BACKUP_MANIFEST
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2), encoding="utf-8")
         # Build alongside the target and swap it in only once the archive closed
         # cleanly. Opening the destination directly would truncate it up front,
         # so a run that died halfway -- a full disk, a killed process -- would
         # leave a stub in the slot with last week's good copy already gone.
         staged = tmp_dir / "archive.tar.gz"
         with tarfile.open(staged, "w:gz") as tar:
-            tar.add(manifest_path, arcname=BACKUP_MANIFEST)
             for website in websites:
                 root = Path(website.root_path)
                 if root.exists():
-                    tar.add(root, arcname=f"sites/{website.domain}/site")
+                    _add_tree(tar, root, f"sites/{website.domain}/site", skipped)
                 sql_path = sql_files.get(website.domain)
                 if sql_path and sql_path.exists():
                     tar.add(sql_path, arcname=f"databases/{website.domain}.sql")
+            # Written last: the manifest records what the walk had to leave out,
+            # so the gap travels with the archive and is visible at restore.
+            manifest["skipped"] = skipped
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2), encoding="utf-8")
+            tar.add(manifest_path, arcname=BACKUP_MANIFEST)
         os.replace(staged, archive)
+    if skipped:
+        logger.warning("Backup of user %s skipped %d unreadable path(s): %s",
+                       user.username, len(skipped),
+                       ", ".join(item["path"] for item in skipped[:5]))
     return str(archive)
 
 

@@ -195,6 +195,7 @@ def run_due_schedules(now: datetime | None = None) -> int:
                 continue
             messages = []
             errors = []
+            warnings = []
             for user in users:
                 try:
                     # DirectAdmin-style rotation: a week of dailies occupies
@@ -202,20 +203,28 @@ def run_due_schedules(now: datetime | None = None) -> int:
                     # later, so the destination cannot grow without bound even
                     # if the prune below never succeeds.
                     slot = backup.weekday_slot(now)
+                    skipped: list = []
                     archive = backup.create_user_backup(
-                        user, db, filename=f"{user.username}-{slot}.tar.gz"
+                        user, db, filename=f"{user.username}-{slot}.tar.gz", skipped=skipped
                     )
                     target = _upload_if_configured(db, schedule, archive, user.username)
                     backup.prune_user_backups(user.username, schedule.retention)
                     messages.append(f"{user.username}: {target}")
+                    # An archive with a hole in it still ran, so it is not an
+                    # error -- but the operator has to be told, or the gap only
+                    # turns up when a restore needs the missing file.
+                    if skipped:
+                        warnings.append(f"{user.username}: {backup.describe_skipped(skipped)}")
                 except Exception as exc:  # pragma: no cover - operational path
                     errors.append(f"{user.username}: {exc}")
             if errors:
                 schedule.last_status = "error"
-                schedule.last_message = _short_message([f"ok {len(messages)} user(s)"] + errors)
+                schedule.last_message = _short_message(
+                    [f"ok {len(messages)} user(s)"] + errors + warnings)
             else:
-                schedule.last_status = "ok"
-                schedule.last_message = _short_message([f"ok {len(messages)} user(s)"] + messages)
+                schedule.last_status = "warning" if warnings else "ok"
+                schedule.last_message = _short_message(
+                    [f"ok {len(messages)} user(s)"] + warnings + messages)
                 ran += 1
             schedule.last_run_at = now
             db.commit()

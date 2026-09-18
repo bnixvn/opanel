@@ -417,13 +417,15 @@ def _run_site_backup_job(job_id: str, request_user_id: int, website_id: int) -> 
             raise ValueError("User not found")
         website = get_owned_website(db, user, website_id)
         db_item = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
-        archive = backup.create_backup(website, db_item.db_name if db_item else None)
+        skipped: list = []
+        archive = backup.create_backup(website, db_item.db_name if db_item else None, skipped=skipped)
         log_action(db, user.id, "backup", website.domain, archive)
+        note = backup.describe_skipped(skipped)
         _set_backup_job(
             job_id,
             status="done",
             backup_file=archive,
-            message="Website backup completed",
+            message="Website backup completed" + (f". {note}" if note else ""),
             finished_at=_now_iso(),
         )
     except Exception as exc:
@@ -442,7 +444,8 @@ def _run_user_backup_job(job_id: str, request_user_id: int, target_user_id: int,
         if not request_user or not request_user.is_active:
             raise ValueError("User not found")
         user = get_backup_user(db, request_user, target_user_id)
-        archive = backup.create_user_backup(user, db)
+        skipped: list = []
+        archive = backup.create_user_backup(user, db, skipped=skipped)
         remote_file = ""
         target_name = ""
         if target_id:
@@ -450,13 +453,14 @@ def _run_user_backup_job(job_id: str, request_user_id: int, target_user_id: int,
             target_name, remote_file = upload_archive_to_target(db, target_id, archive)
         detail = f"{archive}" + (f" -> {target_name}:{remote_file}" if remote_file else "")
         log_action(db, request_user.id, "backup_user", user.username, detail)
+        note = backup.describe_skipped(skipped)
         _set_backup_job(
             job_id,
             status="done",
             backup_file=archive,
             remote_file=remote_file,
             target=target_name,
-            message="Full user backup completed",
+            message="Full user backup completed" + (f". {note}" if note else ""),
             finished_at=_now_iso(),
         )
     except Exception as exc:
@@ -477,16 +481,18 @@ def _run_sftp_backup_job(job_id: str, request_user_id: int, website_id: int, tar
         ensure_role(request_user.role, Role.admin)
         website = get_owned_website(db, request_user, website_id)
         db_item = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
-        archive = backup.create_backup(website, db_item.db_name if db_item else None)
+        skipped: list = []
+        archive = backup.create_backup(website, db_item.db_name if db_item else None, skipped=skipped)
         target_name, remote_file = upload_archive_to_target(db, target_id, archive)
         log_action(db, request_user.id, "backup_sftp", website.domain, f"{target_name}:{remote_file}")
+        note = backup.describe_skipped(skipped)
         _set_backup_job(
             job_id,
             status="done",
             backup_file=archive,
             remote_file=remote_file,
             target=target_name,
-            message="SFTP backup completed",
+            message="SFTP backup completed" + (f". {note}" if note else ""),
             finished_at=_now_iso(),
         )
     except Exception as exc:
