@@ -37,7 +37,10 @@ h1,h2{color:var(--brand-ink)}
 .feature-group-head h2{margin:0;font-size:15px;letter-spacing:.01em}
 .feature-group-icon{width:26px;height:26px;display:grid;place-items:center;border-radius:var(--radius-sm);background:var(--primary-light);color:var(--primary-ink);border:1px solid var(--primary-soft);flex:none}
 .feature-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
-.feature-tile{display:grid;justify-items:start;align-content:start;gap:8px;min-width:0;width:100%;min-height:112px;padding:14px;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);cursor:pointer;transition:border-color .15s,background .15s,transform .15s}
+/* justify-content and height are here to beat the global `button` rule:
+   its justify-content:center centres the single grid track itself, and the
+   height:42px it takes on below 950px would flatten the tile. */
+.feature-tile{display:grid;grid-template-columns:100%;justify-items:start;justify-content:start;align-content:start;gap:8px;min-width:0;width:100%;height:auto;min-height:112px;padding:14px;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);cursor:pointer;transition:border-color .15s,background .15s,transform .15s}
 .feature-tile:hover{background:var(--surface-alt);border-color:var(--primary-soft);transform:translateY(-1px)}
 .feature-tile:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .feature-tile-icon{width:32px;height:32px;display:grid;place-items:center;border-radius:var(--radius-sm);background:var(--primary-light);color:var(--primary-ink);border:1px solid var(--primary-soft);flex:none}
