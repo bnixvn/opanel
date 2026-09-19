@@ -175,6 +175,63 @@ def _short_message(parts: list[str]) -> str:
     return message[:4000]
 
 
+def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
+                 on_progress=None) -> bool:
+    """Run one schedule now, whether or not its cron says it is due.
+
+    Shared by the timer and by the panel's Run now button, so a run started by
+    hand is the same run -- same rotation slot, same retention, same recorded
+    status -- and not a second code path that drifts from it.
+
+    Returns True when every account succeeded.
+    """
+    now = (now or datetime.now()).replace(second=0, microsecond=0)
+    users = _schedule_users(db, schedule)
+    if not users:
+        schedule.last_run_at = now
+        schedule.last_status = "error"
+        schedule.last_message = "No users selected"
+        db.commit()
+        return False
+
+    messages = []
+    errors = []
+    warnings = []
+    for index, user in enumerate(users, start=1):
+        if on_progress:
+            on_progress(index, len(users), user.username)
+        try:
+            # DirectAdmin-style rotation: a week of dailies occupies seven
+            # files named for the day, each overwritten a week later, so the
+            # destination cannot grow without bound even if the prune below
+            # never succeeds.
+            slot = backup.weekday_slot(now)
+            skipped: list = []
+            archive = backup.create_user_backup(
+                user, db, filename=f"{user.username}-{slot}.tar.gz", skipped=skipped
+            )
+            target = _upload_if_configured(db, schedule, archive, user.username)
+            backup.prune_user_backups(user.username, schedule.retention)
+            messages.append(f"{user.username}: {target}")
+            # An archive with a hole in it still ran, so it is not an error --
+            # but the operator has to be told, or the gap only turns up when a
+            # restore needs the missing file.
+            if skipped:
+                warnings.append(f"{user.username}: {backup.describe_skipped(skipped)}")
+        except Exception as exc:  # pragma: no cover - operational path
+            errors.append(f"{user.username}: {exc}")
+
+    if errors:
+        schedule.last_status = "error"
+        schedule.last_message = _short_message([f"ok {len(messages)} user(s)"] + errors + warnings)
+    else:
+        schedule.last_status = "warning" if warnings else "ok"
+        schedule.last_message = _short_message([f"ok {len(messages)} user(s)"] + warnings + messages)
+    schedule.last_run_at = now
+    db.commit()
+    return not errors
+
+
 def run_due_schedules(now: datetime | None = None) -> int:
     now = (now or datetime.now()).replace(second=0, microsecond=0)
     db = SessionLocal()
@@ -186,48 +243,8 @@ def run_due_schedules(now: datetime | None = None) -> int:
                 continue
             if schedule.last_run_at and schedule.last_run_at.replace(second=0, microsecond=0) == now:
                 continue
-            users = _schedule_users(db, schedule)
-            if not users:
-                schedule.last_run_at = now
-                schedule.last_status = "error"
-                schedule.last_message = "No users selected"
-                db.commit()
-                continue
-            messages = []
-            errors = []
-            warnings = []
-            for user in users:
-                try:
-                    # DirectAdmin-style rotation: a week of dailies occupies
-                    # seven files named for the day, each overwritten a week
-                    # later, so the destination cannot grow without bound even
-                    # if the prune below never succeeds.
-                    slot = backup.weekday_slot(now)
-                    skipped: list = []
-                    archive = backup.create_user_backup(
-                        user, db, filename=f"{user.username}-{slot}.tar.gz", skipped=skipped
-                    )
-                    target = _upload_if_configured(db, schedule, archive, user.username)
-                    backup.prune_user_backups(user.username, schedule.retention)
-                    messages.append(f"{user.username}: {target}")
-                    # An archive with a hole in it still ran, so it is not an
-                    # error -- but the operator has to be told, or the gap only
-                    # turns up when a restore needs the missing file.
-                    if skipped:
-                        warnings.append(f"{user.username}: {backup.describe_skipped(skipped)}")
-                except Exception as exc:  # pragma: no cover - operational path
-                    errors.append(f"{user.username}: {exc}")
-            if errors:
-                schedule.last_status = "error"
-                schedule.last_message = _short_message(
-                    [f"ok {len(messages)} user(s)"] + errors + warnings)
-            else:
-                schedule.last_status = "warning" if warnings else "ok"
-                schedule.last_message = _short_message(
-                    [f"ok {len(messages)} user(s)"] + warnings + messages)
+            if run_schedule(db, schedule, now):
                 ran += 1
-            schedule.last_run_at = now
-            db.commit()
     finally:
         db.close()
     return ran

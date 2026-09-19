@@ -133,11 +133,15 @@ def test_a_user_backup_survives_and_records_the_gap(tmp_path, monkeypatch):
     assert [item["path"] for item in skipped] == [str(blocked)]
     with tarfile.open(archive) as tar:
         names = tar.getnames()
-        manifest = json.loads(tar.extractfile(backup.BACKUP_MANIFEST).read().decode("utf-8"))
+        recorded = json.loads(tar.extractfile(backup.BACKUP_SKIPPED).read().decode("utf-8"))
 
     assert "sites/api.babatap.com/site/public_html/index.php" in names
     # The gap travels with the archive, so a restore can see what is missing.
-    assert [item["path"] for item in manifest["skipped"]] == [str(blocked)]
+    assert [item["path"] for item in recorded] == [str(blocked)]
+    # ...in its own member. The manifest stays first so listing an archive does
+    # not have to decompress it to name its owner.
+    assert names[0] == backup.BACKUP_MANIFEST
+    assert names[-1] == backup.BACKUP_SKIPPED
 
 
 def test_a_clean_tree_records_nothing(tmp_path, monkeypatch):
@@ -216,3 +220,38 @@ def test_an_unreadable_directory_is_recorded_not_fatal(tmp_path, monkeypatch):
     backup.create_user_backup(_User(), _db_with([_Site("site.test", root)]), skipped=skipped)
 
     assert [item["path"] for item in skipped] == [str(locked)]
+
+
+def test_the_manifest_is_the_first_member(tmp_path, monkeypatch):
+    """An archive is read sequentially. The restore list describes every backup
+    it offers, so a manifest at the tail cost a full decompress per archive --
+    13 seconds each on a 2.4 GB one."""
+    root, _ = _unreadable_tree(tmp_path)
+    monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path / "out")
+    (tmp_path / "out").mkdir()
+
+    archive = backup.create_user_backup(_User(), _db_with([_Site("api.babatap.com", root)]))
+
+    with tarfile.open(archive) as tar:
+        assert tar.getnames()[0] == backup.BACKUP_MANIFEST
+
+
+def test_reading_the_gap_list_back_is_offered_separately(tmp_path, monkeypatch):
+    root, blocked = _unreadable_tree(tmp_path)
+    _deny_reading(monkeypatch, blocked)
+    monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path / "out")
+    monkeypatch.setattr(backup.settings, "backup_root", str(tmp_path))
+    (tmp_path / "out").mkdir()
+
+    archive = backup.create_user_backup(_User(), _db_with([_Site("api.babatap.com", root)]))
+
+    assert [item["path"] for item in backup.read_backup_skipped(archive)] == [str(blocked)]
+
+
+def test_an_archive_without_a_gap_list_reads_as_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(backup.settings, "backup_root", str(tmp_path))
+    archive = tmp_path / "old.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        backup._add_bytes(tar, backup.BACKUP_MANIFEST, b"{}")
+
+    assert backup.read_backup_skipped(str(archive)) == []

@@ -58,6 +58,14 @@ h1,h2{color:var(--brand-ink)}
 .feature-tile small{color:var(--text-muted);font-size:12px;font-weight:500;line-height:1.3;overflow-wrap:anywhere}
 /* Owner + site of a database, under its name on the admin list. */
 .db-owner{display:block;margin-top:2px;color:var(--text-muted);font-size:11.5px;font-weight:500;line-height:1.2}
+/* Restore list: a checkbox column, then the archive, where it came from, and
+   what can be done with it. */
+.restore-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:4px 0 10px;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-lg)}
+.restore-toolbar .hint{margin:0;margin-right:auto}
+.backup-item.restore-row{grid-template-columns:auto minmax(0,1fr) max-content max-content}
+.backup-item.restore-row.picked{border-color:var(--primary-soft);background:var(--surface-hover)}
+.restore-pick{display:grid;place-items:center;margin:0}
+.restore-pick input{width:16px;height:16px;min-height:0;margin:0}
 .user-metric{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;background:var(--surface-alt);border:1px solid var(--border);border-radius:999px;color:var(--text-secondary);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
 .user-metric svg{width:13px;height:13px;flex:none;color:var(--primary-ink)}
 /* Disk usage lands after the list does; the chip says so without going

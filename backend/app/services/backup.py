@@ -36,6 +36,8 @@ MAX_SSL_MEMBER_BYTES = 256 * 1024
 SITE_RESTORE_MAX_ITEMS = 200000
 SITE_RESTORE_MAX_BYTES = 20 * 1024 * 1024 * 1024
 BACKUP_MANIFEST = "manifest.json"
+# Written last, because what a walk had to skip is only known when it ends.
+BACKUP_SKIPPED = "skipped.json"
 PANEL_USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,64}$")
 
 # Full-user archives opanel will restore. opanel writes "opanel_user"; "bpanel_user"
@@ -366,6 +368,13 @@ def create_user_backup(user: User, db, filename: str | None = None,
         # leave a stub in the slot with last week's good copy already gone.
         staged = tmp_dir / "archive.tar.gz"
         with tarfile.open(staged, "w:gz") as tar:
+            # First member, always. A .tar.gz is read sequentially, so anything
+            # that wants the manifest -- the restore list describes every
+            # archive it offers -- has to decompress up to wherever it sits.
+            # It was briefly written last, to carry the skipped list, and that
+            # cost 13 seconds per 2.4 GB archive just to name its owner.
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2), encoding="utf-8")
+            tar.add(manifest_path, arcname=BACKUP_MANIFEST)
             for website in websites:
                 root = Path(website.root_path)
                 if root.exists():
@@ -387,11 +396,13 @@ def create_user_backup(user: User, db, filename: str | None = None,
                 ):
                     if member and part:
                         _add_bytes(tar, member, part, mode=0o600)
-            # Written last: the manifest records what the walk had to leave out,
-            # so the gap travels with the archive and is visible at restore.
-            manifest["skipped"] = skipped
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2), encoding="utf-8")
-            tar.add(manifest_path, arcname=BACKUP_MANIFEST)
+            # What the walk had to leave out is only known once it is done, so
+            # it goes in its own member at the end rather than dragging the
+            # manifest down there with it. The gap still travels with the
+            # archive; only whoever asks for it pays to reach it.
+            gaps = tmp_dir / BACKUP_SKIPPED
+            gaps.write_text(json.dumps(skipped, ensure_ascii=True, indent=2), encoding="utf-8")
+            tar.add(gaps, arcname=BACKUP_SKIPPED)
         os.replace(staged, archive)
     if skipped:
         logger.warning("Backup of user %s skipped %d unreadable path(s): %s",
@@ -470,6 +481,58 @@ def list_user_restore_backups() -> list[dict]:
     return [describe_user_backup(str(path)) for path in sorted(backup_dir.glob("*.tar.gz"), reverse=True)]
 
 
+def list_all_restorable_backups() -> list[dict]:
+    """Every full-user archive on the box, uploaded or made here.
+
+    The restore screen offers one list rather than making the operator know
+    which folder a given archive happens to live in. Each entry says where it
+    came from and how old it is, because a rotation slot's name no longer
+    carries a date.
+
+    Cheap per archive only because the manifest is the first member; see
+    create_user_backup.
+    """
+    if settings.command_dry_run:
+        return []
+    seen: set = set()
+    items: list[dict] = []
+
+    def _add(path: Path, source: str, account: str = "") -> None:
+        resolved = str(path)
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        try:
+            item = describe_user_backup(resolved)
+        except Exception as exc:  # a half-written or foreign archive
+            item = {"backup_file": resolved, "filename": path.name, "size": 0,
+                    "username": account, "generated_at": "", "websites": 0,
+                    "valid": False, "error": str(exc)}
+        try:
+            item["modified_at"] = datetime.utcfromtimestamp(path.stat().st_mtime).isoformat() + "Z"
+        except OSError:
+            item["modified_at"] = ""
+        item["source"] = source
+        item["account"] = item.get("username") or account
+        items.append(item)
+
+    restore_dir = _user_restore_dir()
+    if restore_dir.exists():
+        for path in sorted(restore_dir.glob("*.tar.gz")):
+            _add(path, "uploaded")
+
+    users_root = Path(settings.backup_root) / "users"
+    if users_root.exists():
+        for account_dir in sorted(users_root.iterdir()):
+            if not account_dir.is_dir() or account_dir.name in {"restore", "uploads"}:
+                continue
+            for path in sorted(account_dir.glob("*.tar.gz")):
+                _add(path, "account", account_dir.name)
+
+    items.sort(key=lambda row: (row.get("account") or "", row.get("modified_at") or ""), reverse=True)
+    return items
+
+
 def user_backup_path(backup_file: str) -> Path:
     backup_root = Path(settings.backup_root).resolve()
     path = Path(backup_file).resolve()
@@ -506,6 +569,29 @@ def prune_user_backups(username: str, keep: int) -> None:
     scheduled = [path for path in list_user_backups(username) if not is_manual_slot(path)]
     for old_backup in scheduled[keep:]:
         Path(old_backup).unlink(missing_ok=True)
+
+
+def read_backup_skipped(backup_file: str) -> list:
+    """What the backup could not read, if the archive records it.
+
+    Its own member at the tail of the archive, so reaching it costs a full
+    decompress -- only ask when the answer is wanted.
+    """
+    archive = user_backup_path(backup_file)
+    with tarfile.open(archive, "r:gz") as tar:
+        try:
+            member = tar.getmember(BACKUP_SKIPPED)
+        except KeyError:
+            return []
+        if not member.isfile() or member.size > 2 * 1024 * 1024:
+            return []
+        source = tar.extractfile(member)
+        if source is None:
+            return []
+        try:
+            return json.loads(source.read().decode("utf-8"))
+        except ValueError:
+            return []
 
 
 def read_backup_manifest(backup_file: str) -> dict:

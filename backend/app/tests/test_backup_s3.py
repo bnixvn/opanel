@@ -636,10 +636,32 @@ def test_the_scheduler_names_the_archive_for_the_account_and_the_day():
     import inspect
     from app.services import backup_scheduler
 
-    source = inspect.getsource(backup_scheduler.run_due_schedules)
+    source = inspect.getsource(backup_scheduler.run_schedule)
 
     assert 'filename=f"{user.username}-{slot}.tar.gz"' in source
     assert "backup.weekday_slot(now)" in source
+
+
+def test_run_now_and_the_timer_share_one_code_path():
+    """A run started by hand must be the same run -- same slot, same
+    retention, same recorded status -- not a second path that drifts."""
+    import inspect
+
+    from app.services import backup_scheduler
+
+    assert "run_schedule(db, schedule, now)" in inspect.getsource(backup_scheduler.run_due_schedules)
+
+
+def test_run_schedule_ignores_whether_the_cron_is_due():
+    import inspect
+
+    from app.services import backup_scheduler
+
+    source = inspect.getsource(backup_scheduler.run_schedule)
+
+    assert "_cron_due" not in source
+    # and it still stamps the run, so the panel shows when it last happened
+    assert "schedule.last_run_at = now" in source
 
 
 def test_a_manual_backup_rotates_on_its_own_slots():

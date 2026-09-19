@@ -353,6 +353,7 @@ function App() {
   const [backupJobs, setBackupJobs] = useState([]);
   const [userBackups, setUserBackups] = useState([]);
   const [restoreBackups, setRestoreBackups] = useState([]);
+  const [restorePicks, setRestorePicks] = useState([]);
   const [restoreBackupDir, setRestoreBackupDir] = useState('');
   const [selectedBackupUserId, setSelectedBackupUserId] = useState('');
   const [backupSchedules, setBackupSchedules] = useState([]);
@@ -2147,6 +2148,28 @@ The database, its MySQL user and its password do not change, so anything using i
     if (data) setBackupSchedules(data);
   }
 
+  async function restoreSelectedBackups() {
+    const picked = restoreBackups.filter(item => restorePicks.includes(item.backup_file));
+    if (picked.length === 0) return;
+    const names = picked.map(item => `  - ${item.account || item.username || '?'}: ${item.filename}`).join('\n');
+    const warning = picked.length === 1
+      ? `This overwrites that account's sites and databases with what is in the archive.`
+      : `These run one after another. Each overwrites that account's sites and databases with what is in the archive.`;
+    if (!confirm(`Restore ${picked.length} backup(s)?
+
+${names}
+
+${warning}`)) return;
+    const data = await request('/maintenance/user-restore-batch', {
+      method: 'POST', body: JSON.stringify({ backup_files: picked.map(item => item.backup_file) }),
+    }, 'Queueing restore...');
+    if (data) {
+      setRestorePicks([]);
+      setNotice(`Restore of ${picked.length} backup(s) started. Watch Backup logs for progress.`);
+      loadBackupJobs();
+    }
+  }
+
   async function loadRestoreBackups() {
     const data = await request('/maintenance/user-restore-backups');
     if (data?.items) setRestoreBackups(data.items);
@@ -2169,6 +2192,22 @@ The database, its MySQL user and its password do not change, so anything using i
     if (data) {
       setNotice('Backup schedule saved.');
       await loadBackupSchedules();
+    }
+  }
+
+  async function runBackupScheduleNow(item) {
+    // The same run the timer would do, just early: same rotation slot, same
+    // retention. Worth saying so, because it overwrites today's slot.
+    const who = scheduleUserLabel(item);
+    if (!confirm(`Run this schedule now?
+
+${who} - ${item.schedule}
+
+It writes today's rotation slot, overwriting last week's copy for that day.`)) return;
+    const data = await request(`/maintenance/backup-schedules/${item.id}/run`, { method: 'POST' }, 'Starting schedule...');
+    if (data) {
+      setNotice('Schedule started. Watch Backup logs for progress.');
+      loadBackupJobs();
     }
   }
 
@@ -3866,6 +3905,7 @@ The database, its MySQL user and its password do not change, so anything using i
       ? [
         ['website', 'Backup website', Globe],
         ['user', 'Backup user', Users],
+        ['restore', 'Restore', RotateCcw],
         ['da-import', 'Import DA Backups', Download],
         ['schedule', 'Scheduled backups', Clock],
         ['destination', 'Backup Destination', Network],
@@ -3967,8 +4007,14 @@ The database, its MySQL user and its password do not change, so anything using i
           </div>)}
         </div>
 
-        <div className="section-title restore-title backup-panel-heading backup-subtitle">
-          <div><h3>Restore folder</h3><p className="hint">{restoreBackupDir || '/var/backups/opanel/users/restore'}</p></div>
+      </div>}
+
+      {isAdmin && activeBackupTab === 'restore' && <div className="backup-tab-panel">
+        <div className="backup-panel-title">
+          <div>
+            <h3>Restore</h3>
+            <p className="hint">Every full-user backup on this server: the ones the panel made, and anything uploaded to {restoreBackupDir || '/var/backups/opanel/users/restore'}. Tick the ones to restore and run them in one go.</p>
+          </div>
           <div className="actions">
             <button disabled={!!loading} onClick={loadRestoreBackups}><RefreshCw size={14}/> Refresh</button>
             <label className="upload-button">
@@ -3977,17 +4023,55 @@ The database, its MySQL user and its password do not change, so anything using i
             </label>
           </div>
         </div>
-        <div className="backup-list">
-          {restoreBackups.map(item => <div className="backup-item" key={item.backup_file}>
-            <span>{item.filename || item.backup_file.split('/').pop()}<small>{item.valid ? `${item.username || 'unknown user'} - ${item.websites || 0} website(s)` : (item.error || 'Invalid backup')}</small></span>
-            <div className="actions">
-              <button disabled={!!loading} onClick={() => downloadUserBackup(item.backup_file)}><Download size={14}/> Download</button>
-              <button disabled={!!loading || !item.valid} onClick={() => restoreUserBackup(item.backup_file)}><RotateCcw size={14}/> Restore user</button>
-              <button className="danger" disabled={!!loading} onClick={() => deleteRestoreBackup(item.backup_file)}><Trash2 size={14}/></button>
-            </div>
-          </div>)}
-        </div>
 
+        {restoreBackups.length === 0 && <EmptyState icon={Archive} message="No backups found to restore." />}
+
+        {restoreBackups.length > 0 && <>
+          <div className="restore-toolbar">
+            <label className="schedule-toggle">
+              <input
+                type="checkbox"
+                checked={restorePicks.length > 0 && restorePicks.length === restoreBackups.filter(item => item.valid).length}
+                ref={box => { if (box) box.indeterminate = restorePicks.length > 0 && restorePicks.length < restoreBackups.filter(item => item.valid).length; }}
+                onChange={e => setRestorePicks(e.target.checked ? restoreBackups.filter(item => item.valid).map(item => item.backup_file) : [])}
+              />
+              <span>Select all restorable</span>
+            </label>
+            <span className="hint">{restorePicks.length ? `${restorePicks.length} selected` : `${restoreBackups.length} backup${restoreBackups.length === 1 ? '' : 's'}`}</span>
+            <button disabled={!!loading || restorePicks.length === 0} onClick={restoreSelectedBackups}>
+              <RotateCcw size={14}/> Restore selected
+            </button>
+          </div>
+
+          <div className="backup-list">
+            {restoreBackups.map(item => {
+              const picked = restorePicks.includes(item.backup_file);
+              return <div className={`backup-item restore-row${picked ? ' picked' : ''}`} key={item.backup_file}>
+                <label className="restore-pick">
+                  <input
+                    type="checkbox"
+                    checked={picked}
+                    disabled={!item.valid}
+                    onChange={() => setRestorePicks(prev => picked ? prev.filter(f => f !== item.backup_file) : [...prev, item.backup_file])}
+                  />
+                </label>
+                <span>
+                  {item.filename || item.backup_file.split('/').pop()}
+                  <small>
+                    {item.valid
+                      ? `${item.account || item.username || 'unknown user'} - ${item.websites || 0} website(s) - ${formatBytes(item.size)}${item.modified_at ? ' - ' + new Date(item.modified_at).toLocaleString() : ''}`
+                      : (item.error || 'Invalid backup')}
+                  </small>
+                </span>
+                <span className={`badge${item.source === 'uploaded' ? '' : ' ok'}`}>{item.source === 'uploaded' ? 'Uploaded' : 'On server'}</span>
+                <div className="actions">
+                  <button disabled={!!loading} onClick={() => downloadUserBackup(item.backup_file)}><Download size={14}/> Download</button>
+                  <button className="danger" disabled={!!loading} onClick={() => deleteRestoreBackup(item.backup_file)}><Trash2 size={14}/></button>
+                </div>
+              </div>;
+            })}
+          </div>
+        </>}
       </div>}
 
       {isAdmin && activeBackupTab === 'da-import' && <div className="backup-tab-panel">
@@ -4057,6 +4141,7 @@ The database, its MySQL user and its password do not change, so anything using i
             const scheduleTarget = sftpTargets.find(target => target.id === item.target_id);
             return <div className="backup-item" key={item.id}>
               <span>{scheduleUserLabel(item)} - {item.schedule}{scheduleTarget ? ` - ${scheduleTarget.name}` : ''}<small>{item.last_status}: {item.last_message || 'not run yet'}</small></span>
+              <button disabled={!!loading} onClick={() => runBackupScheduleNow(item)}><Play size={14}/> Run now</button>
               <button className="danger" disabled={!!loading} onClick={() => deleteBackupSchedule(item.id)}><Trash2 size={14}/></button>
             </div>;
           })}

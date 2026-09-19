@@ -32,9 +32,10 @@ from app.schemas.schemas import (
     SftpBackupRun,
     UserBackupCreate,
     UserRestoreBackup,
+    UserRestoreBatch,
     WpAction,
 )
-from app.services import backup, cron, da_import, file_manager, mariadb, openlitespeed, php, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cron, da_import, file_manager, mariadb, openlitespeed, php, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -538,6 +539,38 @@ def _queue_user_backup(current_user: User, user: User, target_id: int | None) ->
     return job
 
 
+def _run_schedule_now_job(job_id: str, request_user_id: int, schedule_id: int) -> None:
+    _set_backup_job(job_id, status="running", started_at=_now_iso(), message="Running schedule")
+    db = SessionLocal()
+    try:
+        schedule = db.query(BackupSchedule).filter(BackupSchedule.id == schedule_id).first()
+        if not schedule:
+            raise ValueError("Backup schedule not found")
+
+        def progress(index: int, total: int, username: str) -> None:
+            _set_backup_job(job_id, message=f"Backing up {username} ({index}/{total})")
+
+        ok = backup_scheduler.run_schedule(db, schedule, on_progress=progress)
+        db.refresh(schedule)
+        _set_backup_job(
+            job_id,
+            # A run that skipped an unreadable file still ran; the schedule's
+            # own status carries that distinction, so pass it through rather
+            # than flattening it to done/error.
+            status="done" if ok else "error",
+            message=schedule.last_message or ("Schedule finished" if ok else "Schedule failed"),
+            error="" if ok else (schedule.last_message or "Schedule failed"),
+            finished_at=_now_iso(),
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Run-now backup schedule failed: job_id=%s schedule_id=%s", job_id, schedule_id)
+        _set_backup_job(job_id, status="error", error=str(exc),
+                        message="Schedule failed", finished_at=_now_iso())
+    finally:
+        db.close()
+
+
 def _queue_sftp_backup(current_user: User, website: Website, target_id: int) -> dict:
     job = _queue_backup_job(
         current_user,
@@ -697,8 +730,78 @@ def upload_backup(website_id: int, file: UploadFile = File(...), db: Session = D
 
 @router.get("/user-restore-backups")
 def list_user_restore_backups(current_user: User = Depends(get_current_user)):
+    """Everything that can be restored, wherever it happens to live.
+
+    One list: archives uploaded for restore, and the ones the panel made for
+    each account. The operator should not have to know which folder holds
+    which.
+    """
     ensure_role(current_user.role, Role.admin)
-    return {"directory": backup.user_restore_dir(), "items": backup.list_user_restore_backups()}
+    return {"directory": backup.user_restore_dir(), "items": backup.list_all_restorable_backups()}
+
+
+def _run_restore_batch_job(job_id: str, request_user_id: int, backup_files: list[str]) -> None:
+    _set_backup_job(job_id, status="running", started_at=_now_iso(),
+                    message=f"Restoring 1 of {len(backup_files)}")
+    db = SessionLocal()
+    done, failures = [], []
+    try:
+        for index, backup_file in enumerate(backup_files, start=1):
+            name = backup_file.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            _set_backup_job(job_id, message=f"Restoring {name} ({index} of {len(backup_files)})")
+            try:
+                result = backup.restore_user_backup(backup_file, db)
+            except Exception as exc:
+                # One archive failing must not abandon the rest: they are
+                # separate accounts, and the operator picked them all.
+                db.rollback()
+                logger.exception("Restore failed for %s", backup_file)
+                failures.append(f"{name}: {exc}")
+                continue
+            log_action(db, request_user_id, "restore_user", result.get("username", "user"), backup_file)
+            note = f"{result.get('username', name)}: {len(result.get('websites') or [])} site(s)"
+            certs = result.get("certificates") or []
+            if certs:
+                note += f", {len(certs)} cert(s)"
+            if result.get("ssl_warnings"):
+                note += f", SSL not restored for {len(result['ssl_warnings'])}"
+            done.append(note)
+        summary = "; ".join(done + failures)[:4000]
+        _set_backup_job(
+            job_id,
+            status="error" if failures else "done",
+            message=summary or "Nothing restored",
+            error="; ".join(failures)[:2000] if failures else "",
+            finished_at=_now_iso(),
+        )
+    finally:
+        db.close()
+
+
+@router.post("/user-restore-batch")
+def restore_user_backups(payload: UserRestoreBatch, request: Request, db: Session = Depends(get_db),
+                         current_user: User = Depends(get_current_user)):
+    """Restore several archives in one run.
+
+    Sequential on purpose. Each restore rewrites site files, imports databases
+    and reloads OpenLiteSpeed; running them at once would have them fighting
+    over the same web server.
+    """
+    ensure_role(current_user.role, Role.admin)
+    files = [item for item in (payload.backup_files or []) if item.strip()]
+    if not files:
+        raise HTTPException(status_code=400, detail="Select at least one backup")
+    for backup_file in files:
+        try:
+            backup.user_backup_path(backup_file)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"{backup_file}: {exc}") from exc
+    job = _queue_backup_job(current_user, "user_restore_batch",
+                            f"Restore of {len(files)} backup(s) queued", count=len(files))
+    _backup_job_executor.submit(_run_restore_batch_job, job["job_id"], current_user.id, files)
+    log_action(db, current_user.id, "restore_user_batch", f"{len(files)} backup(s)",
+               ", ".join(f.rsplit("/", 1)[-1] for f in files)[:500], request=request)
+    return job
 
 
 @router.post("/user-restore-backups/upload")
@@ -1089,6 +1192,25 @@ def create_backup_schedule(payload: BackupScheduleCreate, request: Request, db: 
     target = "all_users" if payload.all_users else ",".join(user.username for user in users)
     log_action(db, current_user.id, "create_backup_schedule", target, payload.schedule, request=request)
     return item
+
+
+@router.post("/backup-schedules/{schedule_id}/run")
+def run_backup_schedule_now(schedule_id: int, request: Request, db: Session = Depends(get_db),
+                            current_user: User = Depends(get_current_user)):
+    """Run a schedule immediately, without waiting for its cron.
+
+    Goes through the same code the timer uses, so a run started here lands on
+    the same rotation slot and honours the same retention -- it is the schedule
+    running early, not a different kind of backup.
+    """
+    ensure_role(current_user.role, Role.admin)
+    schedule = db.query(BackupSchedule).filter(BackupSchedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Backup schedule not found")
+    job = _queue_backup_job(current_user, "schedule_run", "Schedule queued", schedule_id=schedule.id)
+    _backup_job_executor.submit(_run_schedule_now_job, job["job_id"], current_user.id, schedule.id)
+    log_action(db, current_user.id, "run_backup_schedule", str(schedule.id), schedule.schedule, request=request)
+    return job
 
 
 @router.delete("/backup-schedules/{schedule_id}")

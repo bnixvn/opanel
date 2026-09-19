@@ -825,6 +825,10 @@ class UserBackupCreate(BaseModel):
     target_id: Optional[int] = None
 
 
+class UserRestoreBatch(BaseModel):
+    backup_files: list[str] = Field(min_length=1, max_length=50)
+
+
 class UserRestoreBackup(BaseModel):
     backup_file: str
 
