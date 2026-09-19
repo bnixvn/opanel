@@ -192,13 +192,23 @@ class UserOut(BaseModel):
     is_active: bool
     website_limit: int
     storage_limit_mb: int
-    storage_used_bytes: int = 0
+    # None means "not measured yet" -- the accounts list leaves these out so it
+    # can paint without waiting on a du of every site. 0 would read as "uses
+    # nothing", which is a different claim.
+    storage_used_bytes: Optional[int] = None
     storage_limit_bytes: Optional[int] = None
-    storage_percent: float = 0.0
+    storage_percent: Optional[float] = None
     totp_enabled: bool = False
 
     class Config:
         from_attributes = True
+
+
+class UserUsageOut(BaseModel):
+    id: int
+    storage_used_bytes: int = 0
+    storage_limit_bytes: Optional[int] = None
+    storage_percent: float = 0.0
 
 
 class AuditLogOut(BaseModel):

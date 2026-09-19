@@ -16,6 +16,7 @@ from app.schemas.schemas import (
     UserOut,
     UserPasswordUpdate,
     UserUpdate,
+    UserUsageOut,
 )
 from app.services.audit import log_action
 from app.services import mariadb, openlitespeed, site_users, storage_quota, wordpress
@@ -97,8 +98,39 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
 
 @router.get("", response_model=List[UserOut])
 def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The accounts themselves, with no disk measured.
+
+    Storage used is the one figure here that costs real work -- a `du` over
+    every site a user owns -- and on a box with a few large accounts it held
+    the whole page back. It is served separately by /users/usage, so the list
+    paints immediately and the numbers arrive after.
+
+    The limit still comes back: it is arithmetic on a column, not a
+    measurement. Used and percent are null rather than 0, so the page can tell
+    "not measured yet" apart from "uses nothing".
+    """
     ensure_role(current_user.role, Role.admin)
-    return [_user_out(user, db) for user in db.query(User).order_by(User.id.desc()).all()]
+    rows = []
+    for user in db.query(User).order_by(User.id.desc()).all():
+        data = UserOut.model_validate(user).model_dump()
+        data["storage_used_bytes"] = None
+        data["storage_percent"] = None
+        data["storage_limit_bytes"] = storage_quota.user_storage_limit_bytes(user)
+        rows.append(data)
+    return rows
+
+
+@router.get("/usage", response_model=List[UserUsageOut])
+def list_user_usage(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """What each account is using on disk. Slow by nature; fetched on its own.
+
+    Declared above /{user_id} so the literal path wins the route match.
+    """
+    ensure_role(current_user.role, Role.admin)
+    return [
+        {"id": user.id, **storage_quota.storage_usage_summary(db, user)}
+        for user in db.query(User).order_by(User.id.desc()).all()
+    ]
 
 
 @router.get("/me", response_model=UserOut)

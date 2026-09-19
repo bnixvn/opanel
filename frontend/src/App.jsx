@@ -344,6 +344,7 @@ function App() {
   const [createdDbInfo, setCreatedDbInfo] = useState(null);
   const [copiedField, setCopiedField] = useState(null);
   const [users, setUsers] = useState([]);
+  const [usageLoading, setUsageLoading] = useState(false);
   const [resourceUsage, setResourceUsage] = useState(null);
   const [serviceStates, setServiceStates] = useState({});
   const [serviceNames, setServiceNames] = useState(DEFAULT_SERVICE_NAMES);
@@ -873,7 +874,21 @@ function App() {
       setUsers(data);
       if (!selectedBackupUserId && data[0]) setSelectedBackupUserId(String(data[0].id));
       setNewBackupSchedule(prev => (!prev.all_users && (!prev.user_ids || prev.user_ids.length === 0) && data[0]) ? ({ ...prev, user_ids: [String(data[0].id)] }) : prev);
+      // Disk usage costs a du over every site an account owns, so it is not
+      // part of the list. Fetch it after the rows are on screen and fill it in.
+      loadUserUsage();
     }
+  }
+
+  async function loadUserUsage() {
+    setUsageLoading(true);
+    // No global spinner: the list is already usable, and a spinner over it
+    // would undo the point of showing it early.
+    const data = await request('/users/usage', {}, '');
+    setUsageLoading(false);
+    if (!data) return;
+    const byId = new Map(data.map(row => [row.id, row]));
+    setUsers(prev => prev.map(user => byId.has(user.id) ? { ...user, ...byId.get(user.id) } : user));
   }
 
   async function loadResourceUsage() {
@@ -3203,8 +3218,13 @@ The database, its MySQL user and its password do not change, so anything using i
   }
 
   function storageUsageText(user) {
-    const used = Number(user?.storage_used_bytes || 0);
     const limit = storageLimitBytes(user);
+    // null is "not measured yet", which is not the same claim as 0 B. The
+    // accounts list ships without it so the page can paint straight away.
+    if (user?.storage_used_bytes == null) {
+      return limit === null ? 'measuring...' : `measuring... / ${formatBytes(limit)}`;
+    }
+    const used = Number(user.storage_used_bytes);
     if (limit === null) return `${formatBytes(used)}`;
     const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
     return `${formatBytes(used)}/${formatBytes(limit)} ${pct}%`;
@@ -5004,7 +5024,7 @@ The database, its MySQL user and its password do not change, so anything using i
           <div className="user-main"><strong>{user.username}</strong><small>{user.email}</small></div>
           <span className="badge">{roleLabel(user.role)}</span>
           <span className={`badge ${user.is_active ? 'ok' : 'warn'}`}>{user.is_active ? 'Active' : 'Suspended'}</span>
-          <span className="user-metric"><HardDrive size={13}/>{storageUsageText(user)}</span>
+          <span className={`user-metric${user.storage_used_bytes == null ? ' pending' : ''}`}><HardDrive size={13}/>{storageUsageText(user)}</span>
           <div className="row-actions">
             <button className="mini secondary-light" disabled={!!loading} onClick={() => startEditingUser(user)}><Pencil size={14}/> Edit</button>
             <button className="mini secondary-light" disabled={!!loading} onClick={() => quickLoginUser(user)}><LogIn size={14}/> Login as</button>
