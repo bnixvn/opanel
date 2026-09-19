@@ -47,8 +47,10 @@ h1,h2{color:var(--brand-ink)}
    sets transform:none, which was swallowing the lift. */
 .feature-tile:hover:not(:disabled){background:var(--surface-hover);border-color:var(--primary-soft);transform:translateY(-1px)}
 .feature-tile:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-.feature-tile-icon{width:32px;height:32px;display:grid;place-items:center;border-radius:var(--radius-sm);background:var(--primary-light);color:var(--primary-ink);border:1px solid var(--primary-soft);flex:none}
-.feature-tile:hover .feature-tile-icon{background:var(--primary);color:var(--primary-contrast);border-color:var(--primary)}
+/* No plate behind it: the tile is already the box, and a second one inside
+   just boxes a box. The glyph carries itself at this size. */
+.feature-tile-icon{display:grid;place-items:center;color:var(--primary-ink);flex:none}
+.feature-tile:hover .feature-tile-icon{color:var(--primary)}
 /* Same type as a sidebar menu item: 13px at weight 500 -- 13, not the 14px the
    base button rule says, because a later rule takes every button down to 13.
    The hint sits a step below it, so it must not be the heavier of the two. */
@@ -257,7 +259,6 @@ button:disabled,.upload-button.disabled{background:var(--surface-muted);color:va
 @media(max-width:560px){
   .feature-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .feature-tile{min-height:100px;padding:12px;gap:7px}
-  .feature-tile-icon{width:28px;height:28px}
   .feature-group-head{margin-bottom:11px}
   .resource-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .resource-card{min-height:108px;padding:12px;gap:7px}

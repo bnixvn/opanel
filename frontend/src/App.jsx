@@ -3189,7 +3189,7 @@ function App() {
 
   function FeatureTile({ icon: Icon, label, hint, target }) {
     return <button type="button" className="feature-tile" onClick={() => navigateToPage(target)}>
-      <span className="feature-tile-icon"><Icon size={18}/></span>
+      <span className="feature-tile-icon"><Icon size={26}/></span>
       <span className="feature-tile-label">{label}</span>
       <small>{hint}</small>
     </button>;
