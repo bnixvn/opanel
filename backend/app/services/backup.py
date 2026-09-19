@@ -182,6 +182,35 @@ def weekday_slot(when: datetime | None = None) -> str:
     return WEEKDAY_SLOTS[(when or datetime.now()).weekday()]
 
 
+MANUAL_INFIX = "-manual-"
+
+
+def manual_slot_filename(username: str, when: datetime | None = None) -> str:
+    """The slot a backup taken by hand writes to.
+
+    Seven of these per account, same as the schedule, so a run of manual
+    backups is bounded instead of piling up forever. The infix keeps it clear
+    of the scheduled slot for the same weekday.
+    """
+    return f"{username}{MANUAL_INFIX}{weekday_slot(when)}.tar.gz"
+
+
+def rotation_filenames(username: str) -> set:
+    """Every name a rotation may legitimately write for this account."""
+    return ({f"{username}-{slot}.tar.gz" for slot in WEEKDAY_SLOTS}
+            | {f"{username}{MANUAL_INFIX}{slot}.tar.gz" for slot in WEEKDAY_SLOTS})
+
+
+def is_manual_slot(name: str) -> bool:
+    """A manual slot bounds itself, so retention must leave it alone.
+
+    Counting them towards a schedule's ``keep`` would let a week of scheduled
+    backups evict the copy somebody took by hand before a risky change -- or
+    the other way round.
+    """
+    return MANUAL_INFIX in (name or "").rsplit("/", 1)[-1]
+
+
 def create_user_backup(user: User, db, filename: str | None = None,
                        skipped: Optional[list] = None) -> str:
     if skipped is None:
@@ -191,14 +220,16 @@ def create_user_backup(user: User, db, filename: str | None = None,
     if filename:
         # <account>-<weekday>.tar.gz, so the name identifies the account even
         # when the file is looked at outside its folder.
-        if filename not in {f"{user.username}-{slot}.tar.gz" for slot in WEEKDAY_SLOTS}:
+        if filename not in rotation_filenames(user.username):
             raise ValueError("Invalid rotation filename")
         archive = backup_dir / filename
     else:
-        # A backup taken by hand keeps its timestamp: it must never land on a
-        # scheduled slot and overwrite that day's copy.
-        stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        archive = backup_dir / f"user-{user.username}-{stamp}.tar.gz"
+        # A backup taken by hand rotates on its own seven slots. A timestamp
+        # would never repeat, so nothing would ever overwrite it and nothing
+        # would ever remove it -- a run of manual backups filled the
+        # destination and stayed there. The -manual- infix keeps it clear of
+        # the scheduled slot for the same day.
+        archive = backup_dir / manual_slot_filename(user.username)
     websites = db.query(Website).filter(Website.owner_id == user.id).order_by(Website.id.asc()).all()
 
     with tempfile.TemporaryDirectory(prefix="opanel-user-backup-", dir=str(backup_dir)) as tmp:
@@ -465,8 +496,15 @@ def delete_user_restore_backup(backup_file: str) -> str:
 
 
 def prune_user_backups(username: str, keep: int) -> None:
+    """Hold the scheduled set at ``keep``. Manual slots are not counted.
+
+    They bound themselves at seven, and letting them share a schedule's budget
+    means one evicts the other -- most likely deleting the copy somebody took
+    by hand right before a risky change.
+    """
     keep = max(int(keep or 1), 1)
-    for old_backup in list_user_backups(username)[keep:]:
+    scheduled = [path for path in list_user_backups(username) if not is_manual_slot(path)]
+    for old_backup in scheduled[keep:]:
         Path(old_backup).unlink(missing_ok=True)
 
 
@@ -1440,6 +1478,9 @@ def prune_s3_backups(
     )
     if name_prefix:
         entries = [row for row in entries if row["key"].rsplit("/", 1)[-1].startswith(name_prefix)]
+    # A manual slot bounds itself at seven and is not part of any schedule's
+    # budget; counting it would let the two evict each other.
+    entries = [row for row in entries if not is_manual_slot(row["key"])]
     stale = entries[keep:]
     if not stale:
         return 0

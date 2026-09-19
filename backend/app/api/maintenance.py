@@ -356,7 +356,21 @@ def _decrypted(value, label: str):
         ) from exc
 
 
-def _upload_to_s3_target(target, archive: str) -> tuple[str, str]:
+def _target_folder(target, folder: str) -> str:
+    """One folder per account or site under the destination's prefix.
+
+    A backup sent by hand used to land flat at the base prefix while the
+    scheduler wrote into <prefix>/<account>/. The two never met, so the
+    schedule's retention could not see what the manual runs left behind.
+    """
+    base = (target.remote_path or "").strip().strip("/")
+    safe = (folder or "").strip().strip("/")
+    if not safe:
+        return base
+    return f"{base}/{safe}" if base else safe
+
+
+def _upload_to_s3_target(target, archive: str, folder: str = "") -> tuple[str, str]:
     result = backup.upload_to_s3(
         archive,
         endpoint=target.s3_endpoint,
@@ -364,20 +378,21 @@ def _upload_to_s3_target(target, archive: str) -> tuple[str, str]:
         bucket=target.s3_bucket,
         access_key=target.s3_access_key,
         secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
-        prefix=target.remote_path,
+        prefix=_target_folder(target, folder),
         use_path_style=bool(target.s3_use_path_style),
     )
     return target.name, result["remote_file"]
 
 
-def upload_archive_to_target(db: Session, target_id: int, archive: str) -> tuple[str, str]:
+def upload_archive_to_target(db: Session, target_id: int, archive: str,
+                             folder: str = "") -> tuple[str, str]:
     target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
     if not target or not target.is_active:
         raise HTTPException(status_code=404, detail="Backup target not found")
 
     if (target.kind or "sftp") == "s3":
         try:
-            return _upload_to_s3_target(target, archive)
+            return _upload_to_s3_target(target, archive, folder)
         except backup.S3Error as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except HTTPException:
@@ -450,7 +465,8 @@ def _run_user_backup_job(job_id: str, request_user_id: int, target_user_id: int,
         target_name = ""
         if target_id:
             ensure_role(request_user.role, Role.admin)
-            target_name, remote_file = upload_archive_to_target(db, target_id, archive)
+            target_name, remote_file = upload_archive_to_target(db, target_id, archive,
+                                                                folder=user.username)
         detail = f"{archive}" + (f" -> {target_name}:{remote_file}" if remote_file else "")
         log_action(db, request_user.id, "backup_user", user.username, detail)
         note = backup.describe_skipped(skipped)
@@ -483,7 +499,8 @@ def _run_sftp_backup_job(job_id: str, request_user_id: int, website_id: int, tar
         db_item = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
         skipped: list = []
         archive = backup.create_backup(website, db_item.db_name if db_item else None, skipped=skipped)
-        target_name, remote_file = upload_archive_to_target(db, target_id, archive)
+        target_name, remote_file = upload_archive_to_target(db, target_id, archive,
+                                                            folder=website.domain)
         log_action(db, request_user.id, "backup_sftp", website.domain, f"{target_name}:{remote_file}")
         note = backup.describe_skipped(skipped)
         _set_backup_job(

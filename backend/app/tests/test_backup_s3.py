@@ -642,14 +642,37 @@ def test_the_scheduler_names_the_archive_for_the_account_and_the_day():
     assert "backup.weekday_slot(now)" in source
 
 
-def test_a_manual_backup_keeps_its_timestamp():
-    """It must never land on a scheduled slot and overwrite that day's copy."""
+def test_a_manual_backup_rotates_on_its_own_slots():
+    """A timestamp never repeats, so nothing overwrote it and nothing removed
+    it -- a run of manual backups filled the destination and stayed there. It
+    rotates on seven slots of its own, clear of the scheduled slot for the
+    same day."""
     import inspect
 
     source = inspect.getsource(backup.create_user_backup)
 
-    assert 'f"user-{user.username}-{stamp}.tar.gz"' in source
+    assert "manual_slot_filename(user.username)" in source
+    assert "{stamp}" not in source
     assert "if filename:" in source
+
+
+def test_a_manual_slot_never_collides_with_a_scheduled_one():
+    from datetime import datetime
+
+    scheduled = {f"acme-{slot}.tar.gz" for slot in backup.WEEKDAY_SLOTS}
+    manual = {backup.manual_slot_filename("acme", datetime(2026, 9, 14 + n)) for n in range(7)}
+
+    assert len(manual) == 7
+    assert not (manual & scheduled)
+    assert backup.rotation_filenames("acme") == scheduled | manual
+
+
+def test_a_manual_slot_is_recognised_by_name():
+    assert backup.is_manual_slot("acme-manual-monday.tar.gz")
+    assert backup.is_manual_slot("bk122/acme/acme-manual-monday.tar.gz")
+    assert not backup.is_manual_slot("acme-monday.tar.gz")
+    assert not backup.is_manual_slot("user-acme-20260919171122.tar.gz")
+    assert not backup.is_manual_slot("")
 
 
 def test_a_rotation_filename_has_to_be_one_of_the_slots(tmp_path, monkeypatch):
@@ -828,3 +851,39 @@ def test_the_prune_never_deletes_the_backup_just_taken(tmp_path, monkeypatch):
 
     assert fresh.exists()
     assert len(list(tmp_path.glob("*.tar.gz"))) == 7
+
+
+def test_retention_leaves_manual_slots_alone(tmp_path, monkeypatch):
+    """A schedule's budget must not evict the copy somebody took by hand right
+    before a risky change -- nor the other way round."""
+    import os as _os
+
+    monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path)
+    monkeypatch.setattr(backup.settings, "command_dry_run", False)
+
+    names = [f"acme-{slot}.tar.gz" for slot in backup.WEEKDAY_SLOTS]
+    names += [f"acme-manual-{slot}.tar.gz" for slot in ("monday", "tuesday")]
+    for index, name in enumerate(names):
+        path = tmp_path / name
+        path.write_bytes(b"x")
+        stamp = 1_760_000_000 - index * 3600
+        _os.utime(path, (stamp, stamp))
+
+    backup.prune_user_backups("acme", 3)
+
+    left = sorted(p.name for p in tmp_path.glob("*.tar.gz"))
+    assert "acme-manual-monday.tar.gz" in left
+    assert "acme-manual-tuesday.tar.gz" in left
+    assert len([n for n in left if "-manual-" not in n]) == 3
+
+
+def test_the_s3_prune_leaves_manual_slots_alone(fake_s3):
+    for slot in backup.WEEKDAY_SLOTS:
+        fake_s3["client"].objects[f"opanel/acme/acme-{slot}.tar.gz"] = {"size": 1, "modified": slot}
+    fake_s3["client"].objects["opanel/acme/acme-manual-monday.tar.gz"] = {"size": 1, "modified": "z"}
+
+    backup.prune_s3_backups(prefix="opanel/acme", keep=2, **CREDS)
+
+    deleted = [c for c in fake_s3["client"].calls if c[0] == "delete_objects"]
+    gone = {row["Key"] for row in deleted[0][1]["Delete"]["Objects"]} if deleted else set()
+    assert not any("-manual-" in key for key in gone)
