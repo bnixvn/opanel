@@ -13,7 +13,7 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Archive, ArrowLeft, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Lock, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, Search, Server, Settings as SettingsIcon, Shield, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import './style.css';
 import './brand.css';
@@ -3187,12 +3187,62 @@ function App() {
     </article>;
   }
 
+  function FeatureTile({ icon: Icon, label, hint, target }) {
+    return <button type="button" className="feature-tile" onClick={() => navigateToPage(target)}>
+      <span className="feature-tile-icon"><Icon size={18}/></span>
+      <span className="feature-tile-label">{label}</span>
+      <small>{hint}</small>
+    </button>;
+  }
+
   function renderDashboard() {
     const cpu = resourceUsage?.cpu || {};
     const memory = resourceUsage?.memory || {};
     const disk = resourceUsage?.disk || {};
     const network = resourceUsage?.network || {};
     const networkTotal = (Number(network.rx_per_sec) || 0) + (Number(network.tx_per_sec) || 0);
+    const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+    const sslActive = websites.filter(site => site.ssl_enabled).length;
+    // The counts the stats row used to carry now sit on the feature they
+    // describe, so the number and the way to act on it are the same tile.
+    const featureGroups = [
+      {
+        title: 'Hosting',
+        icon: Layers,
+        items: [
+          { target: 'websites', label: 'Websites', icon: Globe, hint: websites.length ? plural(websites.length, 'site') : 'No websites yet' },
+          { target: 'ssl', label: 'SSL', icon: Lock, hint: sslActive ? `${sslActive} of ${websites.length} secured` : 'Nothing secured yet' },
+          { target: 'databases', label: 'Databases', icon: Database, hint: plural(databases.length, 'database') },
+          { target: 'files', label: 'File manager', icon: FolderOpen, hint: currentUser && !isAdmin
+            ? `${formatBytes(currentUser.storage_used_bytes)} of ${formatBytes(storageLimitBytes(currentUser))}`
+            : 'Browse and edit files' },
+          { target: 'cron', label: 'Cron', icon: Clock, hint: 'Scheduled jobs' },
+          { target: 'backups', label: 'Backups', icon: Archive, hint: 'Create and restore' },
+        ],
+      },
+      {
+        title: 'Protection',
+        icon: ShieldCheck,
+        items: [
+          { target: 'security', label: 'Security', icon: LockKeyhole, hint: 'Login and access' },
+          { target: 'waf', label: 'WAF', icon: ShieldAlert, hint: 'Request filtering' },
+          ...(isAdmin ? [{ target: 'firewall', label: 'Firewall', icon: BrickWall, hint: 'Ports and IP rules' }] : []),
+          ...(isAdmin ? [{ target: 'malware', label: 'Malware scanner', icon: Bug, hint: 'Scan site files' }] : []),
+          { target: 'wafLogs', label: 'Access logs', icon: ScrollText, hint: 'Requests and blocks' },
+        ],
+      },
+      {
+        title: 'Server',
+        icon: Server,
+        items: [
+          { target: 'services', label: 'Services', icon: Activity, hint: 'Start, stop, restart' },
+          ...(isAdmin ? [{ target: 'php', label: 'PHP config', icon: Code2, hint: 'Versions and limits' }] : []),
+          ...(isAdmin ? [{ target: 'users', label: 'Panel users', icon: Users, hint: 'Accounts and limits' }] : []),
+          ...(isAdmin ? [{ target: 'settings', label: 'Panel settings', icon: SettingsIcon, hint: 'Hostname and mail' }] : []),
+          ...(isAdmin ? [{ target: 'updates', label: 'Updates', icon: RefreshCw, hint: 'Panel version' }] : []),
+        ],
+      },
+    ];
     return <>
       {isAdmin && <section className="resource-grid">
         <ResourceCard icon={Cpu} label="CPU" value={formatPercent(cpu.percent)} percent={cpu.percent} detail={cpu.load?.length ? `Load ${cpu.load.join(' / ')}` : `${cpu.cores || '--'} cores`} />
@@ -3200,31 +3250,15 @@ function App() {
         <ResourceCard icon={HardDrive} label="Disk" value={formatPercent(disk.percent)} percent={disk.percent} detail={`${formatBytes(disk.used)} / ${formatBytes(disk.total)}`} />
         <ResourceCard icon={Network} label="Network" value={`${formatBytes(networkTotal)}/s`} detail={`Down ${formatBytes(network.rx_per_sec)}/s / Up ${formatBytes(network.tx_per_sec)}/s`} />
       </section>}
-      <section className="stats-grid">
-        <div className="stat-card"><strong>{websites.length}</strong><span>Websites</span></div>
-        <div className="stat-card"><strong>{databases.length}</strong><span>Databases</span></div>
-        <div className="stat-card"><strong>{websites.filter(s => s.ssl_enabled).length}</strong><span>SSL active</span></div>
-        {currentUser && !isAdmin && <div className="stat-card"><strong>{formatBytes(currentUser.storage_used_bytes)}</strong><span>Storage / {formatBytes(storageLimitBytes(currentUser))}</span></div>}
-      </section>
-      {websites.length > 0 && <section className="section">
-        <h2>Quick overview</h2>
-        <div className="site-grid">
-          {websites.slice(0, 4).map(site => <article className="site-card" key={site.id}>
-            <div className="site-head">
-              <div><a className="site-link" href={websiteUrl(site)} target="_blank" rel="noopener noreferrer">{site.domain}</a></div>
-            </div>
-            <div className="site-meta">
-              <span className={`badge site-ssl-badge ${site.ssl_enabled ? 'ok' : ''}`}>{site.ssl_enabled ? 'SSL' : 'No SSL'}</span>
-              <span>PHP <strong>{site.php_version}</strong></span>
-              <span>Root <strong>{site.document_root || 'public_html'}</strong></span>
-            </div>
-          </article>)}
+      {featureGroups.filter(group => group.items.length > 0).map(group => <section className="section feature-group" key={group.title}>
+        <div className="feature-group-head">
+          <span className="feature-group-icon"><group.icon size={15}/></span>
+          <h2>{group.title}</h2>
         </div>
-        {websites.length > 4 && <p className="hint" style={{marginTop:8}}>Showing 4 of {websites.length} websites. Go to Websites for full list.</p>}
-      </section>}
-      {websites.length === 0 && <section className="section">
-        <EmptyState icon={Globe} message="No websites yet." action={{ label: 'Go to Websites', icon: Globe, onClick: () => navigateToPage('websites') }} />
-      </section>}
+        <div className="feature-grid">
+          {group.items.map(item => <FeatureTile key={item.target} {...item} />)}
+        </div>
+      </section>)}
     </>;
   }
 
