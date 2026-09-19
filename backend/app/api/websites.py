@@ -598,6 +598,24 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
                 raise HTTPException(status_code=413, detail=str(exc)) from exc
             except (RuntimeError, ValueError) as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # The site's databases go with it. MariaDB has no notion of a panel
+            # user -- the database, its MySQL user and its grants are untouched,
+            # so the site keeps running on the same credentials and this is a
+            # record change, not a migration. Leaving them behind meant the new
+            # owner could not see the database powering their own site while
+            # the old owner could still drop it, and a full user backup filed
+            # the data under the wrong account.
+            moved = db.query(DatabaseAccount).filter(
+                DatabaseAccount.website_id == website.id,
+                DatabaseAccount.owner_id != payload.owner_id,
+            ).all()
+            for item in moved:
+                item.owner_id = payload.owner_id
+            if moved:
+                log_action(
+                    db, current_user.id, "move_database_owner", website.domain,
+                    ", ".join(item.db_name for item in moved),
+                )
         website.owner_id = payload.owner_id
     if payload.nginx_custom is not None:
         raise HTTPException(status_code=400, detail="Custom OpenLiteSpeed directives are disabled. Use managed website settings.")

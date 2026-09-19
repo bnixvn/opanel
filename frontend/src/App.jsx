@@ -1706,6 +1706,36 @@ function App() {
     if (data?.message) setNotice(data.message);
   }
 
+  function dbOwnerLabel(item) {
+    const owner = users.find(user => user.id === item.owner_id);
+    const site = websites.find(w => w.id === item.website_id);
+    if (site) return `${owner?.username || `user #${item.owner_id}`} · ${site.domain}`;
+    return `${owner?.username || `user #${item.owner_id}`} · no website`;
+  }
+
+  async function moveDatabaseOwner(item) {
+    // Only offered for a database no website points at. One that belongs to a
+    // site moves with the site, so the two can never drift apart.
+    const choices = users.filter(user => user.id !== item.owner_id);
+    if (choices.length === 0) { setError('No other account to move it to.'); return; }
+    const menu = choices.map((user, index) => `${index + 1}. ${user.username}`).join('\n');
+    const picked = prompt(`Hand ${item.db_name} to which account?
+
+${menu}
+
+Enter a number.`);
+    if (picked === null) return;
+    const choice = choices[Number(picked) - 1];
+    if (!choice) { setError('That is not one of the listed accounts.'); return; }
+    if (!confirm(`Move ${item.db_name} to ${choice.username}?
+
+The database, its MySQL user and its password do not change, so anything using it keeps working.`)) return;
+    const data = await request(`/databases/${item.id}/owner`, {
+      method: 'POST', body: JSON.stringify({ owner_id: choice.id }),
+    }, 'Moving database...');
+    if (data) { setNotice(`${item.db_name} now belongs to ${choice.username}.`); await refreshAll(); }
+  }
+
   async function changeDbPassword(id) {
     const newPass = prompt('Enter a new database password, minimum 12 characters:');
     if (!newPass) return;
@@ -2985,6 +3015,9 @@ function App() {
 
   useEffect(() => {
     if (isAuthenticated && page === 'users') { loadUsers(); loadPlans(); }
+    // The databases page shows an owner per row for admins, and offers to
+    // hand one over, so it needs the account list too.
+    if (isAuthenticated && page === 'databases' && currentUser?.role === 'admin') loadUsers();
     if (isAuthenticated && page === 'php') { loadPhpConfig(); loadPhpVersions(); }
     if (isAuthenticated && page === 'firewall') { loadFirewall(); loadFirewallBlocklists(); }
     if (isAuthenticated && page === 'waf') { loadWafRules(); loadBadBots(); }
@@ -3672,11 +3705,12 @@ function App() {
       <div className="table">
         {filteredDatabases.map(db => {
           return <div className="row db-row" key={db.id}>
-          <span><strong>{db.db_name}</strong></span>
+          <span><strong>{db.db_name}</strong>{isAdmin && <small className="db-owner">{dbOwnerLabel(db)}</small>}</span>
           <span style={{color:'var(--text-muted)'}}>{db.db_user}</span>
           <button disabled={!!loading} onClick={() => openPhpMyAdmin(db.id)}>phpMyAdmin</button>
           <button disabled={!!loading} onClick={() => downloadDatabase(db.id, db.db_name)}><Download size={14}/> SQL</button>
           <button disabled={!!loading} onClick={() => changeDbPassword(db.id)}><KeyRound size={14}/> Password</button>
+          {isAdmin && !db.website_id && <button className="secondary-light" disabled={!!loading} onClick={() => moveDatabaseOwner(db)} title="Hand this database to another account"><MoveRight size={14}/> Owner</button>}
           <button className="danger" disabled={!!loading} onClick={() => deleteDatabase(db.id, db.db_name)}><Trash2 size={14}/></button>
         </div>})}
       </div>

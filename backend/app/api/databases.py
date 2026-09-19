@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website
-from app.schemas.schemas import DatabaseCreate, DatabaseCreatedOut, DatabaseOut, DatabasePasswordUpdate
+from app.schemas.schemas import DatabaseCreate, DatabaseCreatedOut, DatabaseOut, DatabaseOwnerUpdate, DatabasePasswordUpdate
 from app.services import mariadb, panel_urls
 from app.services.audit import log_action
 from app.services.sso_tokens import consume_phpmyadmin_token, create_phpmyadmin_token
@@ -194,6 +194,46 @@ def change_database_password(database_id: int, payload: DatabasePasswordUpdate, 
     item.db_password = encrypt(payload.password)
     db.commit()
     return {"ok": True, "db_user": item.db_user}
+
+
+@router.post("/{database_id}/owner", response_model=DatabaseOut)
+def change_database_owner(database_id: int, payload: DatabaseOwnerUpdate, request: Request,
+                          db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Hand a database to another panel account.
+
+    Only the panel's record of who owns it changes: the database, its MySQL
+    user and its grants are untouched, so whatever is using it keeps working on
+    the same credentials.
+
+    A database attached to a website is not moved on its own -- that is how the
+    website and its data end up owned by different accounts, which is the state
+    this endpoint exists to repair. Move the website instead and the database
+    follows it.
+    """
+    ensure_role(current_user.role, Role.admin)
+    item = db.query(DatabaseAccount).filter(DatabaseAccount.id == database_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Database not found")
+    owner = db.query(User).filter(User.id == payload.owner_id, User.is_active.is_(True)).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found or inactive")
+
+    if item.website_id:
+        website = db.query(Website).filter(Website.id == item.website_id).first()
+        if website and website.owner_id != owner.id:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"{item.db_name} belongs to {website.domain}. Reassign that website "
+                        "instead and the database moves with it."),
+            )
+
+    previous = item.owner_id
+    item.owner_id = owner.id
+    db.commit()
+    db.refresh(item)
+    log_action(db, current_user.id, "change_database_owner", item.db_name,
+               f"{previous} -> {owner.id}", request=request)
+    return item
 
 
 # ---------------------------------------------------------------------------

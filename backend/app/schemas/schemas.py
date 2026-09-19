@@ -473,6 +473,10 @@ class DatabasePasswordUpdate(BaseModel):
     password: str = Field(min_length=12)
 
 
+class DatabaseOwnerUpdate(BaseModel):
+    owner_id: int = Field(gt=0)
+
+
 class DatabaseCreate(BaseModel):
     db_name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     db_user: Optional[str] = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
