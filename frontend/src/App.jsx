@@ -3121,12 +3121,16 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
 
   useEffect(() => { if (selectedBackupUserId && page === 'backups') listUserBackups(selectedBackupUserId); }, [selectedBackupUserId, page]);
 
+  const jobsRunning = backupJobs.some(job => job.status === 'running' || job.status === 'queued');
+
   useEffect(() => {
     if (!isAuthenticated || page !== 'backups') return undefined;
     loadBackupJobs();
-    const timer = setInterval(loadBackupJobs, 5000);
+    // Closer while a bar is moving, further apart when nothing is happening:
+    // a five-second bar looks stuck, and an idle page should not be asking.
+    const timer = setInterval(loadBackupJobs, jobsRunning ? 2000 : 5000);
     return () => clearInterval(timer);
-  }, [isAuthenticated, page, selectedWebsiteId, selectedBackupUserId]);
+  }, [isAuthenticated, page, selectedWebsiteId, selectedBackupUserId, jobsRunning]);
 
   useEffect(() => {
     if (isAuthenticated && page === 'users') { loadUsers(); loadPlans(); }
@@ -4003,6 +4007,14 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
             <span>
               <strong>{jobTitle(job)}</strong>
               <small>{jobDetail(job)}</small>
+              {(job.status === 'running' || job.status === 'queued') && <span className="job-progress">
+                <span className={`progress-bar${job.progress_percent == null ? ' indeterminate' : ''}`}>
+                  <span className="progress-bar-fill" style={job.progress_percent == null ? undefined : { width: `${job.progress_percent}%` }} />
+                </span>
+                {/* No number when nothing countable is happening -- taring one
+                    site's tree has no milestones to report. */}
+                {job.progress_percent != null && <small className="job-progress-pct">{Math.round(job.progress_percent)}%</small>}
+              </span>}
               <small className="backup-job-time">{jobTimestamp(job)}</small>
             </span>
             <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'}>{job.status}</span>

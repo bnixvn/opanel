@@ -235,7 +235,7 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
     warnings = []
     for index, user in enumerate(users, start=1):
         if on_progress:
-            on_progress(index, len(users), user.username)
+            on_progress(index, len(users), user.username, 0, 0, "")
         try:
             # DirectAdmin-style rotation: a week of dailies occupies seven
             # files named for the day, each overwritten a week later, so the
@@ -244,7 +244,10 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
             slot = backup.weekday_slot(now)
             skipped: list = []
             archive = backup.create_user_backup(
-                user, db, filename=f"{user.username}-{slot}.tar.gz", skipped=skipped
+                user, db, filename=f"{user.username}-{slot}.tar.gz", skipped=skipped,
+                on_progress=(lambda done, total, label, _i=index:
+                             on_progress(_i, len(users), user.username, done, total, label))
+                if on_progress else None,
             )
             target = _upload_if_configured(db, schedule, archive, user.username)
             backup.prune_user_backups(user.username, schedule.retention)

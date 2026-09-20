@@ -195,6 +195,23 @@ def _public_backup_job(job: dict) -> dict:
     }
 
 
+def _nested_percent(outer_done: int, outer_total: int,
+                    inner_done: int, inner_total: int) -> float | None:
+    """Where a run is, counting the units it actually has.
+
+    Outer is whole items finished (accounts, archives); inner is how far into
+    the current one. Nothing is inferred from elapsed time -- a 5 GB site and a
+    5 MB one take wildly different amounts of it.
+    """
+    if not outer_total:
+        return None
+    share = 1.0 / outer_total
+    done = max(0, outer_done - 1) * share
+    if inner_total:
+        done += share * min(1.0, inner_done / inner_total)
+    return round(min(100.0, max(0.0, done * 100)), 1)
+
+
 def _set_backup_job(job_id: str, **updates) -> None:
     with _backup_jobs_lock:
         job = _backup_jobs.get(job_id)
@@ -250,6 +267,11 @@ def _queue_backup_job(current_user: User, kind: str, message: str, **extra) -> d
         "created_at": _now_iso(),
         "started_at": "",
         "finished_at": "",
+        # None, not 0: a job whose work cannot be counted -- taring one
+        # site's tree -- says so, and the bar reads "working" instead of
+        # sitting at a number nobody computed.
+        "progress_percent": None,
+        "progress_label": "",
         **extra,
     }
     return _remember_backup_job(job)
@@ -463,7 +485,13 @@ def _run_user_backup_job(job_id: str, request_user_id: int, target_user_id: int,
             raise ValueError("User not found")
         user = get_backup_user(db, request_user, target_user_id)
         skipped: list = []
-        archive = backup.create_user_backup(user, db, skipped=skipped)
+
+        def progress(done, total, label):
+            _set_backup_job(job_id, progress_percent=_nested_percent(1, 1, done, total),
+                            progress_label=label,
+                            message=f"Archiving {label}" if label else "Finishing archive")
+
+        archive = backup.create_user_backup(user, db, skipped=skipped, on_progress=progress)
         remote_file = ""
         target_name = ""
         if target_id:
@@ -549,13 +577,21 @@ def _run_schedule_now_job(job_id: str, request_user_id: int, schedule_id: int) -
         if not schedule:
             raise ValueError("Backup schedule not found")
 
-        def progress(index: int, total: int, username: str) -> None:
-            _set_backup_job(job_id, message=f"Backing up {username} ({index}/{total})")
+        def progress(index, total, username, done=0, of=0, label="") -> None:
+            where = f" - {label}" if label else ""
+            _set_backup_job(
+                job_id,
+                progress_percent=_nested_percent(index, total, done, of),
+                progress_label=f"{username}{where}",
+                message=f"Backing up {username} ({index}/{total}){where}",
+            )
 
         ok = backup_scheduler.run_schedule(db, schedule, on_progress=progress)
         db.refresh(schedule)
         _set_backup_job(
             job_id,
+            progress_percent=100.0,
+            progress_label="",
             # A run that skipped an unreadable file still ran; the schedule's
             # own status carries that distinction, so pass it through rather
             # than flattening it to done/error.
@@ -852,9 +888,20 @@ def _run_restore_batch_job(job_id: str, request_user_id: int, items: list[dict])
                 logger.exception("Could not fetch %s", item.get("key"))
                 failures.append(f"{name}: {exc}")
                 continue
-            _set_backup_job(job_id, message=f"Restoring {name} {position}")
+            _set_backup_job(job_id, message=f"Restoring {name} {position}",
+                            progress_percent=_nested_percent(index, len(items), 0, 0),
+                            progress_label=name)
+
+            def site_progress(done, of, label, _i=index, _n=name):
+                _set_backup_job(
+                    job_id,
+                    progress_percent=_nested_percent(_i, len(items), done, of),
+                    progress_label=f"{_n} - {label}" if label else _n,
+                    message=f"Restoring {_n} {position}" + (f" - {label}" if label else ""),
+                )
+
             try:
-                result = backup.restore_user_backup(backup_file, db)
+                result = backup.restore_user_backup(backup_file, db, on_progress=site_progress)
             except Exception as exc:
                 # One archive failing must not abandon the rest: they are
                 # separate accounts, and the operator picked them all.
@@ -879,6 +926,8 @@ def _run_restore_batch_job(job_id: str, request_user_id: int, items: list[dict])
         summary = "; ".join(done + failures)[:4000]
         _set_backup_job(
             job_id,
+            progress_percent=100.0,
+            progress_label="",
             status="error" if failures else "done",
             message=summary or "Nothing restored",
             error="; ".join(failures)[:2000] if failures else "",

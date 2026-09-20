@@ -177,6 +177,15 @@ button:disabled,.upload-button.disabled{background:var(--surface-muted);color:va
 .update-progress-msg{margin:6px 0 0}
 .update-progress-log{max-height:260px;overflow:auto;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
 .progress-bar{width:100%;height:10px;background:var(--surface-alt);border:1px solid var(--border);border-radius:999px;overflow:hidden}
+/* A job's own bar: thinner, and it sits on the row with the percentage. */
+.job-progress{display:flex;align-items:center;gap:8px;margin-top:6px}
+.job-progress .progress-bar{height:6px;flex:1;min-width:0}
+.job-progress-pct{flex:none;font-size:11px;font-weight:700;color:var(--text-muted);font-variant-numeric:tabular-nums}
+/* Nothing countable is happening, so the bar says working rather than
+   standing at a number nobody computed. */
+.progress-bar.indeterminate .progress-bar-fill{width:35%;animation:progress-sweep 1.4s ease-in-out infinite}
+@keyframes progress-sweep{0%{margin-left:-35%}100%{margin-left:100%}}
+@media(prefers-reduced-motion:reduce){.progress-bar.indeterminate .progress-bar-fill{animation:none;width:100%;opacity:.45}}
 .progress-bar-fill{height:100%;background:var(--primary);border-radius:999px;transition:width .4s ease}
 .updates-os-form{grid-template-columns:minmax(160px,1fr) minmax(150px,170px) minmax(110px,130px) max-content}
 .updates-panel-form{grid-template-columns:minmax(160px,1fr) minmax(150px,170px) max-content}

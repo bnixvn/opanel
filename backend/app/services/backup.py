@@ -232,7 +232,7 @@ def is_manual_slot(name: str) -> bool:
 
 
 def create_user_backup(user: User, db, filename: str | None = None,
-                       skipped: Optional[list] = None) -> str:
+                       skipped: Optional[list] = None, on_progress=None) -> str:
     if skipped is None:
         skipped = []
     backup_dir = _user_backup_dir(user.username)
@@ -393,7 +393,9 @@ def create_user_backup(user: User, db, filename: str | None = None,
             # cost 13 seconds per 2.4 GB archive just to name its owner.
             manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2), encoding="utf-8")
             tar.add(manifest_path, arcname=BACKUP_MANIFEST)
-            for website in websites:
+            for position, website in enumerate(websites, start=1):
+                if on_progress:
+                    on_progress(position - 1, len(websites), website.domain)
                 root = Path(website.root_path)
                 if root.exists():
                     _add_tree(tar, root, f"sites/{website.domain}/site", skipped)
@@ -422,6 +424,8 @@ def create_user_backup(user: User, db, filename: str | None = None,
             gaps.write_text(json.dumps(skipped, ensure_ascii=True, indent=2), encoding="utf-8")
             tar.add(gaps, arcname=BACKUP_SKIPPED)
         os.replace(staged, archive)
+    if on_progress:
+        on_progress(len(websites), len(websites), "")
     if skipped:
         logger.warning("Backup of user %s skipped %d unreadable path(s): %s",
                        user.username, len(skipped),
@@ -759,7 +763,7 @@ def _read_member_bytes(archive: Path, member_name: str) -> bytes:
         return source.read() if source else b""
 
 
-def restore_user_backup(backup_file: str, db) -> dict:
+def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
     archive = user_backup_path(backup_file)
     manifest = read_backup_manifest(str(archive))
     if manifest.get("kind") not in RESTORABLE_BACKUP_KINDS:
@@ -805,7 +809,11 @@ def restore_user_backup(backup_file: str, db) -> dict:
     owned_databases = manifest.get("databases") or []
     with tempfile.TemporaryDirectory(prefix="opanel-user-restore-") as tmp:
         tmp_dir = Path(tmp)
-        for site_info in manifest.get("websites") or []:
+        site_entries = manifest.get("websites") or []
+        for site_position, site_info in enumerate(site_entries, start=1):
+            if on_progress:
+                on_progress(site_position - 1, len(site_entries),
+                            (site_info.get("domain") or "").strip().lower())
             domain = (site_info.get("domain") or "").strip().lower()
             if not site_users.DOMAIN_RE.fullmatch(domain):
                 raise ValueError(f"Invalid domain in backup: {domain}")

@@ -436,3 +436,69 @@ def test_the_timers_fire_on_the_minute_on_both_paths():
         text = (root / "installer" / name).read_text(encoding="utf-8")
         assert "OnUnitActiveSec=60s" not in text, name
         assert text.count("OnCalendar=*:*:00") == 2, name
+
+
+# --------------------------------------------------------------------------
+# Progress
+# --------------------------------------------------------------------------
+
+def test_progress_counts_work_not_time():
+    """A 5 GB site and a 5 MB one take wildly different amounts of time, so a
+    clock-based bar would lie about both."""
+    pct = maintenance._nested_percent
+
+    assert pct(1, 4, 0, 0) == 0.0
+    assert pct(2, 4, 1, 2) == 37.5      # one account done, halfway through the second
+    assert pct(4, 4, 2, 2) == 100.0
+    assert pct(3, 3, 0, 0) == pytest_approx(66.7)
+
+
+def pytest_approx(value):
+    import pytest
+    return pytest.approx(value, abs=0.05)
+
+
+def test_uncountable_work_reports_no_number():
+    """Taring one site's tree has no milestones; the bar should say working,
+    not stand at a number nobody computed."""
+    assert maintenance._nested_percent(1, 0, 0, 0) is None
+
+
+def test_progress_never_leaves_the_rails():
+    pct = maintenance._nested_percent
+
+    assert pct(9, 3, 5, 2) == 100.0     # overshoot is clamped
+    assert pct(0, 3, 0, 0) == 0.0       # and so is undershoot
+
+
+def test_a_job_starts_with_no_percentage():
+    source = inspect.getsource(maintenance._queue_backup_job)
+
+    assert '"progress_percent": None' in source
+
+
+def test_a_user_backup_reports_each_site():
+    assert "on_progress=None" in inspect.getsource(backup.create_user_backup)
+    source = inspect.getsource(backup.create_user_backup)
+    assert "on_progress(position - 1, len(websites), website.domain)" in source
+    # and lands on 100 when the archive is closed
+    assert "on_progress(len(websites), len(websites)" in source
+
+
+def test_a_restore_reports_each_site():
+    source = inspect.getsource(backup.restore_user_backup)
+
+    assert "on_progress=None" in inspect.getsource(backup.restore_user_backup)
+    assert "on_progress(site_position - 1, len(site_entries)" in source
+
+
+def test_a_schedule_nests_the_site_fraction_inside_the_account_one():
+    source = inspect.getsource(backup_scheduler.run_schedule)
+
+    assert "on_progress=(lambda done, total, label" in source
+    assert "on_progress(_i, len(users), user.username, done, total, label)" in source
+
+
+def test_a_finished_run_reads_one_hundred():
+    for name in ("_run_schedule_now_job", "_run_restore_batch_job"):
+        assert "progress_percent=100.0" in inspect.getsource(getattr(maintenance, name)), name
