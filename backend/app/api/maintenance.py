@@ -32,8 +32,9 @@ from app.schemas.schemas import (
     SftpBackupRun,
     UserBackupCreate,
     UserRestoreBackup,
-    RemoteBackupFetch,
+    RemoteBackupRef,
     UserRestoreBatch,
+    UserRestoreDescribe,
     WpAction,
 )
 from app.services import backup, backup_scheduler, cron, da_import, file_manager, mariadb, openlitespeed, php, site_users, storage_quota, wordpress
@@ -742,7 +743,7 @@ def list_user_restore_backups(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/user-restore-backups/describe")
-def describe_restore_backups(payload: UserRestoreBatch, current_user: User = Depends(get_current_user)):
+def describe_restore_backups(payload: UserRestoreDescribe, current_user: User = Depends(get_current_user)):
     """What is inside these archives: owner, site count, whether it is valid.
 
     Separate from the listing because finding a manifest in an archive written
@@ -805,68 +806,53 @@ def list_remote_restore_backups(db: Session = Depends(get_db),
     return {"items": items, "errors": errors}
 
 
-@router.post("/user-restore-remote/fetch")
-def fetch_remote_restore_backup(payload: RemoteBackupFetch, request: Request,
-                                db: Session = Depends(get_db),
-                                current_user: User = Depends(get_current_user)):
-    """Pull one object down into the restore folder.
+def _fetch_remote_archive(db, job_id: str, target_id: int, key: str, position: str) -> str:
+    """Bring one object down so it can be restored.
 
-    Once it is here it is an ordinary uploaded backup: it shows in the list,
-    can be described, ticked and restored with the rest. Keeping fetch and
-    restore apart means a slow download cannot be mistaken for a slow restore.
+    The operator picked a backup, not a download: which side of the network
+    it was on is the panel's problem, not a step to hand them.
     """
-    ensure_role(current_user.role, Role.admin)
     target = db.query(BackupTarget).filter(
-        BackupTarget.id == payload.target_id,
+        BackupTarget.id == target_id,
         BackupTarget.is_active == True,  # noqa: E712
         BackupTarget.kind == "s3",
     ).first()
     if not target:
-        raise HTTPException(status_code=404, detail="Backup target not found")
-    job = _queue_backup_job(current_user, "remote_fetch",
-                            f"Fetching {payload.key.rsplit('/', 1)[-1]}", key=payload.key)
-    _backup_job_executor.submit(_run_remote_fetch_job, job["job_id"], current_user.id,
-                                target.id, payload.key)
-    log_action(db, current_user.id, "fetch_remote_backup", target.name, payload.key, request=request)
-    return job
+        raise ValueError("Backup target not found")
+    _set_backup_job(job_id, message=f"Downloading {key.rsplit('/', 1)[-1]} {position}")
+    return backup.download_from_s3(
+        key,
+        endpoint=target.s3_endpoint,
+        region=target.s3_region,
+        bucket=target.s3_bucket,
+        access_key=target.s3_access_key,
+        secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
+        use_path_style=bool(target.s3_use_path_style),
+        destination_dir=backup.user_restore_dir(),
+    )
 
 
-def _run_remote_fetch_job(job_id: str, request_user_id: int, target_id: int, key: str) -> None:
-    _set_backup_job(job_id, status="running", started_at=_now_iso(), message="Downloading from S3")
-    db = SessionLocal()
-    try:
-        target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
-        if not target:
-            raise ValueError("Backup target not found")
-        destination = backup.download_from_s3(
-            key,
-            endpoint=target.s3_endpoint,
-            region=target.s3_region,
-            bucket=target.s3_bucket,
-            access_key=target.s3_access_key,
-            secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
-            use_path_style=bool(target.s3_use_path_style),
-            destination_dir=backup.user_restore_dir(),
-        )
-        _set_backup_job(job_id, status="done", backup_file=destination,
-                        message=f"Downloaded to {destination}", finished_at=_now_iso())
-    except Exception as exc:
-        logger.exception("Remote backup fetch failed: job_id=%s key=%s", job_id, key)
-        _set_backup_job(job_id, status="error", error=str(exc),
-                        message="Download failed", finished_at=_now_iso())
-    finally:
-        db.close()
-
-
-def _run_restore_batch_job(job_id: str, request_user_id: int, backup_files: list[str]) -> None:
+def _run_restore_batch_job(job_id: str, request_user_id: int, items: list[dict]) -> None:
     _set_backup_job(job_id, status="running", started_at=_now_iso(),
-                    message=f"Restoring 1 of {len(backup_files)}")
+                    message=f"Restoring 1 of {len(items)}")
     db = SessionLocal()
     done, failures = [], []
     try:
-        for index, backup_file in enumerate(backup_files, start=1):
-            name = backup_file.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-            _set_backup_job(job_id, message=f"Restoring {name} ({index} of {len(backup_files)})")
+        for index, item in enumerate(items, start=1):
+            position = f"({index} of {len(items)})"
+            backup_file = item.get("backup_file") or ""
+            fetched = ""
+            name = (backup_file or item.get("key", "")).rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            try:
+                if not backup_file:
+                    backup_file = _fetch_remote_archive(
+                        db, job_id, item["target_id"], item["key"], position)
+                    fetched = backup_file
+            except Exception as exc:
+                logger.exception("Could not fetch %s", item.get("key"))
+                failures.append(f"{name}: {exc}")
+                continue
+            _set_backup_job(job_id, message=f"Restoring {name} {position}")
             try:
                 result = backup.restore_user_backup(backup_file, db)
             except Exception as exc:
@@ -876,6 +862,12 @@ def _run_restore_batch_job(job_id: str, request_user_id: int, backup_files: list
                 logger.exception("Restore failed for %s", backup_file)
                 failures.append(f"{name}: {exc}")
                 continue
+            finally:
+                # A copy pulled down only to be restored is not a local
+                # backup: the destination still holds it, and a 5 GB archive
+                # left in the restore folder is disk nobody asked for.
+                if fetched:
+                    Path(fetched).unlink(missing_ok=True)
             log_action(db, request_user_id, "restore_user", result.get("username", "user"), backup_file)
             note = f"{result.get('username', name)}: {len(result.get('websites') or [])} site(s)"
             certs = result.get("certificates") or []
@@ -907,18 +899,30 @@ def restore_user_backups(payload: UserRestoreBatch, request: Request, db: Sessio
     """
     ensure_role(current_user.role, Role.admin)
     files = [item for item in (payload.backup_files or []) if item.strip()]
-    if not files:
-        raise HTTPException(status_code=400, detail="Select at least one backup")
     for backup_file in files:
         try:
             backup.user_backup_path(backup_file)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=f"{backup_file}: {exc}") from exc
+    remote = payload.remote_items or []
+    for ref in remote:
+        known = db.query(BackupTarget).filter(
+            BackupTarget.id == ref.target_id,
+            BackupTarget.is_active == True,  # noqa: E712
+            BackupTarget.kind == "s3",
+        ).first()
+        if not known:
+            raise HTTPException(status_code=404, detail=f"Backup target {ref.target_id} not found")
+
+    items = ([{"backup_file": path} for path in files]
+             + [{"target_id": ref.target_id, "key": ref.key} for ref in remote])
     job = _queue_backup_job(current_user, "user_restore_batch",
-                            f"Restore of {len(files)} backup(s) queued", count=len(files))
-    _backup_job_executor.submit(_run_restore_batch_job, job["job_id"], current_user.id, files)
-    log_action(db, current_user.id, "restore_user_batch", f"{len(files)} backup(s)",
-               ", ".join(f.rsplit("/", 1)[-1] for f in files)[:500], request=request)
+                            f"Restore of {len(items)} backup(s) queued", count=len(items))
+    _backup_job_executor.submit(_run_restore_batch_job, job["job_id"], current_user.id, items)
+    names = ([path.rsplit("/", 1)[-1] for path in files]
+             + [ref.key.rsplit("/", 1)[-1] for ref in remote])
+    log_action(db, current_user.id, "restore_user_batch", f"{len(items)} backup(s)",
+               ", ".join(names)[:500], request=request)
     return job
 
 

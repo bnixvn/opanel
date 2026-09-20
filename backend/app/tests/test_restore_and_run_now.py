@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from app.api import maintenance
-from app.schemas.schemas import UserRestoreBatch
+from app.schemas.schemas import UserRestoreBatch, UserRestoreDescribe
 from app.services import backup, backup_scheduler
 
 
@@ -111,7 +111,7 @@ def test_a_batch_restore_runs_them_one_after_another():
     OpenLiteSpeed; in parallel they would fight over the web server."""
     source = inspect.getsource(maintenance._run_restore_batch_job)
 
-    assert "for index, backup_file in enumerate(backup_files" in source
+    assert "for index, item in enumerate(items" in source
     assert "submit" not in source
 
 
@@ -133,10 +133,13 @@ def test_every_path_is_checked_before_anything_is_restored():
 
 
 def test_a_batch_restore_is_admin_only_and_needs_a_selection():
-    source = inspect.getsource(maintenance.restore_user_backups)
+    import pytest
+    from pydantic import ValidationError
 
-    assert "ensure_role(current_user.role, Role.admin)" in source
-    assert "Select at least one backup" in source
+    assert "ensure_role(current_user.role, Role.admin)" in inspect.getsource(maintenance.restore_user_backups)
+    # An empty selection is refused by the payload, before the route runs.
+    with pytest.raises(ValidationError, match="Select at least one backup"):
+        UserRestoreBatch()
 
 
 def test_the_batch_size_is_bounded():
@@ -145,9 +148,59 @@ def test_the_batch_size_is_bounded():
 
     assert UserRestoreBatch(backup_files=["a.tar.gz"]).backup_files == ["a.tar.gz"]
     with pytest.raises(ValidationError):
-        UserRestoreBatch(backup_files=[])
+        UserRestoreBatch(backup_files=[], remote_items=[])
     with pytest.raises(ValidationError):
         UserRestoreBatch(backup_files=[f"{n}.tar.gz" for n in range(51)])
+    # The cap is on the whole selection, not on each half.
+    with pytest.raises(ValidationError):
+        UserRestoreBatch(backup_files=[f"{n}.tar.gz" for n in range(30)],
+                         remote_items=[{"target_id": 1, "key": f"{n}.tar.gz"} for n in range(30)])
+
+
+def test_a_selection_may_be_entirely_remote():
+    payload = UserRestoreBatch(remote_items=[{"target_id": 1, "key": "acme/acme-monday.tar.gz"}])
+
+    assert payload.backup_files == []
+    assert payload.remote_items[0].key == "acme/acme-monday.tar.gz"
+
+
+def test_the_panel_downloads_a_remote_archive_itself():
+    """The operator picked a backup, not a download."""
+    source = inspect.getsource(maintenance._run_restore_batch_job)
+
+    assert "_fetch_remote_archive(" in source
+    assert 'if not backup_file:' in source
+
+
+def test_a_fetched_copy_is_removed_once_it_has_been_restored():
+    """The destination still holds it; a 5 GB archive left in the restore
+    folder is disk nobody asked for."""
+    source = inspect.getsource(maintenance._run_restore_batch_job)
+
+    assert "if fetched:" in source
+    assert "Path(fetched).unlink(missing_ok=True)" in source
+    # In a finally, so a failed restore does not leak it either.
+    assert "finally:" in source
+
+
+def test_a_remote_target_is_checked_before_anything_starts():
+    source = inspect.getsource(maintenance.restore_user_backups)
+    check = source.index("Backup target {ref.target_id} not found")
+    submit = source.index("_backup_job_executor.submit")
+
+    assert check < submit
+
+
+def test_there_is_no_separate_fetch_step():
+    """Downloading is the panel's business; it was a step handed to the
+    operator for no reason."""
+    assert not hasattr(maintenance, "fetch_remote_restore_backup")
+    assert not hasattr(maintenance, "_run_remote_fetch_job")
+
+
+def test_describe_keeps_its_own_payload():
+    """It takes only local paths, and many more of them than a restore would."""
+    assert UserRestoreDescribe.model_fields["backup_files"].metadata
 
 
 def test_the_batch_is_recorded():
@@ -241,12 +294,11 @@ def test_a_half_downloaded_archive_is_never_offered():
     assert "partial.unlink(missing_ok=True)" in source
 
 
-def test_fetch_is_queued_and_admin_only():
-    source = inspect.getsource(maintenance.fetch_remote_restore_backup)
-
-    assert "ensure_role(current_user.role, Role.admin)" in source
-    assert "_backup_job_executor.submit(_run_remote_fetch_job" in source
-    assert '"fetch_remote_backup"' in source
+def test_pulling_an_object_down_is_admin_only_by_being_part_of_the_restore():
+    """There is no standalone fetch any more, so the only way to pull an
+    object down is through the restore route, which is admin-only."""
+    assert "ensure_role(current_user.role, Role.admin)" in inspect.getsource(maintenance.restore_user_backups)
+    assert "_fetch_remote_archive" in inspect.getsource(maintenance._run_restore_batch_job)
 
 
 # --------------------------------------------------------------------------

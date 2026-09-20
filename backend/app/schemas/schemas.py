@@ -825,13 +825,31 @@ class UserBackupCreate(BaseModel):
     target_id: Optional[int] = None
 
 
-class RemoteBackupFetch(BaseModel):
+class RemoteBackupRef(BaseModel):
     target_id: int = Field(gt=0)
     key: str = Field(min_length=1, max_length=1024)
 
 
+class UserRestoreDescribe(BaseModel):
+    backup_files: list[str] = Field(min_length=1, max_length=200)
+
+
 class UserRestoreBatch(BaseModel):
-    backup_files: list[str] = Field(min_length=1, max_length=50)
+    """What to restore: archives already here, archives still on a destination,
+    or both. An object on a destination has to come down first, but that is the
+    panel's business, not something to make the operator do by hand."""
+
+    backup_files: list[str] = Field(default_factory=list)
+    remote_items: list[RemoteBackupRef] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def at_least_one_and_not_too_many(self):
+        total = len(self.backup_files) + len(self.remote_items)
+        if total < 1:
+            raise ValueError("Select at least one backup")
+        if total > 50:
+            raise ValueError("Select at most 50 backups")
+        return self
 
 
 class UserRestoreBackup(BaseModel):

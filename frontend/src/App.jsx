@@ -2151,9 +2151,9 @@ The database, its MySQL user and its password do not change, so anything using i
   }
 
   async function restoreSelectedBackups() {
-    const picked = restoreBackups.filter(item => restorePicks.includes(item.backup_file));
+    const picked = restoreRows().filter(item => restorePicks.includes(item.pick));
     if (picked.length === 0) return;
-    const names = picked.map(item => `  - ${item.account || item.username || '?'}: ${item.filename}`).join('\n');
+    const names = picked.map(item => `  - ${item.account || item.username || '?'}: ${item.filename}${item.source === 's3' ? ` (from ${item.target})` : ''}`).join('\n');
     const warning = picked.length === 1
       ? `This overwrites that account's sites and databases with what is in the archive.`
       : `These run one after another. Each overwrites that account's sites and databases with what is in the archive.`;
@@ -2163,7 +2163,7 @@ ${names}
 
 ${warning}`)) return;
     const data = await request('/maintenance/user-restore-batch', {
-      method: 'POST', body: JSON.stringify({ backup_files: picked.map(item => item.backup_file) }),
+      method: 'POST', body: JSON.stringify(splitRestorePicks(picked.map(item => item.pick))),
     }, 'Queueing restore...');
     if (data) {
       setRestorePicks([]);
@@ -2201,17 +2201,28 @@ ${warning}`)) return;
     setRemoteBackupErrors(data.errors || []);
   }
 
-  async function fetchRemoteBackup(item) {
-    if (!confirm(`Download ${item.filename} from ${item.target} to this server?
+  // Local archives and the ones still on a destination, in one list. The
+  // id is what a tick records: a path for something already here, and
+  // "s3:<target>:<key>" for something that still has to come down.
+  function restoreRows() {
+    const local = restoreBackups.map(item => ({ ...item, pick: item.backup_file }));
+    const remote = remoteBackups.map(item => ({
+      ...item,
+      pick: `s3:${item.target_id}:${item.key}`,
+      websites: null,
+      valid: null,
+    }));
+    return [...local, ...remote];
+  }
 
-It lands in the restore folder, where it can be ticked and restored with the rest.`)) return;
-    const data = await request('/maintenance/user-restore-remote/fetch', {
-      method: 'POST', body: JSON.stringify({ target_id: item.target_id, key: item.key }),
-    }, 'Starting download...');
-    if (data) {
-      setNotice(`Downloading ${item.filename}. Watch Backup logs, then refresh this list.`);
-      loadBackupJobs();
-    }
+  function splitRestorePicks(picks) {
+    const backup_files = picks.filter(pick => !pick.startsWith('s3:'));
+    const remote_items = picks.filter(pick => pick.startsWith('s3:')).map(pick => {
+      const rest = pick.slice(3);
+      const cut = rest.indexOf(':');
+      return { target_id: Number(rest.slice(0, cut)), key: rest.slice(cut + 1) };
+    });
+    return { backup_files, remote_items };
   }
 
   async function loadRestoreBackups() {
@@ -2243,10 +2254,12 @@ It lands in the restore folder, where it can be ticked and restored with the res
     }
   }
 
-  async function runBackupScheduleNow(item) {
+  // `who` is passed in: the label helper is local to renderBackups, and
+  // reaching for it here threw before the confirm ever opened, which is why
+  // the button appeared to do nothing.
+  async function runBackupScheduleNow(item, who) {
     // The same run the timer would do, just early: same rotation slot, same
     // retention. Worth saying so, because it overwrites today's slot.
-    const who = scheduleUserLabel(item);
     if (!confirm(`Run this schedule now?
 
 ${who} - ${item.schedule}
@@ -4072,35 +4085,36 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
           </div>
         </div>
 
-        {restoreBackups.length === 0 && <EmptyState icon={Archive} message="No backups found to restore." />}
+        {remoteBackupErrors.map(message => <div className="info-box" key={message}><AlertCircle size={14}/> {message}</div>)}
+        {restoreRows().length === 0 && <EmptyState icon={Archive} message="No backups found to restore." />}
 
-        {restoreBackups.length > 0 && <>
+        {restoreRows().length > 0 && <>
           <div className="restore-toolbar">
             <label className="schedule-toggle">
               <input
                 type="checkbox"
-                checked={restorePicks.length > 0 && restorePicks.length === restoreBackups.filter(item => item.valid !== false).length}
-                ref={box => { if (box) box.indeterminate = restorePicks.length > 0 && restorePicks.length < restoreBackups.filter(item => item.valid !== false).length; }}
-                onChange={e => setRestorePicks(e.target.checked ? restoreBackups.filter(item => item.valid !== false).map(item => item.backup_file) : [])}
+                checked={restorePicks.length > 0 && restorePicks.length === restoreRows().filter(item => item.valid !== false).length}
+                ref={box => { if (box) box.indeterminate = restorePicks.length > 0 && restorePicks.length < restoreRows().filter(item => item.valid !== false).length; }}
+                onChange={e => setRestorePicks(e.target.checked ? restoreRows().filter(item => item.valid !== false).map(item => item.pick) : [])}
               />
               <span>Select all restorable</span>
             </label>
-            <span className="hint">{restorePicks.length ? `${restorePicks.length} selected` : `${restoreBackups.length} backup${restoreBackups.length === 1 ? '' : 's'}`}</span>
+            <span className="hint">{restorePicks.length ? `${restorePicks.length} selected` : `${restoreRows().length} backup${restoreRows().length === 1 ? '' : 's'}`}</span>
             <button disabled={!!loading || restorePicks.length === 0} onClick={restoreSelectedBackups}>
               <RotateCcw size={14}/> Restore selected
             </button>
           </div>
 
           <div className="backup-list">
-            {restoreBackups.map(item => {
-              const picked = restorePicks.includes(item.backup_file);
-              return <div className={`backup-item restore-row${picked ? ' picked' : ''}`} key={item.backup_file}>
+            {restoreRows().map(item => {
+              const picked = restorePicks.includes(item.pick);
+              return <div className={`backup-item restore-row${picked ? ' picked' : ''}`} key={item.pick}>
                 <label className="restore-pick">
                   <input
                     type="checkbox"
                     checked={picked}
                     disabled={item.valid === false}
-                    onChange={() => setRestorePicks(prev => picked ? prev.filter(f => f !== item.backup_file) : [...prev, item.backup_file])}
+                    onChange={() => setRestorePicks(prev => picked ? prev.filter(f => f !== item.pick) : [...prev, item.pick])}
                   />
                 </label>
                 <span>
@@ -4108,39 +4122,25 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
                   <small>
                     {item.valid === false
                       ? (item.error || 'Invalid backup')
-                      : `${item.account || item.username || 'unknown user'} - ${item.websites == null ? 'reading...' : item.websites + ' website(s)'} - ${formatBytes(item.size)}${item.modified_at ? ' - ' + new Date(item.modified_at).toLocaleString() : ''}`}
+                      : item.source === 's3'
+                        ? `${item.account || 'unknown user'} - ${formatBytes(item.size)} - ${item.bucket}/${item.key}`
+                        : `${item.account || item.username || 'unknown user'} - ${item.websites == null ? 'reading...' : item.websites + ' website(s)'} - ${formatBytes(item.size)}${item.modified_at ? ' - ' + new Date(item.modified_at).toLocaleString() : ''}`}
                   </small>
                 </span>
-                <span className={`badge${item.source === 'uploaded' ? '' : ' ok'}`}>{item.source === 'uploaded' ? 'Uploaded' : 'On server'}</span>
+                <span className={`badge${item.source === 'account' ? ' ok' : ''}`}>
+                  {item.source === 's3' ? item.target : item.source === 'uploaded' ? 'Uploaded' : 'On server'}
+                </span>
                 <div className="actions">
-                  <button disabled={!!loading} onClick={() => downloadUserBackup(item.backup_file)}><Download size={14}/> Download</button>
-                  <button className="danger" disabled={!!loading} onClick={() => deleteRestoreBackup(item.backup_file)}><Trash2 size={14}/></button>
+                  {item.source !== 's3' && <>
+                    <button disabled={!!loading} onClick={() => downloadUserBackup(item.backup_file)}><Download size={14}/> Download</button>
+                    <button className="danger" disabled={!!loading} onClick={() => deleteRestoreBackup(item.backup_file)}><Trash2 size={14}/></button>
+                  </>}
                 </div>
               </div>;
             })}
           </div>
         </>}
 
-        <div className="section-title backup-panel-heading backup-subtitle">
-          <div>
-            <h3>On the backup destination</h3>
-            <p className="hint">What is sitting on each S3 destination. An object has to come down to this server before it can be restored, so fetch it first and it joins the list above.</p>
-          </div>
-          <button disabled={!!loading} onClick={loadRemoteBackups}><RefreshCw size={14}/> Refresh</button>
-        </div>
-        {remoteBackupErrors.map(message => <div className="info-box" key={message}><AlertCircle size={14}/> {message}</div>)}
-        {remoteBackups.length === 0 && remoteBackupErrors.length === 0 && <EmptyState icon={Network} message="Nothing on the backup destination yet." />}
-        <div className="backup-list">
-          {remoteBackups.map(item => <div className="backup-item" key={`${item.target_id}:${item.key}`}>
-            <span>
-              {item.filename}
-              <small>{item.target} - {item.bucket}/{item.key}{item.account ? ` - ${item.account}` : ''} - {formatBytes(item.size)}</small>
-            </span>
-            <div className="actions">
-              <button disabled={!!loading} onClick={() => fetchRemoteBackup(item)}><Download size={14}/> Fetch to server</button>
-            </div>
-          </div>)}
-        </div>
       </div>}
 
       {isAdmin && activeBackupTab === 'da-import' && <div className="backup-tab-panel">
@@ -4211,7 +4211,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
             return <div className="backup-item" key={item.id}>
               <span>{scheduleUserLabel(item)} - {item.schedule}{scheduleTarget ? ` - ${scheduleTarget.name}` : ''}<small>{item.last_status}: {item.last_message || 'not run yet'}</small></span>
               <div className="actions">
-                <button disabled={!!loading} onClick={() => runBackupScheduleNow(item)}><Play size={14}/> Run now</button>
+                <button disabled={!!loading} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14}/> Run now</button>
                 <button className="danger" disabled={!!loading} onClick={() => deleteBackupSchedule(item.id)}><Trash2 size={14}/></button>
               </div>
             </div>;
