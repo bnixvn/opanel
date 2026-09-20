@@ -287,3 +287,55 @@ def test_the_manifest_reader_stops_at_the_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(tarfile.TarFile, "extractfile", counting)
     assert backup.read_backup_manifest(str(archive))["kind"] == "opanel_user"
     assert seen == [backup.BACKUP_MANIFEST]
+
+
+def test_a_killed_run_does_not_leak_its_staging_directory(tmp_path, monkeypatch):
+    """TemporaryDirectory cleans up on the way out, but not when the process is
+    killed -- which is what every panel update does to a backup in flight. One
+    leftover on the production box held 6.2 GB."""
+    import os as _os
+
+    stale = tmp_path / f"{backup.STAGING_PREFIX}abandoned"
+    stale.mkdir()
+    (stale / "archive.tar.gz").write_bytes(b"x" * 1024)
+    old = 1_700_000_000
+    _os.utime(stale, (old, old))
+
+    backup._sweep_stale_staging(tmp_path)
+
+    assert not stale.exists()
+
+
+def test_a_sweep_never_touches_a_run_in_progress(tmp_path):
+    """Six hours is well past any real run, so the two cannot meet."""
+    live = tmp_path / f"{backup.STAGING_PREFIX}running"
+    live.mkdir()
+
+    backup._sweep_stale_staging(tmp_path)
+
+    assert live.exists()
+    assert backup.STAGING_STALE_SECONDS >= 3600
+
+
+def test_the_sweep_leaves_everything_else_alone(tmp_path):
+    keep_dir = tmp_path / "something-else"
+    keep_dir.mkdir()
+    keep_file = tmp_path / "acme-monday.tar.gz"
+    keep_file.write_bytes(b"x")
+    import os as _os
+    for path in (keep_dir, keep_file):
+        _os.utime(path, (1_700_000_000, 1_700_000_000))
+
+    backup._sweep_stale_staging(tmp_path)
+
+    assert keep_dir.exists() and keep_file.exists()
+
+
+def test_a_backup_sweeps_before_it_stages():
+    import inspect
+
+    source = inspect.getsource(backup.create_user_backup)
+    sweep = source.index("_sweep_stale_staging(backup_dir)")
+    stage = source.index("tempfile.TemporaryDirectory(prefix=STAGING_PREFIX")
+
+    assert sweep < stage

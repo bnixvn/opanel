@@ -264,12 +264,38 @@ def is_manual_slot(name: str) -> bool:
     return MANUAL_INFIX in (name or "").rsplit("/", 1)[-1]
 
 
+STAGING_PREFIX = "opanel-user-backup-"
+# Well past any real run, so a sweep can never meet one in progress.
+STAGING_STALE_SECONDS = 6 * 3600
+
+
+def _sweep_stale_staging(backup_dir: Path) -> None:
+    """Remove staging directories a previous run never got to clean up.
+
+    An archive is built in a temporary directory next to its destination, and
+    TemporaryDirectory removes it on the way out -- but not when the process is
+    killed, which is what every panel update does to a backup in flight. One
+    such leftover on the production box held 6.2 GB and nothing was ever going
+    to reclaim it.
+    """
+    cutoff = time.time() - STAGING_STALE_SECONDS
+    for path in backup_dir.glob(f"{STAGING_PREFIX}*"):
+        try:
+            if not path.is_dir() or path.stat().st_mtime > cutoff:
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            logger.warning("Removed stale backup staging directory %s", path)
+        except OSError:
+            continue
+
+
 def create_user_backup(user: User, db, filename: str | None = None,
                        skipped: Optional[list] = None, on_progress=None) -> str:
     if skipped is None:
         skipped = []
     backup_dir = _user_backup_dir(user.username)
     backup_dir.mkdir(parents=True, exist_ok=True)
+    _sweep_stale_staging(backup_dir)
     if filename:
         # <account>-<weekday>.tar.gz, so the name identifies the account even
         # when the file is looked at outside its folder.
@@ -285,7 +311,7 @@ def create_user_backup(user: User, db, filename: str | None = None,
         archive = backup_dir / manual_slot_filename(user.username)
     websites = db.query(Website).filter(Website.owner_id == user.id).order_by(Website.id.asc()).all()
 
-    with tempfile.TemporaryDirectory(prefix="opanel-user-backup-", dir=str(backup_dir)) as tmp:
+    with tempfile.TemporaryDirectory(prefix=STAGING_PREFIX, dir=str(backup_dir)) as tmp:
         tmp_dir = Path(tmp)
         manifest = {
             "kind": "opanel_user",
