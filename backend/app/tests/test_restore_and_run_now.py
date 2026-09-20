@@ -502,3 +502,13 @@ def test_a_schedule_nests_the_site_fraction_inside_the_account_one():
 def test_a_finished_run_reads_one_hundred():
     for name in ("_run_schedule_now_job", "_run_restore_batch_job"):
         assert "progress_percent=100.0" in inspect.getsource(getattr(maintenance, name)), name
+
+
+def test_progress_actually_reaches_the_browser():
+    """The job record is serialised through an explicit allow-list, so a field
+    added to the record but not to that list never leaves the server -- which
+    is how the first cut of this shipped a bar that could not move."""
+    source = inspect.getsource(maintenance._public_backup_job)
+
+    assert '"progress_percent": job.get("progress_percent")' in source
+    assert '"progress_label"' in source

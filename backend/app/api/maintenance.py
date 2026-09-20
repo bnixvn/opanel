@@ -192,6 +192,10 @@ def _public_backup_job(job: dict) -> dict:
         "created_at": job.get("created_at", ""),
         "started_at": job.get("started_at", ""),
         "finished_at": job.get("finished_at", ""),
+        # None when the current step has nothing countable in it; the bar
+        # sweeps rather than standing at a figure nobody computed.
+        "progress_percent": job.get("progress_percent"),
+        "progress_label": job.get("progress_label", ""),
     }
 
 
