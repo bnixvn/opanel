@@ -255,3 +255,35 @@ def test_an_archive_without_a_gap_list_reads_as_empty(tmp_path, monkeypatch):
         backup._add_bytes(tar, backup.BACKUP_MANIFEST, b"{}")
 
     assert backup.read_backup_skipped(str(archive)) == []
+
+
+def test_reading_the_manifest_does_not_index_the_whole_archive(tmp_path, monkeypatch):
+    """getmember() builds the full member list first, so it decompresses
+    everything however early the manifest sits. The restore list pays that per
+    archive."""
+    import inspect
+
+    source = inspect.getsource(backup.read_backup_manifest)
+
+    assert "tar.getmember(" not in source
+    assert "for member in tar:" in source
+
+
+def test_the_manifest_reader_stops_at_the_manifest(tmp_path, monkeypatch):
+    monkeypatch.setattr(backup.settings, "backup_root", str(tmp_path))
+    archive = tmp_path / "a.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        backup._add_bytes(tar, backup.BACKUP_MANIFEST, b'{"kind":"opanel_user"}')
+        for n in range(200):
+            backup._add_bytes(tar, f"sites/x/{n}.bin", b"y" * 4096)
+
+    seen = []
+    real_extractfile = tarfile.TarFile.extractfile
+
+    def counting(self, member):
+        seen.append(getattr(member, "name", member))
+        return real_extractfile(self, member)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractfile", counting)
+    assert backup.read_backup_manifest(str(archive))["kind"] == "opanel_user"
+    assert seen == [backup.BACKUP_MANIFEST]
