@@ -4141,8 +4141,10 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
             const scheduleTarget = sftpTargets.find(target => target.id === item.target_id);
             return <div className="backup-item" key={item.id}>
               <span>{scheduleUserLabel(item)} - {item.schedule}{scheduleTarget ? ` - ${scheduleTarget.name}` : ''}<small>{item.last_status}: {item.last_message || 'not run yet'}</small></span>
-              <button disabled={!!loading} onClick={() => runBackupScheduleNow(item)}><Play size={14}/> Run now</button>
-              <button className="danger" disabled={!!loading} onClick={() => deleteBackupSchedule(item.id)}><Trash2 size={14}/></button>
+              <div className="actions">
+                <button disabled={!!loading} onClick={() => runBackupScheduleNow(item)}><Play size={14}/> Run now</button>
+                <button className="danger" disabled={!!loading} onClick={() => deleteBackupSchedule(item.id)}><Trash2 size={14}/></button>
+              </div>
             </div>;
           })}
         </div>
