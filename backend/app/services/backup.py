@@ -73,7 +73,32 @@ def _hostname_conflicts(db, domain: str, exclude_website_id: int | None = None) 
     return safe in reserved or f"www.{safe}" in reserved
 
 
-def _add_tree(tar: tarfile.TarFile, source, arcname: str, skipped: list) -> None:
+def _tree_size(root) -> int:
+    """Bytes of regular files under a path, without reading any of them.
+
+    A stat walk over twenty thousand files is well under a second; gzipping
+    the five gigabytes they hold is minutes. Paying the former to make the
+    latter measurable is a good trade. Anything unreadable counts as nothing
+    rather than stopping the count.
+    """
+    total = 0
+    stack = [Path(root)]
+    while stack:
+        path = stack.pop()
+        try:
+            if path.is_symlink():
+                continue
+            if path.is_dir():
+                stack.extend(path.iterdir())
+            elif path.is_file():
+                total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _add_tree(tar: tarfile.TarFile, source, arcname: str, skipped: list,
+              on_bytes=None) -> None:
     """Add a directory tree, recording what could not be read instead of dying.
 
     ``tarfile.add()`` walks the tree itself and aborts the whole archive on the
@@ -88,13 +113,21 @@ def _add_tree(tar: tarfile.TarFile, source, arcname: str, skipped: list) -> None
     """
     root = Path(source)
     stack = [(root, arcname)]
+    written = 0
     while stack:
         path, name = stack.pop()
+        try:
+            size = path.stat().st_size if path.is_file() and not path.is_symlink() else 0
+        except OSError:
+            size = 0
         try:
             tar.add(path, arcname=name, recursive=False)
         except (OSError, ValueError) as exc:
             skipped.append({"path": str(path), "reason": str(exc)})
             continue
+        if size and on_bytes:
+            written += size
+            on_bytes(written)
         # is_dir() follows symlinks; a link was just stored as a link and must
         # not be walked, or a link pointing up the tree would loop.
         if path.is_symlink() or not path.is_dir():
@@ -398,7 +431,23 @@ def create_user_backup(user: User, db, filename: str | None = None,
                     on_progress(position - 1, len(websites), website.domain)
                 root = Path(website.root_path)
                 if root.exists():
-                    _add_tree(tar, root, f"sites/{website.domain}/site", skipped)
+                    # Within one site the bar moves on bytes, because most
+                    # accounts own exactly one and site boundaries alone would
+                    # leave it at zero for the whole run.
+                    total_bytes = _tree_size(root) if on_progress else 0
+                    step = max(1, total_bytes // 200)   # ~200 updates, no more
+                    next_at = step
+
+                    def report(written, _p=position, _t=total_bytes):
+                        nonlocal next_at
+                        if written < next_at:
+                            return
+                        next_at = written + step
+                        on_progress(_p - 1 + min(1.0, written / _t), len(websites),
+                                    website.domain)
+
+                    _add_tree(tar, root, f"sites/{website.domain}/site", skipped,
+                              on_bytes=report if (on_progress and total_bytes) else None)
             # Named for the database, not for a site: one account can own more
             # databases than it has websites, and more than one per site.
             for entry in manifest["databases"]:

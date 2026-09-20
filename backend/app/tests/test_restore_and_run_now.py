@@ -512,3 +512,49 @@ def test_progress_actually_reaches_the_browser():
 
     assert '"progress_percent": job.get("progress_percent")' in source
     assert '"progress_label"' in source
+
+
+def test_progress_moves_inside_a_site_not_only_between_them():
+    """Most accounts here own one website. With only site boundaries to report
+    the bar sat at 0% for four minutes and then jumped to 100%, which is no
+    better than the sweep it replaced."""
+    source = inspect.getsource(backup.create_user_backup)
+
+    assert "_tree_size(root)" in source
+    assert "on_bytes=report" in source
+    # The fraction is folded into the site count, so the same percentage maths
+    # covers both levels.
+    assert "_p - 1 + min(1.0, written / _t)" in source
+
+
+def test_the_size_walk_reads_no_file_contents():
+    """It runs before gzipping gigabytes, so it has to be cheap, and it must
+    not fail on the unreadable files that prompted all of this."""
+    source = inspect.getsource(backup._tree_size)
+
+    assert "st_size" in source
+    assert "open(" not in source
+    assert "except OSError" in source
+    assert "is_symlink()" in source
+
+
+def test_updates_are_rate_limited_not_per_file():
+    """A 20,000-file site would otherwise push 20,000 job updates."""
+    source = inspect.getsource(backup.create_user_backup)
+
+    assert "max(1, total_bytes // 200)" in source
+    assert "if written < next_at:" in source
+
+
+def test_a_site_of_unknown_size_falls_back_to_boundaries():
+    source = inspect.getsource(backup.create_user_backup)
+
+    assert "if (on_progress and total_bytes) else None" in source
+
+
+def test_the_percentage_accepts_a_fractional_position():
+    pct = maintenance._nested_percent
+
+    assert pct(1, 1, 0.3, 1) == 30.0            # one account, 30% through its only site
+    assert pct(1, 7, 0.3, 1) == pytest_approx(4.3)
+    assert pct(4, 7, 0, 1) == pytest_approx(42.9)

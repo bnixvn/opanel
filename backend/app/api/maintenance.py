@@ -199,8 +199,8 @@ def _public_backup_job(job: dict) -> dict:
     }
 
 
-def _nested_percent(outer_done: int, outer_total: int,
-                    inner_done: int, inner_total: int) -> float | None:
+def _nested_percent(outer_done: float, outer_total: int,
+                    inner_done: int = 0, inner_total: int = 0) -> float | None:
     """Where a run is, counting the units it actually has.
 
     Outer is whole items finished (accounts, archives); inner is how far into
@@ -210,7 +210,9 @@ def _nested_percent(outer_done: int, outer_total: int,
     if not outer_total:
         return None
     share = 1.0 / outer_total
-    done = max(0, outer_done - 1) * share
+    # outer_done may be fractional: "two sites finished and 30% through the
+    # third" arrives as 2.3, so the bar moves inside a site as well as between.
+    done = max(0.0, outer_done - 1) * share
     if inner_total:
         done += share * min(1.0, inner_done / inner_total)
     return round(min(100.0, max(0.0, done * 100)), 1)
