@@ -560,6 +560,11 @@ setup_panel_user() {
   # Make the panel data dirs writable by opanel.
   install -d -o opanel -g opanel -m 0750 "$APP_DIR"
   install -d -o opanel -g opanel -m 0750 "$BACKUP_ROOT"
+  # One place for local backups, split by what a thing is: whole
+  # accounts, single websites, and archives waiting to be restored.
+  for sub in users sites restore; do
+    install -d -o opanel -g opanel -m 0750 "$BACKUP_ROOT/$sub"
+  done
   install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/da
 
   # MariaDB: create an admin user that opanel can use without password

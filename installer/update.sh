@@ -486,6 +486,67 @@ for root in roots:
 PY
 }
 
+migrate_backup_layout() {
+  # One place for local backups, split by what a thing is:
+  #   <root>/users/<account>/   whole accounts
+  #   <root>/sites/<domain>/    single websites
+  #   <root>/restore/           waiting to be restored
+  # A website archive used to sit in a folder at the root, beside users/ and
+  # db-snapshots/, so the layout held only while no domain was called one of
+  # those. Moves are within one filesystem and skip anything already in place.
+  python3 - <<'PY'
+import shutil
+from pathlib import Path
+
+ROOT = Path("/var/backups/opanel")
+RESERVED = {"users", "sites", "restore", "db-snapshots", "uploads"}
+if not ROOT.is_dir():
+    raise SystemExit(0)
+
+moved = 0
+
+
+def move_into(source: Path, destination: Path) -> None:
+    global moved
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.exists():
+        source.rename(destination)
+        moved += 1
+        return
+    # Merge rather than clobber: a name that exists on both sides is the same
+    # rotation slot, and the one already in place is the newer layout.
+    for item in source.iterdir():
+        target = destination / item.name
+        if target.exists():
+            continue
+        item.rename(target)
+        moved += 1
+    try:
+        source.rmdir()
+    except OSError:
+        pass
+
+
+# <root>/<domain>/ -> <root>/sites/<domain>/
+for entry in sorted(ROOT.iterdir()):
+    if not entry.is_dir() or entry.name in RESERVED or "." not in entry.name:
+        continue
+    move_into(entry, ROOT / "sites" / entry.name)
+
+# <root>/users/restore and <root>/users/uploads -> <root>/restore
+for legacy in ("restore", "uploads"):
+    source = ROOT / "users" / legacy
+    if source.is_dir():
+        move_into(source, ROOT / "restore")
+
+if moved:
+    print(f"  Moved {moved} backup item(s) into the current layout")
+PY
+  for d in users sites restore; do
+    install -d -o opanel -g opanel -m 0750 "/var/backups/opanel/${d}" 2>/dev/null || true
+  done
+}
+
 migrate_drop_iframe_blocking() {
   python3 - <<'PY'
 import re
@@ -1473,6 +1534,7 @@ log "Reloading OpenLiteSpeed"
 update_progress 92 "restarting" "Restarting services and reloading OpenLiteSpeed"
 migrate_nginx_wordpress_csp_worker_src
 migrate_drop_iframe_blocking
+migrate_backup_layout
 
 # --- Serve IPv6 when the box has it ----------------------------------------
 # Only fills in a bind host that was never set: an admin who turned IPv6 off in

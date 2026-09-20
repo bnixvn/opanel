@@ -135,7 +135,7 @@ def describe_skipped(skipped: list) -> str:
 def create_backup(website: Website, db_name: Optional[str] = None,
                   skipped: Optional[list] = None) -> str:
     stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    backup_dir = Path(settings.backup_root) / website.domain
+    backup_dir = _site_backup_dir(website.domain)
     archive = backup_dir / f"{website.domain}-{stamp}.tar.gz"
     sql_file = backup_dir / f"{website.domain}-{stamp}.sql"
     shell.run(["mkdir", "-p", str(backup_dir)])
@@ -157,14 +157,32 @@ def create_backup(website: Website, db_name: Optional[str] = None,
     return str(archive)
 
 
+# One place, split by what a thing is rather than by what made it:
+#
+#   <backup_root>/users/<account>/   whole accounts
+#   <backup_root>/sites/<domain>/    single websites
+#   <backup_root>/restore/           waiting to be restored
+#
+# A website used to drop its folder at the root, beside users/ and
+# db-snapshots/, so the layout depended on a domain never being called one of
+# those. Under sites/ it cannot collide with anything.
 def _user_backup_dir(username: str) -> Path:
     if not PANEL_USERNAME_RE.fullmatch(username or ""):
         raise ValueError("Invalid panel username")
     return Path(settings.backup_root) / "users" / username
 
 
+def _site_backup_dir(domain: str) -> Path:
+    safe = (domain or "").strip().lower()
+    # A domain reaches here from a Website row, but it also reaches here from
+    # an upload form, so it is checked rather than trusted.
+    if not safe or not site_users.DOMAIN_RE.fullmatch(safe):
+        raise ValueError("Invalid domain")
+    return Path(settings.backup_root) / "sites" / safe
+
+
 def _user_restore_dir() -> Path:
-    return Path(settings.backup_root) / "users" / "restore"
+    return Path(settings.backup_root) / "restore"
 
 
 def user_restore_dir() -> str:
@@ -426,7 +444,10 @@ def list_user_backups(username: str) -> List[str]:
 
 
 def list_uploaded_user_backups(username: Optional[str] = None) -> List[str]:
-    backup_dirs = [_user_restore_dir(), Path(settings.backup_root) / "users" / "uploads"]
+    backup_dirs = [_user_restore_dir(),
+                   # Two folders older releases wrote uploads into.
+                   Path(settings.backup_root) / "users" / "restore",
+                   Path(settings.backup_root) / "users" / "uploads"]
     if settings.command_dry_run:
         return []
     items = []
@@ -481,16 +502,30 @@ def list_user_restore_backups() -> list[dict]:
     return [describe_user_backup(str(path)) for path in sorted(backup_dir.glob("*.tar.gz"), reverse=True)]
 
 
+# Describing an archive means finding its manifest, and in one written before
+# the manifest moved to the front that is a full decompress -- 159 seconds for
+# seventeen archives on the production box. Keyed on identity, not just path,
+# so a rotation slot that was overwritten is described again.
+_describe_cache: dict = {}
+
+
+def _archive_identity(path: Path):
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path), int(stat.st_mtime), stat.st_size)
+
+
 def list_all_restorable_backups() -> list[dict]:
     """Every full-user archive on the box, uploaded or made here.
 
-    The restore screen offers one list rather than making the operator know
-    which folder a given archive happens to live in. Each entry says where it
-    came from and how old it is, because a rotation slot's name no longer
-    carries a date.
-
-    Cheap per archive only because the manifest is the first member; see
-    create_user_backup.
+    Reads no archive. The account comes from the folder it sits in, which is
+    what put it there, and the rest -- how many sites, whether the manifest is
+    even valid -- is left to describe_backups() so the screen can paint before
+    anything is decompressed. An archive written before the manifest moved to
+    the first member costs a full decompress to describe, and there is no
+    reason to pay that just to list a filename.
     """
     if settings.command_dry_run:
         return []
@@ -503,18 +538,25 @@ def list_all_restorable_backups() -> list[dict]:
             return
         seen.add(resolved)
         try:
-            item = describe_user_backup(resolved)
-        except Exception as exc:  # a half-written or foreign archive
-            item = {"backup_file": resolved, "filename": path.name, "size": 0,
-                    "username": account, "generated_at": "", "websites": 0,
-                    "valid": False, "error": str(exc)}
-        try:
-            item["modified_at"] = datetime.utcfromtimestamp(path.stat().st_mtime).isoformat() + "Z"
+            stat = path.stat()
+            size, modified = stat.st_size, datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z"
         except OSError:
-            item["modified_at"] = ""
-        item["source"] = source
-        item["account"] = item.get("username") or account
-        items.append(item)
+            size, modified = 0, ""
+        cached = _describe_cache.get(_archive_identity(path))
+        items.append({
+            "backup_file": resolved,
+            "filename": path.name,
+            "size": size,
+            "modified_at": modified,
+            "source": source,
+            "account": account,
+            # Unknown until described; None is not the same claim as 0 or False.
+            "username": (cached or {}).get("username", account),
+            "websites": (cached or {}).get("websites"),
+            "valid": (cached or {}).get("valid"),
+            "generated_at": (cached or {}).get("generated_at", ""),
+            "error": (cached or {}).get("error", ""),
+        })
 
     restore_dir = _user_restore_dir()
     if restore_dir.exists():
@@ -531,6 +573,35 @@ def list_all_restorable_backups() -> list[dict]:
 
     items.sort(key=lambda row: (row.get("account") or "", row.get("modified_at") or ""), reverse=True)
     return items
+
+
+def describe_backups(backup_files: list[str]) -> list[dict]:
+    """Open these archives and say what is in them.
+
+    The slow half of the restore list, asked for separately and cached, so the
+    cost is paid once per archive rather than on every visit to the page.
+    """
+    results = []
+    for backup_file in backup_files:
+        try:
+            path = user_backup_path(backup_file)
+        except FileNotFoundError:
+            results.append({"backup_file": backup_file, "valid": False, "error": "Backup not found"})
+            continue
+        identity = _archive_identity(path)
+        cached = _describe_cache.get(identity)
+        if cached is None:
+            try:
+                cached = describe_user_backup(str(path))
+            except Exception as exc:  # a half-written or foreign archive
+                cached = {"backup_file": str(path), "filename": path.name, "username": "",
+                          "generated_at": "", "websites": 0, "valid": False, "error": str(exc)}
+            if identity:
+                _describe_cache[identity] = cached
+                if len(_describe_cache) > 500:
+                    _describe_cache.pop(next(iter(_describe_cache)))
+        results.append({**cached, "backup_file": str(path)})
+    return results
 
 
 def user_backup_path(backup_file: str) -> Path:
@@ -963,7 +1034,7 @@ def restore_user_backup(backup_file: str, db) -> dict:
 
 
 def save_uploaded_backup(domain: str, filename: str, source_file) -> str:
-    backup_dir = (Path(settings.backup_root).resolve() / domain).resolve()
+    backup_dir = _site_backup_dir(domain).resolve()
     backup_dir.mkdir(parents=True, exist_ok=True)
     safe_name = Path(filename).name
     if not safe_name.endswith(".tar.gz"):
@@ -1101,7 +1172,7 @@ def restore_backup(website: Website, backup_file: str) -> str:
 
 
 def backup_path(domain: str, backup_file: str) -> Path:
-    backup_root = (Path(settings.backup_root).resolve() / domain).resolve()
+    backup_root = _site_backup_dir(domain).resolve()
     path = Path(backup_file).resolve()
     if backup_root not in path.parents or not path.exists() or path.suffixes[-2:] != [".tar", ".gz"] or not path.is_file():
         raise FileNotFoundError("Backup not found")
@@ -1127,7 +1198,7 @@ def delete_backup(domain: str, backup_file: str) -> str:
 
 
 def list_backups(domain: str) -> List[str]:
-    backup_dir = Path(settings.backup_root) / domain
+    backup_dir = _site_backup_dir(domain)
     if settings.command_dry_run:
         return []
     if not backup_dir.exists():
@@ -1542,6 +1613,38 @@ def list_s3_backups(
         raise _s3_failure(exc, bucket) from exc
     entries.sort(key=lambda row: row["modified"] or 0, reverse=True)
     return entries
+
+
+def download_from_s3(key: str, *, endpoint: str, region: str, bucket: str,
+                     access_key: str, secret_key: str, use_path_style: bool = False,
+                     destination_dir: str) -> str:
+    """Pull one object into the restore folder.
+
+    The name is taken from the key, not from anything the caller passes, and
+    is reduced to a bare filename -- a key is remote input and must not be
+    able to place a file outside the folder it was asked for.
+    """
+    safe_name = Path(str(key).replace("\\", "/")).name
+    if not safe_name.endswith(".tar.gz"):
+        raise S3Error("Only .tar.gz backups can be fetched")
+    folder = Path(destination_dir).resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+    destination = (folder / safe_name).resolve()
+    if folder not in destination.parents:
+        raise S3Error("Invalid backup name")
+
+    client = _s3_client(endpoint=endpoint, region=region, access_key=access_key,
+                        secret_key=secret_key, use_path_style=use_path_style)
+    partial = destination.with_suffix(destination.suffix + ".part")
+    try:
+        client.download_file(bucket, key, str(partial))
+    except Exception as exc:  # noqa: BLE001
+        partial.unlink(missing_ok=True)
+        raise _s3_failure(exc) from exc
+    # Swap in only once it is whole, so a half-downloaded archive is never
+    # offered for restore.
+    os.replace(partial, destination)
+    return str(destination)
 
 
 def prune_s3_backups(

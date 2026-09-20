@@ -32,6 +32,7 @@ from app.schemas.schemas import (
     SftpBackupRun,
     UserBackupCreate,
     UserRestoreBackup,
+    RemoteBackupFetch,
     UserRestoreBatch,
     WpAction,
 )
@@ -738,6 +739,123 @@ def list_user_restore_backups(current_user: User = Depends(get_current_user)):
     """
     ensure_role(current_user.role, Role.admin)
     return {"directory": backup.user_restore_dir(), "items": backup.list_all_restorable_backups()}
+
+
+@router.post("/user-restore-backups/describe")
+def describe_restore_backups(payload: UserRestoreBatch, current_user: User = Depends(get_current_user)):
+    """What is inside these archives: owner, site count, whether it is valid.
+
+    Separate from the listing because finding a manifest in an archive written
+    before the manifest moved to the front means decompressing all of it --
+    159 seconds for the seventeen on the production box. The list paints first;
+    this fills it in.
+    """
+    ensure_role(current_user.role, Role.admin)
+    return {"items": backup.describe_backups(payload.backup_files)}
+
+
+@router.get("/user-restore-remote")
+def list_remote_restore_backups(db: Session = Depends(get_db),
+                                current_user: User = Depends(get_current_user)):
+    """What is sitting on each active S3 destination.
+
+    Listing only: an object cannot be described without pulling it down, and
+    nothing is pulled down until someone asks for it. Reported per target so a
+    failing destination does not hide the ones that answered.
+    """
+    ensure_role(current_user.role, Role.admin)
+    targets = db.query(BackupTarget).filter(
+        BackupTarget.is_active == True, BackupTarget.kind == "s3"  # noqa: E712
+    ).all()
+    items, errors = [], []
+    for target in targets:
+        try:
+            rows = backup.list_s3_backups(
+                endpoint=target.s3_endpoint,
+                region=target.s3_region,
+                bucket=target.s3_bucket,
+                access_key=target.s3_access_key,
+                secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
+                prefix=target.remote_path,
+                use_path_style=bool(target.s3_use_path_style),
+            )
+        except Exception as exc:
+            errors.append(f"{target.name}: {exc}")
+            continue
+        base = backup.s3_prefix_for(target.remote_path)
+        for row in rows:
+            key = row["key"]
+            tail = key[len(base):].lstrip("/") if base else key
+            # <account>/<file> is how both the scheduler and a manual upload
+            # write; anything flatter is from before that and has no folder to
+            # take the account from.
+            account = tail.split("/")[0] if "/" in tail else ""
+            items.append({
+                "target_id": target.id,
+                "target": target.name,
+                "bucket": target.s3_bucket,
+                "key": key,
+                "filename": key.rsplit("/", 1)[-1],
+                "account": account,
+                "size": row.get("size") or 0,
+                "modified_at": str(row.get("modified") or ""),
+                "source": "s3",
+            })
+    items.sort(key=lambda row: (row["target"], row["account"], row["modified_at"]), reverse=True)
+    return {"items": items, "errors": errors}
+
+
+@router.post("/user-restore-remote/fetch")
+def fetch_remote_restore_backup(payload: RemoteBackupFetch, request: Request,
+                                db: Session = Depends(get_db),
+                                current_user: User = Depends(get_current_user)):
+    """Pull one object down into the restore folder.
+
+    Once it is here it is an ordinary uploaded backup: it shows in the list,
+    can be described, ticked and restored with the rest. Keeping fetch and
+    restore apart means a slow download cannot be mistaken for a slow restore.
+    """
+    ensure_role(current_user.role, Role.admin)
+    target = db.query(BackupTarget).filter(
+        BackupTarget.id == payload.target_id,
+        BackupTarget.is_active == True,  # noqa: E712
+        BackupTarget.kind == "s3",
+    ).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Backup target not found")
+    job = _queue_backup_job(current_user, "remote_fetch",
+                            f"Fetching {payload.key.rsplit('/', 1)[-1]}", key=payload.key)
+    _backup_job_executor.submit(_run_remote_fetch_job, job["job_id"], current_user.id,
+                                target.id, payload.key)
+    log_action(db, current_user.id, "fetch_remote_backup", target.name, payload.key, request=request)
+    return job
+
+
+def _run_remote_fetch_job(job_id: str, request_user_id: int, target_id: int, key: str) -> None:
+    _set_backup_job(job_id, status="running", started_at=_now_iso(), message="Downloading from S3")
+    db = SessionLocal()
+    try:
+        target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
+        if not target:
+            raise ValueError("Backup target not found")
+        destination = backup.download_from_s3(
+            key,
+            endpoint=target.s3_endpoint,
+            region=target.s3_region,
+            bucket=target.s3_bucket,
+            access_key=target.s3_access_key,
+            secret_key=_decrypted(target.s3_secret_key, "S3 secret key"),
+            use_path_style=bool(target.s3_use_path_style),
+            destination_dir=backup.user_restore_dir(),
+        )
+        _set_backup_job(job_id, status="done", backup_file=destination,
+                        message=f"Downloaded to {destination}", finished_at=_now_iso())
+    except Exception as exc:
+        logger.exception("Remote backup fetch failed: job_id=%s key=%s", job_id, key)
+        _set_backup_job(job_id, status="error", error=str(exc),
+                        message="Download failed", finished_at=_now_iso())
+    finally:
+        db.close()
 
 
 def _run_restore_batch_job(job_id: str, request_user_id: int, backup_files: list[str]) -> None:

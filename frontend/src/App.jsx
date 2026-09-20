@@ -354,6 +354,8 @@ function App() {
   const [userBackups, setUserBackups] = useState([]);
   const [restoreBackups, setRestoreBackups] = useState([]);
   const [restorePicks, setRestorePicks] = useState([]);
+  const [remoteBackups, setRemoteBackups] = useState([]);
+  const [remoteBackupErrors, setRemoteBackupErrors] = useState([]);
   const [restoreBackupDir, setRestoreBackupDir] = useState('');
   const [selectedBackupUserId, setSelectedBackupUserId] = useState('');
   const [backupSchedules, setBackupSchedules] = useState([]);
@@ -2170,10 +2172,49 @@ ${warning}`)) return;
     }
   }
 
+  async function describeRestoreBackups(items) {
+    // The slow half: finding a manifest in an archive written before the
+    // manifest moved to the front means decompressing all of it. The list is
+    // already on screen, so this fills in behind it without a spinner.
+    const files = items.map(item => item.backup_file);
+    if (files.length === 0) return;
+    const data = await request('/maintenance/user-restore-backups/describe', {
+      method: 'POST', body: JSON.stringify({ backup_files: files }),
+    }, '');
+    if (!data?.items) return;
+    const byFile = new Map(data.items.map(row => [row.backup_file, row]));
+    setRestoreBackups(prev => prev.map(item => byFile.has(item.backup_file)
+      ? { ...item, ...byFile.get(item.backup_file) } : item));
+  }
+
+  async function loadRemoteBackups() {
+    const data = await request('/maintenance/user-restore-remote', {}, '');
+    if (!data) return;
+    setRemoteBackups(data.items || []);
+    setRemoteBackupErrors(data.errors || []);
+  }
+
+  async function fetchRemoteBackup(item) {
+    if (!confirm(`Download ${item.filename} from ${item.target} to this server?
+
+It lands in the restore folder, where it can be ticked and restored with the rest.`)) return;
+    const data = await request('/maintenance/user-restore-remote/fetch', {
+      method: 'POST', body: JSON.stringify({ target_id: item.target_id, key: item.key }),
+    }, 'Starting download...');
+    if (data) {
+      setNotice(`Downloading ${item.filename}. Watch Backup logs, then refresh this list.`);
+      loadBackupJobs();
+    }
+  }
+
   async function loadRestoreBackups() {
     const data = await request('/maintenance/user-restore-backups');
-    if (data?.items) setRestoreBackups(data.items);
+    if (data?.items) {
+      setRestoreBackups(data.items);
+      describeRestoreBackups(data.items);
+    }
     if (data?.directory) setRestoreBackupDir(data.directory);
+    loadRemoteBackups();
   }
 
   async function createBackupSchedule() {
@@ -4031,9 +4072,9 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
             <label className="schedule-toggle">
               <input
                 type="checkbox"
-                checked={restorePicks.length > 0 && restorePicks.length === restoreBackups.filter(item => item.valid).length}
-                ref={box => { if (box) box.indeterminate = restorePicks.length > 0 && restorePicks.length < restoreBackups.filter(item => item.valid).length; }}
-                onChange={e => setRestorePicks(e.target.checked ? restoreBackups.filter(item => item.valid).map(item => item.backup_file) : [])}
+                checked={restorePicks.length > 0 && restorePicks.length === restoreBackups.filter(item => item.valid !== false).length}
+                ref={box => { if (box) box.indeterminate = restorePicks.length > 0 && restorePicks.length < restoreBackups.filter(item => item.valid !== false).length; }}
+                onChange={e => setRestorePicks(e.target.checked ? restoreBackups.filter(item => item.valid !== false).map(item => item.backup_file) : [])}
               />
               <span>Select all restorable</span>
             </label>
@@ -4051,16 +4092,16 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
                   <input
                     type="checkbox"
                     checked={picked}
-                    disabled={!item.valid}
+                    disabled={item.valid === false}
                     onChange={() => setRestorePicks(prev => picked ? prev.filter(f => f !== item.backup_file) : [...prev, item.backup_file])}
                   />
                 </label>
                 <span>
                   {item.filename || item.backup_file.split('/').pop()}
                   <small>
-                    {item.valid
-                      ? `${item.account || item.username || 'unknown user'} - ${item.websites || 0} website(s) - ${formatBytes(item.size)}${item.modified_at ? ' - ' + new Date(item.modified_at).toLocaleString() : ''}`
-                      : (item.error || 'Invalid backup')}
+                    {item.valid === false
+                      ? (item.error || 'Invalid backup')
+                      : `${item.account || item.username || 'unknown user'} - ${item.websites == null ? 'reading...' : item.websites + ' website(s)'} - ${formatBytes(item.size)}${item.modified_at ? ' - ' + new Date(item.modified_at).toLocaleString() : ''}`}
                   </small>
                 </span>
                 <span className={`badge${item.source === 'uploaded' ? '' : ' ok'}`}>{item.source === 'uploaded' ? 'Uploaded' : 'On server'}</span>
@@ -4072,6 +4113,27 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
             })}
           </div>
         </>}
+
+        <div className="section-title backup-panel-heading backup-subtitle">
+          <div>
+            <h3>On the backup destination</h3>
+            <p className="hint">What is sitting on each S3 destination. An object has to come down to this server before it can be restored, so fetch it first and it joins the list above.</p>
+          </div>
+          <button disabled={!!loading} onClick={loadRemoteBackups}><RefreshCw size={14}/> Refresh</button>
+        </div>
+        {remoteBackupErrors.map(message => <div className="info-box" key={message}><AlertCircle size={14}/> {message}</div>)}
+        {remoteBackups.length === 0 && remoteBackupErrors.length === 0 && <EmptyState icon={Network} message="Nothing on the backup destination yet." />}
+        <div className="backup-list">
+          {remoteBackups.map(item => <div className="backup-item" key={`${item.target_id}:${item.key}`}>
+            <span>
+              {item.filename}
+              <small>{item.target} - {item.bucket}/{item.key}{item.account ? ` - ${item.account}` : ''} - {formatBytes(item.size)}</small>
+            </span>
+            <div className="actions">
+              <button disabled={!!loading} onClick={() => fetchRemoteBackup(item)}><Download size={14}/> Fetch to server</button>
+            </div>
+          </div>)}
+        </div>
       </div>}
 
       {isAdmin && activeBackupTab === 'da-import' && <div className="backup-tab-panel">

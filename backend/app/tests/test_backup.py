@@ -8,7 +8,8 @@ from app.services import backup
 
 
 def _site_backup(backup_root: Path) -> Path:
-    domain_dir = backup_root / "example.test"
+    # Website archives live under sites/<domain>/, not loose at the root.
+    domain_dir = backup_root / "sites" / "example.test"
     domain_dir.mkdir(parents=True)
     archive_path = domain_dir / "example.test-20260802000000.tar.gz"
     source = backup_root / "index.html"
