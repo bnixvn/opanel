@@ -369,3 +369,70 @@ def test_the_migration_merges_rather_than_clobbers():
     assert "RESERVED" in block
     # Only a folder that looks like a domain is treated as a site.
     assert '"." not in entry.name' in block
+
+
+# --------------------------------------------------------------------------
+# A schedule must survive a tick that never happened
+# --------------------------------------------------------------------------
+
+def test_a_missed_minute_still_runs_the_schedule():
+    """systemd restarts the runner a minute after the previous run finished,
+    so the cycle drifts and whole minutes are never examined -- 23 of every
+    180 on the production box. A daily backup should not depend on luck."""
+    from datetime import datetime
+
+    from app.services.backup_scheduler import _due_since
+
+    last = datetime(2026, 9, 20, 2, 58)
+    # The runner never looked at 03:00; it looked at 02:58 and again at 03:01.
+    assert _due_since("0 3 * * *", last, datetime(2026, 9, 20, 3, 1))
+
+
+def test_a_schedule_that_already_ran_does_not_run_again():
+    from datetime import datetime
+
+    from app.services.backup_scheduler import _due_since
+
+    assert not _due_since("0 3 * * *", datetime(2026, 9, 20, 3, 0), datetime(2026, 9, 20, 3, 5))
+
+
+def test_a_brand_new_schedule_does_not_fire_for_a_time_it_never_covered():
+    from datetime import datetime
+
+    from app.services.backup_scheduler import _due_since
+
+    # Never run: judged on this minute alone.
+    assert not _due_since("0 3 * * *", None, datetime(2026, 9, 20, 5, 0))
+    assert _due_since("0 3 * * *", None, datetime(2026, 9, 20, 3, 0))
+
+
+def test_a_box_that_was_off_for_a_month_fires_once_not_thirty_times():
+    from datetime import datetime
+
+    from app.services import backup_scheduler
+
+    now = datetime(2026, 9, 20, 12, 0)
+    long_ago = datetime(2026, 8, 20, 12, 0)
+
+    assert backup_scheduler._due_since("0 3 * * *", long_ago, now)
+    # The walk is bounded, so one stale schedule cannot spin for a month of
+    # minutes on every tick.
+    assert backup_scheduler.CATCHUP_WINDOW_MINUTES <= 48 * 60
+
+
+def test_the_loop_asks_about_the_window_not_the_minute():
+    source = inspect.getsource(backup_scheduler.run_due_schedules)
+
+    assert "_due_since(schedule.schedule, schedule.last_run_at, now)" in source
+    assert "if not _cron_due(schedule.schedule, now)" not in source
+
+
+def test_the_timers_fire_on_the_minute_on_both_paths():
+    """An install-only change never reaches a running box."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    for name in ("install.sh", "update.sh"):
+        text = (root / "installer" / name).read_text(encoding="utf-8")
+        assert "OnUnitActiveSec=60s" not in text, name
+        assert text.count("OnCalendar=*:*:00") == 2, name

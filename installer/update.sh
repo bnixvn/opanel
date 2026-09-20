@@ -850,8 +850,10 @@ Description=Check for a due opanel malware scan every minute
 
 [Timer]
 OnBootSec=120s
-OnUnitActiveSec=60s
-AccuracySec=15s
+# See the backup timer: counting from the end of the last run drifts past
+# whole minutes.
+OnCalendar=*:*:00
+AccuracySec=1s
 Persistent=true
 
 [Install]
@@ -864,8 +866,12 @@ Description=Run opanel scheduled backups every minute
 
 [Timer]
 OnBootSec=90s
-OnUnitActiveSec=60s
-AccuracySec=15s
+# On the minute, not 60s after the last run finished. Counting from the end
+# meant each cycle started ~70s later than the one before, so whole wall-clock
+# minutes were never scanned -- 23 of every 180 on the production box -- and a
+# schedule whose minute fell in one of them was silently skipped.
+OnCalendar=*:*:00
+AccuracySec=1s
 Persistent=true
 
 [Install]

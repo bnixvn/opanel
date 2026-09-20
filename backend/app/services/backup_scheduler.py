@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 
@@ -41,6 +41,42 @@ def _cron_due(schedule: str, now: datetime) -> bool:
         and _field_matches(month, now.month)
         and (_field_matches(weekday, cron_weekday) or (cron_weekday == 0 and _field_matches(weekday, 7)))
     )
+
+
+# How far back a missed schedule is still worth running. Long enough to
+# cover a reboot or a backup run that blocked the runner for hours, short
+# enough that a box switched off for a month fires once on return, not thirty
+# times.
+CATCHUP_WINDOW_MINUTES = 26 * 60
+
+
+def _due_since(schedule: str, since: datetime | None, now: datetime) -> bool:
+    """Was this schedule due at any minute that has not been covered yet?
+
+    The runner used to ask only whether the current minute matched. It does not
+    get to look every minute: systemd restarts it a minute after the previous
+    run *finished*, so the cycle drifts forward and whole minutes are never
+    examined -- 23 of every 180 on the production box. Worse, a run that takes
+    an hour blinds it to every other schedule for that hour. Either way a
+    backup silently did not happen.
+
+    So walk the minutes since the last run instead. A schedule that has never
+    run has no window to catch up on and is judged on the current minute alone,
+    or creating one would immediately fire it for a time it was never meant to
+    cover.
+    """
+    if since is None:
+        return _cron_due(schedule, now)
+    start = since.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    earliest = now - timedelta(minutes=CATCHUP_WINDOW_MINUTES)
+    if start < earliest:
+        start = earliest
+    moment = start
+    while moment <= now:
+        if _cron_due(schedule, moment):
+            return True
+        moment += timedelta(minutes=1)
+    return False
 
 
 def _s3_secret(target) -> str:
@@ -239,9 +275,9 @@ def run_due_schedules(now: datetime | None = None) -> int:
     try:
         schedules = db.query(BackupSchedule).filter(BackupSchedule.is_active == True).all()  # noqa: E712
         for schedule in schedules:
-            if not _cron_due(schedule.schedule, now):
-                continue
             if schedule.last_run_at and schedule.last_run_at.replace(second=0, microsecond=0) == now:
+                continue
+            if not _due_since(schedule.schedule, schedule.last_run_at, now):
                 continue
             if run_schedule(db, schedule, now):
                 ran += 1
