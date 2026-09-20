@@ -2176,15 +2176,22 @@ ${warning}`)) return;
     // The slow half: finding a manifest in an archive written before the
     // manifest moved to the front means decompressing all of it. The list is
     // already on screen, so this fills in behind it without a spinner.
-    const files = items.map(item => item.backup_file);
+    const files = items.filter(item => item.websites == null).map(item => item.backup_file);
     if (files.length === 0) return;
-    const data = await request('/maintenance/user-restore-backups/describe', {
-      method: 'POST', body: JSON.stringify({ backup_files: files }),
-    }, '');
-    if (!data?.items) return;
-    const byFile = new Map(data.items.map(row => [row.backup_file, row]));
-    setRestoreBackups(prev => prev.map(item => byFile.has(item.backup_file)
-      ? { ...item, ...byFile.get(item.backup_file) } : item));
+    // A few at a time, so rows fill in as the answers come back and one slow
+    // archive does not hold up the other sixteen. Archives written before the
+    // manifest moved to the front cost a full decompress to read -- 24 seconds
+    // for a 5 GB one -- and they age out as the rotation overwrites them.
+    for (let start = 0; start < files.length; start += 3) {
+      const batch = files.slice(start, start + 3);
+      const data = await request('/maintenance/user-restore-backups/describe', {
+        method: 'POST', body: JSON.stringify({ backup_files: batch }),
+      }, '');
+      if (!data?.items) continue;
+      const byFile = new Map(data.items.map(row => [row.backup_file, row]));
+      setRestoreBackups(prev => prev.map(item => byFile.has(item.backup_file)
+        ? { ...item, ...byFile.get(item.backup_file) } : item));
+    }
   }
 
   async function loadRemoteBackups() {
