@@ -558,3 +558,20 @@ def test_the_percentage_accepts_a_fractional_position():
     assert pct(1, 1, 0.3, 1) == 30.0            # one account, 30% through its only site
     assert pct(1, 7, 0.3, 1) == pytest_approx(4.3)
     assert pct(4, 7, 0, 1) == pytest_approx(42.9)
+
+
+def test_a_run_started_from_a_schedule_reports_on_that_schedule():
+    """Pressing Run now and then having to find the progress on another tab is
+    how a working button reads as doing nothing."""
+    source = inspect.getsource(maintenance._public_backup_job)
+
+    assert '"schedule_id": job.get("schedule_id")' in source
+
+
+def test_the_schedule_row_matches_its_own_run():
+    from pathlib import Path
+
+    app = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert "backupJobs.find(job => job.schedule_id === item.id" in app
+    assert "job.status === 'running' || job.status === 'queued'" in app

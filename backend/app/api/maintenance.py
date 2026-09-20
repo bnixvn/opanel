@@ -194,6 +194,10 @@ def _public_backup_job(job: dict) -> dict:
         "finished_at": job.get("finished_at", ""),
         # None when the current step has nothing countable in it; the bar
         # sweeps rather than standing at a figure nobody computed.
+        # Which schedule this run belongs to, so the schedule's own row
+        # can show it. Pressing Run now and then having to find the
+        # progress on another tab is how it reads as doing nothing.
+        "schedule_id": job.get("schedule_id"),
         "progress_percent": job.get("progress_percent"),
         "progress_label": job.get("progress_label", ""),
     }

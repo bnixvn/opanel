@@ -4221,7 +4221,25 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
           {backupSchedules.map(item => {
             const scheduleTarget = sftpTargets.find(target => target.id === item.target_id);
             return <div className="backup-item" key={item.id}>
-              <span>{scheduleUserLabel(item)} - {item.schedule}{scheduleTarget ? ` - ${scheduleTarget.name}` : ''}<small>{item.last_status}: {item.last_message || 'not run yet'}</small></span>
+              <span>{scheduleUserLabel(item)} - {item.schedule}{scheduleTarget ? ` - ${scheduleTarget.name}` : ''}
+                {(() => {
+                  // A run started from this row reports on this row. Sending
+                  // someone to another tab to find out whether their click did
+                  // anything is how it reads as doing nothing.
+                  const live = backupJobs.find(job => job.schedule_id === item.id
+                    && (job.status === 'running' || job.status === 'queued'));
+                  if (!live) return <small>{item.last_status}: {item.last_message || 'not run yet'}</small>;
+                  return <>
+                    <small>{live.message || 'Running'}</small>
+                    <span className="job-progress">
+                      <span className={`progress-bar${live.progress_percent == null ? ' indeterminate' : ''}`}>
+                        <span className="progress-bar-fill" style={live.progress_percent == null ? undefined : { width: `${live.progress_percent}%` }} />
+                      </span>
+                      {live.progress_percent != null && <small className="job-progress-pct">{Math.round(live.progress_percent)}%</small>}
+                    </span>
+                  </>;
+                })()}
+              </span>
               <div className="actions">
                 <button disabled={!!loading} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14}/> Run now</button>
                 <button className="danger" disabled={!!loading} onClick={() => deleteBackupSchedule(item.id)}><Trash2 size={14}/></button>
