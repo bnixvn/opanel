@@ -104,8 +104,20 @@ def test_panel_linux_users_are_sftp_chroot_only():
     assert "--shell /bin/bash" not in helper
     assert 'chmod 0711 "$HOME_ROOT"' in helper
     assert 'chown "root:$user" "$home_dir"' in helper
-    assert 'chmod 0751 "$home_dir"' in helper
+    # 0750, not 0751. The home directory is the gate that keeps one tenant out
+    # of another's files: the site tree inside is deliberately 0755/0644 (see
+    # test_site_permissions_use_standard_wordpress_modes, which pins those and
+    # rejects 2750/640 because the panel reads site files in-process as the
+    # opanel account), so the "other" execute bit here was the whole boundary.
+    # With 0751 any local uid could traverse into /home/<other>/<domain> and
+    # read their wp-config.php. Verified on a live host before the change.
+    # Still root-owned and not group-writable, which is what sshd requires of a
+    # ChrootDirectory.
+    assert 'chmod 0750 "$home_dir"' in helper
+    assert 'chmod 0751 "$home_dir"' not in helper
     assert 'usermod -aG "$user" www-data' in helper
+    # The panel itself must keep read access once "other" loses it.
+    assert 'usermod -aG "$user" opanel' in helper
 
 
 def test_panel_tools_ssl_vhosts_enable_http2_for_nginx_1_24():

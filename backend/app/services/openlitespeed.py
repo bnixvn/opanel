@@ -369,6 +369,41 @@ REWRITE_RULE_LINES = {
 # ---------------------------------------------------------------------------
 # Core rendering
 # ---------------------------------------------------------------------------
+PHP_SESSION_ROOT = "/var/lib/php/sessions"
+PHP_UPLOAD_ROOT = "/var/lib/php/uploads"
+
+
+def _php_runtime_dirs(linux_user: str | None) -> tuple[str, str]:
+    """Per-site PHP session and upload directories.
+
+    Only a real site Linux user gets them; the www-data fallback shares the
+    system defaults and must not be handed another account's directory.
+    """
+    if not linux_user or linux_user == "www-data":
+        return "", ""
+    return f"{PHP_SESSION_ROOT}/{linux_user}", f"{PHP_UPLOAD_ROOT}/{linux_user}"
+
+
+def _php_open_basedir(root_path: str, session_dir: str, upload_dir: str) -> str:
+    """Build the open_basedir list for one site.
+
+    This has to be rendered into the vhost's own phpIniOverride block rather
+    than into a file under the LSPHP build's etc/. The build's ini scan
+    directory is shared by every site on that PHP version, so a per-site value
+    written there is either read by every site or -- as was the case until this
+    was fixed -- read by none, because the scan directory only loads *.ini and
+    the pool fragments are written as *.conf. phpIniOverride is scoped to one
+    virtual host by construction, which is the property this needs.
+    """
+    parts = [root_path]
+    if session_dir:
+        parts.append(session_dir)
+    if upload_dir:
+        parts.append(upload_dir)
+    parts.append("/usr/share/php")
+    return ":".join(parts)
+
+
 def _build_context(
     domain: str,
     root_path: str,
@@ -413,6 +448,13 @@ def _build_context(
     rewrite_block = ""
     vhost_rewrite_rules = REWRITE_RULE_LINES.get(checked_rewrite, "")
 
+    # open_basedir only means anything where PHP actually runs.
+    php_session_dir, php_upload_dir = ("", "")
+    php_open_basedir = ""
+    if lsphp_app:
+        php_session_dir, php_upload_dir = _php_runtime_dirs(linux_user)
+        php_open_basedir = _php_open_basedir(root_path, php_session_dir, php_upload_dir)
+
     return {
         "domain": safe_domain,
         "root_path": root_path,
@@ -440,6 +482,9 @@ def _build_context(
         "error_log": _log_path(safe_domain, "error").as_posix(),
         "php_error_log": _php_error_log_path(safe_domain).as_posix(),
         "acme_webroot": ACME_WEBROOT,
+        "php_open_basedir": php_open_basedir,
+        "php_session_path": php_session_dir,
+        "php_upload_tmp": php_upload_dir,
         "security_headers": SECURITY_HEADERS,
         "hsts_header": HSTS_HEADER if has_ssl else "",
         "csp_header": WORDPRESS_CSP if checked_app == "wordpress" else "",
@@ -558,7 +603,6 @@ def suspend_vhost(domain: str) -> None:
     shell.privileged(
         "ols-vhost-suspend",
         helper_args=[safe_domain],
-        check=False,
         fallback=[
             "bash", "-lc",
             "conf=/usr/local/lsws/conf/opanel/vhosts/$1/vhost.conf && "
@@ -576,7 +620,6 @@ def restore_vhost(domain: str) -> None:
     shell.privileged(
         "ols-vhost-restore",
         helper_args=[safe_domain],
-        check=False,
         fallback=[
             "bash", "-lc",
             "conf=/usr/local/lsws/conf/opanel/vhosts/$1/vhost.conf && "

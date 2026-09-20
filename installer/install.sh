@@ -1016,7 +1016,7 @@ setup_phpmyadmin_sso() {
 \$cfg['Servers'][\$i]['host'] = 'localhost';
 \$cfg['Servers'][\$i]['AllowNoPassword'] = false;
 \$cfg['Servers'][\$i]['only_db'] = '';
-\$cfg['SessionSavePath'] = '/var/lib/php/sessions';
+\$cfg['SessionSavePath'] = '/var/lib/php/pma-sessions';
 \$cfg['PmaAbsoluteUri'] = '${pma_scheme}://${pma_host}/phpmyadmin/';
 PHP
 
@@ -1024,7 +1024,7 @@ PHP
 <?php
 declare(strict_types=1);
 
-session_save_path('/var/lib/php/sessions');
+session_save_path('/var/lib/php/pma-sessions');
 ini_set('session.use_cookies', 'true');
 session_set_cookie_params([
     'lifetime' => 0,
@@ -1098,8 +1098,14 @@ PHP
   sed -i "s#__opanel_PMA_SIGNON_SECRET__#${pma_signon_secret}#" /usr/share/phpmyadmin/opanel-signon.php
 
   chown root:opanel-sites /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || chown root:www-data /etc/phpmyadmin/conf.d/opanel-signon.php
-  chmod 644 /etc/phpmyadmin/conf.d/opanel-signon.php
-  chmod 644 /usr/share/phpmyadmin/opanel-signon.php
+  # 0640, not 0644: both files carry the X-OPanel-Signon-Secret that gates
+  # /api/databases/phpmyadmin-sso/{token}, which returns any account's database
+  # credentials with no ownership binding. www-data is in opanel-sites (line
+  # 549 above), so group-readable is sufficient for phpMyAdmin itself.
+  chmod 0640 /etc/phpmyadmin/conf.d/opanel-signon.php
+  chown root:opanel-sites /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
+  chmod 0640 /usr/share/phpmyadmin/opanel-signon.php
+  install -d -o www-data -g www-data -m 0700 /var/lib/php/pma-sessions
   fix_phpmyadmin_permissions
 }
 

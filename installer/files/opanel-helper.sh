@@ -89,16 +89,24 @@ ensure_lshttpd_runtime_dir() {
 }
 
 fix_phpmyadmin_permissions() {
+  # Private session store for the phpMyAdmin sign-on handshake. It used to
+  # write into /var/lib/php/sessions, the same parent every site's per-user
+  # session directory lives under, and those sessions carry a cleartext
+  # database user and password.
+  install -d -o www-data -g www-data -m 0700 /var/lib/php/pma-sessions 2>/dev/null || true
+  chown www-data:www-data /var/lib/php/pma-sessions 2>/dev/null || true
+  chmod 0700 /var/lib/php/pma-sessions 2>/dev/null || true
+  # All of these are 0640 root:opanel-sites. www-data is a member of
+  # opanel-sites (install.sh, ensure_sites_group and update.sh all put it
+  # there), so group-readable is enough for the PHP that has to read them --
+  # the signon files in particular carry the X-OPanel-Signon-Secret that gates
+  # an endpoint returning any account's database credentials, and they were
+  # world-readable, which every site's Linux user could exploit.
   local file
   for file in \
     /etc/phpmyadmin/conf.d/opanel-signon.php \
     /etc/phpmyadmin/config.inc.php \
-    /usr/share/phpmyadmin/opanel-signon.php; do
-    [[ -e "$file" ]] || continue
-    chgrp "$opanel_SITES_GROUP" "$file" 2>/dev/null || true
-    chmod 0644 "$file" 2>/dev/null || true
-  done
-  for file in \
+    /usr/share/phpmyadmin/opanel-signon.php \
     /etc/phpmyadmin/config-db.php \
     /var/lib/phpmyadmin/blowfish_secret.inc.php; do
     [[ -e "$file" ]] || continue
@@ -782,13 +790,25 @@ for link in phpmyadmin.rglob('*'):
   fi
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
+  # Migrate the sign-on session store off the shared parent. install.sh writes
+  # the new path for fresh installs, but an existing box only ever gets a new
+  # helper -- and ensure_php_runtime_dirs now tightens /var/lib/php/sessions to
+  # 0751 root:root, which would leave phpMyAdmin unable to write its sessions
+  # there. Doing it here means the fix arrives with the helper instead of one
+  # release late.
+  sed -i -E "s#/var/lib/php/sessions'#/var/lib/php/pma-sessions'#g" \
+    /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   [[ -n "$host" ]] && sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
   local pma_signon_secret
   pma_signon_secret="$(env_get PMA_SIGNON_SECRET)"
   [[ -n "$pma_signon_secret" ]] && sed -i -E "s#(X-OPanel-Signon-Secret: )[^']*#\1${pma_signon_secret}#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
-  # OLS PHP runs as www-data:opanel-sites â€“ group is opanel-sites (not www-data),
-  # so group-readable (640) won't work.  Must be world-readable (644).
-  chmod 644 /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
+  # This file holds the signon secret, so it is group-readable and no wider.
+  # The previous comment here claimed 0640 could not work because the group is
+  # opanel-sites rather than www-data -- but www-data is added to opanel-sites
+  # by install.sh, ensure_sites_group and update.sh alike, so 0640 is exactly
+  # what it needs. fix_phpmyadmin_permissions below sets group and mode for
+  # this file too; the chmod is kept only to close the window before it runs.
+  chmod 0640 /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
   fix_phpmyadmin_permissions
   ols_sync_main_config
   restart_openlitespeed 2>/dev/null || true
@@ -2814,6 +2834,14 @@ ensure_panel_user_home() {
   require_linux_user "$user"
   getent group "$user" >/dev/null || groupadd "$user"
   usermod -aG "$user" www-data 2>/dev/null || true
+  # The panel reads site trees directly as the opanel account -- the file
+  # manager (file_manager.read_text_file, list_directory) and the backup
+  # writer (backup._add_tree) walk them in-process rather than through this
+  # helper. Group membership is what keeps that working now that the home
+  # directory no longer grants access to every local uid via its "other" bits.
+  # This grants opanel nothing new: it already reaches root through the
+  # unrestricted sudo grant on this script.
+  usermod -aG "$user" opanel 2>/dev/null || true
   chown root:root "$HOME_ROOT"
   chmod 0711 "$HOME_ROOT"
   chmod a-s "$HOME_ROOT" 2>/dev/null || true
@@ -2825,7 +2853,14 @@ ensure_panel_user_home() {
   usermod -aG "$opanel_SFTP_GROUP" "$user" 2>/dev/null || true
   mkdir -p "$home_dir"
   chown "root:$user" "$home_dir"
-  chmod 0751 "$home_dir"
+  # 0750, not 0751. The "other" execute bit let any local uid traverse into
+  # another tenant's home; combined with the 0755/0644 modes fix_site_tree
+  # applies inside, one site's PHP or shell could read a neighbour's
+  # wp-config.php and reach their database. This directory is the gate, so
+  # tightening it holds even for files PHP later creates at the process umask.
+  # Still root-owned and not group-writable, which is what sshd requires of a
+  # ChrootDirectory for the SFTP jail.
+  chmod 0750 "$home_dir"
   chmod a-s "$home_dir" 2>/dev/null || true
   chmod -t "$home_dir" 2>/dev/null || true
   clear_path_acl "$home_dir"
@@ -3273,15 +3308,21 @@ ensure_php_pool() {
 ; opanel_PHP_FPM_IDLE_TIMEOUT, opanel_PHP_FPM_MAX_REQUESTS,
 ; opanel_PHP_FPM_REQUEST_TERMINATE_TIMEOUT.
 ; OLS starts this site as an LSAPI external app from the vhost config.
+;
+; NOTE: open_basedir, upload_tmp_dir and session.save_path used to be written
+; here. They never took effect. This directory is not the build's ini scan
+; directory (that is etc/php/<ver>/mods-available), and the scan directory only
+; loads *.ini while these fragments are *.conf -- so every site ran with an
+; empty open_basedir. They now live in each site's own vhost phpIniOverride
+; block, which is scoped to one virtual host by construction; putting a
+; per-site value in this build-shared directory could not have been correct
+; even if it were read. See openlitespeed._php_open_basedir.
 user = ${user}
 group = ${user}
 LSAPI_CHILDREN = ${PHP_FPM_MAX_CHILDREN}
 LSAPI_MAX_IDLE = ${PHP_FPM_PROCESS_IDLE_TIMEOUT}
 LSAPI_MAX_REQS = ${PHP_FPM_MAX_REQUESTS}
 LSAPI_MAX_PROCESS_TIME = ${PHP_FPM_REQUEST_TERMINATE_TIMEOUT}
-open_basedir = ${target}:${sess_dir}:${upload_dir}:/usr/share/php
-upload_tmp_dir = ${upload_dir}
-session.save_path = ${sess_dir}
 POOL
   # Skip the OLS restart when the pool config is byte-identical to what is
   # already deployed -- a bulk site refresh writes the same file back for every
@@ -3303,6 +3344,20 @@ ensure_php_runtime_dirs() {
   require_linux_user "$user"
   install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /tmp/lshttpd
   chmod g+s /tmp/lshttpd 2>/dev/null || true
+  # Assert the shared parents before creating anything under them. Nothing in
+  # this repository used to create them, so their mode was whatever the distro
+  # packages left: php-common ships /var/lib/php/sessions as 1733, i.e. sticky
+  # but world-writable. The sticky bit stops a local uid removing another's
+  # entry, not pre-creating a path component that a later root `install -d`
+  # would resolve. `install -d` only applies -o/-g/-m to components it creates,
+  # so an existing directory keeps its mode and has to be reset explicitly.
+  install -d -o root -g root -m 0755 /var/lib/php
+  install -d -o root -g root -m 0751 /var/lib/php/sessions
+  install -d -o root -g root -m 0751 /var/lib/php/uploads
+  chown root:root /var/lib/php /var/lib/php/sessions /var/lib/php/uploads
+  chmod 0755 /var/lib/php
+  chmod 0751 /var/lib/php/sessions /var/lib/php/uploads
+  chmod -t /var/lib/php/sessions /var/lib/php/uploads 2>/dev/null || true
   install -d -o "$user" -g "$user" -m 0700 "$sess_dir"
   install -d -o "$user" -g "$user" -m 0700 "$upload_dir"
   chmod g-s "$upload_dir" 2>/dev/null || true
@@ -3545,6 +3600,53 @@ case "$cmd" in
     rm -f "/usr/local/lsws/conf/opanel/waf/sites/${safe_domain}.conf"
     ols_sync_main_config
     restart_openlitespeed 2>/dev/null || true
+    ;;
+
+  # The other half of the suspend path that was never implemented. Renaming the
+  # file is enough on its own because ols_sync_main_config enumerates vhosts
+  # with glob("*/vhost.conf"), so a suspended site drops out of the generated
+  # main config and its host mapping instead of leaving a dangling configFile
+  # reference that would stop OpenLiteSpeed loading.
+  ols-vhost-suspend)
+    [[ $# -eq 1 ]] || deny "usage: ols-vhost-suspend <domain>"
+    safe_domain="$1"
+    require_domain "$safe_domain"
+    vhost_conf="$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
+    if [[ -f "$vhost_conf" ]]; then
+      mv -f -- "$vhost_conf" "${vhost_conf}.suspended"
+    elif [[ ! -f "${vhost_conf}.suspended" ]]; then
+      deny "no vhost config for $safe_domain"
+    fi
+    ols_sync_main_config
+    restart_openlitespeed 2>/dev/null || true
+    echo "suspended $safe_domain"
+    ;;
+
+  ols-vhost-restore)
+    [[ $# -eq 1 ]] || deny "usage: ols-vhost-restore <domain>"
+    safe_domain="$1"
+    require_domain "$safe_domain"
+    vhost_conf="$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
+    if [[ -f "${vhost_conf}.suspended" ]]; then
+      mv -f -- "${vhost_conf}.suspended" "$vhost_conf"
+    elif [[ ! -f "$vhost_conf" ]]; then
+      deny "no suspended vhost config for $safe_domain"
+    fi
+    ols_sync_main_config
+    restart_openlitespeed 2>/dev/null || true
+    echo "restored $safe_domain"
+    ;;
+
+  # openlitespeed.test_config() has always called this and always got "unknown
+  # command" back, so with check=False the configuration test silently reported
+  # success for every input.
+  ols-config-test)
+    [[ $# -eq 0 ]] || deny "usage: ols-config-test"
+    if [[ -x /usr/local/lsws/bin/litespeed ]]; then
+      /usr/local/lsws/bin/litespeed -t 2>&1 || deny "OpenLiteSpeed configuration test failed"
+    else
+      deny "OpenLiteSpeed binary not found"
+    fi
     ;;
 
   # ---- ClamAV malware scanning (optional) -------------------------------
@@ -4449,6 +4551,32 @@ PY
   panel-user-delete)
     [[ $# -eq 1 ]] || deny "usage: panel-user-delete <panel-user>"
     delete_panel_user_runtime "$1"
+    ;;
+
+  # provisioning.suspend_account and unsuspend_account have called these two
+  # since they were written, but the case labels never existed: the calls fell
+  # through to the default arm's "unknown command", and because both call sites
+  # pass check=False the non-zero exit was discarded and the provisioning job
+  # was still recorded "completed". A suspended account therefore kept SFTP,
+  # its websites, its crontab and its MariaDB grants. See
+  # docs/whmcs-opanel-contract.md, Suspend step 2 / Unsuspend step 1.
+  panel-user-lock)
+    [[ $# -eq 1 ]] || deny "usage: panel-user-lock <panel-user>"
+    require_linux_user "$1"
+    id -u "$1" >/dev/null 2>&1 || deny "panel Linux user does not exist: $1"
+    usermod -L "$1" || deny "could not lock $1"
+    # Locking only stops the next authentication. Existing SFTP sessions keep
+    # their file access until the process dies, so they are cut here.
+    pkill -KILL -u "$1" 2>/dev/null || true
+    echo "locked $1"
+    ;;
+
+  panel-user-unlock)
+    [[ $# -eq 1 ]] || deny "usage: panel-user-unlock <panel-user>"
+    require_linux_user "$1"
+    id -u "$1" >/dev/null 2>&1 || deny "panel Linux user does not exist: $1"
+    usermod -U "$1" || deny "could not unlock $1"
+    echo "unlocked $1"
     ;;
 
   site-runtime-ensure)

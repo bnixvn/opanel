@@ -1337,7 +1337,12 @@ log "Refreshing managed site config"
 #     gated on SITE_HARDEN_VERSION, or forced by --refresh-sites / a provisioning
 #     site. A plain backend or malware-scanner change no longer triggers it.
 SITE_FP_FILE="/var/lib/opanel/site-refresh.fingerprint"
-SITE_HARDEN_VERSION=1
+# 2: ensure_panel_user_home tightens /home/<user> from 0751 to 0750 and adds the
+# opanel account to each site group. Existing boxes still have 0751, which let
+# any site's Linux user traverse into another tenant's home and read their
+# wp-config.php, so they have to be re-hardened rather than waiting for the next
+# unrelated permission change.
+SITE_HARDEN_VERSION=2
 SITE_HARDEN_MARKER="/var/lib/opanel/site-harden.version"
 # harden_existing_panel_users v2 applies the identical tree scheme, so a box
 # already stamped there needs no first-time re-harden from this loop.
@@ -1352,6 +1357,9 @@ site_refresh_fingerprint() {
     "$APP_DIR/backend/app/services/waf.py" \
     "$APP_DIR/backend/app/services/site_users.py" \
     "$APP_DIR/backend/app/api/websites.py" \
+    "$APP_DIR/backend/app/templates/openlitespeed/php.conf.j2" \
+    "$APP_DIR/backend/app/templates/openlitespeed/wordpress.conf.j2" \
+    "$APP_DIR/backend/app/templates/openlitespeed/static.conf.j2" \
     2>/dev/null | sha256sum | awk '{print $1}'
 }
 _site_refresh_progress() {

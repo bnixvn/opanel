@@ -386,20 +386,18 @@ def suspend_account(db: Session, external_id: str, reason: str = "Suspended by W
     user.token_version = (user.token_version or 0) + 1
     db.commit()
 
-    # Lock Linux user
+    # Lock the Linux user. This is what removes SFTP; a failure here means the
+    # account is not actually suspended, so it fails the job instead of being
+    # swallowed. Both of these calls used to pass check=False against helper
+    # subcommands that did not exist, which reported success while doing
+    # nothing at all.
     linux_user = site_users.linux_user_for_panel_username(user.username)
-    try:
-        shell.privileged("panel-user-lock", helper_args=[linux_user], check=False)
-    except Exception:
-        pass
+    shell.privileged("panel-user-lock", helper_args=[linux_user])
 
-    # Disable vhost
-    website = db.query(Website).filter(Website.id == account.primary_website_id).first() if account.primary_website_id else None
-    if website:
-        try:
-            openlitespeed.suspend_vhost(website.domain)
-        except Exception:
-            pass
+    # Disable every vhost the account owns, not just the primary one -- the
+    # others kept serving through a suspension.
+    for website in db.query(Website).filter(Website.owner_id == account.user_id).all():
+        openlitespeed.suspend_vhost(website.domain)
 
     account.status = "suspended"
     account.updated_at = datetime.utcnow()
@@ -422,24 +420,19 @@ def unsuspend_account(db: Session, external_id: str) -> HostingAccount:
         _finish_job(db, job, "failed", "User not found")
         raise ValueError("User not found")
 
-    # Unlock Linux user
+    # Unlock the Linux user. Mirrors suspend: a failure fails the job rather
+    # than leaving the operator believing service was restored.
     linux_user = site_users.linux_user_for_panel_username(user.username)
-    try:
-        shell.privileged("panel-user-unlock", helper_args=[linux_user], check=False)
-    except Exception:
-        pass
+    shell.privileged("panel-user-unlock", helper_args=[linux_user])
 
-    # Enable panel user
+    # Enable panel user. token_version is deliberately NOT bumped here: suspend
+    # already moved it forward, so every pre-suspension JWT stays rejected.
     user.is_active = True
     db.commit()
 
-    # Restore vhost
-    website = db.query(Website).filter(Website.id == account.primary_website_id).first() if account.primary_website_id else None
-    if website:
-        try:
-            openlitespeed.restore_vhost(website.domain)
-        except Exception:
-            pass
+    # Restore every vhost suspend took down.
+    for website in db.query(Website).filter(Website.owner_id == account.user_id).all():
+        openlitespeed.restore_vhost(website.domain)
 
     account.status = "active"
     account.updated_at = datetime.utcnow()
