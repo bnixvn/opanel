@@ -62,8 +62,11 @@ h1,h2{color:var(--brand-ink)}
    what can be done with it. */
 .restore-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:4px 0 10px;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-lg)}
 .restore-toolbar .hint{margin:0;margin-right:auto}
-.backup-item.restore-row{grid-template-columns:auto minmax(0,1fr) max-content max-content}
-.backup-item.restore-row.picked{border-color:var(--primary-soft);background:var(--surface-hover)}
+/* .backups-page .backup-item sets two columns at the same specificity and
+   later in this file, so it wins a tie; reach past it rather than relying on
+   order. */
+.backups-page .backup-list .backup-item.restore-row{grid-template-columns:auto minmax(0,1fr) max-content max-content;align-items:center}
+.backups-page .backup-list .backup-item.restore-row.picked{border-color:var(--primary-soft);background:var(--surface-hover)}
 .restore-pick{display:grid;place-items:center;margin:0}
 .restore-pick input{width:16px;height:16px;min-height:0;margin:0}
 .user-metric{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;background:var(--surface-alt);border:1px solid var(--border);border-radius:999px;color:var(--text-secondary);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
