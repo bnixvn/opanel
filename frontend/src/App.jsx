@@ -1463,7 +1463,13 @@ function App() {
   async function assignDomainToUser() {
     if (!assignWebsiteId || !assignUserId) return;
     const data = await request(`/websites/${assignWebsiteId}`, { method: 'PATCH', body: JSON.stringify({ owner_id: Number(assignUserId) }) }, 'Assigning domain to user...');
-    if (data) { setNotice(`Assigned domain ${data.domain} to user ID ${assignUserId}`); await refreshAll(); }
+    if (data) {
+      // Name the account, not its row id -- the operator picked a username from
+      // the dropdown and has no idea which number that was.
+      const owner = users.find(user => String(user.id) === String(assignUserId));
+      setNotice(`${data.domain} now belongs to ${owner?.username || `user #${assignUserId}`}.`);
+      await refreshAll();
+    }
   }
 
   async function createWordPress() {
