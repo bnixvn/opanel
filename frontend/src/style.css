@@ -637,6 +637,9 @@ a:hover{color:var(--primary-ink-hover)}
   .actions{display:grid;grid-template-columns:1fr;align-items:stretch}
   .actions button,.actions .button-link,.actions .upload-button,.actions select{width:100%;max-width:none}
   .row,.db-row,.user-row{grid-template-columns:1fr;gap:7px;padding:12px}
+  /* Stacked, so the action cluster reads with the text above it rather
+     than hugging the far edge. */
+  .db-actions{justify-content:flex-start;flex-wrap:wrap}
   .user-edit-grid{grid-template-columns:1fr 1fr}
   .row-actions{justify-content:stretch;display:grid;grid-template-columns:1fr}
   .row-actions button{width:100%}
@@ -721,6 +724,9 @@ a:hover{color:var(--primary-ink-hover)}
   .actions{display:grid;grid-template-columns:1fr;align-items:stretch}
   .actions button,.actions .button-link,.actions .upload-button,.actions select{width:100%;max-width:none}
   .row,.db-row,.user-row{grid-template-columns:1fr;gap:7px;padding:12px}
+  /* Stacked, so the action cluster reads with the text above it rather
+     than hugging the far edge. */
+  .db-actions{justify-content:flex-start;flex-wrap:wrap}
   .row-actions{justify-content:stretch;display:grid;grid-template-columns:1fr}
   .row-actions button{width:100%}
   .site-head{display:grid;gap:8px}
@@ -1097,6 +1103,9 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
   .actions{display:grid;grid-template-columns:1fr;align-items:stretch}
   .actions button,.actions .button-link,.actions .upload-button,.actions select{width:100%;max-width:none}
   .row,.db-row,.user-row{grid-template-columns:1fr;gap:7px;padding:12px}
+  /* Stacked, so the action cluster reads with the text above it rather
+     than hugging the far edge. */
+  .db-actions{justify-content:flex-start;flex-wrap:wrap}
   .row-actions{justify-content:stretch;display:grid;grid-template-columns:1fr}
   .row-actions button{width:100%}
   .site-head{display:grid;gap:8px}
