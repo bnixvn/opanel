@@ -351,6 +351,8 @@ function App() {
   const [databases, setDatabases] = useState([]);
   const [newDatabase, setNewDatabase] = useState({ db_name: '', db_user: '', db_password: '' });
   const [createdDbInfo, setCreatedDbInfo] = useState(null);
+  // { db, ownerId } while the move-owner dialog is open.
+  const [dbOwnerModal, setDbOwnerModal] = useState(null);
   const [copiedField, setCopiedField] = useState(null);
   const [users, setUsers] = useState([]);
   const [usageLoading, setUsageLoading] = useState(false);
@@ -1740,27 +1742,31 @@ function App() {
     return `${owner?.username || `user #${item.owner_id}`} · no website`;
   }
 
-  async function moveDatabaseOwner(item) {
-    // Only offered for a database no website points at. One that belongs to a
-    // site moves with the site, so the two can never drift apart.
-    const choices = users.filter(user => user.id !== item.owner_id);
+  // Only offered for a database no website points at. One that belongs to a
+  // site moves with the site, so the two can never drift apart.
+  function dbOwnerChoices(item) {
+    return users.filter(user => user.id !== item?.owner_id);
+  }
+
+  function openDbOwnerModal(item) {
+    const choices = dbOwnerChoices(item);
     if (choices.length === 0) { setError('No other account to move it to.'); return; }
-    const menu = choices.map((user, index) => `${index + 1}. ${user.username}`).join('\n');
-    const picked = prompt(`Hand ${item.db_name} to which account?
+    setDbOwnerModal({ db: item, ownerId: String(choices[0].id) });
+  }
 
-${menu}
-
-Enter a number.`);
-    if (picked === null) return;
-    const choice = choices[Number(picked) - 1];
-    if (!choice) { setError('That is not one of the listed accounts.'); return; }
-    if (!confirm(`Move ${item.db_name} to ${choice.username}?
-
-The database, its MySQL user and its password do not change, so anything using it keeps working.`)) return;
+  async function submitDbOwnerChange() {
+    if (!dbOwnerModal) return;
+    const { db: item, ownerId } = dbOwnerModal;
+    const choice = users.find(user => String(user.id) === String(ownerId));
+    if (!choice) { setError('Pick an account to move it to.'); return; }
     const data = await request(`/databases/${item.id}/owner`, {
       method: 'POST', body: JSON.stringify({ owner_id: choice.id }),
     }, 'Moving database...');
-    if (data) { setNotice(`${item.db_name} now belongs to ${choice.username}.`); await refreshAll(); }
+    if (data) {
+      setDbOwnerModal(null);
+      setNotice(`${item.db_name} now belongs to ${choice.username}.`);
+      await refreshAll();
+    }
   }
 
   async function changeDbPassword(id) {
@@ -3840,11 +3846,22 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
           return <div className="row db-row" key={db.id}>
           <span><strong>{db.db_name}</strong>{isAdmin && <small className="db-owner">{dbOwnerLabel(db)}</small>}</span>
           <span style={{color:'var(--text-muted)'}}>{db.db_user}</span>
-          <button disabled={!!loading} onClick={() => openPhpMyAdmin(db.id)}>phpMyAdmin</button>
-          <button disabled={!!loading} onClick={() => downloadDatabase(db.id, db.db_name)}><Download size={14}/> SQL</button>
-          <button disabled={!!loading} onClick={() => changeDbPassword(db.id)}><KeyRound size={14}/> Password</button>
-          {isAdmin && !db.website_id && <button className="secondary-light" disabled={!!loading} onClick={() => moveDatabaseOwner(db)} title="Hand this database to another account"><MoveRight size={14}/> Owner</button>}
-          <button className="danger" disabled={!!loading} onClick={() => deleteDatabase(db.id, db.db_name)}><Trash2 size={14}/></button>
+          <span className="db-actions">
+            <button disabled={!!loading} onClick={() => openPhpMyAdmin(db.id)}>phpMyAdmin</button>
+            <button className="mini secondary-light" disabled={!!loading} title="Download SQL dump"
+                    aria-label={`Download SQL dump of ${db.db_name}`}
+                    onClick={() => downloadDatabase(db.id, db.db_name)}><Download size={14}/></button>
+            <button className="mini secondary-light" disabled={!!loading} title="Change database password"
+                    aria-label={`Change the password for ${db.db_name}`}
+                    onClick={() => changeDbPassword(db.id)}><KeyRound size={14}/></button>
+            {isAdmin && !db.website_id && <button className="mini secondary-light" disabled={!!loading}
+                    title="Move to another account"
+                    aria-label={`Move ${db.db_name} to another account`}
+                    onClick={() => openDbOwnerModal(db)}><MoveRight size={14}/></button>}
+            <button className="mini danger" disabled={!!loading} title="Delete database"
+                    aria-label={`Delete ${db.db_name}`}
+                    onClick={() => deleteDatabase(db.id, db.db_name)}><Trash2 size={14}/></button>
+          </span>
         </div>})}
       </div>
       <p className="hint">Click phpMyAdmin to sign in directly. Token expires after 60s.</p>
@@ -5525,6 +5542,37 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
             <label><span>Current password</span><input type="password" value={profileForm.current_password} onChange={e => setProfileForm(prev => ({ ...prev, current_password: e.target.value }))} placeholder="Required to confirm" /></label>
             {currentUser?.totp_enabled && <label><span>2FA code</span><input value={profileForm.code} onChange={e => setProfileForm(prev => ({ ...prev, code: e.target.value }))} placeholder="6-digit code" maxLength={6} /></label>}
             <button disabled={!!loading || !profileForm.password || profileForm.password.length < 12} onClick={changeMyPasswordFromProfile}><KeyRound size={14}/> Change password</button>
+          </div>
+        </div>
+      </div>
+    </div>}
+    {dbOwnerModal && <div className="modal-overlay" onClick={() => setDbOwnerModal(null)}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Move database</h3>
+          <button className="secondary-light" onClick={() => setDbOwnerModal(null)} aria-label="Close"><X size={16}/></button>
+        </div>
+        <div className="modal-body">
+          <div className="modal-section">
+            <div className="move-db-summary">
+              <label>Database</label><strong>{dbOwnerModal.db.db_name}</strong>
+              <label>Currently</label>
+              <span>{users.find(u => u.id === dbOwnerModal.db.owner_id)?.username || `user #${dbOwnerModal.db.owner_id}`}</span>
+            </div>
+            <label>
+              <span>Move to</span>
+              <select value={dbOwnerModal.ownerId}
+                      onChange={e => setDbOwnerModal(prev => ({ ...prev, ownerId: e.target.value }))}>
+                {dbOwnerChoices(dbOwnerModal.db).map(user => (
+                  <option key={user.id} value={user.id}>{user.username}</option>
+                ))}
+              </select>
+            </label>
+            <p className="hint">The database, its MySQL user and its password do not change, so anything already connected keeps working.</p>
+          </div>
+          <div className="modal-actions">
+            <button className="secondary-light" onClick={() => setDbOwnerModal(null)}>Cancel</button>
+            <button disabled={!!loading || !dbOwnerModal.ownerId} onClick={submitDbOwnerChange}><MoveRight size={14}/> Move database</button>
           </div>
         </div>
       </div>
