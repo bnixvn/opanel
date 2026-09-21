@@ -638,11 +638,21 @@ harden_existing_panel_users() {
     id -u "$user" >/dev/null 2>&1 || continue
     getent group "$user" >/dev/null || groupadd "$user" 2>/dev/null || true
     usermod -aG "$user" www-data 2>/dev/null || true
+    # The panel reads site trees in-process as the opanel account (file manager,
+    # backup writer), so it needs group access now that "other" no longer grants
+    # any. Mirrors ensure_panel_user_home in the helper.
+    usermod -aG "$user" opanel 2>/dev/null || true
     home_dir="/home/$user"
     usermod --home "$home_dir" --shell /usr/sbin/nologin --gid "$user" "$user" 2>/dev/null || true
     mkdir -p "$home_dir"
     chown "root:$user" "$home_dir"
-    chmod 0751 "$home_dir"
+    # 0750, not 0751 -- and this has to agree with ensure_panel_user_home in
+    # opanel-helper.sh, which asserts the same thing. This loop runs on every
+    # update regardless of the harden marker, so while it said 0751 it silently
+    # reverted the helper's 0750 and reopened cross-tenant traversal into
+    # /home/<other>/<domain>. Observed on the test box: the mode went back to
+    # 0751 on the next update after being tightened.
+    chmod 0750 "$home_dir"
     chmod a-s "$home_dir" 2>/dev/null || true
     chmod -t "$home_dir" 2>/dev/null || true
     if command -v setfacl >/dev/null 2>&1; then

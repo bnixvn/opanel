@@ -115,6 +115,22 @@ def test_panel_linux_users_are_sftp_chroot_only():
     # ChrootDirectory.
     assert 'chmod 0750 "$home_dir"' in helper
     assert 'chmod 0751 "$home_dir"' not in helper
+    # The same invariant is written in update.sh, which re-asserts panel-user
+    # home permissions on every run regardless of the harden marker. While the
+    # two disagreed, the next update silently reverted the helper's 0750 and
+    # reopened cross-tenant traversal -- observed on a live box. Every place
+    # that sets this mode has to agree.
+    for script_path in (INSTALL_SCRIPT, UPDATE_SCRIPT):
+        script = script_path.read_text(encoding="utf-8")
+        assert 'chmod 0751 "$home_dir"' not in script, (
+            f"{script_path.name} still sets a panel-user home to 0751, which "
+            "undoes the helper on the next update"
+        )
+        if 'chmod 0750 "$home_dir"' in script:
+            assert 'usermod -aG "$user" opanel' in script, (
+                f"{script_path.name} tightens the home without giving the panel "
+                "account group access, which breaks the file manager and backups"
+            )
     assert 'usermod -aG "$user" www-data' in helper
     # The panel itself must keep read access once "other" loses it.
     assert 'usermod -aG "$user" opanel' in helper
