@@ -58,14 +58,34 @@ def _remove_user_from_backup_schedules(db: Session, user_id: int) -> None:
 
 
 def _delete_owned_website(db: Session, website: Website) -> None:
-    db_item = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
-    if db_item:
+    # .all(), not .first(): a website may carry more than one database, and the
+    # extra rows used to survive the deletion with their MariaDB schemas intact.
+    db_items = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).all()
+    for db_item in db_items:
         mariadb.drop_database(db_item.db_name, db_item.db_user)
     openlitespeed.remove_vhost(website.domain)
     wordpress.delete_wordpress(website.root_path)
-    if db_item:
+    for db_item in db_items:
         db.delete(db_item)
     db.delete(website)
+
+
+def _delete_orphan_databases(db: Session, owner_id: int) -> list[str]:
+    """Drop the owner's databases that no website teardown reached.
+
+    POST /api/databases creates rows with website_id NULL, so a per-website
+    lookup could never see them -- on a live box a third of the rows looked
+    like that. Because db_name is derived deterministically from the domain and
+    create_database issues CREATE DATABASE IF NOT EXISTS, a surviving schema is
+    silently adopted by the next website created for the same domain and filed
+    under its new owner, so this is not merely leftover disk usage.
+    """
+    dropped: list[str] = []
+    for item in db.query(DatabaseAccount).filter(DatabaseAccount.owner_id == owner_id).all():
+        mariadb.drop_database(item.db_name, item.db_user)
+        db.delete(item)
+        dropped.append(item.db_name)
+    return dropped
 
 
 @router.post("", response_model=UserOut)
@@ -201,6 +221,8 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
         for website in websites:
             _delete_owned_website(db, website)
             deleted_domains.append(website.domain)
+        # Anything owned but not attached to one of those websites.
+        _delete_orphan_databases(db, user.id)
         _remove_user_from_backup_schedules(db, user.id)
         site_users.delete_panel_user(user.username)
     except (RuntimeError, ValueError) as exc:

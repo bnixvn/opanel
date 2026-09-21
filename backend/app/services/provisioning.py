@@ -5,6 +5,7 @@ Every public function is idempotent where the contract requires it.
 
 import hashlib
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -456,16 +457,39 @@ def terminate_account(db: Session, external_id: str) -> bool:
     websites = db.query(Website).filter(Website.owner_id == account.user_id).all() if user else []
 
     for website in websites:
-        # Full teardown: drop the site database, remove files, and the vhost.
-        db_acc = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
-        if db_acc:
-            mariadb.drop_database(db_acc.db_name, db_acc.db_user)
-            db.delete(db_acc)
+        # Full teardown: remove files and the vhost. Databases are dropped
+        # below, by ownership rather than per website.
         openlitespeed.remove_vhost(website.domain)
         wordpress.delete_wordpress(website.root_path)
         db.delete(website)
 
     if user:
+        # Drop every database the account owns, not one per website. The old
+        # lookup was `DatabaseAccount.website_id == website.id` with .first(),
+        # which missed three whole classes: standalone databases (website_id is
+        # NULL, which is what POST /api/databases creates and what a third of
+        # the rows on a live box looked like), any database past the first on a
+        # website, and -- for every WHMCS-provisioned WordPress account --
+        # all of them, because create_account calls mariadb.create_database
+        # directly and never inserts a DatabaseAccount row at all, so the
+        # lookup always returned None.
+        #
+        # What survived was not inert. db_name is derived deterministically
+        # from the domain by safe_db_identifier, and create_database issues
+        # CREATE DATABASE IF NOT EXISTS, so a later website for the same domain
+        # silently adopted the previous tenant's schema and was recorded under
+        # the new owner. docs/whmcs-opanel-contract.md promises full teardown.
+        for db_acc in db.query(DatabaseAccount).filter(
+            DatabaseAccount.owner_id == user.id
+        ).all():
+            try:
+                mariadb.drop_database(db_acc.db_name, db_acc.db_user)
+            except Exception as exc:  # keep tearing down the rest
+                logging.getLogger(__name__).warning(
+                    "terminate: could not drop database %s: %s", db_acc.db_name, exc
+                )
+            db.delete(db_acc)
+
         # Remove the Linux/SFTP user and its home directory entirely.
         site_users.delete_panel_user(user.username)
         db.delete(user)

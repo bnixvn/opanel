@@ -317,11 +317,18 @@ def create_user_backup(user: User, db, filename: str | None = None,
             "kind": "opanel_user",
             "version": 1,
             "generated_at": datetime.utcnow().isoformat() + "Z",
+            # No hashed_password and no role. The archive leaves the box --
+            # upload_to_s3 does a plain upload_file with no client-side
+            # encryption -- so exporting the account's bcrypt hash handed
+            # anyone who can read the bucket material for an offline attack,
+            # and manifest.json is deliberately the first member so it comes
+            # out of a few kilobytes without touching the site data. The
+            # restore no longer reads either field (it always creates an
+            # end_user with a generated password), so there is nothing left to
+            # export them for.
             "user": {
                 "username": user.username,
                 "email": user.email,
-                "hashed_password": user.hashed_password,
-                "role": user.role,
                 "is_active": user.is_active,
                 "website_limit": user.website_limit,
                 "storage_limit_mb": user.storage_limit_mb,

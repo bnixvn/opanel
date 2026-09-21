@@ -935,16 +935,34 @@ def _available_email(db, username: str, preferred: str) -> tuple[str, str | None
     return (preferred or f"{username}@import.local"), None
 
 
-def _delete_existing_user(db, username: str) -> None:
+def _overwrite_scope(db, username: str, domains: list[str]) -> list[str]:
+    """Websites the named account owns that this archive does NOT bring back.
+
+    An overwrite used to call a _delete_existing_user that removed every
+    DatabaseAccount and every Website the account owned -- including sites the
+    archive never mentions -- and then the User row itself. The clash message
+    shown beforehand listed only the archive's own domains and then recommended
+    re-running with overwrite enabled, so the operator authorised a deletion
+    strictly wider than the one they were shown. _process_archive also commits
+    several times mid-run, so the deletion was durable long before the import
+    finished and the job handler's rollback could not undo it, while the
+    underlying MariaDB databases, site files and vhosts were left on disk with
+    no panel record pointing at them.
+
+    Overwrite now replaces only what the archive carries: _delete_existing_domain
+    handles each archive domain (its website row, aliases and per-website
+    DatabaseAccounts), the User row is kept and reused, and anything outside the
+    archive is reported to the operator rather than removed.
+    """
     user = db.query(User).filter(User.username == username).first()
-    if user:
-        _log(f"  Removing existing panel user {username}")
-        db.query(DatabaseAccount).filter(DatabaseAccount.owner_id == user.id).delete()
-        for w in db.query(Website).filter(Website.owner_id == user.id).all():
-            db.query(WebsiteAlias).filter(WebsiteAlias.website_id == w.id).delete()
-            db.delete(w)
-        db.delete(user)
-        db.flush()
+    if user is None:
+        return []
+    named = {d.strip().lower() for d in domains if d}
+    return sorted(
+        w.domain
+        for w in db.query(Website).filter(Website.owner_id == user.id).all()
+        if (w.domain or "").strip().lower() not in named
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1014,10 +1032,21 @@ def _process_archive(
                 " DirectAdmin account first."
             )
 
-    # Remove any existing records for these domains / user
+    # Remove existing records for the domains this archive brings back, and
+    # nothing else. Anything the account owns that the archive does not mention
+    # is left in place and reported, so overwrite cannot silently delete a site
+    # the operator was never shown.
     for domain in domains:
         _delete_existing_domain(db, domain)
-    _delete_existing_user(db, username)
+    if overwrite:
+        untouched = _overwrite_scope(db, username, domains)
+        if untouched:
+            note = (
+                f"Kept {len(untouched)} website(s) of '{username}' that this archive "
+                "does not contain: " + ", ".join(untouched)
+            )
+            summary["warnings"].append(note)
+            _log(f"  {note}")
 
     # Create panel user
     password = secrets.token_urlsafe(16)
