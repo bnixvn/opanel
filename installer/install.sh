@@ -682,7 +682,7 @@ install_panel_cli() {
 }
 
 validate_privileged_helper() {
-  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper wp --info >/dev/null
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper wp-info >/dev/null
   # Seed /etc/opanel/certs before the panel first starts: a self-signed default
   # so HTTPS works out of the box, plus a directory per Let's Encrypt domain so
   # any site with SSL can reach the panel under its own certificate.

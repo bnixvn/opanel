@@ -72,9 +72,31 @@ def test_wp_cli_refuses_to_run_without_a_site_user():
         )
 
 
-def test_the_helper_wp_case_is_gone():
+def test_no_helper_case_runs_wp_cli_as_www_data_with_caller_argv():
+    """The defect was caller-chosen argv, not www-data running wp at all.
+
+    wp-cli bootstraps WordPress from --path, so forwarding "$@" to it as
+    www-data executed a tenant's wp-config.php and plugins as an account that
+    is in every panel user's group. A fixed-argv `wp --info` health check for
+    the installer has none of that, so wp-info is allowed to keep it.
+    """
     assert 'deny "wp is no longer supported' in HELPER
-    assert "runuser -u www-data -- env HOME=/var/www" not in HELPER
+    for line in HELPER.splitlines():
+        if "www-data" in line and "/usr/local/bin/wp" in line:
+            assert line.rstrip().endswith("--info"), (
+                f"www-data wp-cli invocation with non-fixed argv: {line.strip()}"
+            )
+            assert '"$@"' not in line
+
+    info = HELPER[HELPER.index("  wp-info)") : HELPER.index("  wp-info)") + 500]
+    assert "[[ $# -eq 0 ]]" in info, "wp-info must accept no arguments at all"
+
+
+def test_the_installers_use_the_fixed_argv_health_check():
+    for name in ("install.sh", "update.sh"):
+        script = (PROJECT_ROOT / "installer" / name).read_text(encoding="utf-8")
+        assert "opanel-helper wp-info" in script
+        assert "opanel-helper wp --info" not in script
 
 
 def test_helper_cron_cases_require_a_validated_user():

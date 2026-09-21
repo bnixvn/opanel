@@ -4755,6 +4755,16 @@ PY
     deny "wp is no longer supported; use wp-site <site-user> <args...>"
     ;;
 
+  # Fixed-argv health check for the installer's helper validation. `wp --info`
+  # touches no site tree and takes nothing from the caller, which is the whole
+  # difference from the removed `wp` case: that one forwarded caller-chosen
+  # argv, and wp-cli bootstraps WordPress from --path.
+  wp-info)
+    [[ $# -eq 0 ]] || deny "usage: wp-info"
+    [[ -x /usr/local/bin/wp ]] || deny "wp-cli not found"
+    exec runuser -u www-data -- env HOME=/var/www       WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable'       php -d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp --info
+    ;;
+
   wp-site)
     [[ $# -ge 2 ]] || deny "usage: wp-site <site-user> <args...>"
     user="$1"; shift

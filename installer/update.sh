@@ -1155,7 +1155,7 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
     install -m 0440 -o root -g root  "$SOURCE_DIR/installer/files/opanel-sudoers"   /etc/sudoers.d/opanel
     sed -i 's/\r$//' /etc/sudoers.d/opanel
     visudo -c -f /etc/sudoers.d/opanel >/dev/null
-    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper wp --info >/dev/null
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper wp-info >/dev/null
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper php-fpm-retune >/dev/null || \
       echo "  (warning: could not retune existing PHP-FPM pools; site refresh will retry later)"
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper mariadb-retune >/dev/null || \
