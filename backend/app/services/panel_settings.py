@@ -149,7 +149,10 @@ def current_settings() -> dict:
     ssl_enabled = panel_url.startswith("https://") and has_panel_certificate()
     from app.services import malware_scan
 
-    mw = malware_scan.refresh_status()
+    # Cached: current_settings() is reached by three unauthenticated routes and
+    # refresh_status() forks sudo plus the root helper every time. See
+    # malware_scan.cached_status.
+    mw = malware_scan.cached_status()
     return {
         "app_name": app_name,
         "panel_url": panel_url,
@@ -385,6 +388,7 @@ def add_linux_malware_detect() -> dict:
     Runs the clone + install in the background so the API call returns at once;
     the Malware Scanner page reflects ``lmd_installed`` once it finishes.
     """
+    _malware_scan.invalidate_status_cache()
     status = _malware_scan.refresh_status()
     if not status.get("installed"):
         raise ValueError("Install ClamAV first, then add Linux Malware Detect.")
@@ -405,6 +409,7 @@ def _add_lmd_flow() -> None:
     try:
         _malware_scan.install_lmd()
     except Exception as exc:  # noqa: BLE001 - record failure, do not crash thread
+        _malware_scan.invalidate_status_cache()
         state = _malware_scan.refresh_status()
         state["detail"] = f"Linux Malware Detect install failed: {exc}"
         _malware_scan._write_status(state)

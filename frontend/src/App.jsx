@@ -129,7 +129,16 @@ function formatLogDuration(value = 0) {
 }
 
 function csvEscape(value) {
-  const text = String(value ?? '');
+  let text = String(value ?? '');
+  // Neutralize spreadsheet formulas before quoting. Three of the exported WAF
+  // access-log columns -- path, user_agent and reason -- are copied verbatim
+  // out of the OpenLiteSpeed access line, so their contents are chosen by
+  // whoever sent the request to the hosted site. A cell starting with =, +, -,
+  // @, tab or CR is a formula to a spreadsheet, which is what an admin opens
+  // the exported .csv with. Quoting alone does not stop it: the consumer
+  // evaluates the cell after unquoting. A leading apostrophe is the standard
+  // neutralizer and is what every major spreadsheet treats as "this is text".
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

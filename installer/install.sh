@@ -522,8 +522,21 @@ copy_sources() {
 
 build_frontend() {
   cd "${APP_DIR}/frontend"
-  rm -rf node_modules package-lock.json dist .vite
-  npm install
+  # Keep package-lock.json. Deleting it and running `npm install` re-resolved
+  # the whole dependency graph against the live registry, as root, on the
+  # production host, and bundled the result into the SPA served to panel
+  # admins -- so the reviewed, digest-bound graph the committed lockfile
+  # represents was discarded at exactly the step where it mattered.
+  # requirements.txt pins every Python dependency exactly; this is the same
+  # expectation. `npm ci` falls back to `npm install` only if the lockfile and
+  # package.json have genuinely drifted, which is a build problem to fix, not
+  # something to do silently on every install.
+  rm -rf node_modules dist .vite
+  npm ci || {
+    echo "WARNING: npm ci failed (package-lock.json out of sync with package.json)."
+    echo "WARNING: falling back to npm install -- the installed graph is NOT the reviewed one."
+    npm install
+  }
   VITE_API_URL=/api npm run build
   if [[ ! -f dist/index.html ]]; then
     fail "Frontend build failed: ${APP_DIR}/frontend/dist/index.html is missing"

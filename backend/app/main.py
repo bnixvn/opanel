@@ -229,10 +229,28 @@ def sso_intermediary_script():
     )
 
 
-@app.post("/sso", include_in_schema=False)
-def sso_login_post(request: Request, response: Response, token: str = Form(...), db: Session = Depends(get_db)):
-    """Consume a one-time SSO token submitted via POST body."""
-    from app.api.auth import _issue_login_session
+def _reject_cross_site_sso(request: Request) -> None:
+    """Refuse an SSO handshake initiated by another site.
+
+    Both SSO routes set opanel_session at path="/", replacing whatever session
+    the visitor already holds, and neither goes through get_current_user -- so
+    the double-submit CSRF control lives somewhere these routes never reach.
+    A cross-site form post or top-level navigation could therefore drop a
+    victim's browser into an account chosen by whoever sent the link, which is
+    session fixation with the roles reversed: the victim goes on working in the
+    attacker's panel.
+
+    Sec-Fetch-Site is sent by every current browser and is not settable from
+    script. A non-browser client omits it and is unaffected, which is what the
+    WHMCS integration needs.
+    """
+    fetch_site = (request.headers.get("sec-fetch-site") or "").lower()
+    if fetch_site and fetch_site not in {"same-origin", "same-site", "none"}:
+        raise HTTPException(status_code=403, detail="Cross-site SSO is not allowed")
+
+
+def _sso_user_or_401(db: Session, token: str):
+    """Consume the token and return the account it names, or raise."""
     from app.models.entities import User
     from app.services.provisioning import consume_sso_token
 
@@ -242,6 +260,28 @@ def sso_login_post(request: Request, response: Response, token: str = Form(...),
     user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
     if user is None:
         raise HTTPException(status_code=401, detail="User not found or inactive")
+    # An SSO link must not be a way around two-factor authentication. The
+    # password path enforces user.totp_enabled and impersonation re-prompts the
+    # admin's own code; these routes went straight from consume_sso_token to
+    # _issue_login_session, so an account that had deliberately turned 2FA on
+    # still had a parallel door at lower assurance. There is nowhere to prompt
+    # for a code mid-redirect, so the honest answer is to send them to the
+    # normal login form.
+    if getattr(user, "totp_enabled", False):
+        raise HTTPException(
+            status_code=403,
+            detail="This account uses two-factor authentication. Sign in from the panel login page.",
+        )
+    return user
+
+
+@app.post("/sso", include_in_schema=False)
+def sso_login_post(request: Request, response: Response, token: str = Form(...), db: Session = Depends(get_db)):
+    """Consume a one-time SSO token submitted via POST body."""
+    from app.api.auth import _issue_login_session
+
+    _reject_cross_site_sso(request)
+    user = _sso_user_or_401(db, token)
     redirect = RedirectResponse(url="/", status_code=302)
     _issue_login_session(redirect, request, user)
     return redirect
@@ -255,15 +295,9 @@ def sso_login(token: str, request: Request, response: Response, db: Session = De
     fragment-based /sso endpoint to keep the token out of server logs.
     """
     from app.api.auth import _issue_login_session
-    from app.models.entities import User
-    from app.services.provisioning import consume_sso_token
 
-    user_id = consume_sso_token(db, token)
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="Invalid or expired SSO token")
-    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
+    _reject_cross_site_sso(request)
+    user = _sso_user_or_401(db, token)
     redirect = RedirectResponse(url="/", status_code=302)
     _issue_login_session(redirect, request, user)
     return redirect

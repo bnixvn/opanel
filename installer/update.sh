@@ -1044,6 +1044,42 @@ fi
 [[ -d "$SOURCE_DIR/backend"  ]] || fail "Missing $SOURCE_DIR/backend"
 [[ -d "$SOURCE_DIR/frontend" ]] || fail "Missing $SOURCE_DIR/frontend"
 
+# Refuse a downgrade unless the operator asked for one.
+#
+# The default channel is the mutable branch `main`, applied with
+# `git reset --hard`, which takes whatever the ref points at -- including a
+# commit older than what is installed. current_panel_version was read only to
+# populate the status file and never compared, so a force-push that moved the
+# branch backwards silently reverted every box that auto-updates, taking
+# security fixes with it. There is no signature or pin anywhere in this path,
+# and the fetched tree goes on to reinstall /usr/local/sbin/opanel-helper and
+# /etc/sudoers.d/opanel, so "the version went down" is the one cheap signal
+# available that something is wrong.
+#
+# ALLOW_DOWNGRADE=1 is the deliberate escape hatch for a real rollback.
+incoming_panel_version() {
+  if [[ -f "$SOURCE_DIR/VERSION" ]]; then
+    tr -d '[:space:]' <"$SOURCE_DIR/VERSION"
+    return 0
+  fi
+  sed -nE 's/^APP_VERSION = "([^"]+)"/\1/p' "$SOURCE_DIR/backend/app/core/version.py" 2>/dev/null | head -n 1
+}
+
+INSTALLED_VERSION="$(current_panel_version || true)"
+INCOMING_VERSION="$(incoming_panel_version || true)"
+if [[ "${ALLOW_DOWNGRADE:-0}" != "1" && -n "$INSTALLED_VERSION" && -n "$INCOMING_VERSION" \
+      && "$INSTALLED_VERSION" != "$INCOMING_VERSION" ]]; then
+  # sort -V puts the lower version first; if that is the incoming one, stop.
+  lower="$(printf '%s\n%s\n' "$INSTALLED_VERSION" "$INCOMING_VERSION" | sort -V | head -n 1)"
+  if [[ "$lower" == "$INCOMING_VERSION" ]]; then
+    write_update_state "failed" "${UPDATE_REF:-}" \
+      "Refusing downgrade ${INSTALLED_VERSION} -> ${INCOMING_VERSION}"
+    fail "Refusing to downgrade opanel ${INSTALLED_VERSION} -> ${INCOMING_VERSION} from ${UPDATE_REF:-$UPDATE_CHANNEL}.
+If this rollback is deliberate, re-run with ALLOW_DOWNGRADE=1."
+  fi
+fi
+[[ -n "$INCOMING_VERSION" ]] && log "Installing opanel ${INCOMING_VERSION} (was ${INSTALLED_VERSION:-unknown})"
+
 # --- Sync code into APP_DIR -------------------------------------------------
 log "Syncing source to $APP_DIR"
 mkdir -p "$APP_DIR"
@@ -1523,8 +1559,14 @@ rm -rf dist .vite node_modules/.vite
 
 if [[ ! -d node_modules ]] || [[ package.json -nt node_modules ]]; then
   log "Installing npm dependencies..."
-  rm -rf node_modules package-lock.json
-  npm install
+  # See build_frontend in install.sh: the committed lockfile is the only thing
+  # binding this root-run build to a reviewed dependency graph, so it stays.
+  rm -rf node_modules
+  npm ci || {
+    log "WARNING: npm ci failed (package-lock.json out of sync with package.json)"
+    log "WARNING: falling back to npm install -- installed graph is NOT the reviewed one"
+    npm install
+  }
 fi
 log "Building frontend with VITE_API_URL=/api..."
 VITE_API_URL=/api npm run build 2>&1 || { log "BUILD FAILED"; exit 1; }
