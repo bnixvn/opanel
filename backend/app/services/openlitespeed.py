@@ -9,7 +9,7 @@ Replaces the former nginx.py service.
 import os
 import re
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable, Optional
 
 from jinja2 import Environment, FileSystemLoader
@@ -373,6 +373,31 @@ PHP_SESSION_ROOT = "/var/lib/php/sessions"
 PHP_UPLOAD_ROOT = "/var/lib/php/uploads"
 
 
+def _linux_user_from_root_path(root_path: str) -> str:
+    """Recover the site's Linux user from /home/<linux-user>/<domain>.
+
+    Mirrors site_users.require_site_linux_user's derivation, and defers to that
+    module's validator so the reserved-account list has one definition. Returns
+    "" when the path is not a managed site root.
+    """
+    try:
+        parts = PurePosixPath(root_path or "").parts
+    except (TypeError, ValueError):
+        return ""
+    # ("/", "home", "<user>", "<domain>", ...)
+    if len(parts) < 4 or parts[0] != "/" or parts[1] != "home":
+        return ""
+    candidate = parts[2]
+    # site_users is already imported above, so use its definitions rather
+    # than a second copy -- a duplicated invariant is the bug class this
+    # whole audit kept finding.
+    try:
+        return site_users.validate_linux_user(candidate)
+    except ValueError:
+        return ""
+    return candidate
+
+
 def _php_runtime_dirs(linux_user: str | None) -> tuple[str, str]:
     """Per-site PHP session and upload directories.
 
@@ -448,11 +473,31 @@ def _build_context(
     rewrite_block = ""
     vhost_rewrite_rules = REWRITE_RULE_LINES.get(checked_rewrite, "")
 
+    # Resolve the site's own uid before anything reads it. `linux_user or
+    # "www-data"` was the last place in the codebase that still elected the
+    # shared account: Website.linux_user is nullable with no backfill, so every
+    # row created before that column keeps NULL forever, and those vhosts
+    # rendered extUser/extGroup www-data. www-data is a member of every panel
+    # user's private group, so with /home/<user> at 0750 that uid traverses into
+    # every tenant's tree -- the exact access the 0750 change was made to close.
+    #
+    # The site root encodes the answer (/home/<linux-user>/<domain>), which is
+    # what site_users.require_site_linux_user recovers, so a legacy row gets a
+    # real uid and full confinement instead of a downgrade. Deriving it here
+    # also keeps open_basedir and the per-site session/upload directories
+    # consistent: emitting open_basedir while falling back to the system session
+    # path would point PHP at a directory now outside its own open_basedir and
+    # unwritable, breaking session_start() on exactly those legacy sites.
+    site_user = linux_user
+    if not site_user or site_user == "www-data":
+        derived = _linux_user_from_root_path(root_path)
+        site_user = derived or site_user
+
     # open_basedir only means anything where PHP actually runs.
     php_session_dir, php_upload_dir = ("", "")
     php_open_basedir = ""
     if lsphp_app:
-        php_session_dir, php_upload_dir = _php_runtime_dirs(linux_user)
+        php_session_dir, php_upload_dir = _php_runtime_dirs(site_user)
         php_open_basedir = _php_open_basedir(root_path, php_session_dir, php_upload_dir)
 
     return {
@@ -477,7 +522,7 @@ def _build_context(
         "redirects": _safe_redirects(redirects, safe_domain),
         "waf_enabled": waf_enabled,
         "waf_rules_file": waf_rules_file(safe_domain) if waf_enabled else "",
-        "linux_user": linux_user or "www-data",
+        "linux_user": site_user or "www-data",
         "access_log": _log_path(safe_domain, "access").as_posix(),
         "error_log": _log_path(safe_domain, "error").as_posix(),
         "php_error_log": _php_error_log_path(safe_domain).as_posix(),

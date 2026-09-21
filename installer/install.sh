@@ -564,8 +564,10 @@ build_frontend() {
     fail "Frontend build failed: ${APP_DIR}/frontend/dist/index.html is missing"
   fi
   # OLS (lsadm) needs to read the bundle. The frontend is public anyway.
-  chmod o+rX "${APP_DIR}" "${APP_DIR}/frontend" 2>/dev/null || true
-  chmod -R o+rX "${APP_DIR}/frontend/dist"
+  # Not $APP_DIR itself -- see the note in update.sh. Widening it puts
+  # opanel.db within reach of every local uid.
+  chmod 0750 "${APP_DIR}" 2>/dev/null || true
+  [[ -f "${APP_DIR}/backend/opanel.db" ]] && chmod 0640 "${APP_DIR}/backend/opanel.db" 2>/dev/null || true
   echo "Frontend built: $(grep -oE 'index-[a-zA-Z0-9_-]+\.js' dist/index.html | head -n1 || echo 'unknown')"
 }
 
@@ -586,7 +588,10 @@ setup_panel_user() {
   # Allow opanel to write into OLS vhost directory.
   install -d -o root -g opanel -m 2775 /usr/local/lsws/conf/opanel/vhosts
   install -d -o root -g opanel -m 2775 /usr/local/lsws/conf/opanel/custom
-  install -d -o www-data -g opanel-sites -m 2775 /var/log/openlitespeed
+  # 2770: the per-site access/error logs OLS writes at this level are 0644
+  # and carry full request lines. See the note in opanel-helper.sh.
+  install -d -o www-data -g opanel-sites -m 2770 /var/log/openlitespeed
+  chmod 2770 /var/log/openlitespeed 2>/dev/null || true
   # setgid so new files inherit the opanel group; allows future writes.
   chmod g+s /usr/local/lsws/conf/opanel/vhosts || true
   chmod g+s /usr/local/lsws/conf/opanel/custom 2>/dev/null || true

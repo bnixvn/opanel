@@ -14,9 +14,17 @@ PUBLIC_DIR = "public_html"
 RESERVED_LINUX_USERS = {
     "root", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail",
     "news", "uucp", "proxy", "www-data", "backup", "list", "irc", "_apt",
-    "nobody", "OPanel", "opanel-sites", "opanel-sftp", "mysql", "redis",
+    "nobody", "opanel", "opanel-sites", "opanel-sftp", "mysql", "redis",
     "lsws", "lsadm",
+    # Names the installer and the DA importer also treat as reserved; the two
+    # lists had drifted (da_import.RESERVED_USERS carried these, this one did
+    # not).
+    "bpanel", "systemd-network", "systemd-resolve", "messagebus", "sshd",
 }
+# Compared case-folded, because every caller lowercases the username first.
+_RESERVED_LINUX_USERS_FOLDED = frozenset(
+    name.casefold() for name in RESERVED_LINUX_USERS
+)
 
 
 def linux_user_for_domain(domain: str) -> str:
@@ -29,9 +37,19 @@ def linux_user_for_domain(domain: str) -> str:
 
 
 def validate_linux_user(username: str) -> str:
-    if not LINUX_USER_RE.fullmatch(username or "") or username in RESERVED_LINUX_USERS:
+    # Case-fold before comparing. The reserved set was written with "OPanel"
+    # capitalised while every caller lowercases first
+    # (linux_user_for_panel_username does `.strip().lower()`), so "opanel" --
+    # the panel's own service account -- passed validation. A panel user of that
+    # name would have had ensure_panel_user_home rewrite the service account's
+    # home and shell and add www-data to its group, and delete_panel_user would
+    # `userdel` it and `rm -rf` its home.
+    candidate = (username or "").strip()
+    if not LINUX_USER_RE.fullmatch(candidate):
         raise ValueError("Invalid panel Linux user")
-    return username
+    if candidate.casefold() in _RESERVED_LINUX_USERS_FOLDED:
+        raise ValueError("Invalid panel Linux user")
+    return candidate
 
 
 def linux_user_for_panel_username(username: str) -> str:

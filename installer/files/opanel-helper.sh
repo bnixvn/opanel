@@ -61,7 +61,15 @@ ensure_opanel_data_dir() {
 ensure_ols_conf_dir_writable() {
   ensure_sites_group
   install -d -o root -g root -m 0755 "$BLOCKLIST_DIR"
-  install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /var/log/openlitespeed
+  # 2770, not 2775. The per-domain subdirectory is 0750, but OpenLiteSpeed's own
+  # vhost logs sit at this top level as <domain>.access.log / <domain>.error.log
+  # and nothing sets their mode, so OLS creates them 0644 at its umask. With
+  # "other" able to traverse here, any site's Linux user could read every other
+  # tenant's access log -- full request lines, so query strings, password-reset
+  # tokens and API keys. The panel reads these as root via read_site_log, so no
+  # "other" access is needed. Verified on a live box before the change.
+  install -d -o www-data -g "$opanel_SITES_GROUP" -m 2770 /var/log/openlitespeed
+  chmod 2770 /var/log/openlitespeed 2>/dev/null || true
   ensure_lshttpd_runtime_dir
   chmod g+s /var/log/openlitespeed 2>/dev/null || true
   if getent group opanel >/dev/null 2>&1; then
@@ -77,12 +85,19 @@ ensure_ols_conf_dir_writable() {
 
 ensure_lshttpd_runtime_dir() {
   ensure_sites_group
-  install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /tmp/lshttpd /tmp/lshttpd/swap
+  # 2770, not 2775. This tree is OpenLiteSpeed's swappingDir: request bodies
+  # too large for memory are spilled here, so a world-readable chain meant any
+  # site's Linux user could read another tenant's in-flight POST bodies and
+  # uploads. Verified on a live box: the directories were 2775 and the .lsb
+  # files 0664, in a /tmp/lshttpd that "other" could traverse. Only www-data
+  # (the server) and opanel-sites need access.
+  install -d -o www-data -g "$opanel_SITES_GROUP" -m 2770 /tmp/lshttpd /tmp/lshttpd/swap
+  chmod 2770 /tmp/lshttpd /tmp/lshttpd/swap 2>/dev/null || true
   chmod g+s /tmp/lshttpd 2>/dev/null || true
   if [[ -d /tmp/lshttpd/swap ]]; then
     chown -R www-data:"$opanel_SITES_GROUP" /tmp/lshttpd/swap 2>/dev/null || true
-    find /tmp/lshttpd/swap -type d -exec chmod 2775 {} + 2>/dev/null || true
-    find /tmp/lshttpd/swap -type f -exec chmod 0664 {} + 2>/dev/null || true
+    find /tmp/lshttpd/swap -type d -exec chmod 2770 {} + 2>/dev/null || true
+    find /tmp/lshttpd/swap -type f -exec chmod 0660 {} + 2>/dev/null || true
   fi
   chown www-data:"$opanel_SITES_GROUP" /tmp/lshttpd/lsphp*.sock /tmp/lshttpd/lsphp*.sock.pid 2>/dev/null || true
   chmod 0664 /tmp/lshttpd/lsphp*.sock.pid 2>/dev/null || true
@@ -3647,7 +3662,7 @@ case "$cmd" in
     # is being written right now).
     vhost_site_user="$(sed -nE 's#^[[:space:]]*docRoot[[:space:]]+/home/([^/]+)/.*#\1#p' "$vhost_tmp" | head -1)"
     if [[ -n "$vhost_site_user" ]] && id "$vhost_site_user" >/dev/null 2>&1; then
-      [[ -d /var/log/openlitespeed ]] || install -d -o www-data -g opanel-sites -m 2775 /var/log/openlitespeed
+      [[ -d /var/log/openlitespeed ]] || install -d -o www-data -g opanel-sites -m 2770 /var/log/openlitespeed
       install -d -o "$vhost_site_user" -g "$vhost_site_user" -m 0750 "/var/log/openlitespeed/$safe_domain"
     fi
     install -d -o root -g opanel -m 2775 "$OLS_VHOSTS_DIR/$safe_domain"

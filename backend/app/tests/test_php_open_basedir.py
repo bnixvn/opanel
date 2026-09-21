@@ -78,15 +78,35 @@ def test_static_site_gets_no_php_confinement() -> None:
     assert "open_basedir" not in conf
 
 
-def test_www_data_fallback_gets_no_per_user_runtime_dirs() -> None:
-    """A site with no Linux user must not be handed another account's dirs."""
+def test_a_legacy_row_is_resolved_rather_than_downgraded_to_www_data() -> None:
+    """A NULL linux_user must not make the tenant's PHP run as www-data.
+
+    This test previously asserted the opposite shape -- open_basedir present,
+    session.save_path absent -- and so codified two bugs at once. www-data is a
+    member of every panel user's private group, so with /home/<user> at 0750
+    that uid traverses into every tenant's tree; and emitting open_basedir while
+    falling back to the system session path (now 0751 root:root) broke
+    session_start() on exactly those sites. The site root encodes the uid
+    (/home/<linux-user>/<domain>), so it is recovered from there instead.
+    """
     conf = openlitespeed.render_vhost(
         "example.test", ROOT_PATH, app_type="php", php_version="8.4", linux_user=None
     )
+    assert f"extUser               {LINUX_USER}" in conf
+    assert "extUser               www-data" not in conf
+    assert "/var/lib/php/sessions/www-data" not in conf
+    assert f"php_admin_value   session.save_path /var/lib/php/sessions/{LINUX_USER}" in conf
+    assert f"php_admin_value   open_basedir {ROOT_PATH}:" in conf
+
+
+def test_a_root_path_outside_home_gets_no_shared_session_dir() -> None:
+    """Nothing to derive, so no per-user dirs -- and no www-data session path."""
+    conf = openlitespeed.render_vhost(
+        "example.test", "/srv/elsewhere/example.test",
+        app_type="php", php_version="8.4", linux_user=None,
+    )
     assert "/var/lib/php/sessions/www-data" not in conf
     assert "session.save_path" not in conf
-    # The document root is still confined even without a site user.
-    assert f"php_admin_value   open_basedir {ROOT_PATH}:" in conf
 
 
 def test_helper_no_longer_writes_php_ini_keys_into_the_unread_pool_file() -> None:

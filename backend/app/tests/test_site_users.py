@@ -233,10 +233,21 @@ def test_openlitespeed_site_runtime_uses_site_user_and_writable_logs():
 
     assert not opanelctl.startswith(b"\xef\xbb\xbf")
     assert "ensure_sites_group" in helper
-    assert 'install -d -o www-data -g "$opanel_SITES_GROUP" -m 2775 /var/log/openlitespeed' in helper
+    # 2770, not 2775. OpenLiteSpeed writes <domain>.access.log at this level
+    # with its own umask (0644) and nothing in the repo sets those file modes,
+    # so a world-traversable directory let any site's Linux user read every
+    # other tenant's request lines -- query strings, reset tokens, API keys.
+    # Confirmed at 2775/0644 on a live box before the change. The panel reads
+    # these as root via read_site_log, so "other" needs no access. Both places
+    # that create it must agree, or an update silently re-widens it.
+    assert 'install -d -o www-data -g "$opanel_SITES_GROUP" -m 2770 /var/log/openlitespeed' in helper
+    assert "install -d -o www-data -g opanel-sites -m 2770 /var/log/openlitespeed" in install_script
+    for name, script in (("helper", helper), ("install.sh", install_script)):
+        assert "2775 /var/log/openlitespeed" not in script, (
+            f"{name} still creates the OLS log directory world-traversable"
+        )
     assert "chmod g+s /var/log/openlitespeed" in helper
     assert '"    setUIDMode               2",' in helper
-    assert "install -d -o www-data -g opanel-sites -m 2775 /var/log/openlitespeed" in install_script
     assert "chmod g+s /var/log/openlitespeed" in install_script
 
 

@@ -1589,8 +1589,19 @@ HASHED=$(grep -oE 'index-[a-zA-Z0-9_-]+\.js' dist/index.html | head -n1 || true)
 echo "Built bundle: ${HASHED:-unknown}"
 
 # Make sure nginx (www-data) can read the freshly built bundle.
-chmod o+rX "$APP_DIR" "$APP_DIR/frontend" 2>/dev/null || true
-chmod -R o+rX "$APP_DIR/frontend/dist"
+# $APP_DIR is deliberately NOT widened. `chmod o+rX "$APP_DIR"` left
+# /opt/opanel at 0755, and since rsync -a brings backend/ over from a 0755 git
+# checkout, /opt/opanel/backend was 0755 and opanel.db 0644 -- so every local
+# uid, including every tenant's PHP, could read the panel database. Confirmed on
+# a live box: a site user could read opanel.db. .env stays 0640 so the Fernet
+# ciphertexts hold, but bcrypt hashes, TOTP secrets and the whole schema did not.
+# The o+rX was for an nginx-era setup that read the bundle off disk; this panel
+# serves frontend/dist in-process from FastAPI (main.py), and a fresh install
+# already ends at 0750 and works.
+install -d -o opanel -g opanel -m 0750 "$APP_DIR" "$APP_DIR/backend"
+chmod 0750 "$APP_DIR" "$APP_DIR/backend" 2>/dev/null || true
+[[ -f "$APP_DIR/backend/opanel.db" ]] && chmod 0640 "$APP_DIR/backend/opanel.db" 2>/dev/null || true
+chown -R opanel:opanel "$APP_DIR/backend" 2>/dev/null || true
 
 # The API mounts /assets only when the built directory exists at process start.
 # Restart once more after the clean frontend rebuild so newly hashed JS/CSS

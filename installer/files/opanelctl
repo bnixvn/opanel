@@ -301,8 +301,10 @@ SSHD
   [[ -d /var/lib/opanel/assets ]] && chown -R opanel:opanel /var/lib/opanel/assets 2>/dev/null || true
   chmod 0640 "$ENV_FILE" 2>/dev/null || true
   if [[ -d "$APP_DIR/frontend/dist" ]]; then
-    chmod o+rX "$APP_DIR" "$APP_DIR/frontend" 2>/dev/null || true
-    chmod -R o+rX "$APP_DIR/frontend/dist"
+    # $APP_DIR stays 0750: widening it exposes backend/opanel.db to every
+    # local uid. See the note in installer/update.sh.
+    chmod 0750 "$APP_DIR" 2>/dev/null || true
+    [[ -f "$APP_DIR/backend/opanel.db" ]] && chmod 0640 "$APP_DIR/backend/opanel.db" 2>/dev/null || true
   fi
   if [[ -x "$APP_DIR/backend/.venv/bin/python" ]]; then
     cd "$APP_DIR/backend"
