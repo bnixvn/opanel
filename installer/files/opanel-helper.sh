@@ -2897,7 +2897,10 @@ finally:
         except OSError:
             pass
 HARDENPY
-  [[ $? -eq 0 ]] || deny "could not harden site directory path: $target"
+  # No status check here on purpose: this script runs under `set -euo pipefail`,
+  # so a non-zero exit from python3 aborts the helper immediately with the
+  # SystemExit message python printed -- the line that used to follow could
+  # never have run. delete_no_follow relies on the same behaviour.
 }
 
 ensure_panel_user_home() {
