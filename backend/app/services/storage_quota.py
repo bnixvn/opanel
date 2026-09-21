@@ -139,6 +139,20 @@ def enforce_user_storage_quota(
         )
 
 
+def user_storage_headroom_bytes(db, user, *, use_cache: bool = True) -> int | None:
+    """Bytes the account could still write, or None when unlimited.
+
+    Cheap by default (cached usage), because the only caller uses it to decide
+    when to stop reading an archive early. The authoritative check remains
+    enforce_user_storage_quota, which never trusts the cache.
+    """
+    limit_bytes = user_storage_limit_bytes(user)
+    if limit_bytes is None:
+        return None
+    used_bytes = user_storage_used_bytes(db, user, use_cache=use_cache)
+    return max(0, limit_bytes - used_bytes)
+
+
 def source_file_size(source_file) -> int | None:
     try:
         position = source_file.tell()

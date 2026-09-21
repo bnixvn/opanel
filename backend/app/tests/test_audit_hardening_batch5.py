@@ -207,19 +207,48 @@ def test_migration_0028_is_reversible_and_idempotent():
 
 def test_tar_prepass_stops_at_the_callers_quota():
     body = _code(inspect.getsource(file_manager._tar_uncompressed_size))
-    assert "quota_check" in body, (
+    assert "max_bytes" in body, (
         "walking a gzip stream decompresses every member, and that work was "
         "bounded only by the 100 GiB module constant while the caller's 1 GiB "
         "limit was not consulted until afterwards"
     )
     caller = _code(inspect.getsource(file_manager.extract_archive))
-    assert "quota_check=quota_check" in caller
+    assert "max_bytes=quota_headroom" in caller
+
+
+def test_the_prepass_bound_is_a_number_not_a_quota_call():
+    """A quota call per batch would have been a du storm.
+
+    enforce_user_storage_quota measures usage with use_cache=False on purpose,
+    so calling it inside the walk would run a du over every site the account
+    owns once per batch -- replacing a decompression DoS with a different one.
+    The ceiling is resolved once by the caller instead.
+    """
+    source = inspect.getsource(file_manager._tar_uncompressed_size)
+    # Strip the docstring: it explains why quota_check is deliberately absent,
+    # so matching it would be matching the explanation, not the code.
+    body = _code(source.split('"""')[-1])
+    assert "quota_check" not in body
+    from app.services import storage_quota
+
+    assert hasattr(storage_quota, "user_storage_headroom_bytes")
+    headroom = _code(inspect.getsource(storage_quota.user_storage_headroom_bytes))
+    assert "use_cache: bool = True" in headroom, (
+        "the early-stop bound may use the cache; only enforcement may not"
+    )
+
+
+def test_the_authoritative_quota_check_still_runs():
+    caller = _code(inspect.getsource(file_manager.extract_archive))
+    assert "quota_check(incoming, 0)" in caller, (
+        "the cheap bound must not replace the uncached enforcement"
+    )
 
 
 def test_the_zip_path_is_left_alone():
     """It reads central-directory metadata, so it never had the problem."""
     body = _code(inspect.getsource(file_manager._zip_uncompressed_size))
-    assert "quota_check" not in body
+    assert "max_bytes" not in body
 
 
 # --------------------------------------------------------------------------

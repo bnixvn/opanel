@@ -306,6 +306,7 @@ def _run_extract_job(job_id: str, user_id: int, website_id: int, archive_path: s
             destination_path,
             allow_executable,
             quota_check=_quota_check_for_website(db, website),
+            quota_headroom=storage_quota.user_storage_headroom_bytes(db, website.owner),
         )
         log_action(db, user.id, "extract_archive", website.domain, archive_path)
         _set_file_job(

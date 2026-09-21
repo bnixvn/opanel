@@ -930,7 +930,7 @@ def _tar_uncompressed_size(
     destination: Path,
     archive_file: Path,
     allow_executable: bool = False,
-    quota_check=None,
+    max_bytes: Optional[int] = None,
 ) -> int:
     """Total declared size of the members that will be written.
 
@@ -943,12 +943,14 @@ def _tar_uncompressed_size(
     bought up to 100 GiB of decompression on a ThreadPoolExecutor with two
     workers shared by every tenant on the box.
 
-    Passing quota_check in lets the walk stop at the limit that would refuse the
-    extraction anyway, instead of after it.
+    Passing max_bytes in lets the walk stop at the limit that would refuse the
+    extraction anyway, instead of after it. It is a plain number, resolved once
+    by the caller: an earlier version of this called quota_check() inside the
+    loop, and quota_check reaches enforce_user_storage_quota, which measures
+    current usage with use_cache=False -- a du over every site the account owns.
+    Calling that per batch replaced one denial-of-service with another.
     """
     total = 0
-    checked_at = 0
-    quota_step = 64 * 1024 * 1024
     for index, member in enumerate(archive, start=1):
         if MAX_ARCHIVE_ITEMS is not None and index > MAX_ARCHIVE_ITEMS:
             raise ValueError(f"Archive has too many files (limit {MAX_ARCHIVE_ITEMS})")
@@ -971,12 +973,14 @@ def _tar_uncompressed_size(
         total += member.size
         if MAX_ARCHIVE_UNCOMPRESSED_BYTES is not None and total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
             raise ValueError("Archive is too large")
-        # Re-test the caller's quota as the declared total grows, so an archive
-        # that cannot fit stops the decompression here rather than at the
-        # global cap. Batched, because the check costs a directory walk.
-        if quota_check is not None and total - checked_at >= quota_step:
-            checked_at = total
-            quota_check(total, 0)
+        # Stop as soon as the declared total passes what the caller could
+        # accept, so an archive that cannot fit does not buy the rest of the
+        # decompression. The authoritative uncached quota check still runs after
+        # this returns.
+        if max_bytes is not None and total > max_bytes:
+            raise ValueError(
+                "Archive does not fit in the available storage quota"
+            )
     return total
 
 
@@ -1048,6 +1052,7 @@ def extract_archive(
     destination_path: str = "",
     allow_executable: bool = False,
     quota_check: Optional[QuotaCheck] = None,
+    quota_headroom: Optional[int] = None,
 ) -> str:
     archive_file = _safe_path(website, archive_path)
     if not archive_file.exists() or not archive_file.is_file():
@@ -1072,7 +1077,7 @@ def extract_archive(
         archive_kind = "tar.gz"
         with tarfile.open(archive_file, "r:gz") as archive:
             incoming = _tar_uncompressed_size(
-                archive, destination, archive_file, allow_executable, quota_check=quota_check
+                archive, destination, archive_file, allow_executable, max_bytes=quota_headroom
             )
             if quota_check:
                 quota_check(incoming, 0)
