@@ -91,6 +91,27 @@ def test_no_helper_case_runs_wp_cli_as_www_data_with_caller_argv():
     info = HELPER[HELPER.index("  wp-info)") : HELPER.index("  wp-info)") + 500]
     assert "[[ $# -eq 0 ]]" in info, "wp-info must accept no arguments at all"
 
+    # The legacy `wp` case survives only as an exact `--info` shim, because an
+    # upgrading box runs the PREVIOUS update.sh, which validates the new helper
+    # with `opanel-helper wp --info`. Removing it outright aborted the update
+    # under set -e after the helper was already replaced.
+    legacy = HELPER[HELPER.index("  wp)") : HELPER.index("  wp-site)")]
+    assert '$# -eq 1 && "$1" == "--info"' in legacy, (
+        "the wp case must accept exactly --info and nothing else"
+    )
+    assert '"$@"' not in legacy
+
+
+def test_the_helper_health_check_cannot_abort_an_update():
+    """It runs after the new helper is installed and before migrations."""
+    for name in ("install.sh", "update.sh"):
+        script = (PROJECT_ROOT / "installer" / name).read_text(encoding="utf-8")
+        index = script.index("opanel-helper wp-info")
+        window = script[index : index + 200]
+        assert "||" in window, (
+            f"{name}: a failing wp-cli health check must not stop the update"
+        )
+
 
 def test_the_installers_use_the_fixed_argv_health_check():
     for name in ("install.sh", "update.sh"):

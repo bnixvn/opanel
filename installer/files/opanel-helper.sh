@@ -4752,6 +4752,18 @@ PY
     # Website.linux_user was NULL, which is the permanent state of every row
     # created before that column was added. Callers now resolve the site user
     # with site_users.require_site_linux_user and use wp-site.
+    # Backward-compatible shim, and nothing more. An existing box always runs
+    # the PREVIOUS update.sh when it upgrades, and that script validates the
+    # freshly-installed helper with `opanel-helper wp --info`. Removing the case
+    # outright made that check fail under `set -e`, which aborted the update
+    # after the new helper was in place but before migrations ran. Accepting
+    # exactly `--info` keeps the upgrade path working; every other argv -- which
+    # is what the defect was, since wp-cli bootstraps WordPress from --path --
+    # is still refused.
+    if [[ $# -eq 1 && "$1" == "--info" ]]; then
+      [[ -x /usr/local/bin/wp ]] || deny "wp-cli not found"
+      exec runuser -u www-data -- env HOME=/var/www         WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable'         php -d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp --info
+    fi
     deny "wp is no longer supported; use wp-site <site-user> <args...>"
     ;;
 
