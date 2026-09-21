@@ -2590,10 +2590,37 @@ require_terminal_cwd() {
   echo "$resolved"
 }
 
+# Options of the allowlisted file commands that run another program. The
+# hyphen skip in require_terminal_path_args means an option is never treated as
+# a path, so these have to be refused by name or they slip past the containment
+# check entirely -- `find . -exec sh -c '<cmd>' \;` was the shortest example.
+TERMINAL_EXEC_OPTIONS=(
+  # find / GNU findutils
+  -exec -execdir -ok -okdir -fprint -fprint0 -fprintf -fls
+  # tar
+  --to-command --use-compress-program --checkpoint-action --rmt-command -I
+  # zip / unzip
+  -TT --unzip-command
+  # grep
+  --devices=read
+)
+
+require_terminal_safe_options() {
+  local arg banned
+  for arg in "$@"; do
+    for banned in "${TERMINAL_EXEC_OPTIONS[@]}"; do
+      if [[ "$arg" == "$banned" || "$arg" == "$banned="* ]]; then
+        deny "option $banned runs another program and is not allowed in the terminal"
+      fi
+    done
+  done
+}
+
 require_terminal_path_args() {
   local user="$1" cwd="$2" arg resolved
   shift 2
   require_linux_user "$user"
+  require_terminal_safe_options "$@"
   for arg in "$@"; do
     case "$arg" in
       ""|"-"*|"--") continue ;;
@@ -2805,7 +2832,7 @@ harden_site_file() {
 }
 
 harden_site_dir_path() {
-  local root="$1" target="$2" user="$3" relative current part
+  local root="$1" target="$2" user="$3"
   ensure_sites_group
   require_linux_user "$user"
   root=$(readlink -m "$root") || deny "cannot resolve $root"
@@ -2815,16 +2842,62 @@ harden_site_dir_path() {
     *) deny "directory path outside site root: $target" ;;
   esac
   [[ -d "$target" ]] || deny "site directory does not exist: $target"
-  harden_site_dir "$root" "$user"
-  [[ "$target" == "$root" ]] && return 0
-  relative="${target#${root}/}"
-  current="$root"
-  IFS='/' read -r -a root_parts <<< "$relative"
-  for part in "${root_parts[@]}"; do
-    current="$current/$part"
-    [[ -d "$current" ]] || deny "site directory does not exist: $current"
-    harden_site_dir "$current" "$user"
-  done
+  # Apply ownership and mode on descriptors opened O_NOFOLLOW, never by
+  # re-resolving the path. require_safe_path resolves once with `readlink -m`
+  # and returns a string; the old implementation then re-derived each component
+  # by name and called chown/chmod on it, both of which follow symlinks, inside
+  # directories the site user owns. Replacing a component between the resolve
+  # and the walk made root chown an arbitrary directory to that user, and the
+  # trailing `[[ ! -L "$target" ]]` guards could not catch it because $target
+  # was already fully dereferenced. rm-site has used this shape all along via
+  # delete_no_follow; the hardening path had not.
+  python3 - "$user" "$root" "$target" <<'HARDENPY'
+import os
+import pwd
+import sys
+
+user, root, target = sys.argv[1:4]
+base = f"/home/{user}"
+root = os.path.normpath(root)
+target = os.path.normpath(target)
+
+if os.path.dirname(root) != base:
+    raise SystemExit("invalid site root")
+if target != root and not target.startswith(root + os.sep):
+    raise SystemExit("target outside site root")
+
+rel = os.path.relpath(target, base)
+if rel.startswith("..") or rel == ".":
+    raise SystemExit("target outside site root")
+
+entry = pwd.getpwnam(user)
+uid, gid = entry.pw_uid, entry.pw_gid
+
+base_fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+open_fds = [base_fd]
+try:
+    parent_fd = base_fd
+    for part in rel.split(os.sep):
+        try:
+            child_fd = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd
+            )
+        except OSError as exc:
+            raise SystemExit(f"refusing to harden {part!r}: {exc}")
+        open_fds.append(child_fd)
+        os.fchown(child_fd, uid, gid)
+        # 0755 matches fix_site_tree. The cross-tenant boundary is the 0750
+        # home directory above these, not this mode.
+        os.fchmod(child_fd, 0o755)
+        parent_fd = child_fd
+finally:
+    for fd in open_fds:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+HARDENPY
+  [[ $? -eq 0 ]] || deny "could not harden site directory path: $target"
 }
 
 ensure_panel_user_home() {
@@ -4112,9 +4185,12 @@ case "$cmd" in
     case "$rel_arg" in
       ""|"/"|/*|*$'\n'*|".."|"../"*|*"/.."|*"/../"*) deny "unsafe relative path: $rel_arg" ;;
     esac
+    # Test the raw join, not the resolved path: require_safe_path returns the
+    # output of `readlink -m`, so its last component is already dereferenced and
+    # -L on it can never be true.
+    [[ ! -L "$root_target/$rel_arg" ]] || deny "refusing to write through a symlink: $rel_arg"
     target=$(require_safe_path "$root_target" "$root_target/$rel_arg")
     [[ -d "$target" ]] && deny "cannot write a directory: $target"
-    [[ -L "$target" ]] && deny "refusing to write through a symlink: $target"
     parent=$(dirname -- "$target")
     runuser -u "$user" -- mkdir -p -- "$parent"
     harden_site_dir_path "$root_target" "$parent" "$user"
@@ -4139,8 +4215,9 @@ case "$cmd" in
     case "$rel_arg" in
       ""|"/"|/*|*$'\n'*|".."|"../"*|*"/.."|*"/../"*) deny "unsafe relative path: $rel_arg" ;;
     esac
+    # Raw join, for the reason given in site-file-write above.
+    [[ ! -L "$root_target/$rel_arg" ]] || deny "refusing to write through a symlink: $rel_arg"
     target=$(require_safe_path "$root_target" "$root_target/$rel_arg")
-    [[ ! -L "$target" ]] || deny "refusing to write through a symlink: $target"
     [[ "$staged_arg" == /tmp/opanel-upload-* ]] || deny "invalid staged upload path"
     [[ ! -L "$staged_arg" ]] || deny "staged upload cannot be a symlink"
     staged=$(readlink -e -- "$staged_arg") || deny "staged upload not found"
@@ -4165,8 +4242,9 @@ case "$cmd" in
     case "$rel_arg" in
       ""|"/"|/*|".."|"../"*|*"/.."|*"/../"*) deny "unsafe relative path: $rel_arg" ;;
     esac
+    # Raw join, for the reason given in site-file-write above.
+    [[ ! -L "$root_target/$rel_arg" ]] || deny "refusing to delete through a symlink: $rel_arg"
     target=$(require_safe_path "$root_target" "$root_target/$rel_arg")
-    [[ ! -L "$target" ]] || deny "refusing to delete through a symlink: $target"
     rm -f -- "$target"
     ;;
 
@@ -4664,8 +4742,17 @@ PY
   # handler, which the opcache JIT refuses ("JIT is incompatible with third
   # party extensions..."). Turning JIT off up front keeps wp-cli output clean.
   wp)
-    [[ $# -ge 1 ]] || deny "usage: wp <args...>"
-    exec runuser -u www-data -- env HOME=/var/www WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable' php -d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp "$@"
+    # Removed. This ran wp-cli as www-data with no validation beyond an
+    # argument count, and wp-cli bootstraps WordPress from --path, so pointing
+    # it at a tenant's document root executed that tenant's wp-config.php and
+    # plugins as www-data -- an account that ensure_panel_user_home adds to
+    # every panel user's private group and ensure_sites_group adds to
+    # opanel-sites, which owns phpMyAdmin's config-db.php and
+    # blowfish_secret.inc.php. The backend reached it whenever
+    # Website.linux_user was NULL, which is the permanent state of every row
+    # created before that column was added. Callers now resolve the site user
+    # with site_users.require_site_linux_user and use wp-site.
+    deny "wp is no longer supported; use wp-site <site-user> <args...>"
     ;;
 
   wp-site)
@@ -4676,16 +4763,21 @@ PY
     ;;
 
   # ---- crontab managed for www-data ------------------------------------
+  # The user argument is mandatory and always validated. It used to default to
+  # www-data and skip require_linux_user for that value, so every site whose
+  # linux_user was NULL shared one crontab: cron-list handed the whole thing to
+  # the caller and cron-write replaced it wholesale, letting one tenant read
+  # and overwrite another's scheduled commands.
   cron-list)
-    user="${1:-www-data}"
-    if [[ "$user" != "www-data" ]]; then require_linux_user "$user"; fi
-    exec runuser -u "$user" -- crontab -l 2>/dev/null
+    [[ $# -eq 1 ]] || deny "usage: cron-list <site-user>"
+    require_linux_user "$1"
+    exec runuser -u "$1" -- crontab -l 2>/dev/null
     ;;
   cron-write)
     # crontab content is fed via stdin
-    user="${1:-www-data}"
-    if [[ "$user" != "www-data" ]]; then require_linux_user "$user"; fi
-    exec runuser -u "$user" -- crontab -
+    [[ $# -eq 1 ]] || deny "usage: cron-write <site-user>"
+    require_linux_user "$1"
+    exec runuser -u "$1" -- crontab -
     ;;
 
   # ---- service status (read-only, no privilege change needed but useful)
@@ -4734,7 +4826,20 @@ PY
       fi
     fi
 
-    # Whitelist of allowed commands for terminal access
+    # Allowed commands for terminal access.
+    #
+    # This list is a usability affordance, not the security boundary. Ten of its
+    # entries are general-purpose interpreters (php, composer, phpunit, node,
+    # npm, npx, yarn, git, artisan, wp) whose first argument is arbitrary code,
+    # so no argument policy can narrow what they do. The boundary is the uid
+    # they run as -- the site's own Linux user, which the tenant already reaches
+    # through their own site PHP -- together with the filesystem modes that
+    # keep that uid out of other tenants' trees: /home is 0711, each
+    # /home/<user> is 0750 (root-owned, group the site user), and the panel
+    # account is a group member so the file manager and backups still work.
+    #
+    # The file-command branches below additionally confine every path argument
+    # to the caller's own home and refuse the options that run another program.
     case "$cmd" in
       php)
         exec runuser -u "$user" -- env "${terminal_env[@]}" "$php_bin" "$@"

@@ -174,9 +174,15 @@ def wp_update(path: str, action: str, linux_user: str | None = None):
         args = ["theme", "update", "--all", f"--path={path}", "--allow-root"]
     else:
         raise ValueError("Unsupported WordPress action")
-    if linux_user:
-        return shell.privileged("wp-site", helper_args=[linux_user, *args], fallback=["wp", *args])
-    return shell.privileged("wp", helper_args=args, fallback=["wp", *args])
+    # No www-data fallback. That account is in every panel user's private
+    # group and in opanel-sites, which owns phpMyAdmin's config-db.php and
+    # blowfish_secret.inc.php -- and wp-cli bootstraps WordPress from --path,
+    # so running a tenant's tree as www-data executes their wp-config.php and
+    # plugins as that account. Callers resolve the site user with
+    # site_users.require_site_linux_user.
+    if not linux_user:
+        raise ValueError("This website has no Linux user; cannot run wp-cli safely")
+    return shell.privileged("wp-site", helper_args=[linux_user, *args], fallback=["wp", *args])
 
 
 def reset_admin_password(path: str, user: str, password: str, linux_user: str | None = None):
@@ -184,9 +190,11 @@ def reset_admin_password(path: str, user: str, password: str, linux_user: str | 
     if not isinstance(password, str) or len(password) < 10 or "\x00" in password:
         raise ValueError("Password must be at least 10 characters")
     args = ["user", "update", safe_user, "--user_pass=/dev/stdin", f"--path={path}", "--allow-root"]
+    if not linux_user:
+        raise ValueError("This website has no Linux user; cannot run wp-cli safely")
     return shell.privileged(
-        "wp-site" if linux_user else "wp",
-        helper_args=[linux_user, *args] if linux_user else args,
+        "wp-site",
+        helper_args=[linux_user, *args],
         fallback=["wp", *args],
         input=password,
         sensitive=True,

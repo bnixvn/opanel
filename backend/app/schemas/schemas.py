@@ -151,6 +151,7 @@ class UserCreate(BaseModel):
     role: Literal["admin", "end_user"] = "end_user"
     website_limit: int = Field(default=5, ge=0, le=1000)
     storage_limit_mb: int = Field(default=1024, ge=0, le=1024 * 1024)
+    database_limit: int = Field(default=10, ge=0, le=1000)
 
     @field_validator("username")
     @classmethod
@@ -171,6 +172,7 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     website_limit: Optional[int] = Field(default=None, ge=0, le=1000)
     storage_limit_mb: Optional[int] = Field(default=None, ge=0, le=1024 * 1024)
+    database_limit: Optional[int] = Field(default=None, ge=0, le=1000)
 
 
 class UserPasswordUpdate(BaseModel):
@@ -192,6 +194,7 @@ class UserOut(BaseModel):
     is_active: bool
     website_limit: int
     storage_limit_mb: int
+    database_limit: int = 10
     # None means "not measured yet" -- the accounts list leaves these out so it
     # can paint without waiting on a du of every site. 0 would read as "uses
     # nothing", which is a different claim.

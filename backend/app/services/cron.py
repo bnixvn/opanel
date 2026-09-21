@@ -132,18 +132,13 @@ def _validate_command(command: str, document_root: str | Path) -> str:
 
 
 def cron_user_for_website(website: Website) -> str:
-    if website.linux_user:
-        return site_users.validate_linux_user(website.linux_user)
-    try:
-        parts = Path(website.root_path).resolve().relative_to(site_users.HOME_ROOT.resolve()).parts
-    except ValueError:
-        return "www-data"
-    if parts:
-        try:
-            return site_users.validate_linux_user(parts[0])
-        except ValueError:
-            return "www-data"
-    return "www-data"
+    """Never www-data: that crontab is shared by every site that fell back to it.
+
+    list_cron_all returned the whole www-data crontab to the caller and add_cron
+    rewrote it wholesale, so one tenant on the fallback path could read and
+    replace another's scheduled commands.
+    """
+    return site_users.require_site_linux_user(website)
 
 
 def _parse_cron_line(index: int, line: str) -> dict:
@@ -167,9 +162,8 @@ def add_cron(website: Website, schedule: str, command: str) -> str:
     marker = f"# OPanel:{safe_domain}"
     line = f"{safe_schedule} cd {shlex.quote(str(document_root))} && {safe_command} {marker}"
     cron_user = cron_user_for_website(website)
-    if cron_user != "www-data":
-        runtime_php_version = website.php_version if (website.app_type or "wordpress") in {"wordpress", "php"} else None
-        site_users.ensure_site_runtime(website.domain, website.root_path, runtime_php_version, cron_user)
+    runtime_php_version = website.php_version if (website.app_type or "wordpress") in {"wordpress", "php"} else None
+    site_users.ensure_site_runtime(website.domain, website.root_path, runtime_php_version, cron_user)
     existing = list_cron_all(cron_user)
     new_content = existing.rstrip() + ("\n" if existing.strip() else "") + line + "\n"
     shell.privileged(
@@ -181,9 +175,10 @@ def add_cron(website: Website, schedule: str, command: str) -> str:
     return line
 
 
-def list_cron_all(cron_user: str = "www-data") -> str:
-    if cron_user != "www-data":
-        site_users.validate_linux_user(cron_user)
+def list_cron_all(cron_user: str) -> str:
+    # Required and always validated: the old "www-data" default returned one
+    # shared crontab to whichever tenant asked for it.
+    site_users.validate_linux_user(cron_user)
     result = shell.privileged(
         "cron-list",
         helper_args=[cron_user],
@@ -193,7 +188,7 @@ def list_cron_all(cron_user: str = "www-data") -> str:
     return result.stdout or ""
 
 
-def list_cron(domain: str, cron_user: str = "www-data") -> str:
+def list_cron(domain: str, cron_user: str) -> str:
     safe_domain = _validate_domain(domain)
     marker = f"opanel:{safe_domain}"
     # add_cron writes the marker as "# OPanel:<domain>", so match case-insensitively.
@@ -202,11 +197,11 @@ def list_cron(domain: str, cron_user: str = "www-data") -> str:
     return "\n".join(line for line in list_cron_all(cron_user).splitlines() if marker in line.lower())
 
 
-def list_cron_entries(domain: str, cron_user: str = "www-data") -> list[dict]:
+def list_cron_entries(domain: str, cron_user: str) -> list[dict]:
     return [_parse_cron_line(index, line) for index, line in enumerate(list_cron(domain, cron_user).splitlines())]
 
 
-def delete_cron(domain: str, index: int, cron_user: str = "www-data") -> str:
+def delete_cron(domain: str, index: int, cron_user: str) -> str:
     safe_domain = _validate_domain(domain)
     matching = list_cron(safe_domain, cron_user).splitlines()
     if index < 0 or index >= len(matching):

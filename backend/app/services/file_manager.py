@@ -930,8 +930,25 @@ def _tar_uncompressed_size(
     destination: Path,
     archive_file: Path,
     allow_executable: bool = False,
+    quota_check=None,
 ) -> int:
+    """Total declared size of the members that will be written.
+
+    Unlike the zip path, which reads only the central directory, walking a gzip
+    stream forces decompression of every member's data to reach the next header.
+    That work used to be bounded solely by MAX_ARCHIVE_UNCOMPRESSED_BYTES --
+    100 GiB, a module constant -- while the caller's own storage limit (1 GiB by
+    default) was not consulted until the walk had finished. A ~100 MB upload of
+    highly compressible members, well inside the tenant's own quota, therefore
+    bought up to 100 GiB of decompression on a ThreadPoolExecutor with two
+    workers shared by every tenant on the box.
+
+    Passing quota_check in lets the walk stop at the limit that would refuse the
+    extraction anyway, instead of after it.
+    """
     total = 0
+    checked_at = 0
+    quota_step = 64 * 1024 * 1024
     for index, member in enumerate(archive, start=1):
         if MAX_ARCHIVE_ITEMS is not None and index > MAX_ARCHIVE_ITEMS:
             raise ValueError(f"Archive has too many files (limit {MAX_ARCHIVE_ITEMS})")
@@ -954,6 +971,12 @@ def _tar_uncompressed_size(
         total += member.size
         if MAX_ARCHIVE_UNCOMPRESSED_BYTES is not None and total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
             raise ValueError("Archive is too large")
+        # Re-test the caller's quota as the declared total grows, so an archive
+        # that cannot fit stops the decompression here rather than at the
+        # global cap. Batched, because the check costs a directory walk.
+        if quota_check is not None and total - checked_at >= quota_step:
+            checked_at = total
+            quota_check(total, 0)
     return total
 
 
@@ -1048,7 +1071,9 @@ def extract_archive(
     elif suffix.endswith(".tar.gz") or suffix.endswith(".tgz"):
         archive_kind = "tar.gz"
         with tarfile.open(archive_file, "r:gz") as archive:
-            incoming = _tar_uncompressed_size(archive, destination, archive_file, allow_executable)
+            incoming = _tar_uncompressed_size(
+                archive, destination, archive_file, allow_executable, quota_check=quota_check
+            )
             if quota_check:
                 quota_check(incoming, 0)
     else:

@@ -1747,7 +1747,7 @@ def wordpress_action(payload: WpAction, db: Session = Depends(get_db), current_u
     result = wordpress.wp_update(
         str(site_users.document_root(website.root_path, website.document_root or "public_html")),
         payload.action,
-        website.linux_user,
+        site_users.require_site_linux_user(website),
     )
     return result.__dict__
 
@@ -1832,7 +1832,7 @@ def update_wordpress_all(website_id: int, request: Request, db: Session = Depend
     results = {}
     for action in ("core", "plugins", "themes"):
         try:
-            result = wordpress.wp_update(doc_root, action, website.linux_user)
+            result = wordpress.wp_update(doc_root, action, site_users.require_site_linux_user(website))
             results[action] = (result.stdout or result.stderr or "").strip()
         except (RuntimeError, ValueError) as exc:
             results[action] = str(exc)

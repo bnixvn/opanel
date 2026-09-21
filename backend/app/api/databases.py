@@ -64,6 +64,26 @@ def create_database(payload: DatabaseCreate, db: Session = Depends(get_db), curr
     db_user = payload.db_user or db_name
     db_password = payload.db_password or mariadb.random_password()
 
+    # Count quota. Databases were the one tenant resource with no cap: websites
+    # are metered against owner.website_limit and bytes against
+    # storage_limit_mb, both with non-zero defaults, while this path had
+    # nothing. Each create also forks two mysql clients and ends its DDL batch
+    # with FLUSH PRIVILEGES -- a globally locking privilege reload whose cost
+    # grows with the number of accounts already present -- so an uncapped path
+    # made every later create slower for every tenant on the instance.
+    # 0 means unlimited, as it does for storage_limit_mb.
+    if not is_admin_role(current_user.role):
+        limit = getattr(current_user, "database_limit", 0) or 0
+        if limit > 0:
+            owned = db.query(DatabaseAccount).filter(
+                DatabaseAccount.owner_id == current_user.id
+            ).count()
+            if owned >= limit:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Database limit reached ({owned}/{limit}). Ask your administrator to raise it.",
+                )
+
     if db.query(DatabaseAccount).filter(DatabaseAccount.db_name == db_name).first():
         raise HTTPException(status_code=409, detail="Database name already exists")
     if db.query(DatabaseAccount).filter(DatabaseAccount.db_user == db_user).first():

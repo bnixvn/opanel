@@ -348,10 +348,22 @@ def test_archive_extract_helper_skips_symlinks_instead_of_rejecting():
 def test_wp_cli_wrapper_disables_jit_for_ioncube_compat():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
     # every wp-cli entrypoint turns opcache JIT off (ionCube user-opcode-handler
-    # conflict) alongside the existing pcre.jit=0
-    for marker in (
-        "WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable'",
-    ):
-        assert helper.count(marker) >= 3, marker
+    # conflict) alongside the existing pcre.jit=0.
+    #
+    # The count dropped from 3 to 2 when the `wp` case was removed: it ran
+    # wp-cli as www-data with no argument validation, and the backend reached it
+    # whenever Website.linux_user was NULL. Every remaining entrypoint runs as
+    # the site's own user, so the invariant is that *all* of them carry the
+    # flags -- not that there are three of them.
+    marker = "WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable'"
+    # Count invocations, not mentions: one line is an `[[ -x ... ]]` existence
+    # check, which needs no PHP flags.
+    invocations = [
+        line for line in helper.splitlines()
+        if "/usr/local/bin/wp" in line and "runuser" in line
+    ]
+    assert len(invocations) >= 2
+    for line in invocations:
+        assert marker in line, f"wp-cli entrypoint without the JIT flags: {line.strip()}"
     assert "-d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp" in helper
     assert "WP_CLI_PHP_ARGS='-d pcre.jit=0'" not in helper

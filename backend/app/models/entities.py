@@ -22,6 +22,9 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     website_limit: Mapped[int] = mapped_column(Integer, default=5)
     storage_limit_mb: Mapped[int] = mapped_column(Integer, default=1024)
+    # Databases were the one tenant resource with no cap at all. 0 = unlimited,
+    # matching storage_limit_mb.
+    database_limit: Mapped[int] = mapped_column(Integer, default=10)
     # Bumped to invalidate previously-issued JWTs (logout-everywhere, role
     # change, password reset by admin, account disable, etc).
     token_version: Mapped[int] = mapped_column(Integer, default=0)
@@ -249,6 +252,7 @@ class HostingPlan(Base):
     name: Mapped[str] = mapped_column(String(128))
     website_limit: Mapped[int] = mapped_column(Integer, default=1)
     storage_limit_mb: Mapped[int] = mapped_column(Integer, default=1024)
+    database_limit: Mapped[int] = mapped_column(Integer, default=10)
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
     app_type: Mapped[str] = mapped_column(String(32), default="php")
     auto_ssl: Mapped[bool] = mapped_column(Boolean, default=False)

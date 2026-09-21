@@ -253,6 +253,28 @@ install_base_packages() {
 }
 
 remove_ufw_legacy() {
+  # OPanel manages iptables directly, so ufw has to stop driving the same
+  # tables. Its configuration is moved aside rather than deleted: this used to
+  # `rm -rf /etc/ufw /var/lib/ufw`, which destroyed whatever rules the operator
+  # had without a copy and with no way back. It also runs as step 1 of the
+  # installer, long before setup_firewall, and OPanel's replacement is an
+  # allow-list over an ACCEPT policy -- so a host that arrived firewalled did
+  # not get an equivalent, and could not be restored to what it had.
+  if [[ -d /etc/ufw || -d /var/lib/ufw ]]; then
+    local ufw_backup="/var/lib/opanel/ufw-backup-$(date -u +%Y%m%d%H%M%S)"
+    install -d -o root -g root -m 0700 "$ufw_backup"
+    for dir in /etc/ufw /var/lib/ufw; do
+      [[ -d "$dir" ]] || continue
+      cp -a "$dir" "$ufw_backup/" 2>/dev/null || true
+    done
+    echo "NOTE: existing ufw configuration saved to ${ufw_backup}"
+    if command -v ufw >/dev/null 2>&1 && timeout 15 ufw status 2>/dev/null | grep -qi '^Status: active'; then
+      echo "WARNING: ufw was ACTIVE on this host and is being disabled."
+      echo "WARNING: OPanel's firewall page is a blocklist over an ACCEPT policy, not a"
+      echo "WARNING: default-deny replacement. Review 'ss -ltnp' after the install and"
+      echo "WARNING: block anything that should not be reachable."
+    fi
+  fi
   systemctl disable --now ufw >/dev/null 2>&1 || true
   command -v ufw >/dev/null 2>&1 && timeout 15 ufw --force disable >/dev/null 2>&1 || true
   DEBIAN_FRONTEND=noninteractive apt-get purge -y ufw >/dev/null 2>&1 || true

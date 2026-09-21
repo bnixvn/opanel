@@ -38,6 +38,40 @@ def linux_user_for_panel_username(username: str) -> str:
     return validate_linux_user((username or "").strip().lower())
 
 
+def require_site_linux_user(website) -> str:
+    """The Linux uid a site's own work must run as. Never www-data.
+
+    ``Website.linux_user`` was added nullable with no backfill, so rows created
+    before that migration keep NULL forever. Both wp_update/reset_admin_password
+    and cron_user_for_website treated that as a reason to fall back to the
+    shared www-data account, which is a principal change rather than a default:
+    www-data is a member of every panel user's private group and of
+    opanel-sites, which owns phpMyAdmin's config-db.php and
+    blowfish_secret.inc.php. Running a tenant's own WordPress or crontab as
+    that account hands the tenant those memberships.
+
+    The site root already encodes the answer -- /home/<linux-user>/<domain> --
+    so a legacy row is resolved from it rather than downgraded. If even that
+    does not yield a valid panel user, the caller has to fail: there is no safe
+    shared account to land on.
+    """
+    if getattr(website, "linux_user", None):
+        return validate_linux_user(website.linux_user)
+    try:
+        parts = Path(website.root_path).resolve().relative_to(HOME_ROOT.resolve()).parts
+    except (ValueError, OSError, TypeError, AttributeError):
+        parts = ()
+    if parts:
+        try:
+            return validate_linux_user(parts[0])
+        except ValueError:
+            pass
+    raise ValueError(
+        f"Website {getattr(website, 'domain', '?')} has no Linux user; "
+        "refusing to run its work as the shared www-data account"
+    )
+
+
 def validate_php_version(php_version: str) -> str:
     if not PHP_VERSION_RE.fullmatch(php_version or ""):
         raise ValueError("Invalid PHP version")

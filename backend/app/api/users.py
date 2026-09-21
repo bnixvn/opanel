@@ -108,6 +108,7 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         role=payload.role,
         website_limit=payload.website_limit,
         storage_limit_mb=payload.storage_limit_mb,
+        database_limit=payload.database_limit,
     )
     db.add(user)
     db.commit()
@@ -192,6 +193,8 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         user.website_limit = payload.website_limit
     if payload.storage_limit_mb is not None:
         user.storage_limit_mb = payload.storage_limit_mb
+    if payload.database_limit is not None:
+        user.database_limit = payload.database_limit
 
     if role_changed:
         # New role -> existing tokens with old role claim should be invalidated.

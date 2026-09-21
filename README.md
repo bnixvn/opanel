@@ -220,9 +220,23 @@ OPanel uses **OpenLiteSpeed** as the webserver:
 
 ## Firewall
 
-OPanel uses **iptables + ipset** for firewall management:
+OPanel uses **iptables + ipset** for firewall management.
 
-- **Protected ports** (22, 80, 443, 465, 587, panel port) are always allowed
+> **This is a blocklist, not a default-deny firewall.** The `INPUT` policy is
+> `ACCEPT` and no managed chain ends in `DROP`, so a port is reachable unless
+> something explicitly blocks it. The "protected ports" below are the ports the
+> panel refuses to *let you block*, not the only ports that are open — every
+> other listening service on the host is reachable too. The policy is ACCEPT on
+> purpose, so that a mistake in the rules cannot lock you out of your own
+> server. If you need closed-by-default, put that in front of the host (a cloud
+> security group, or your own `iptables -P INPUT DROP` with matching allows) and
+> check `ss -ltnp` for anything listening that should not be.
+>
+> Installing OPanel also disables and purges `ufw`. Its configuration is copied
+> to `/var/lib/opanel/ufw-backup-<timestamp>` first, but the rules are **not**
+> translated — if the host was firewalled by ufw, it is not afterwards.
+
+- **Protected ports** (22, 80, 443, 465, 587, panel port) cannot be removed from the allow list
 - **User rules** allow/block specific ports and IPs
 - **Blocklists** via ipset sets (`opanel_blocklist4`, `opanel_blocklist6`) with auto-update from URL lists
 - All rules persist in `/var/lib/opanel/firewall/rules.json`
