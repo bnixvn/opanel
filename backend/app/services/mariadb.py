@@ -17,6 +17,38 @@ def random_password(length: int = 24) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+def assert_db_user_available(db, db_user: str, owner_id: int) -> None:
+    """Refuse a db_user that a different panel account already holds.
+
+    ``allow_existing=True`` turns creation into ``ALTER USER ... IDENTIFIED BY``,
+    which is only safe under the precondition its docstring states -- that the
+    caller already owns the account. Nothing enforced that. Both archive paths
+    took ``db_user`` from archive content and checked only the sibling field
+    ``db_name``, so an archive could name another tenant's SQL user and
+    re-password it: the victim's site lost database access, and the archive's
+    author held a working credential with GRANT ALL on the victim's database,
+    reachable from localhost, which is where every tenant's PHP runs.
+
+    RESERVED_DB_IDENTIFIERS already protects the server's own accounts; this
+    protects ordinary tenants from each other. Import it lazily to keep this
+    module free of a model-layer import at load time.
+    """
+    from app.models.entities import DatabaseAccount
+
+    if not db_user:
+        return
+    clash = (
+        db.query(DatabaseAccount)
+        .filter(
+            DatabaseAccount.db_user == db_user,
+            DatabaseAccount.owner_id != owner_id,
+        )
+        .first()
+    )
+    if clash is not None:
+        raise ValueError(f"Database user already belongs to another account: {db_user}")
+
+
 def safe_db_identifier(domain: str, prefix: str) -> str:
     clean = "".join(ch if ch.isalnum() else "_" for ch in domain.lower())[:38]
     return f"{prefix}_{clean}"[:63]

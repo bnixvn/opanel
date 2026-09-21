@@ -21,7 +21,7 @@ from paramiko.ssh_exception import SSHException
 from app.core.config import settings
 from app.core.secrets import decrypt, encrypt
 from app.core.security import hash_password
-from app.core.permissions import normalize_role
+from app.core.permissions import Role
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.services import mariadb, openlitespeed, site_users, waf, wordpress
 from app.services import ssl as ssl_service
@@ -838,6 +838,71 @@ def _read_member_bytes(archive: Path, member_name: str) -> bytes:
         return source.read() if source else b""
 
 
+def _preflight_restore(db, manifest: dict, user, owned_databases: list) -> None:
+    """Reject an archive before any privileged side effect happens.
+
+    restore_user_backup performs every irreversible step -- Linux account, site
+    tree, MariaDB database with GRANT ALL, SQL import, certificate install,
+    root-owned WAF include, root-owned vhost plus an OpenLiteSpeed restart --
+    before its single db.commit(). Several of its own validations then fire
+    partway through, and the only recovery anywhere is a SQLAlchemy rollback,
+    which touches none of that. An archive whose first site was valid and whose
+    second was not therefore left a live vhost, a root-owned WAF include, a
+    database with GRANT ALL, installed key material and a Linux user, with zero
+    rows in the panel database -- so nothing listed them, nothing could remove
+    them through the panel, and remove_vhost was never called for that domain.
+    It also let a crafted archive fail late on purpose to avoid leaving an
+    auditable record of what it had installed.
+
+    Every check here is one the main loop already performs; doing them up front
+    is what makes the attacker-controllable failures happen before the first
+    side effect rather than in the middle of them.
+    """
+    owner_id = user.id if user is not None else None
+    seen_domains: set[str] = set()
+    for site_info in manifest.get("websites") or []:
+        domain = (site_info.get("domain") or "").strip().lower()
+        if not site_users.DOMAIN_RE.fullmatch(domain):
+            raise ValueError(f"Invalid domain in backup: {domain}")
+        if domain in seen_domains:
+            raise ValueError(f"Domain listed twice in backup: {domain}")
+        seen_domains.add(domain)
+        site_users.validate_document_root(site_info.get("document_root") or "public_html")
+
+        existing = db.query(Website).filter(Website.domain == domain).first()
+        if existing is not None and existing.owner_id != owner_id:
+            raise ValueError(f"Domain already belongs to another account: {domain}")
+
+        exclude_id = existing.id if existing is not None else None
+        for alias in site_info.get("aliases") or []:
+            alias_domain = (alias or "").strip().lower()
+            if not alias_domain or alias_domain == domain:
+                continue
+            if _hostname_conflicts(db, alias_domain, exclude_website_id=exclude_id):
+                raise ValueError(
+                    f"Alias domain already belongs to another website: {alias_domain}"
+                )
+
+    for entry in owned_databases:
+        db_name = (entry.get("db_name") or "").strip()
+        db_user = (entry.get("db_user") or "").strip()
+        if not db_name or not db_user:
+            continue
+        if Path(db_name).name != db_name:
+            raise ValueError(f"Invalid database name in backup: {db_name}")
+        clash = (
+            db.query(DatabaseAccount)
+            .filter(
+                DatabaseAccount.db_name == db_name,
+                DatabaseAccount.owner_id != owner_id,
+            )
+            .first()
+        )
+        if clash is not None:
+            raise ValueError(f"Database name already belongs to another account: {db_name}")
+        mariadb.assert_db_user_available(db, db_user, owner_id)
+
+
 def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
     archive = user_backup_path(backup_file)
     manifest = read_backup_manifest(str(archive))
@@ -849,21 +914,41 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
         raise ValueError("Invalid user in backup")
 
     user = db.query(User).filter(User.username == username).first()
+
+    # Reject the archive before anything privileged happens. ensure_panel_user
+    # below creates a Linux account, so the preflight has to run ahead of it,
+    # not just ahead of the site loop. `user` is None for an account that does
+    # not exist yet, which means it cannot own any domain or database already
+    # on the box -- so every collision is a conflict.
+    owned_databases = manifest.get("databases") or []
+    _preflight_restore(db, manifest, user, owned_databases)
+
     created_user = False
     if user is None:
         email = user_info.get("email") or f"{username}@users.opanel.invalid"
         if email.endswith(_PLACEHOLDER_EMAIL_SUFFIXES):
             email = f"{username}@users.opanel.invalid"
-        backup_role = user_info.get("role") or "end_user"
-        try:
-            role = normalize_role(backup_role).value
-        except Exception:
-            role = "end_user"
+        # Neither the role nor the credential may come from the archive.
+        # normalize_role maps "admin" (and the legacy "super_admin") to
+        # Role.admin, so an archive naming an unused username and role "admin"
+        # used to create a panel administrator whose bcrypt hash -- and so
+        # whose password -- its author chose, with no TOTP and immediately
+        # usable at /api/auth/login. A panel admin reaches root through the
+        # sudoers grant on opanel-helper, which carries no argument
+        # restriction. RESTORABLE_BACKUP_KINDS deliberately accepts
+        # "bpanel_user", a foreign panel's export, so archive bytes are
+        # third-party data; the operator authorises "restore this account", not
+        # "make this archive's author an administrator", and describe_backups
+        # never showed them the requested role.
+        #
+        # da_import._process_archive already does exactly this: role is
+        # hardcoded to end_user and the password is generated server-side.
+        restored_password = secrets.token_urlsafe(18)
         user = User(
             username=username,
             email=email,
-            hashed_password=user_info.get("hashed_password") or hash_password(secrets.token_urlsafe(18)),
-            role=role,
+            hashed_password=hash_password(restored_password),
+            role=Role.end_user.value,
             is_active=bool(user_info.get("is_active", True)),
             website_limit=int(user_info.get("website_limit") or 5),
             storage_limit_mb=int(user_info.get("storage_limit_mb") or 1024),
@@ -881,7 +966,7 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
     # Archives written before databases were backed up by ownership carry them
     # only per site; newer ones carry every database the account owned, so the
     # per-site path below must stand down or each one would import twice.
-    owned_databases = manifest.get("databases") or []
+    # (owned_databases is resolved above, before the preflight.)
     with tempfile.TemporaryDirectory(prefix="opanel-user-restore-") as tmp:
         tmp_dir = Path(tmp)
         site_entries = manifest.get("websites") or []
@@ -917,6 +1002,19 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
             site_users.ensure_document_root(root_path, document_root, linux_user)
 
             website = db.query(Website).filter(Website.domain == domain).first()
+            # A domain already on the box must belong to the account being
+            # restored. The lookup used to be by domain alone, and the update
+            # branch below then rewrote owner_id, root_path, linux_user and the
+            # WAF columns -- so an archive naming someone else's domain took
+            # the site over, deleted the aliases it did not list, repointed its
+            # database row, and had rewrite_vhost serve the archive's content
+            # under the archive account's uid. The alias loop below and the
+            # owned-database loop further down both already refuse a conflict;
+            # so does websites.create_website. This is the same rule.
+            if website is not None and website.owner_id != user.id:
+                raise ValueError(
+                    f"Domain already belongs to another account: {domain}"
+                )
             created_site = False
             if website is None:
                 website = Website(
@@ -934,7 +1032,17 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
                     nginx_rewrite_mode=nginx_rewrite_mode,
                     waf_enabled=bool(site_info.get("waf_enabled", True)),
                     waf_default_rules=site_info.get("waf_default_rules") or "",
-                    waf_custom_rules=site_info.get("waf_custom_rules") or "",
+                    # Never from the archive. api/waf.py refuses any change to
+                    # custom_rules from a non-admin and says why in source:
+                    # these are raw ModSecurity directives, actions can run
+                    # programs, and a rule that fails to parse can stop the
+                    # server coming back up. The restore applied them with no
+                    # author check at all, and render_site_rules appends them
+                    # last, after the base include -- so a trailing
+                    # "SecRuleEngine Off" silently disabled the WAF for that
+                    # site. waf_default_rules is a catalogue selection, not
+                    # directives, so it is safe to carry.
+                    waf_custom_rules="",
                 )
                 db.add(website)
                 db.flush()
@@ -952,7 +1060,9 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
                 website.nginx_rewrite_mode = nginx_rewrite_mode
                 website.waf_enabled = bool(site_info.get("waf_enabled", True))
                 website.waf_default_rules = site_info.get("waf_default_rules") or ""
-                website.waf_custom_rules = site_info.get("waf_custom_rules") or ""
+                # waf_custom_rules is deliberately left as it is: whatever this
+                # row already holds was authored by an admin through
+                # PATCH /websites/{id}/waf, and the archive is not an admin.
                 db.flush()
 
             existing_aliases = {
@@ -979,6 +1089,7 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
                 ).first()
                 if conflict:
                     raise ValueError(f"Database name already belongs to another website: {db_name}")
+                mariadb.assert_db_user_available(db, db_user, user.id)
                 mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
                 sql_member = db_info.get("sql_member") or f"databases/{domain}.sql"
                 sql_path = _extract_member_to_file(archive, sql_member, tmp_dir)
@@ -1082,6 +1193,7 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
             ).first()
             if conflict:
                 raise ValueError(f"Database name already belongs to another account: {db_name}")
+            mariadb.assert_db_user_available(db, db_user, user.id)
             mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
             sql_path = _extract_member_to_file(
                 archive, entry.get("sql_member") or f"databases/{db_name}.sql", tmp_dir

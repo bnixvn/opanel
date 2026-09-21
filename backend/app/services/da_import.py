@@ -1167,7 +1167,11 @@ def _process_archive(
                     # Decompress SQL if needed
                     temp_sql = _temporary_sql_file(matched_sql)
 
-                    # Create database and user
+                    # Create database and user. db_user comes out of the
+                    # archive's own app config, so it has to be checked against
+                    # other accounts' SQL users before allow_existing turns the
+                    # create into a re-password.
+                    mariadb.assert_db_user_available(db, db_user, user.id)
                     mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
 
                     # Import SQL
@@ -1282,6 +1286,7 @@ def _process_archive(
             temp_sql = _temporary_sql_file(sql_path)
             db_user = _normalize_db_identifier(key, key, set())
             db_password, _reused = _import_db_password({}, _da_db_credentials(sql_path, root))
+            mariadb.assert_db_user_available(db, db_user, user.id)
             mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
             mariadb.import_database(db_name, str(temp_sql))
             item = DatabaseAccount(
