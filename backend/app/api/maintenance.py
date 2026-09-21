@@ -714,7 +714,11 @@ def restore_backup(payload: RestoreBackup, db: Session = Depends(get_db), curren
         else:
             try:
                 database_restored = backup.restore_backup_database(
-                    website, payload.backup_file, account.db_name
+                    website,
+                    payload.backup_file,
+                    account.db_name,
+                    db_user=account.db_user,
+                    db_password=decrypt(account.db_password),
                 )
                 if not database_restored:
                     database_note = "This backup contains no SQL dump, so only files were restored."

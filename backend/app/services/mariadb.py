@@ -1,5 +1,8 @@
 from datetime import datetime
+import contextlib
+import tempfile
 from pathlib import Path
+import os
 import secrets
 import string
 import subprocess
@@ -47,6 +50,18 @@ def assert_db_user_available(db, db_user: str, owner_id: int) -> None:
     )
     if clash is not None:
         raise ValueError(f"Database user already belongs to another account: {db_user}")
+    # The panel's table is not the whole picture. create_account (the WHMCS
+    # path) calls create_database directly and never inserts a DatabaseAccount
+    # row, so those SQL users -- whose names are derived deterministically from
+    # the domain -- are invisible here. identifier_in_use asks MariaDB itself,
+    # which is why the user-facing create path uses it. Without this, an archive
+    # could still re-password an account the panel has no record of.
+    if db.query(DatabaseAccount).filter(DatabaseAccount.db_user == db_user).first() is None:
+        existing = identifier_in_use("opanel_probe_unused", db_user)
+        if existing and "user" in existing.lower():
+            raise ValueError(
+                f"Database user already exists on this server: {db_user}"
+            )
 
 
 def safe_db_identifier(domain: str, prefix: str) -> str:
@@ -213,16 +228,70 @@ def export_database(db_name: str, output_file: str):
     return shell.run(args, sensitive=True)
 
 
-def import_database(db_name: str, input_file: str):
+@contextlib.contextmanager
+def _scoped_defaults_file(db_user: str, db_password: str):
+    """A 0600 [client] defaults-file for one database user.
+
+    The credentials must not go in argv: /proc/<pid>/cmdline is world-readable,
+    so every local uid -- including every other tenant's PHP -- could read the
+    password of the schema being imported.
+    """
+    safe_user = _validate_identifier(db_user)
+    if "\n" in db_password or "\r" in db_password or "\x00" in db_password:
+        raise ValueError("Invalid database password")
+    handle = tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", prefix="opanel-mysql-", suffix=".cnf", delete=False
+    )
+    try:
+        os.chmod(handle.name, 0o600)
+        handle.write("[client]\n")
+        handle.write(f"user={safe_user}\n")
+        handle.write(f"password={db_password}\n")
+        handle.write("host=localhost\n")
+        handle.close()
+        yield handle.name
+    finally:
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+
+
+def import_database(
+    db_name: str,
+    input_file: str,
+    *,
+    as_user: str | None = None,
+    as_password: str | None = None,
+):
+    """Load a SQL dump into ``db_name``.
+
+    ``as_user``/``as_password`` name the schema's own MariaDB account, and every
+    caller that imports a dump out of an archive must supply them. Without them
+    this runs as the panel's own account, which holds
+    GRANT ALL PRIVILEGES ON *.* WITH GRANT OPTION -- and `mysql <db>` only sets
+    the default schema, so a dump body could GRANT itself anything, create
+    users, or read another tenant's tables. Scoping the connection makes
+    MariaDB enforce the one-schema boundary instead of trusting the file.
+    """
     safe_name = _validate_identifier(db_name)
     sql_path = Path(input_file).resolve()
     if not sql_path.exists() or not sql_path.is_file():
         raise FileNotFoundError("SQL file not found")
     if settings.command_dry_run:
         return shell.run(["mysql", safe_name], sensitive=True)
-    args = _mysql_args([safe_name])
-    with sql_path.open("rb") as source:
-        completed = subprocess.run(args, stdin=source, capture_output=True, check=False)
+
+    def _run(args):
+        with sql_path.open("rb") as source:
+            return subprocess.run(args, stdin=source, capture_output=True, check=False)
+
+    if as_user:
+        if not as_password:
+            raise ValueError("A scoped database import needs the account password")
+        with _scoped_defaults_file(as_user, as_password) as defaults:
+            completed = _run(["mysql", f"--defaults-file={defaults}", safe_name])
+    else:
+        completed = _run(_mysql_args([safe_name]))
     if completed.returncode != 0:
         stderr = completed.stderr.decode("utf-8", errors="replace")
         raise RuntimeError(f"Database import failed: {stderr.strip()}")

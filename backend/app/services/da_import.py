@@ -1070,7 +1070,14 @@ def _process_archive(
         db.flush()
         _log(f"  Created panel user: {username}")
     else:
-        _log(f"  Using existing panel user: {username}")
+        # Overwrite now keeps the existing User row instead of deleting it, so
+        # the panel password has to be set here too. Without this the
+        # credentials file reported a password that worked for SFTP (because
+        # ensure_panel_user below rotates the Linux account regardless) and
+        # failed at the panel login.
+        user.hashed_password = hashed
+        db.flush()
+        _log(f"  Using existing panel user: {username} (password reset)")
 
     # Create Linux user
     linux_user = site_users.ensure_panel_user(username, password)

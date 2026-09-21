@@ -867,6 +867,11 @@ def _preflight_restore(db, manifest: dict, user, owned_databases: list) -> None:
     """
     owner_id = user.id if user is not None else None
     seen_domains: set[str] = set()
+    # Hostnames the archive itself claims. Two sites in one archive that both
+    # claim a name -- as a primary domain, a www. variant or an alias -- used to
+    # fail on the SECOND one, inside the loop, after the first site's Linux
+    # account, database, certificate, WAF include and vhost were already live.
+    seen_hostnames: set[str] = set()
     for site_info in manifest.get("websites") or []:
         domain = (site_info.get("domain") or "").strip().lower()
         if not site_users.DOMAIN_RE.fullmatch(domain):
@@ -881,6 +886,18 @@ def _preflight_restore(db, manifest: dict, user, owned_databases: list) -> None:
             raise ValueError(f"Domain already belongs to another account: {domain}")
 
         exclude_id = existing.id if existing is not None else None
+        # An owner check on Website.domain alone is weaker than the rule
+        # create_website applies. _hostname_conflicts also reserves each site's
+        # www. variant and every alias, so without it an archive could claim
+        # another account's alias -- no Website row carries that name -- and get
+        # a second vhost serving the hijacked hostname under its own uid.
+        if _hostname_conflicts(db, domain, exclude_website_id=exclude_id):
+            raise ValueError(f"Hostname already belongs to another website: {domain}")
+        for hostname in (domain, f"www.{domain}"):
+            if hostname in seen_hostnames:
+                raise ValueError(f"Hostname claimed twice in backup: {hostname}")
+            seen_hostnames.add(hostname)
+
         for alias in site_info.get("aliases") or []:
             alias_domain = (alias or "").strip().lower()
             if not alias_domain or alias_domain == domain:
@@ -889,14 +906,33 @@ def _preflight_restore(db, manifest: dict, user, owned_databases: list) -> None:
                 raise ValueError(
                     f"Alias domain already belongs to another website: {alias_domain}"
                 )
+            if alias_domain in seen_hostnames:
+                raise ValueError(f"Hostname claimed twice in backup: {alias_domain}")
+            seen_hostnames.add(alias_domain)
 
-    for entry in owned_databases:
+    # Check the database entries the restore will ACTUALLY use. The loop picks
+    # `owned_databases` when the manifest carries a top-level list and the
+    # per-site `database` entry otherwise, so validating only the former left
+    # the other path entirely unchecked -- and an archive chooses which one it
+    # ships.
+    entries = list(owned_databases)
+    if not entries:
+        for site_info in manifest.get("websites") or []:
+            site_db = site_info.get("database")
+            if site_db:
+                entries.append(site_db)
+
+    for entry in entries:
         db_name = (entry.get("db_name") or "").strip()
         db_user = (entry.get("db_user") or "").strip()
         if not db_name or not db_user:
             continue
         if Path(db_name).name != db_name:
             raise ValueError(f"Invalid database name in backup: {db_name}")
+        # By owner, never by website_id: website_id is nullable, and SQL
+        # `website_id != <n>` does not match NULL, so a per-website comparison
+        # is blind to exactly the standalone databases POST /api/databases
+        # creates.
         clash = (
             db.query(DatabaseAccount)
             .filter(
@@ -1022,6 +1058,10 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
                 raise ValueError(
                     f"Domain already belongs to another account: {domain}"
                 )
+            if _hostname_conflicts(
+                db, domain, exclude_website_id=website.id if website else None
+            ):
+                raise ValueError(f"Hostname already belongs to another website: {domain}")
             created_site = False
             if website is None:
                 website = Website(
@@ -1090,12 +1130,15 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
                 db_name = db_info.get("db_name")
                 db_user = db_info.get("db_user")
                 db_password = db_info.get("db_password") or mariadb.random_password()
+                # By owner. `website_id != website.id` cannot match a NULL
+                # website_id, which is what every standalone database has, so
+                # this check used to be blind to the rows most worth protecting.
                 conflict = db.query(DatabaseAccount).filter(
                     DatabaseAccount.db_name == db_name,
-                    DatabaseAccount.website_id != website.id,
+                    DatabaseAccount.owner_id != user.id,
                 ).first()
                 if conflict:
-                    raise ValueError(f"Database name already belongs to another website: {db_name}")
+                    raise ValueError(f"Database name already belongs to another account: {db_name}")
                 mariadb.assert_db_user_available(db, db_user, user.id)
                 mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
                 sql_member = db_info.get("sql_member") or f"databases/{domain}.sql"
@@ -1286,7 +1329,14 @@ def archive_has_database(website: Website, backup_file: str) -> bool:
         return any(m.name.startswith("database/") and m.name.endswith(".sql") for m in tar.getmembers())
 
 
-def restore_backup_database(website: Website, backup_file: str, db_name: str) -> bool:
+def restore_backup_database(
+    website: Website,
+    backup_file: str,
+    db_name: str,
+    *,
+    db_user: str | None = None,
+    db_password: str | None = None,
+) -> bool:
     """Import the SQL dump held in a website backup.
 
     restore_backup() deliberately skips the database/ member, so for a long time
@@ -1310,7 +1360,12 @@ def restore_backup_database(website: Website, backup_file: str, db_name: str) ->
                 break
         if sql_path is None:
             return False
-        mariadb.import_database(db_name, str(sql_path))
+        # Scoped to the schema's own account: this route is reachable by any
+        # end_user who owns the site, and the archive -- including its SQL
+        # member -- can be one they uploaded themselves.
+        mariadb.import_database(
+            db_name, str(sql_path), as_user=db_user, as_password=db_password
+        )
         return True
 
 

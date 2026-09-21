@@ -14,6 +14,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.secrets import encrypt
 from app.core.security import hash_password
 from app.models.entities import (
     ApiToken,
@@ -280,6 +281,24 @@ def create_account(
                 _cleanup_failed(db, user, website)
                 _finish_job(db, job, "failed", f"MariaDB creation failed: {exc}")
                 raise ValueError(f"Could not create database: {exc}") from exc
+
+            # Record it. Without a DatabaseAccount row, terminate_account's
+            # sweep -- by owner or by website, either way -- has nothing to find,
+            # so every WHMCS-provisioned schema survived termination with its
+            # data intact. db_name is derived deterministically from the domain
+            # and create_database issues CREATE DATABASE IF NOT EXISTS, so the
+            # next site for that domain silently adopted it. This row also makes
+            # the database count visible to the quota and to backups.
+            db.add(
+                DatabaseAccount(
+                    owner_id=user.id,
+                    website_id=website.id,
+                    db_name=db_info["db_name"],
+                    db_user=db_info["db_user"],
+                    db_password=encrypt(db_info["db_password"]),
+                )
+            )
+            db.flush()
 
             try:
                 wordpress.install_wordpress(
