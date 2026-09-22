@@ -368,3 +368,92 @@ def test_an_account_with_only_an_authenticator_app_is_unaffected(
 def test_an_account_with_neither_signs_straight_in(db, login_user, memory_limits):
     result = _login(db, login_user)
     assert result.access_token
+
+
+# --------------------------------------------------------------------------
+# a passkey is a SECOND factor, never a way past the password
+# --------------------------------------------------------------------------
+def test_a_valid_passkey_does_not_get_in_with_the_wrong_password(
+    db, login_user, panel_host, memory_limits, monkeypatch
+):
+    """The whole point: the passkey is checked only after the password."""
+    from fastapi import HTTPException, Response
+
+    from app.api import auth as auth_api
+
+    _credential(db, login_user, credential_id="k1")
+    # Pretend every assertion is cryptographically perfect.
+    monkeypatch.setattr(passkeys, "complete_login", lambda *a, **k: True)
+
+    with pytest.raises(HTTPException) as exc:
+        auth_api.login(
+            request=_request(), response=Response(),
+            form=_Form(login_user.username, "not-the-password"),
+            otp="", passkey='{"rawId": "k1"}', db=db,
+        )
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid username or password", (
+        "a wrong password must fail as a wrong password, before the second "
+        "factor is looked at at all"
+    )
+
+
+def test_the_passkey_is_never_consulted_when_the_password_is_wrong(
+    db, login_user, panel_host, memory_limits, monkeypatch
+):
+    from fastapi import HTTPException, Response
+
+    from app.api import auth as auth_api
+
+    _credential(db, login_user, credential_id="k1")
+    consulted = []
+    monkeypatch.setattr(
+        passkeys, "complete_login",
+        lambda *a, **k: (consulted.append(1), True)[1],
+    )
+    monkeypatch.setattr(
+        passkeys, "has_passkeys",
+        lambda *a, **k: (consulted.append(1), True)[1],
+    )
+
+    with pytest.raises(HTTPException):
+        auth_api.login(
+            request=_request(), response=Response(),
+            form=_Form(login_user.username, "wrong"),
+            otp="", passkey='{"rawId": "k1"}', db=db,
+        )
+    assert consulted == [], "the second factor was reached on a failed password"
+
+
+def test_an_unknown_account_never_reaches_the_passkey_path(
+    db, panel_host, memory_limits, monkeypatch
+):
+    from fastapi import HTTPException, Response
+
+    from app.api import auth as auth_api
+
+    monkeypatch.setattr(passkeys, "has_passkeys", lambda *a, **k: pytest.fail(
+        "a nonexistent username must be rejected before any passkey lookup"
+    ))
+    with pytest.raises(HTTPException) as exc:
+        auth_api.login(
+            request=_request(), response=Response(),
+            form=_Form("nobody", "whatever"), otp="", passkey="", db=db,
+        )
+    assert exc.value.status_code == 401
+
+
+def test_complete_login_has_exactly_one_caller_and_it_is_behind_the_password():
+    """No second entry point may appear that skips the password."""
+    source = (
+        pathlib.Path(passkeys.__file__).parent.parent / "api" / "auth.py"
+    ).read_text(encoding="utf-8")
+    assert source.count("passkeys.complete_login(") == 1
+    body = source[source.index("def login("):]
+    body = body[: body.index("\n@router")]
+    assert body.index("verify_password(") < body.index("passkeys.complete_login("), (
+        "the password check must come first in the function body"
+    )
+    assert body.index("Invalid username or password") < body.index("passkeys.has_passkeys("), (
+        "the wrong-password branch must return before any passkey work"
+    )
