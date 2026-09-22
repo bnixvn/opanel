@@ -277,13 +277,18 @@ write_update_state() {
   latest="${ref#v}"
   [[ "$latest" == "$ref" ]] && latest=""
   install -d -m 0750 "$(dirname "$UPDATE_STATE_FILE")"
-  python3 - "$UPDATE_STATE_FILE" "$status" "$ref" "$latest" "$current" "$message" "$now" <<'PY'
+  # INSTALLED_COMMIT is what the panel compares against the branch tip to know
+  # whether a release is waiting. /opt/opanel is a plain tree with no .git, so
+  # without this recorded here there is nothing on the box to compare and the
+  # Updates page can only fall back to version numbers.
+  python3 - "$UPDATE_STATE_FILE" "$status" "$ref" "$latest" "$current" "$message" "$now" "${INSTALLED_COMMIT:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 status, ref, latest, current, message, now = sys.argv[2:8]
+installed_commit = sys.argv[8] if len(sys.argv) > 8 else ""
 try:
     state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 except Exception:
@@ -291,6 +296,8 @@ except Exception:
 
 if current:
     state["current_version"] = current
+if installed_commit:
+    state["installed_commit"] = installed_commit
 if latest:
     state["latest_tag"] = ref
     state["latest_version"] = latest
@@ -1045,6 +1052,7 @@ else
       UPDATE_REF="$remote_branch"
       write_update_state "updating" "$UPDATE_REF" "Updating opanel from ${UPDATE_REF}"
       reset_worktree_to_ref "$remote_branch" "$BRANCH"
+      INSTALLED_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
       echo "HEAD: $(git rev-parse --short HEAD) - $(git log -1 --pretty=%s)"
       ;;
     *)

@@ -4901,9 +4901,19 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     if (!isAdmin) return <section className="section"><h2>Updates</h2><p className="hint">No permission.</p></section>;
     const statusText = updatesStatus?.stdout || updatesStatus?.stderr || 'Click View logs to load update logs.';
     const panelUpdate = updatesStatus?.panel || {};
-    const panelBadge = panelUpdate.latest_commit ? 'Tracking main' : 'Unknown';
-    const panelBadgeClass = panelUpdate.latest_commit ? 'badge ok' : 'badge';
+    // Three states, not two. `update_available` is null when the check could
+    // not tell -- an unreadable VERSION on the branch, or a box that has not
+    // yet recorded the commit it installed -- and "unknown" must not be
+    // dressed up as "up to date".
+    const hasUpdate = panelUpdate.update_available;
+    const panelBadge = hasUpdate === true ? 'Update available'
+      : hasUpdate === false ? 'Up to date'
+      : panelUpdate.latest_commit ? 'Tracking main' : 'Unknown';
+    const panelBadgeClass = hasUpdate === true ? 'badge warn'
+      : hasUpdate === false ? 'badge ok' : 'badge';
     const currentPanelVersion = panelUpdate.current_version || appVersion || 'unknown';
+    const latestPanelVersion = panelUpdate.latest_version || '';
+    const newerVersion = Boolean(latestPanelVersion) && latestPanelVersion !== currentPanelVersion;
     const latestPanelRef = panelUpdate.latest_commit ? panelUpdate.latest_commit.slice(0, 12) : 'unknown';
     return <>
       <section className="section">
@@ -4915,12 +4925,15 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
           <div className="update-version-head"><strong>Panel source</strong><span className={panelBadgeClass}>{panelBadge}</span></div>
           <div className="update-version-grid">
             <span>Current <strong>v{currentPanelVersion}</strong></span>
+            {newerVersion && <span>Available <strong>v{latestPanelVersion}</strong></span>}
             <span>Branch <strong>{panelUpdate.update_branch || 'main'}</strong></span>
             <span>Latest commit <strong>{latestPanelRef}</strong></span>
             <span>Checked <strong>{panelUpdate.last_checked_at || 'never'}</strong></span>
             <span>State file <strong>{panelUpdate.state_file || '/var/lib/opanel/update-status.json'}</strong></span>
           </div>
           {panelUpdate.check_error && <p className="hint">Main branch check failed: {panelUpdate.check_error}</p>}
+          {hasUpdate !== true && hasUpdate !== false && !panelUpdate.check_error &&
+            <p className="hint">Cannot tell yet whether a release is waiting. Run one panel update to record the installed commit, after which this compares exactly.</p>}
           {panelUpdate.last_update_status && <p className="hint">Last update: {panelUpdate.last_update_status}{panelUpdate.last_update_ref ? ` (${panelUpdate.last_update_ref})` : ''}{panelUpdate.last_update_finished_at ? ` at ${panelUpdate.last_update_finished_at}` : ''}</p>}
         </div>
         <div className="actions">

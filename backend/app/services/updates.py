@@ -1,6 +1,9 @@
 import json
 import os
+import re
+import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -55,6 +58,89 @@ def _latest_branch_ref_from_git() -> tuple[str, str]:
     return f"origin/{UPDATE_BRANCH}", commit
 
 
+_VERSION_RE = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")
+
+
+def _remote_version(commit: str) -> str:
+    """Read VERSION at the branch tip, or "" when it cannot be read.
+
+    `git ls-remote` returns a commit and no file content, so there was nothing
+    to compare a version against and the installed one was echoed back as the
+    latest. A blobless depth-1 fetch into a throwaway bare repo costs about two
+    seconds and 160K, and the answer is cached for STATUS_CACHE_SECONDS like
+    the rest of the check.
+
+    Anything unexpected yields "" rather than a guess: the caller reports "I do
+    not know" instead of "you are up to date", which is the failure that hid a
+    release in the first place.
+    """
+    if not commit:
+        return ""
+    workdir = tempfile.mkdtemp(prefix="opanel-version-")
+    try:
+        staged = [
+            ["git", "init", "--quiet", "--bare", workdir],
+            [
+                "git", "-C", workdir, "fetch", "--quiet", "--depth=1",
+                "--filter=blob:none", REPO_URL, f"refs/heads/{UPDATE_BRANCH}",
+            ],
+        ]
+        for argv in staged:
+            done = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=45)
+            if done.returncode != 0:
+                return ""
+        shown = subprocess.run(
+            ["git", "-C", workdir, "cat-file", "blob", "FETCH_HEAD:VERSION"],
+            capture_output=True, text=True, check=False, timeout=45,
+        )
+        if shown.returncode != 0:
+            return ""
+        text = (shown.stdout or "").strip()
+        # A VERSION file holding something other than a version -- or a stubbed
+        # subprocess in a test -- must not be presented as a release number.
+        return text if _VERSION_RE.fullmatch(text) else ""
+    except Exception:
+        return ""
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _version_tuple(text: str) -> tuple:
+    """Leading integers of a dotted version, stopping at the first non-number.
+
+    "1.10.0" sorts above "1.9.8" here, which string comparison gets backwards.
+    """
+    parts: list[int] = []
+    for chunk in (text or "").split("."):
+        digits = ""
+        for char in chunk:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def _update_available(installed_commit: str, latest_commit: str,
+                      current_version: str, remote_version: str) -> "bool | None":
+    """True, False, or None for "could not tell" -- never a guess.
+
+    The commit is the exact answer, but only boxes updated by a copy of
+    update.sh new enough to record it have one; update.sh applies its own edits
+    one run late, so every existing installation falls back to comparing
+    versions until it has updated once more.
+    """
+    if installed_commit and latest_commit:
+        return installed_commit != latest_commit
+    installed = _version_tuple(current_version)
+    offered = _version_tuple(remote_version)
+    if installed and offered:
+        return offered > installed
+    return None
+
+
 def panel_release_status(force_refresh: bool = False) -> dict:
     state = _read_update_state()
     now = _utc_now()
@@ -69,12 +155,14 @@ def panel_release_status(force_refresh: bool = False) -> dict:
     if should_refresh:
         try:
             latest_tag, latest_commit = _latest_branch_ref_from_git()
-            latest_version = current_version
+            remote_version = _remote_version(latest_commit)
+            latest_version = remote_version or current_version
             state.update(
                 {
                     "current_version": current_version,
                     "latest_tag": latest_tag,
                     "latest_version": latest_version,
+                    "remote_version": remote_version,
                     "latest_commit": latest_commit,
                     "update_channel": "branch",
                     "update_branch": UPDATE_BRANCH,
@@ -104,14 +192,25 @@ def panel_release_status(force_refresh: bool = False) -> dict:
     if not check_error:
         check_error = state.get("check_error") or ""
 
+    # `remote_version` is what the check actually learned; `latest_version`
+    # falls back to the installed one so the page still has something to show.
+    # Only the former decides whether an update exists, or an unreadable
+    # VERSION would read as "up to date".
+    installed_commit = state.get("installed_commit") or ""
+    remote_version = state.get("remote_version") or ""
+    update_available = _update_available(
+        installed_commit, latest_commit, current_version, remote_version
+    )
+
     return {
         "current_version": current_version,
         "latest_version": latest_version,
         "latest_tag": latest_tag,
         "latest_commit": latest_commit,
+        "installed_commit": installed_commit,
         "update_channel": "branch",
         "update_branch": UPDATE_BRANCH,
-        "update_available": None,
+        "update_available": update_available,
         "last_checked_at": state.get("last_checked_at") or "",
         "last_update_started_at": state.get("last_update_started_at") or "",
         "last_update_finished_at": state.get("last_update_finished_at") or "",
