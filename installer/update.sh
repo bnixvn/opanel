@@ -666,10 +666,13 @@ harden_existing_panel_users() {
           setfacl -Rb "$site_dir" 2>/dev/null || true
           find "$site_dir" -type d -exec setfacl -k {} + 2>/dev/null || true
         fi
-        find "$site_dir" -type d -exec chmod 755 {} + 2>/dev/null || true
-        find "$site_dir" -type d -exec chmod a-s {} + 2>/dev/null || true
-        find "$site_dir" -type d -exec chmod -t {} + 2>/dev/null || true
-        find "$site_dir" -type f -exec chmod 644 {} + 2>/dev/null || true
+        # Delegate the mode pass to the helper rather than repeating it here.
+        # `find -type d -exec chmod` selects correctly but the batched chmod
+        # re-resolves each path by name and follows symlinks, and the site user
+        # owns these directories -- so a swapped entry made root chmod a path
+        # of their choosing. fix_site_tree walks on O_NOFOLLOW descriptors, and
+        # keeping one implementation is how the two stop drifting apart.
+        sudo -u opanel env HOME="$APP_DIR" opanel_USE_HELPER=true sudo -n /usr/local/sbin/opanel-helper site-path-fix "$site_dir" "$user" >/dev/null 2>&1 || true
       done
     fi
     if [[ -d "/var/lib/php/uploads/$user" ]]; then

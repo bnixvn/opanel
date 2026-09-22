@@ -1110,6 +1110,11 @@ def extract_archive(
 
 
 def download_file_path(website: Website, relative_path: str, allow_sensitive: bool = False) -> Path:
+    """Validate a download target. Prefer download_file_handle.
+
+    Kept for callers that only need the path. On its own this is not safe to
+    hand to FileResponse: see download_file_handle.
+    """
     target = _safe_path(website, relative_path)
     if not target.exists() or not target.is_file():
         raise ValueError("File not found")
@@ -1117,3 +1122,68 @@ def download_file_path(website: Website, relative_path: str, allow_sensitive: bo
         raise ValueError("Symlinks are not allowed")
     _assert_sensitive_read_allowed(target, "Downloading", allow_sensitive)
     return target
+
+
+def _open_no_follow(root: Path, target: Path):
+    """Open ``target`` by walking from ``root`` one component at a time.
+
+    Every component is opened O_NOFOLLOW relative to the previous one's
+    descriptor, so no part of the path can be swapped for a symlink between the
+    check and the open. Returns an open binary file object.
+
+    Falls back to a plain open where the platform has no ``dir_fd`` support --
+    development on Windows. The target is Linux, where it always does.
+    """
+    if os.open not in getattr(os, "supports_dir_fd", set()):
+        return open(target, "rb")
+
+    relative = target.relative_to(root)
+    parent_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY)
+    opened: list[int] = [parent_fd]
+    try:
+        parts = relative.parts
+        for part in parts[:-1]:
+            child = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd
+            )
+            opened.append(child)
+            parent_fd = child
+        leaf = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    except OSError as exc:
+        for fd in opened:
+            os.close(fd)
+        # ELOOP is a symlink appearing where a real entry was checked.
+        raise ValueError("File not found") from exc
+    for fd in opened:
+        os.close(fd)
+
+    info = os.fstat(leaf)
+    if not stat.S_ISREG(info.st_mode):
+        os.close(leaf)
+        raise ValueError("Not a regular file")
+    return os.fdopen(leaf, "rb")
+
+
+def download_file_handle(website: Website, relative_path: str, allow_sensitive: bool = False):
+    """Open a download target safely. Returns (file object, name, size).
+
+    download_file_path validates and returns a Path, and the caller handed that
+    Path to FileResponse -- which opens it lazily, at send time, after the route
+    has already returned. A tenant owns their own tree, so they could rename the
+    checked file and drop a symlink in its place inside that window and have the
+    panel (running as the opanel account, which can read /opt/opanel/backend/.env
+    and /opt/opanel/.my.cnf) open the target and stream it back. The sensitive-
+    name check matched the pre-swap filename, so it did not help either.
+
+    Opening here, before returning, closes the window: the descriptor is taken
+    while the checks are still true, and nothing reopens the path afterwards.
+    """
+    target = download_file_path(website, relative_path, allow_sensitive=allow_sensitive)
+    root = Path(website.root_path).resolve()
+    handle = _open_no_follow(root, target)
+    try:
+        size = os.fstat(handle.fileno()).st_size
+    except OSError:
+        handle.close()
+        raise ValueError("File not found")
+    return handle, target.name, size

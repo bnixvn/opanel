@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -1884,10 +1884,30 @@ def read_file(website_id: int, path: str, db: Session = Depends(get_db), current
 def download_file(website_id: int, path: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     website = get_owned_website(db, current_user, website_id)
     try:
-        target = file_manager.download_file_path(website, path, allow_sensitive=is_admin_role(current_user.role))
+        # Opened here, not by FileResponse later: FileResponse opens the path
+        # lazily at send time, after this function returns, and the tenant owns
+        # the tree it points into. See file_manager.download_file_handle.
+        handle, name, size = file_manager.download_file_handle(
+            website, path, allow_sensitive=is_admin_role(current_user.role)
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return FileResponse(str(target), filename=target.name)
+
+    def _stream():
+        try:
+            while chunk := handle.read(64 * 1024):
+                yield chunk
+        finally:
+            handle.close()
+
+    return StreamingResponse(
+        _stream(),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Length": str(size),
+            "Content-Disposition": f'attachment; filename="{name}"',
+        },
+    )
 
 
 @router.post("/files/mkdir")

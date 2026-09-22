@@ -145,19 +145,39 @@ def test_panel_tools_ssl_vhosts_enable_http2_for_nginx_1_24():
 def test_site_permissions_use_standard_wordpress_modes():
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
     update = UPDATE_SCRIPT.read_text(encoding="utf-8")
-    assert 'find "$target" -type d -exec chmod 755 {} +' in helper
-    assert 'find "$target" -type f -exec chmod 644 {} +' in helper
+    # The modes themselves: 0755 directories, 0644 files. Deliberate -- the
+    # panel reads site trees in-process as the opanel account, so tightening
+    # these breaks the file manager and the backup writer. The cross-tenant
+    # boundary is the 0750 home above them, pinned in
+    # test_panel_linux_users_are_sftp_chroot_only.
+    tree = helper[helper.index("fix_site_tree() {"):]
+    tree = tree[: tree.index("require_ip_or_cidr()")]
+    assert "DIR_MODE = 0o755" in tree
+    assert "FILE_MODE = 0o644" in tree
     assert 'chown -R "$user:$user" "$target"' in helper
     assert 'harden_site_file "$target" "$user"' in helper
     assert 'install -o "$user" -g "$user" -m 0644' in helper
-    assert 'chown -R "$user:$user" "$site_dir"' in update
-    assert 'find "$site_dir" -type d -exec chmod 755 {} +' in update
-    assert 'find "$site_dir" -type f -exec chmod 644 {} +' in update
-    assert 'find "$target" -type d -exec chmod a-s {} +' in helper
-    assert 'find "$site_dir" -type d -exec chmod a-s {} +' in update
     assert 'chmod a-s "$target"' in helper
-    assert 'find "$target" -type d -exec chmod 2750 {} +' not in helper
-    assert 'find "$target" -type f -exec chmod 640 {} +' not in helper
+
+    # The mode pass must walk on descriptors. `find -type d -exec chmod`
+    # selected correctly but the batched chmod re-resolved each path by name
+    # and followed symlinks, inside directories the site user owns -- so a
+    # swapped entry made root chmod a path of their choosing.
+    assert "O_NOFOLLOW" in tree and "os.fchmod" in tree
+    assert 'find "$target" -type d -exec chmod 755 {} +' not in helper
+    assert 'find "$target" -type f -exec chmod 644 {} +' not in helper
+
+    # And update.sh must not keep its own copy of the walk: the two drifting
+    # apart is exactly how the 0751 home regression happened.
+    assert 'find "$site_dir" -type d -exec chmod 755 {} +' not in update
+    assert 'find "$site_dir" -type f -exec chmod 644 {} +' not in update
+    assert "opanel-helper site-path-fix" in update, (
+        "update.sh should delegate the per-site mode pass to the helper"
+    )
+    assert 'chown -R "$user:$user" "$site_dir"' in update
+
+    # Never re-tighten to 2750/640: see the comment above.
+    assert "0o2750" not in tree and "0o640" not in tree
     assert 'find "$site_dir" -type d -exec chmod 2750 {} +' not in update
     assert 'find "$site_dir" -type f -exec chmod 640 {} +' not in update
     assert 'find "$target" -type d -exec chmod u-s {} +' not in helper

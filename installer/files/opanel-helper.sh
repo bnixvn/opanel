@@ -3488,16 +3488,87 @@ fix_site_tree() {
   local target="$1" user="$2"
   ensure_sites_group
   require_linux_user "$user"
+  # chown -R is safe: GNU chown defaults to -P and does not follow symlinks.
   chown -R "$user:$user" "$target"
   if [[ -d "$target" ]]; then
     if command -v setfacl >/dev/null 2>&1; then
       setfacl -Rb "$target" 2>/dev/null || true
       find "$target" -type d -exec setfacl -k {} + 2>/dev/null || true
     fi
-    find "$target" -type d -exec chmod 755 {} +
+    # The mode pass walks on descriptors. `find -type d -exec chmod` selected
+    # correctly -- find lstats, so it never matched a symlink -- but the
+    # batched chmod re-resolved each path by name, and chmod always
+    # dereferences. The site user owns these directories, so swapping an
+    # enumerated entry for a symlink between the walk and the exec made root
+    # chmod a path of their choosing. Same fix as harden_site_dir_path.
+    python3 - "$target" <<'TREEPY'
+import os
+import stat
+import sys
+
+root = sys.argv[1]
+
+DIR_MODE = 0o755
+FILE_MODE = 0o644
+
+
+def harden(dir_fd, name, is_dir):
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if is_dir:
+        flags |= os.O_DIRECTORY
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except OSError:
+        # A symlink, or the entry vanished. Either way it is not ours to chmod.
+        return None
+    try:
+        info = os.fstat(fd)
+        if is_dir and not stat.S_ISDIR(info.st_mode):
+            os.close(fd)
+            return None
+        if not is_dir and not stat.S_ISREG(info.st_mode):
+            os.close(fd)
+            return None
+        os.fchmod(fd, DIR_MODE if is_dir else FILE_MODE)
+    except OSError:
+        os.close(fd)
+        return None
+    if is_dir:
+        return fd
+    os.close(fd)
+    return None
+
+
+def walk(dir_fd):
+    with os.scandir(dir_fd) as entries:
+        children = list(entries)
+    for entry in children:
+        try:
+            is_dir = entry.is_dir(follow_symlinks=False)
+            is_file = entry.is_file(follow_symlinks=False)
+        except OSError:
+            continue
+        if not is_dir and not is_file:
+            continue
+        child_fd = harden(dir_fd, entry.name, is_dir)
+        if child_fd is not None:
+            try:
+                walk(child_fd)
+            finally:
+                os.close(child_fd)
+
+
+root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    os.fchmod(root_fd, DIR_MODE)
+    walk(root_fd)
+finally:
+    os.close(root_fd)
+TREEPY
+    # Strip setgid/sticky separately: fchmod above already set the exact mode,
+    # so these only matter for entries the walk skipped.
     find "$target" -type d -exec chmod a-s {} + 2>/dev/null || true
     find "$target" -type d -exec chmod -t {} + 2>/dev/null || true
-    find "$target" -type f -exec chmod 644 {} +
   else
     harden_site_file "$target" "$user"
   fi
