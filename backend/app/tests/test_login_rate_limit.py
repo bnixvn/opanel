@@ -76,9 +76,13 @@ def _request(ip):
 def _attempt(db, password, ip="203.0.113.9"):
     """One login attempt. Returns the HTTPException status, or None on success."""
     try:
+        # Every Form parameter has to be supplied explicitly: calling the
+        # endpoint directly skips FastAPI, so an omitted one arrives as the
+        # Form(...) default object, which is truthy and would look like a
+        # submitted value.
         auth_api.login(
             request=_request(ip), response=Response(),
-            form=_Form("victim", password), otp="", db=db,
+            form=_Form("victim", password), otp="", passkey="", db=db,
         )
         return None
     except HTTPException as exc:

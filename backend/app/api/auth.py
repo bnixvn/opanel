@@ -419,39 +419,47 @@ def login(
             detail="Invalid username or password",
         )
 
-    # A passkey and an authenticator app are mutually exclusive, so at most one
-    # of these branches applies. The passkey one mirrors the TOTP flow: the
-    # client is told what is required, performs the ceremony, and re-posts here.
-    if passkeys.has_passkeys(db, user):
-        if not passkey:
-            try:
-                options = passkeys.begin_login(db, user)
-            except passkeys.PasskeyError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            return LoginResponse(requires_passkey=True, passkey_options=options)
+    # Second factor. An account may hold a passkey, an authenticator app, or
+    # both; when it holds both the passkey is offered first and the code is the
+    # way through when the passkey cannot be used -- a borrowed machine, a
+    # browser without WebAuthn, a key left at home.
+    has_passkey = passkeys.has_passkeys(db, user)
+
+    def _second_factor_failed(detail: str):
+        _record_failure(ip_key, apply_lockout=True)
+        _record_failure(user_key, apply_lockout=False)
+        _enforce_rate_limit(user_key)
+        return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+
+    if passkey:
+        if not has_passkey:
+            raise _second_factor_failed("This account has no passkey")
         try:
             assertion = json.loads(passkey)
         except (TypeError, ValueError):
             assertion = None
         if not isinstance(assertion, dict) or not passkeys.complete_login(db, user, assertion):
-            _record_failure(ip_key, apply_lockout=True)
-            _record_failure(user_key, apply_lockout=False)
-            _enforce_rate_limit(user_key)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="That passkey could not be verified",
-            )
-    elif user.totp_enabled:
-        if not otp:
-            return LoginResponse(requires_2fa=True)
+            raise _second_factor_failed("That passkey could not be verified")
+    elif otp:
+        # The fallback, and the only path for an account with no passkey.
+        if not user.totp_enabled:
+            raise _second_factor_failed("This account has no authenticator app")
         if not _verify_totp(user, otp):
-            _record_failure(ip_key, apply_lockout=True)
-            _record_failure(user_key, apply_lockout=False)
-            _enforce_rate_limit(user_key)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication code",
-            )
+            raise _second_factor_failed("Invalid authentication code")
+    elif has_passkey:
+        try:
+            options = passkeys.begin_login(db, user)
+        except passkeys.PasskeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # requires_2fa rides along so the client can offer "use a code
+        # instead" without a second round trip to find out whether it exists.
+        return LoginResponse(
+            requires_passkey=True,
+            passkey_options=options,
+            requires_2fa=bool(user.totp_enabled),
+        )
+    elif user.totp_enabled:
+        return LoginResponse(requires_2fa=True)
 
     _record_success(ip_key)
     _record_success(user_key)
@@ -609,12 +617,9 @@ def setup_two_factor(
     require_sensitive_action_step_up(current_user, payload.current_password, payload.code)
     if current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="Two-factor authentication is already enabled")
-    # One second factor per account. Two in parallel makes the account only as
-    # strong as the weaker one and lets an attacker choose which to face.
-    try:
-        passkeys.assert_totp_may_be_enabled(db, current_user)
-    except passkeys.PasskeyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # A passkey is no longer a reason to refuse: an account may hold both, and
+    # an authenticator code is what gets its owner in when the passkey cannot
+    # be used.
     secret = pyotp.random_base32()
     current_user.totp_secret = encrypt(secret)
     db.commit()
@@ -673,9 +678,10 @@ def _passkey_status(db: Session, user: User) -> PasskeyStatus:
         available=available,
         passkeys=[PasskeyOut.model_validate(c) for c in creds],
         totp_enabled=bool(user.totp_enabled),
-        # Both false once either factor is in use.
-        can_add_passkey=available and not user.totp_enabled,
-        can_enable_totp=not user.totp_enabled and not creds,
+        # Independent. The two run side by side, and sign-in prefers the
+        # passkey with the authenticator code as the fallback.
+        can_add_passkey=available,
+        can_enable_totp=not user.totp_enabled,
         unavailable_reason=(
             ""
             if available

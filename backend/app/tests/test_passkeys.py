@@ -1,12 +1,14 @@
-"""Passkeys, and the rule that an account uses one second factor.
+"""Passkeys, and how they sit beside an authenticator app.
 
-Two factors in parallel make the account only as strong as the weaker one and
-let an attacker choose which to face, so registering a passkey is refused while
-an authenticator app is on, and enabling an authenticator app is refused while
-a passkey exists. Both directions are enforced, with a message naming what to
-remove first.
+An account may hold both. Sign-in prefers the passkey and falls back to a code
+when the passkey cannot be used -- a borrowed machine, a browser without
+WebAuthn, a key left at home. Two factors in parallel do mean an attacker may
+attack whichever is weaker; in exchange nobody is locked out of their own panel
+by a lost device, which is the commoner failure.
 """
 from __future__ import annotations
+
+import pathlib
 
 import pytest
 from sqlalchemy import create_engine
@@ -58,48 +60,36 @@ def _credential(db, user, credential_id="Y3JlZDE"):
 
 
 # --------------------------------------------------------------------------
-# one factor per account, both directions
+# the two coexist
 # --------------------------------------------------------------------------
-def test_a_passkey_cannot_be_added_while_an_authenticator_app_is_on(db, user, panel_host):
+def test_a_passkey_can_be_added_while_an_authenticator_app_is_on(db, user, panel_host):
     user.totp_enabled = True
     db.commit()
-    with pytest.raises(passkeys.PasskeyError, match="authenticator app"):
-        passkeys.begin_registration(db, user)
+    options = passkeys.begin_registration(db, user)
+    assert options["challenge"], "an authenticator app must not block a passkey"
 
 
-def test_an_authenticator_app_cannot_be_enabled_while_a_passkey_exists(db, user):
+def test_an_authenticator_app_can_be_set_up_while_a_passkey_exists(db, user, panel_host):
     _credential(db, user)
-    with pytest.raises(passkeys.PasskeyError, match="passkey"):
-        passkeys.assert_totp_may_be_enabled(db, user)
+    # Nothing in the passkey layer refuses it any more, and auth.py no longer
+    # consults this module before generating a TOTP secret.
+    assert not hasattr(passkeys, "assert_totp_may_be_enabled")
+    source = (
+        pathlib.Path(passkeys.__file__).parent.parent / "api" / "auth.py"
+    ).read_text(encoding="utf-8")
+    setup = source[source.index("def setup_two_factor") : source.index("def enable_two_factor")]
+    assert "PasskeyError" not in setup
 
 
-def test_the_refusal_names_what_to_remove_first(db, user, panel_host):
+def test_an_account_can_hold_both_at_once(db, user, panel_host):
     user.totp_enabled = True
     db.commit()
-    with pytest.raises(passkeys.PasskeyError) as exc:
-        passkeys.begin_registration(db, user)
-    assert "Turn off" in str(exc.value)
-
-    user.totp_enabled = False
-    db.commit()
     _credential(db, user)
-    with pytest.raises(passkeys.PasskeyError) as exc:
-        passkeys.assert_totp_may_be_enabled(db, user)
-    assert "Remove the passkey" in str(exc.value)
-
-
-def test_neither_blocks_the_other_on_a_fresh_account(db, user, panel_host):
-    passkeys.assert_totp_may_be_enabled(db, user)  # must not raise
+    assert passkeys.has_passkeys(db, user) is True
+    assert user.totp_enabled is True
+    # And a second passkey is still fine.
     options = passkeys.begin_registration(db, user)
     assert options["challenge"]
-
-
-def test_removing_the_last_passkey_frees_the_authenticator_app(db, user):
-    record = _credential(db, user)
-    with pytest.raises(passkeys.PasskeyError):
-        passkeys.assert_totp_may_be_enabled(db, user)
-    assert passkeys.delete_credential(db, user, record.id)
-    passkeys.assert_totp_may_be_enabled(db, user)  # must not raise
 
 
 # --------------------------------------------------------------------------
@@ -233,3 +223,148 @@ def test_one_account_cannot_delete_anothers_passkey(db, user):
     theirs = _credential(db, other, credential_id="theirs")
     assert passkeys.delete_credential(db, user, theirs.id) is False
     assert db.query(WebauthnCredential).filter_by(id=theirs.id).first() is not None
+
+
+# --------------------------------------------------------------------------
+# sign-in prefers the passkey, and falls back to a code
+# --------------------------------------------------------------------------
+PASSWORD = "CorrectHorseBattery1"
+
+
+@pytest.fixture
+def login_user(db):
+    from app.core.security import hash_password as _hash
+
+    row = User(
+        username="loginer", email="l@example.test",
+        hashed_password=_hash(PASSWORD), role="end_user", is_active=True,
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+@pytest.fixture
+def memory_limits(monkeypatch):
+    from app.api import auth as auth_api
+
+    monkeypatch.setattr(auth_api, "_rate_limit_backend", lambda: "memory")
+    auth_api._login_attempts.clear()
+    auth_api._login_failures.clear()
+    auth_api._login_lockouts.clear()
+    yield
+    auth_api._login_attempts.clear()
+    auth_api._login_failures.clear()
+    auth_api._login_lockouts.clear()
+
+
+class _Form:
+    def __init__(self, username, password):
+        self.username = username
+        self.password = password
+
+
+def _request():
+    class _Client:
+        host = "203.0.113.5"
+
+    class _Req:
+        client = _Client()
+        headers = {}
+        cookies = {}
+        url = type("U", (), {"scheme": "https", "hostname": "panel.example.test"})()
+
+    return _Req()
+
+
+def _login(db, user, **kwargs):
+    from fastapi import Response
+
+    from app.api import auth as auth_api
+
+    return auth_api.login(
+        request=_request(), response=Response(),
+        form=_Form(user.username, PASSWORD),
+        otp=kwargs.get("otp", ""), passkey=kwargs.get("passkey", ""), db=db,
+    )
+
+
+def test_an_account_with_a_passkey_is_offered_the_passkey_first(
+    db, login_user, panel_host, memory_limits
+):
+    _credential(db, login_user, credential_id="k1")
+    result = _login(db, login_user)
+    assert result.requires_passkey is True
+    assert result.passkey_options["challenge"]
+    assert result.access_token is None
+
+
+def test_the_offer_says_whether_a_code_is_also_available(
+    db, login_user, panel_host, memory_limits
+):
+    _credential(db, login_user, credential_id="k1")
+    assert _login(db, login_user).requires_2fa is False, (
+        "no authenticator app, so the client must not offer a code"
+    )
+    login_user.totp_enabled = True
+    db.commit()
+    assert _login(db, login_user).requires_2fa is True, (
+        "the client needs this to offer 'use a code instead' without another "
+        "round trip"
+    )
+
+
+def test_a_code_gets_in_even_though_the_account_has_a_passkey(
+    db, login_user, panel_host, memory_limits, monkeypatch
+):
+    """The fallback: the passkey could not be used on this device."""
+    from app.api import auth as auth_api
+
+    _credential(db, login_user, credential_id="k1")
+    login_user.totp_enabled = True
+    db.commit()
+    monkeypatch.setattr(auth_api, "_verify_totp", lambda user, code: code == "123456")
+
+    result = _login(db, login_user, otp="123456")
+    assert result.access_token, "a valid code must sign the account in"
+
+
+def test_a_wrong_code_still_fails(db, login_user, panel_host, memory_limits, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api import auth as auth_api
+
+    _credential(db, login_user, credential_id="k1")
+    login_user.totp_enabled = True
+    db.commit()
+    monkeypatch.setattr(auth_api, "_verify_totp", lambda user, code: False)
+
+    with pytest.raises(HTTPException) as exc:
+        _login(db, login_user, otp="000000")
+    assert exc.value.status_code == 401
+
+
+def test_a_code_is_refused_when_the_account_has_no_authenticator_app(
+    db, login_user, panel_host, memory_limits
+):
+    from fastapi import HTTPException
+
+    _credential(db, login_user, credential_id="k1")
+    with pytest.raises(HTTPException) as exc:
+        _login(db, login_user, otp="123456")
+    assert exc.value.status_code == 401
+
+
+def test_an_account_with_only_an_authenticator_app_is_unaffected(
+    db, login_user, memory_limits
+):
+    login_user.totp_enabled = True
+    db.commit()
+    result = _login(db, login_user)
+    assert result.requires_2fa is True
+    assert result.requires_passkey is False
+
+
+def test_an_account_with_neither_signs_straight_in(db, login_user, memory_limits):
+    result = _login(db, login_user)
+    assert result.access_token

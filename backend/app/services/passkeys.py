@@ -1,10 +1,11 @@
 """Passkey (WebAuthn) registration and login.
 
-An account uses passkeys or an authenticator app, never both. Two second
-factors in parallel means the account is only as strong as the weaker one, and
-an attacker picks which to attack; keeping one also gives the operator a single
-answer to "what does signing in to this account require". The rule is enforced
-on the way in from both directions, with a message naming what to remove first.
+An account may hold both a passkey and an authenticator app. Sign-in prefers
+the passkey and falls back to a code when the passkey cannot be used -- a
+borrowed machine, a browser without WebAuthn, a key left at home. The trade is
+deliberate: two factors in parallel mean an attacker may attack whichever is
+weaker, and in exchange nobody is locked out of their own panel by a lost
+device. Recovery is the commoner failure.
 
 Challenges live in memory with a short TTL rather than in the database. They
 are single-use, expire in two minutes, and a lost one costs the user one retry
@@ -129,7 +130,7 @@ def _login_key(username: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# The one-factor rule
+# Credentials
 # ---------------------------------------------------------------------------
 
 def credentials_for(db, user: User) -> list[WebauthnCredential]:
@@ -150,22 +151,9 @@ def has_passkeys(db, user: User) -> bool:
     )
 
 
-def assert_totp_may_be_enabled(db, user: User) -> None:
-    """Called before an authenticator app is set up."""
-    if has_passkeys(db, user):
-        raise PasskeyError(
-            "This account already uses a passkey. Remove the passkey first if "
-            "you want to use an authenticator app instead."
-        )
-
-
 def _assert_passkey_may_be_added(db, user: User) -> None:
-    if user.totp_enabled:
-        raise PasskeyError(
-            "This account already uses an authenticator app. Turn off "
-            "two-factor authentication first if you want to use a passkey "
-            "instead."
-        )
+    # An authenticator app is no longer a reason to refuse: the two coexist,
+    # and sign-in prefers the passkey with the code as the fallback.
     if len(credentials_for(db, user)) >= MAX_CREDENTIALS_PER_USER:
         raise PasskeyError(
             f"An account can hold at most {MAX_CREDENTIALS_PER_USER} passkeys."

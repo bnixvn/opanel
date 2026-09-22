@@ -114,9 +114,11 @@ class LoginResponse(BaseModel):
     access_token: Optional[str] = None
     token_type: str = "bearer"
     requires_2fa: bool = False
-    # The password was right but the account is protected by a passkey. The
-    # options carry the challenge the browser must sign; the client replies to
-    # the same /login endpoint with `passkey`, mirroring how `otp` works.
+    # The password was right and the account has a passkey. The options carry
+    # the challenge the browser must sign; the client replies to the same
+    # /login endpoint with `passkey`, mirroring how `otp` works. When
+    # requires_2fa is set alongside this, the account also has an authenticator
+    # app and the client may offer a code instead of the passkey.
     requires_passkey: bool = False
     passkey_options: Optional[dict] = None
 
@@ -165,8 +167,8 @@ class PasskeyStatus(BaseModel):
     available: bool
     passkeys: list[PasskeyOut] = []
     totp_enabled: bool = False
-    # Which factor this account may still turn on. Both are false once one is
-    # in use: the panel keeps a single second factor.
+    # Independent: an account may hold both. Sign-in prefers the passkey and
+    # falls back to a code.
     can_add_passkey: bool = False
     can_enable_totp: bool = False
     unavailable_reason: str = ""

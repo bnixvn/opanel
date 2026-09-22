@@ -701,11 +701,21 @@ function App() {
       });
       let data = await res.json().catch(() => ({}));
       if (res.ok && data.requires_passkey) {
-        // The password was accepted; the account is protected by a passkey.
-        // Run the ceremony and re-post to the same endpoint, exactly as the
-        // authenticator-code path does.
+        // The password was accepted and the account has a passkey, so try that
+        // first. `requires_2fa` alongside it means the account also has an
+        // authenticator app, which is the way through when the passkey cannot
+        // be used here -- a borrowed machine, a browser without WebAuthn, a
+        // key left at home.
+        const codeAvailable = Boolean(data.requires_2fa);
+        const fallbackToCode = (message) => {
+          if (!codeAvailable) { setError(message); return false; }
+          setNeedsTwoFactor(true);
+          setNotice('Enter your authentication code instead.');
+          return true;
+        };
+
         if (!passkeysSupported()) {
-          setError('This account uses a passkey, but this browser does not support them.');
+          fallbackToCode('This account uses a passkey, but this browser does not support them.');
           return;
         }
         const options = data.passkey_options || {};
@@ -715,10 +725,10 @@ function App() {
         try {
           assertion = await navigator.credentials.get({ publicKey: options });
         } catch (err) {
-          setError('Passkey sign-in was cancelled.');
+          fallbackToCode('Passkey sign-in was cancelled.');
           return;
         }
-        if (!assertion) { setError('No passkey was offered.'); return; }
+        if (!assertion) { fallbackToCode('No passkey was offered.'); return; }
         const retry = new URLSearchParams({ username, password });
         retry.set('passkey', JSON.stringify({
           id: assertion.id,
@@ -734,7 +744,15 @@ function App() {
         const second = await fetch(`${API}/auth/login`, { method: 'POST', body: retry, credentials: 'include' });
         data = await second.json().catch(() => ({}));
         if (!second.ok) {
-          setError(formatApiError(data.detail, 'That passkey could not be verified.'));
+          // A rejected passkey is not a reason to strand someone who also has
+          // a code, but say what happened rather than silently switching.
+          if (codeAvailable) {
+            setNeedsTwoFactor(true);
+            setError(formatApiError(data.detail, 'That passkey could not be verified.'));
+            setNotice('Enter your authentication code instead.');
+          } else {
+            setError(formatApiError(data.detail, 'That passkey could not be verified.'));
+          }
           return;
         }
       }
@@ -4947,8 +4965,8 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     const enabled = Boolean(twoFactorStatus?.enabled || currentUser?.totp_enabled);
     const pk = passkeyStatus || {};
     const keys = pk.passkeys || [];
-    // One second factor per account, so each card says plainly why the other
-    // is unavailable rather than failing at the last step.
+    // Independent. Sign-in prefers the passkey; the code is what gets the
+    // owner in when the passkey cannot be used.
     const canEnableTotp = pk.can_enable_totp !== undefined ? pk.can_enable_totp : !enabled;
     return <>
       <section className="section">
@@ -4957,7 +4975,8 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
             <h2>Passkey</h2>
             <p className="hint">
               {keys.length
-                ? <>Required to sign in. <strong>{keys.length}</strong> registered.</>
+                ? <>Tried first when you sign in. <strong>{keys.length}</strong> registered
+                    {enabled ? ', with your authenticator code as the fallback.' : '.'}</>
                 : 'Sign in with a fingerprint, face, screen lock, or security key.'}
             </p>
           </div>
@@ -4983,15 +5002,15 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
                  placeholder="Name this passkey (e.g. Work laptop)" maxLength={64} />
           <button disabled={!!loading} onClick={registerPasskey}><Shield size={14}/> Add passkey</button>
         </div>}
-        {pk.can_add_passkey === false && pk.available !== false && enabled &&
-          <p className="hint">Turn off the authenticator app below to use a passkey instead.</p>}
+        {keys.length > 0 && !enabled &&
+          <p className="hint">Add an authenticator app below as a fallback, in case you cannot use this passkey.</p>}
       </section>
       <section className="section">
         <div className="section-title">
           <div><h2>Google Authenticator 2FA</h2><p className="hint">Current status: <strong>{enabled ? 'Enabled' : 'Disabled'}</strong></p></div>
           <button disabled={!!loading} onClick={loadTwoFactorStatus}><RefreshCw size={14}/> Refresh</button>
         </div>
-        {!enabled && !canEnableTotp && <p className="hint">Remove the passkey above to use an authenticator app instead.</p>}
+        {!enabled && keys.length > 0 && <p className="hint">Used when a passkey is not available on the device you are signing in from.</p>}
         {!enabled && canEnableTotp && <div className="security-grid">
           <div className="info-box">
             <strong>Setup</strong>
