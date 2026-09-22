@@ -1,5 +1,6 @@
 import base64
 import logging
+import json
 import secrets
 import time
 from collections import defaultdict, deque
@@ -22,10 +23,16 @@ from app.core.database import get_db
 from app.core.permissions import Role, ensure_role
 from app.core.security import create_access_token, hash_password, needs_rehash, verify_password
 from app.core.secrets import decrypt, encrypt
-from app.core.step_up import require_sensitive_action_step_up, verify_totp
+from app.core.step_up import require_current_password, require_sensitive_action_step_up, verify_totp
+from app.services import passkeys
 from app.models.entities import RevokedToken, User
 from app.schemas.schemas import (
     LoginResponse,
+    PasskeyDeleteRequest,
+    PasskeyOut,
+    PasskeyRegisterBegin,
+    PasskeyRegisterComplete,
+    PasskeyStatus,
     TwoFactorDisableRequest,
     TwoFactorEnableRequest,
     TwoFactorSetup,
@@ -373,6 +380,7 @@ def login(
     response: Response,
     form: OAuth2PasswordRequestForm = Depends(),
     otp: str = Form(default=""),
+    passkey: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
     # Reject oversize credentials early Ã¢â‚¬â€ protects bcrypt and avoids using a
@@ -411,7 +419,29 @@ def login(
             detail="Invalid username or password",
         )
 
-    if user.totp_enabled:
+    # A passkey and an authenticator app are mutually exclusive, so at most one
+    # of these branches applies. The passkey one mirrors the TOTP flow: the
+    # client is told what is required, performs the ceremony, and re-posts here.
+    if passkeys.has_passkeys(db, user):
+        if not passkey:
+            try:
+                options = passkeys.begin_login(db, user)
+            except passkeys.PasskeyError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return LoginResponse(requires_passkey=True, passkey_options=options)
+        try:
+            assertion = json.loads(passkey)
+        except (TypeError, ValueError):
+            assertion = None
+        if not isinstance(assertion, dict) or not passkeys.complete_login(db, user, assertion):
+            _record_failure(ip_key, apply_lockout=True)
+            _record_failure(user_key, apply_lockout=False)
+            _enforce_rate_limit(user_key)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="That passkey could not be verified",
+            )
+    elif user.totp_enabled:
         if not otp:
             return LoginResponse(requires_2fa=True)
         if not _verify_totp(user, otp):
@@ -579,6 +609,12 @@ def setup_two_factor(
     require_sensitive_action_step_up(current_user, payload.current_password, payload.code)
     if current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="Two-factor authentication is already enabled")
+    # One second factor per account. Two in parallel makes the account only as
+    # strong as the weaker one and lets an attacker choose which to face.
+    try:
+        passkeys.assert_totp_may_be_enabled(db, current_user)
+    except passkeys.PasskeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     secret = pyotp.random_base32()
     current_user.totp_secret = encrypt(secret)
     db.commit()
@@ -624,3 +660,89 @@ def disable_two_factor(
     db.refresh(current_user)
     _issue_login_session(response, request, current_user)
     return TwoFactorStatus(enabled=False)
+
+
+# ---------------------------------------------------------------------------
+# Passkeys (WebAuthn)
+# ---------------------------------------------------------------------------
+
+def _passkey_status(db: Session, user: User) -> PasskeyStatus:
+    available = passkeys.is_available()
+    creds = passkeys.credentials_for(db, user) if available else []
+    return PasskeyStatus(
+        available=available,
+        passkeys=[PasskeyOut.model_validate(c) for c in creds],
+        totp_enabled=bool(user.totp_enabled),
+        # Both false once either factor is in use.
+        can_add_passkey=available and not user.totp_enabled,
+        can_enable_totp=not user.totp_enabled and not creds,
+        unavailable_reason=(
+            ""
+            if available
+            else "Set a panel hostname in Panel settings first: a passkey is "
+                 "bound to the hostname it was created on."
+        ),
+    )
+
+
+@router.get("/passkeys", response_model=PasskeyStatus)
+def list_passkeys(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return _passkey_status(db, current_user)
+
+
+@router.post("/passkeys/register/begin")
+def passkey_register_begin(
+    payload: PasskeyRegisterBegin,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Options for creating a passkey. Costs a password (and a code if TOTP is
+    still on), because adding a factor is as sensitive as removing one."""
+    require_sensitive_action_step_up(current_user, payload.current_password, payload.code)
+    try:
+        return passkeys.begin_registration(db, current_user)
+    except passkeys.PasskeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/passkeys/register/complete", response_model=PasskeyStatus)
+def passkey_register_complete(
+    payload: PasskeyRegisterComplete,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        passkeys.complete_registration(db, current_user, payload.credential, payload.name)
+    except passkeys.PasskeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.refresh(current_user)
+    # Registration bumps token_version, so this session needs reissuing or the
+    # user is logged out by their own success.
+    _issue_login_session(response, request, current_user)
+    return _passkey_status(db, current_user)
+
+
+@router.post("/passkeys/{credential_id}/delete", response_model=PasskeyStatus)
+def passkey_delete(
+    credential_id: int,
+    payload: PasskeyDeleteRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Removing a factor is a sensitive action, so it costs a password.
+
+    No TOTP code is asked for here: an account with a passkey has no TOTP, and
+    requiring the passkey itself would strand anyone whose key was lost --
+    which is the main reason to be on this endpoint.
+    """
+    require_current_password(current_user, payload.current_password)
+    if not passkeys.delete_credential(db, current_user, credential_id):
+        raise HTTPException(status_code=404, detail="Passkey not found")
+    db.refresh(current_user)
+    _issue_login_session(response, request, current_user)
+    return _passkey_status(db, current_user)
+

@@ -23,14 +23,19 @@ def get_resource_usage(current_user: User = Depends(get_current_user)):
 
 @router.get("/list")
 def get_services(current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.end_user)
+    # Admin only. The service inventory names every daemon on the box and its
+    # unit state; a hosting customer has no use for it and it is not theirs to
+    # see. system-info and resource-usage stay open because the dashboard's own
+    # CPU/RAM/disk cards read them.
+    ensure_role(current_user.role, Role.admin)
     return {"services": list_services()}
 
 
 @router.post("/action")
 def run_service_action(payload: ServiceAction, current_user: User = Depends(get_current_user)):
-    minimum_role = Role.end_user if payload.action == "status" else Role.admin
-    ensure_role(current_user.role, minimum_role)
+    # Including "status": it was the read half of the page end users no longer
+    # have, and leaving it open would have let them enumerate services anyway.
+    ensure_role(current_user.role, Role.admin)
     try:
         result = service_action(payload.name, payload.action)
     except ValueError as exc:

@@ -114,6 +114,11 @@ class LoginResponse(BaseModel):
     access_token: Optional[str] = None
     token_type: str = "bearer"
     requires_2fa: bool = False
+    # The password was right but the account is protected by a passkey. The
+    # options carry the challenge the browser must sign; the client replies to
+    # the same /login endpoint with `passkey`, mirroring how `otp` works.
+    requires_passkey: bool = False
+    passkey_options: Optional[dict] = None
 
 
 class TwoFactorStatus(BaseModel):
@@ -142,6 +147,43 @@ class TwoFactorEnableRequest(BaseModel):
 class TwoFactorDisableRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=72)
     code: Optional[str] = Field(default=None, min_length=6, max_length=12)
+
+
+class PasskeyOut(BaseModel):
+    id: int
+    name: str
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PasskeyStatus(BaseModel):
+    """What the Security page needs to render both options honestly."""
+
+    available: bool
+    passkeys: list[PasskeyOut] = []
+    totp_enabled: bool = False
+    # Which factor this account may still turn on. Both are false once one is
+    # in use: the panel keeps a single second factor.
+    can_add_passkey: bool = False
+    can_enable_totp: bool = False
+    unavailable_reason: str = ""
+
+
+class PasskeyRegisterBegin(BaseModel):
+    current_password: str = Field(min_length=1, max_length=72)
+    code: Optional[str] = Field(default=None, min_length=6, max_length=12)
+
+
+class PasskeyRegisterComplete(BaseModel):
+    credential: dict
+    name: str = Field(default="", max_length=64)
+
+
+class PasskeyDeleteRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=72)
 
 
 class UserCreate(BaseModel):

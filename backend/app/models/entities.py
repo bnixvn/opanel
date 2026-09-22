@@ -303,3 +303,32 @@ class PanelSsoToken(Base):
 
     user: Mapped["User"] = relationship()
 
+
+
+class WebauthnCredential(Base):
+    """A registered passkey.
+
+    One account uses either passkeys or an authenticator app, never both: the
+    panel keeps a single second factor so there is one story about what is
+    required and no silent fallback to the weaker one. See
+    app/services/passkeys.py.
+    """
+
+    __tablename__ = "webauthn_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # Base64url, as the browser reports it. Unique across the panel: a
+    # credential belongs to exactly one account.
+    credential_id: Mapped[str] = mapped_column(String(512), unique=True, index=True)
+    public_key: Mapped[str] = mapped_column(Text)
+    # The authenticator's own counter. A value that fails to advance is the
+    # documented signal of a cloned authenticator.
+    sign_count: Mapped[int] = mapped_column(Integer, default=0)
+    # What the owner called it, so they can tell two keys apart when removing one.
+    name: Mapped[str] = mapped_column(String(64), default="Passkey")
+    transports: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped["User"] = relationship()

@@ -128,6 +128,30 @@ function formatLogDuration(value = 0) {
   return `${Number.isFinite(duration) ? duration : 0} ms`;
 }
 
+// --- WebAuthn wire format -------------------------------------------------
+// The API speaks base64url (what the spec uses on the wire); the browser API
+// speaks ArrayBuffer. These two convert at the boundary and nowhere else.
+function b64urlToBuf(value) {
+  const padded = (value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function bufToB64url(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function passkeysSupported() {
+  return typeof window !== 'undefined'
+    && !!window.PublicKeyCredential
+    && !!(navigator.credentials && navigator.credentials.create);
+}
+
 function csvEscape(value) {
   let text = String(value ?? '');
   // Neutralize spreadsheet formulas before quoting. Three of the exported WAF
@@ -438,6 +462,8 @@ function App() {
   const [wafAccessAutoRefresh, setWafAccessAutoRefresh] = useState(5);
   const [assignUserId, setAssignUserId] = useState('');
   const [assignWebsiteId, setAssignWebsiteId] = useState('');
+  const [passkeyStatus, setPasskeyStatus] = useState(null);
+  const [passkeyName, setPasskeyName] = useState('');
   const [twoFactorStatus, setTwoFactorStatus] = useState(null);
   const [twoFactorSetup, setTwoFactorSetup] = useState(null);
   const [twoFactorCode, setTwoFactorCode] = useState('');
@@ -673,11 +699,49 @@ function App() {
         body,
         credentials: 'include',
       });
-      const data = await res.json().catch(() => ({}));
+      let data = await res.json().catch(() => ({}));
+      if (res.ok && data.requires_passkey) {
+        // The password was accepted; the account is protected by a passkey.
+        // Run the ceremony and re-post to the same endpoint, exactly as the
+        // authenticator-code path does.
+        if (!passkeysSupported()) {
+          setError('This account uses a passkey, but this browser does not support them.');
+          return;
+        }
+        const options = data.passkey_options || {};
+        options.challenge = b64urlToBuf(options.challenge);
+        (options.allowCredentials || []).forEach(item => { item.id = b64urlToBuf(item.id); });
+        let assertion;
+        try {
+          assertion = await navigator.credentials.get({ publicKey: options });
+        } catch (err) {
+          setError('Passkey sign-in was cancelled.');
+          return;
+        }
+        if (!assertion) { setError('No passkey was offered.'); return; }
+        const retry = new URLSearchParams({ username, password });
+        retry.set('passkey', JSON.stringify({
+          id: assertion.id,
+          rawId: bufToB64url(assertion.rawId),
+          type: assertion.type,
+          response: {
+            clientDataJSON: bufToB64url(assertion.response.clientDataJSON),
+            authenticatorData: bufToB64url(assertion.response.authenticatorData),
+            signature: bufToB64url(assertion.response.signature),
+            userHandle: assertion.response.userHandle ? bufToB64url(assertion.response.userHandle) : null,
+          },
+        }));
+        const second = await fetch(`${API}/auth/login`, { method: 'POST', body: retry, credentials: 'include' });
+        data = await second.json().catch(() => ({}));
+        if (!second.ok) {
+          setError(formatApiError(data.detail, 'That passkey could not be verified.'));
+          return;
+        }
+      }
       if (res.ok && data.requires_2fa) {
         setNeedsTwoFactor(true);
         setNotice('Enter your authentication code.');
-      } else if (res.ok && data.access_token) {
+      } else if (data.access_token) {
         // Don't keep the token anywhere: the HttpOnly cookie just got set by
         // the response. JS code MUST NOT touch the JWT.
         setIsAuthenticated(true);
@@ -692,6 +756,83 @@ function App() {
       setError(`Cannot connect to the ${panelSettings.app_name || 'opanel'} API at ${API}. Check opanel-api and the panel port.`);
     } finally {
       setLoading('');
+    }
+  }
+
+  async function loadPasskeys() {
+    const data = await request('/auth/passkeys', {}, 'Loading passkeys...');
+    if (data) setPasskeyStatus(data);
+  }
+
+  async function registerPasskey() {
+    if (!passkeysSupported()) {
+      setError('This browser does not support passkeys.');
+      return;
+    }
+    const currentPassword = prompt('Enter your current password to confirm:');
+    if (!currentPassword) return;
+    const body = { current_password: currentPassword };
+    // Only asked for while an authenticator app is still the active factor.
+    if (passkeyStatus?.totp_enabled) {
+      const code = prompt('Enter the 6-digit code from your authenticator:');
+      if (!code) return;
+      body.code = code;
+    }
+    const options = await request(
+      '/auth/passkeys/register/begin',
+      { method: 'POST', body: JSON.stringify(body) },
+      'Preparing passkey...',
+    );
+    if (!options) return;
+
+    options.challenge = b64urlToBuf(options.challenge);
+    options.user.id = b64urlToBuf(options.user.id);
+    (options.excludeCredentials || []).forEach(item => { item.id = b64urlToBuf(item.id); });
+
+    let credential;
+    try {
+      credential = await navigator.credentials.create({ publicKey: options });
+    } catch (err) {
+      setError('Passkey setup was cancelled, or this device could not create one.');
+      return;
+    }
+    if (!credential) { setError('No passkey was created.'); return; }
+
+    const data = await request('/auth/passkeys/register/complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: passkeyName.trim(),
+        credential: {
+          id: credential.id,
+          rawId: bufToB64url(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: bufToB64url(credential.response.clientDataJSON),
+            attestationObject: bufToB64url(credential.response.attestationObject),
+          },
+          transports: credential.response.getTransports ? credential.response.getTransports() : [],
+        },
+      }),
+    }, 'Saving passkey...');
+    if (data) {
+      setPasskeyStatus(data);
+      setPasskeyName('');
+      setNotice('Passkey added. It is now required to sign in.');
+      await loadCurrentUser();
+    }
+  }
+
+  async function removePasskey(item) {
+    if (!confirm(`Remove the passkey "${item.name}"?\n\nIf it is the last one, this account goes back to a password only.`)) return;
+    const currentPassword = prompt('Enter your current password to confirm:');
+    if (!currentPassword) return;
+    const data = await request(`/auth/passkeys/${item.id}/delete`, {
+      method: 'POST', body: JSON.stringify({ current_password: currentPassword }),
+    }, 'Removing passkey...');
+    if (data) {
+      setPasskeyStatus(data);
+      setNotice(`Removed ${item.name}.`);
+      await loadCurrentUser();
     }
   }
 
@@ -3164,6 +3305,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     if (isAuthenticated && page === 'updates' && currentUser?.role === 'admin') loadUpdates();
     if (isAuthenticated && page === 'security') {
       loadTwoFactorStatus();
+      loadPasskeys();
     }
     if (isAuthenticated && page === 'malware' && isAdmin) {
       loadMalwareScanStatus();
@@ -3233,7 +3375,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     ['waf', 'WAF', Shield],
     ['wafLogs', 'Access Logs', FileText],
     ...(isAdmin ? [['updates', 'Updates', RefreshCw]] : []),
-    ['services', 'Services Status', Server],
+    ...(isAdmin ? [['services', 'Services Status', Server]] : []),
   ];
 
   const navItems = [...mainNavItems, ...settingsNavItems];
@@ -3413,7 +3555,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
         title: 'Server',
         icon: Server,
         items: [
-          { target: 'services', label: 'Services', icon: Activity, hint: 'Start, stop, restart' },
+          ...(isAdmin ? [{ target: 'services', label: 'Services', icon: Activity, hint: 'Start, stop, restart' }] : []),
           ...(isAdmin ? [{ target: 'php', label: 'PHP config', icon: Code2, hint: 'Versions and limits' }] : []),
           ...(isAdmin ? [{ target: 'users', label: 'Panel users', icon: Users, hint: 'Accounts and limits' }] : []),
           ...(isAdmin ? [{ target: 'settings', label: 'Panel settings', icon: SettingsIcon, hint: 'Hostname and mail' }] : []),
@@ -4803,13 +4945,54 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
 
   function renderSecurity() {
     const enabled = Boolean(twoFactorStatus?.enabled || currentUser?.totp_enabled);
+    const pk = passkeyStatus || {};
+    const keys = pk.passkeys || [];
+    // One second factor per account, so each card says plainly why the other
+    // is unavailable rather than failing at the last step.
+    const canEnableTotp = pk.can_enable_totp !== undefined ? pk.can_enable_totp : !enabled;
     return <>
+      <section className="section">
+        <div className="section-title">
+          <div>
+            <h2>Passkey</h2>
+            <p className="hint">
+              {keys.length
+                ? <>Required to sign in. <strong>{keys.length}</strong> registered.</>
+                : 'Sign in with a fingerprint, face, screen lock, or security key.'}
+            </p>
+          </div>
+          <button disabled={!!loading} onClick={loadPasskeys}><RefreshCw size={14}/> Refresh</button>
+        </div>
+        {pk.available === false && <p className="hint">{pk.unavailable_reason}</p>}
+        {keys.length > 0 && <div className="table">
+          {keys.map(item => <div className="row passkey-row" key={item.id}>
+            <span>
+              <strong>{item.name}</strong>
+              <small className="db-owner">
+                Added {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'recently'}
+                {item.last_used_at ? ` · last used ${new Date(item.last_used_at).toLocaleDateString()}` : ' · not used yet'}
+              </small>
+            </span>
+            <button className="mini danger" disabled={!!loading}
+                    title="Remove this passkey" aria-label={`Remove the passkey ${item.name}`}
+                    onClick={() => removePasskey(item)}><Trash2 size={14}/></button>
+          </div>)}
+        </div>}
+        {pk.available !== false && (pk.can_add_passkey !== false) && <div className="passkey-add">
+          <input value={passkeyName} onChange={e => setPasskeyName(e.target.value)}
+                 placeholder="Name this passkey (e.g. Work laptop)" maxLength={64} />
+          <button disabled={!!loading} onClick={registerPasskey}><Shield size={14}/> Add passkey</button>
+        </div>}
+        {pk.can_add_passkey === false && pk.available !== false && enabled &&
+          <p className="hint">Turn off the authenticator app below to use a passkey instead.</p>}
+      </section>
       <section className="section">
         <div className="section-title">
           <div><h2>Google Authenticator 2FA</h2><p className="hint">Current status: <strong>{enabled ? 'Enabled' : 'Disabled'}</strong></p></div>
           <button disabled={!!loading} onClick={loadTwoFactorStatus}><RefreshCw size={14}/> Refresh</button>
         </div>
-        {!enabled && <div className="security-grid">
+        {!enabled && !canEnableTotp && <p className="hint">Remove the passkey above to use an authenticator app instead.</p>}
+        {!enabled && canEnableTotp && <div className="security-grid">
           <div className="info-box">
             <strong>Setup</strong>
             {twoFactorSetup?.qr_data_url ? <img className="qr-code" src={twoFactorSetup.qr_data_url} alt="2FA QR code" /> : <p className="hint">No setup code generated.</p>}
@@ -5429,7 +5612,9 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     if (page === 'waf') return renderWaf();
     if (page === 'wafLogs') return renderWafAccessLogs();
     if (page === 'updates') return renderUpdates();
-    if (page === 'services') return renderServices();
+    // Admin only, and guarded here too so a bookmarked /services does not
+    // paint a page whose every request will 403.
+    if (page === 'services') return isAdmin ? renderServices() : renderDashboard();
     if (page === 'settings') return renderPanelSettings();
     if (page === 'users') return renderUsers();
     return renderDashboard();

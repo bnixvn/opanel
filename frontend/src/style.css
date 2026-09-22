@@ -1236,6 +1236,9 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
    an unreadable sliver on anything narrower than a desktop. */
 .db-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .db-actions .mini{min-width:36px;justify-content:center;padding-inline:9px}
+.passkey-row{grid-template-columns:minmax(0,1fr) auto}
+.passkey-add{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.passkey-add input{flex:1 1 16rem;min-width:0}
 .profile-email-row{display:flex;gap:8px;align-items:end}
 .profile-email-row input{flex:1}
 
