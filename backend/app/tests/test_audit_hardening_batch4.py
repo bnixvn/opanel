@@ -65,28 +65,57 @@ def test_the_cache_expires(monkeypatch):
 
 
 def test_a_live_read_refreshes_the_cache(monkeypatch):
-    """refresh_status owns the memo, so the cache cannot go stale behind a
-    state change: every panel_settings path that toggles the scanner re-reads
-    the status through refresh_status, which updates the memo as it goes.
-    That is why no invalidate call is sprinkled through those functions."""
-    values = iter([
-        {"enabled": False, "installed": False, "active": False, "detail": "a"},
-        {"enabled": True, "installed": True, "active": True, "detail": "b"},
-    ])
+    """refresh_status owns the memo, so it cannot go stale behind a change.
+
+    The previous version of this test patched `_collect_status`, which does not
+    exist -- monkeypatch(raising=False) silently did nothing, the real
+    refresh_status ran, and the assertion held by construction. It tested
+    nothing.
+    """
+    calls = []
+
+    class _Result:
+        returncode = 1
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(malware_scan.shell, "privileged",
+                        lambda *a, **k: (calls.append(1), _Result())[1])
+    monkeypatch.setattr(malware_scan, "clamav_installed", lambda: bool(calls))
+    monkeypatch.setattr(malware_scan, "_socket_path", lambda: "")
     monkeypatch.setattr(malware_scan, "_write_status", lambda state: None)
-    monkeypatch.setattr(malware_scan, "_collect_status", lambda: next(values), raising=False)
 
     malware_scan.invalidate_status_cache()
-    monkeypatch.setattr(malware_scan, "refresh_status", malware_scan.refresh_status)
-    # Seed the memo, then prove a direct refresh replaces it rather than
-    # leaving cached_status serving the old value.
-    malware_scan._STATUS_CACHE = {"detail": "stale"}
-    malware_scan._STATUS_CACHE_AT = __import__("time").monotonic()
+    first = malware_scan.cached_status()
+    # Seed a stale value, then prove a live read replaces it rather than
+    # sitting beside it.
+    malware_scan._STATUS_CACHE = dict(first, detail="stale")
     assert malware_scan.cached_status()["detail"] == "stale"
     fresh = malware_scan.refresh_status()
-    assert malware_scan.cached_status() == fresh, (
-        "a live read must replace the memo, not sit beside it"
-    )
+    assert malware_scan.cached_status() == fresh
+    assert malware_scan.cached_status()["detail"] != "stale"
+
+
+def test_the_cache_read_survives_a_concurrent_invalidate(monkeypatch):
+    """`if _STATUS_CACHE is not None: return dict(_STATUS_CACHE)` loaded the
+    global twice; an invalidate between those bytecodes raised TypeError out of
+    three unauthenticated routes."""
+    import app.services.malware_scan as mod
+
+    monkeypatch.setattr(mod, "refresh_status", lambda: {"detail": "rebuilt"})
+    mod._STATUS_CACHE = {"detail": "cached"}
+    mod._STATUS_CACHE_AT = __import__("time").monotonic()
+
+    real_dict = dict
+
+    def _dict_that_invalidates(value=None, **kw):
+        # Simulate the window: the memo is dropped after the None test passes.
+        mod._STATUS_CACHE = None
+        return real_dict(value) if value is not None else real_dict(**kw)
+
+    monkeypatch.setattr(mod, "dict", _dict_that_invalidates, raising=False)
+    # Must not raise, whichever value comes back.
+    assert mod.cached_status()["detail"] in {"cached", "rebuilt"}
 
 
 # --------------------------------------------------------------------------
@@ -102,47 +131,14 @@ def test_a_live_read_refreshes_the_cache(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# a username key must not be able to deny its own account
+# login rate limiting
 # --------------------------------------------------------------------------
-def test_an_account_name_key_feeds_no_rate_limit_counter():
-    for name in ("_memory_record_failure", "_redis_record_failure"):
-        body = _code(inspect.getsource(getattr(auth_api, name)))
-        guard = body.index("if not apply_lockout:")
-        # The early return has to come before any counter is touched.
-        for counter in ("_login_attempts[", "attempts_key = ", "zadd", "attempts.append"):
-            if counter in body:
-                assert body.index(counter) > guard, (
-                    f"{name} records into {counter!r} before exempting account-name keys; "
-                    "that is the account-DoS the lockout exemption exists to prevent"
-                )
-
-
-def test_wrong_passwords_for_one_account_do_not_lock_out_its_owner(monkeypatch):
-    monkeypatch.setattr(auth_api, "_rate_limit_backend", lambda: "memory")
-    auth_api._login_attempts.clear()
-    auth_api._login_failures.clear()
-    auth_api._login_lockouts.clear()
-
-    user_key = auth_api._username_key("victim")
-    for _ in range(auth_api._LOGIN_MAX_ATTEMPTS * 3):
-        auth_api._record_failure(user_key, apply_lockout=False)
-
-    # The real owner must still be able to reach the login form.
-    auth_api._enforce_rate_limit(user_key)
-
-
-def test_source_rate_limiting_still_applies(monkeypatch):
-    monkeypatch.setattr(auth_api, "_rate_limit_backend", lambda: "memory")
-    auth_api._login_attempts.clear()
-    auth_api._login_failures.clear()
-    auth_api._login_lockouts.clear()
-
-    ip_key = auth_api._client_key.__wrapped__ if hasattr(auth_api._client_key, "__wrapped__") else None
-    key = "ip:203.0.113.7"
-    for _ in range(auth_api._LOGIN_MAX_ATTEMPTS + 2):
-        auth_api._record_failure(key, apply_lockout=True)
-    with pytest.raises(Exception):
-        auth_api._enforce_rate_limit(key)
+# The three tests here asserted that an account-name key fed no counter at all.
+# That shape cured the owner-lockout but left distributed guessing against one
+# account unmetered, and the long lockout had already been exempt -- so the
+# wrong half had been given up. test_login_rate_limit.py replaces them and
+# drives the real login() instead: the owner gets in after any number of wrong
+# guesses, and those guesses are still throttled across addresses.
 
 
 # --------------------------------------------------------------------------

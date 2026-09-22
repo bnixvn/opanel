@@ -230,16 +230,11 @@ def _redis_record_failure(key: str, *, apply_lockout: bool) -> None:
     apply, so one source cannot exceed ``_LOGIN_MAX_ATTEMPTS`` per minute and
     repeated failure locks that source out.
 
-    ``apply_lockout=False`` is what a username key gets, and it now records
-    nothing at all. Exempting only the lockout was not enough: the short window
-    is keyed on the account name too, so wrong passwords from many IPs still
-    pushed that account past the limit and held it at 429 for its real owner --
-    the account-DoS the lockout exemption was written to prevent, arriving
-    through the other counter.
+    ``apply_lockout=False`` is what a username key gets: the short window is
+    recorded, the long lockout is not. The window is only consulted after a
+    password has already failed (see login()), so it throttles spraying against
+    one account without ever refusing that account's real owner.
     """
-    # See _memory_record_failure: an account-name key feeds no counter.
-    if not apply_lockout:
-        return
     now = time.time()
     member = f"{now}:{secrets.token_hex(8)}"
     attempts_key = _rate_limit_key("attempts", key)
@@ -267,22 +262,20 @@ def _redis_record_failure(key: str, *, apply_lockout: bool) -> None:
 def _memory_record_failure(key: str, *, apply_lockout: bool) -> None:
     now = time.monotonic()
     with _login_lock:
-        # apply_lockout=False means "this key is an account name, not a
-        # source", and neither counter may be fed from it. The long lockout was
-        # already exempted so that wrong passwords from many IPs could not lock
-        # a named account out -- but the short window was not, and it is keyed
-        # the same way, so eight wrong passwords a minute held that account at
-        # 429 for its real owner too, from any number of addresses. That is the
-        # account-DoS the exemption exists to prevent, reached through the
-        # other counter. Per-source limiting is the IP key's job and still
-        # applies to every one of those attempts.
-        if not apply_lockout:
-            return
+        # The short window is fed for both kinds of key. Where it is *enforced*
+        # is what differs: login() consults the account-name key only after a
+        # password has already failed, so a correct password is never refused.
         attempts = _login_attempts[key]
         attempts.append(now)
         cutoff = now - _LOGIN_WINDOW_SECONDS
         while attempts and attempts[0] < cutoff:
             attempts.popleft()
+
+        # The long lockout stays source-only. Feeding it from an account name
+        # would let wrong passwords from many addresses lock that account out
+        # for 15 minutes, which is the whole reason the exemption exists.
+        if not apply_lockout:
+            return
         failures = _login_failures[key]
         failures.append(now)
         failure_cutoff = now - _LOGIN_LOCKOUT_SECONDS
@@ -392,12 +385,12 @@ def login(
 
     ip_key = _client_key(request)
     user_key = _username_key(form.username)
-    # IP key gets full lockout (slow attacker from one source).
+    # IP key gets the full lockout: one source, slowed down.
     _enforce_rate_limit(ip_key)
-    # Username key only enforces the short-window rate limit; the lockout
-    # check is intentionally skipped so an attacker cannot DoS a known
-    # account by spraying wrong passwords from many IPs.
-    _enforce_rate_limit(user_key)
+    # The account-name key is deliberately NOT checked here. Enforcing it
+    # before the password is what let an attacker hold someone else's account
+    # at 429 -- the owner was refused even with the right password. It is
+    # checked below, only on the path where the password has already failed.
 
     user = db.query(User).filter(User.username == form.username).first()
     if user and user.is_active:
@@ -409,6 +402,10 @@ def login(
     if not user or not user.is_active or not password_ok:
         _record_failure(ip_key, apply_lockout=True)
         _record_failure(user_key, apply_lockout=False)
+        # Only now. A correct password never reaches this branch, so the real
+        # owner cannot be locked out, while an attacker guessing against one
+        # account is throttled however many addresses they spread across.
+        _enforce_rate_limit(user_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -420,6 +417,7 @@ def login(
         if not _verify_totp(user, otp):
             _record_failure(ip_key, apply_lockout=True)
             _record_failure(user_key, apply_lockout=False)
+            _enforce_rate_limit(user_key)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication code",
