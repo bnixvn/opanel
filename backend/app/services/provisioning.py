@@ -415,13 +415,31 @@ def suspend_account(db: Session, external_id: str, reason: str = "Suspended by W
     shell.privileged("panel-user-lock", helper_args=[linux_user])
 
     # Disable every vhost the account owns, not just the primary one -- the
-    # others kept serving through a suspension.
+    # others kept serving through a suspension. One domain that cannot be
+    # suspended must not stop the rest: the Linux account is already locked at
+    # this point, so aborting here would leave the account half-suspended and,
+    # since every retry hits the same domain first, permanently so.
+    failed: list[str] = []
     for website in db.query(Website).filter(Website.owner_id == account.user_id).all():
-        openlitespeed.suspend_vhost(website.domain)
+        try:
+            openlitespeed.suspend_vhost(website.domain)
+        except Exception as exc:  # noqa: BLE001 - record and keep going
+            failed.append(website.domain)
+            logging.getLogger(__name__).warning(
+                "suspend: could not disable vhost %s: %s", website.domain, exc
+            )
 
     account.status = "suspended"
     account.updated_at = datetime.utcnow()
-    _finish_job(db, job, "completed")
+    if failed:
+        # The account IS suspended -- panel sessions ended, Linux account
+        # locked -- but these domains may still be served, so the operator has
+        # to be told rather than shown a clean "completed".
+        _finish_job(db, job, "failed",
+                    "Suspended, but these vhosts could not be disabled: "
+                    + ", ".join(failed))
+    else:
+        _finish_job(db, job, "completed")
     db.commit()
     db.refresh(account)
     return account
@@ -450,13 +468,26 @@ def unsuspend_account(db: Session, external_id: str) -> HostingAccount:
     user.is_active = True
     db.commit()
 
-    # Restore every vhost suspend took down.
+    # Restore every vhost suspend took down. Same rule as suspend: one domain
+    # must not keep the rest of the account offline.
+    failed: list[str] = []
     for website in db.query(Website).filter(Website.owner_id == account.user_id).all():
-        openlitespeed.restore_vhost(website.domain)
+        try:
+            openlitespeed.restore_vhost(website.domain)
+        except Exception as exc:  # noqa: BLE001 - record and keep going
+            failed.append(website.domain)
+            logging.getLogger(__name__).warning(
+                "unsuspend: could not restore vhost %s: %s", website.domain, exc
+            )
 
     account.status = "active"
     account.updated_at = datetime.utcnow()
-    _finish_job(db, job, "completed")
+    if failed:
+        _finish_job(db, job, "failed",
+                    "Unsuspended, but these vhosts could not be restored: "
+                    + ", ".join(failed))
+    else:
+        _finish_job(db, job, "completed")
     db.commit()
     db.refresh(account)
     return account

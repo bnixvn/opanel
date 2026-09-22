@@ -1879,8 +1879,13 @@ firewall_blocklist_apply() {
     # pass. `ipset restore` loads the whole batch in a single process.
     awk -v v4="$v4_target" -v v6="$v6_target" '
       NF && $0 !~ /^[[:space:]]*#/ {
-        if (index($0, ":") > 0) print "add " v6 " " $0
-        else print "add " v4 " " $0
+        # Re-apply the prefix floor at the load site: /var/lib/opanel is
+        # opanel-owned, so blocklist.set can be written without going through
+        # the fetch filter above.
+        slash = index($0, "/")
+        prefix = (slash ? substr($0, slash + 1) + 0 : 128)
+        if (index($0, ":") > 0) { if (prefix < 16) next; print "add " v6 " " $0 }
+        else { if (prefix < 8) next; print "add " v4 " " $0 }
       }
     ' "${BLOCKLIST_DIR}/blocklist.set" | ipset restore -exist 2>/dev/null || true
   fi
@@ -1897,6 +1902,18 @@ firewall_blocklist_apply() {
   fi
   if ! ip6tables -C OPANEL_BLOCKLIST -m set --match-set "$BLOCKLIST_IPSET_V6" src -j DROP 2>/dev/null; then
     ip6tables -I OPANEL_BLOCKLIST 1 -m set --match-set "$BLOCKLIST_IPSET_V6" src -j DROP 2>/dev/null || true
+  fi
+  # Loopback leaves this chain before the DROP can see it. This chain is jumped
+  # from INPUT at position 1, ahead of the loopback and ESTABLISHED accepts in
+  # OPANEL_INPUT, so a blocklist entry wide enough to cover 127.0.0.1 would
+  # otherwise cut the panel's own health check and the phpMyAdmin SSO call to
+  # 127.0.0.1. The prefix floor above should make that unreachable; this is the
+  # second line of defence, since a remote list is the input.
+  if ! iptables -C OPANEL_BLOCKLIST -i lo -j RETURN 2>/dev/null; then
+    iptables -I OPANEL_BLOCKLIST 1 -i lo -j RETURN 2>/dev/null || true
+  fi
+  if ! ip6tables -C OPANEL_BLOCKLIST -i lo -j RETURN 2>/dev/null; then
+    ip6tables -I OPANEL_BLOCKLIST 1 -i lo -j RETURN 2>/dev/null || true
   fi
   ensure_firewall_rule_store >/dev/null 2>&1 || true
 }
@@ -1977,6 +1994,19 @@ for raw in open(sys.argv[1], encoding="utf-8", errors="ignore"):
         or network.is_multicast
         or network.is_reserved
         or network.is_unspecified
+    ):
+        continue
+    # A prefix floor. None of the flags above reject 0.0.0.0/1 or 0.0.0.0/0 --
+    # they are neither private nor reserved nor loopback as a *network* -- yet
+    # 0.0.0.0/1 contains 127.0.0.1, and OPANEL_BLOCKLIST is jumped from INPUT
+    # at position 1, ahead of the loopback and ESTABLISHED accepts. One such
+    # line in a subscribed list therefore DROPs every inbound packet including
+    # loopback: panel, SSH, web, mail and the panel's own health check, saved
+    # by firewall_persist_rules and re-armed after reboot, recoverable only
+    # from an out-of-band console. No real blocklist entry needs to be this
+    # wide; /8 and /16 already cover 16.7M and 2^112 addresses.
+    if (network.version == 4 and network.prefixlen < 8) or (
+        network.version == 6 and network.prefixlen < 16
     ):
         continue
     if value not in seen:
@@ -3704,13 +3734,20 @@ case "$cmd" in
     require_domain "$safe_domain"
     vhost_conf="$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
     if [[ -f "$vhost_conf" ]]; then
-      mv -f -- "$vhost_conf" "${vhost_conf}.suspended"
-    elif [[ ! -f "${vhost_conf}.suspended" ]]; then
-      deny "no vhost config for $safe_domain"
+      mv -f -- "$vhost_conf" "${vhost_conf}.suspended" \
+        || deny "could not suspend the vhost for $safe_domain"
+      ols_sync_main_config
+      restart_openlitespeed 2>/dev/null || true
+      echo "suspended $safe_domain"
+    else
+      # Nothing served is already the state suspend is trying to reach, so
+      # this is a no-op rather than an error. Denying here meant one Website
+      # row without an OLS vhost -- a failed provision, or a row that outlived
+      # its config -- aborted the whole suspension after the Linux account had
+      # already been locked, leaving the account half-suspended and, because
+      # every retry hit the same domain, impossible to suspend ever again.
+      echo "no vhost to suspend for $safe_domain"
     fi
-    ols_sync_main_config
-    restart_openlitespeed 2>/dev/null || true
-    echo "suspended $safe_domain"
     ;;
 
   ols-vhost-restore)
@@ -3719,13 +3756,17 @@ case "$cmd" in
     require_domain "$safe_domain"
     vhost_conf="$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
     if [[ -f "${vhost_conf}.suspended" ]]; then
-      mv -f -- "${vhost_conf}.suspended" "$vhost_conf"
-    elif [[ ! -f "$vhost_conf" ]]; then
-      deny "no suspended vhost config for $safe_domain"
+      mv -f -- "${vhost_conf}.suspended" "$vhost_conf" \
+        || deny "could not restore the vhost for $safe_domain"
+      ols_sync_main_config
+      restart_openlitespeed 2>/dev/null || true
+      echo "restored $safe_domain"
+    else
+      # Symmetric with ols-vhost-suspend: nothing suspended is already the
+      # state unsuspend wants, so it must not block the rest of the account
+      # coming back.
+      echo "no suspended vhost for $safe_domain"
     fi
-    ols_sync_main_config
-    restart_openlitespeed 2>/dev/null || true
-    echo "restored $safe_domain"
     ;;
 
   # openlitespeed.test_config() has always called this and always got "unknown

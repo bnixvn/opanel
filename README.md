@@ -232,6 +232,13 @@ OPanel uses **iptables + ipset** for firewall management.
 > security group, or your own `iptables -P INPUT DROP` with matching allows) and
 > check `ss -ltnp` for anything listening that should not be.
 >
+> **It can still lock you out from the other direction.** Subscribed blocklists
+> are fetched from URLs you supply and loaded as `DROP` rules ahead of
+> everything else, so a bad entry in a third-party list blocks traffic the
+> ACCEPT policy would otherwise have allowed. Entries wider than `/8` (IPv4) or
+> `/16` (IPv6) are refused and loopback is exempted, because `0.0.0.0/1` passes
+> every "is this a private/reserved network" test and contains `127.0.0.1`.
+>
 > Installing OPanel also disables and purges `ufw`. Its configuration is copied
 > to `/var/lib/opanel/ufw-backup-<timestamp>` first, but the rules are **not**
 > translated — if the host was firewalled by ufw, it is not afterwards.
