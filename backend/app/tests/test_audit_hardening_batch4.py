@@ -90,27 +90,15 @@ def test_a_live_read_refreshes_the_cache(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# SSO must not be a lower-assurance parallel door
+# SSO
 # --------------------------------------------------------------------------
-def test_sso_refuses_an_account_with_two_factor_enabled():
-    source = _code(Path(PROJECT_ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8"))
-    helper = source[source.index("def _sso_user_or_401") : source.index("@app.post(\"/sso\"")]
-    assert "totp_enabled" in helper, (
-        "the password path enforces totp_enabled and impersonation re-prompts; "
-        "SSO went straight from consume_sso_token to _issue_login_session"
-    )
-    assert "403" in helper
-
-
-def test_both_sso_routes_go_through_the_guard():
-    source = _code(Path(PROJECT_ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8"))
-    for route in ('@app.post("/sso"', '@app.get("/sso/{token}"'):
-        block = source[source.index(route) : source.index(route) + 900]
-        assert "_sso_user_or_401" in block, f"{route} must use the shared guard"
-        assert "_reject_cross_site_sso" in block, f"{route} needs cross-site binding"
-        assert "consume_sso_token(db, token)" not in block, (
-            f"{route} must not re-implement the handshake"
-        )
+# The two tests that lived here asserted that certain identifiers appeared
+# inside a 900-character window of main.py. They passed while the guard they
+# described blocked nothing a browser could do -- it was wired to the two
+# routes that consume a token and not to GET /sso, the page that feeds them.
+# test_sso_flow.py replaces them: it exercises peek vs consume, the click
+# requirement, the nonce pairing, the legacy route no longer signing anyone in,
+# and the 2FA redirect.
 
 
 # --------------------------------------------------------------------------

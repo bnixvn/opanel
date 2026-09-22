@@ -1,9 +1,11 @@
 ﻿import logging
 import mimetypes
 import os
+import secrets
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Depends, Request, Response, Form
+from fastapi import Body, FastAPI, HTTPException, Depends, Request, Response, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -177,51 +179,103 @@ def brand_asset(filename: str):
     )
 
 
-@app.get("/sso", include_in_schema=False)
-def sso_intermediary():
-    """Serve an intermediary page that reads the SSO token from the URL
-    fragment (#) and POSTs it to /sso.
+SSO_NONCE_COOKIE = "opanel_sso_nonce"
 
-    Using the fragment keeps the token out of server access logs and proxy
-    logs because browsers never send the fragment in HTTP requests.
 
-    The auto-submit script is loaded from /sso.js (same-origin) rather than
-    inlined here: the panel's CSP sends script-src 'self' with no
-    'unsafe-inline', so an inline <script> block is silently blocked by the
-    browser and the token is never submitted (the login just appears to
-    hang, then falls through to the normal login page).
+def _sso_page_html(nonce: str) -> str:
+    """The sign-in confirmation page.
+
+    The token still travels in the URL fragment so it never reaches an access
+    log, and the script still lives at /sso.js because the panel's CSP sends
+    script-src 'self' with no 'unsafe-inline'.
+
+    What changed is that the page no longer submits by itself. An auto-submit
+    made the whole handshake reachable by redirect: a page on any origin could
+    send a victim to /sso#<the attacker's token> and the browser would complete
+    the login unattended, leaving the victim working inside the attacker's
+    panel. A form the visitor has to click cannot be driven that way, and
+    naming the account on the button is what lets someone notice they were
+    handed a link to a stranger's account.
     """
-    from fastapi.responses import HTMLResponse
-
-    return HTMLResponse(
-        """<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>OPanel SSO</title></head>
-<body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif">
-<p>Logging in…</p>
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>OPanel sign-in</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#0f1115;color:#e8e6e3">
+<main style="max-width:26rem;padding:2rem;text-align:center">
+<h1 style="font-size:1.1rem;font-weight:600;margin:0 0 1rem">OPanel sign-in</h1>
+<p id="sso-status" style="color:#a8a096;line-height:1.5;margin:0 0 1.25rem">Checking your sign-in link&hellip;</p>
 <form id="sso-form" method="POST" action="/sso">
 <input type="hidden" name="token" id="sso-token">
+<input type="hidden" name="nonce" value="{nonce}">
 </form>
+<button id="sso-go" type="button" hidden
+ style="font:inherit;font-weight:600;padding:.7rem 1.4rem;border:0;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer"></button>
+<p id="sso-note" style="color:#7d766c;font-size:.85rem;line-height:1.5;margin:1.25rem 0 0" hidden>
+This replaces any OPanel session already open in this browser.</p>
+</main>
 <script src="/sso.js"></script>
-</body></html>""",
+</body></html>"""
+
+
+@app.get("/sso", include_in_schema=False)
+def sso_intermediary(request: Request):
+    """Serve the sign-in confirmation page and mint its form nonce."""
+    from app.api.auth import _is_secure_request
+    from fastapi.responses import HTMLResponse
+
+    nonce = secrets.token_urlsafe(32)
+    page = HTMLResponse(
+        _sso_page_html(nonce),
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
     )
+    # Double-submit pair for the POST below. It does not stop the redirect
+    # attack on its own -- both halves of that happen on the panel's own origin
+    # -- but it does stop a form on another origin posting straight to /sso and
+    # skipping this page entirely.
+    page.set_cookie(
+        SSO_NONCE_COOKIE, nonce,
+        max_age=600, httponly=True, samesite="strict",
+        secure=_is_secure_request(request), path="/sso",
+    )
+    return page
 
 
 @app.get("/sso.js", include_in_schema=False)
 def sso_intermediary_script():
-    """Same-origin auto-submit script for the /sso intermediary page.
-
-    Served as a real script-src 'self' resource (see sso_intermediary())
-    rather than inlined, so the CSP doesn't block it from running.
-    """
+    """Same-origin script for the sign-in page (CSP is script-src 'self')."""
     from fastapi.responses import Response
 
     return Response(
         content="""(function(){
   var hash = window.location.hash.replace(/^#/, "");
-  if (!hash) { document.body.innerHTML = "<p>Invalid SSO link.</p>"; return; }
+  var status = document.getElementById("sso-status");
+  var go = document.getElementById("sso-go");
+  var note = document.getElementById("sso-note");
+  if (!hash) { status.textContent = "This sign-in link is missing its token."; return; }
   document.getElementById("sso-token").value = hash;
-  document.getElementById("sso-form").submit();
+  fetch("/sso/preview", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: hash })
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d || !d.username) {
+      status.textContent = "This sign-in link is not valid, has expired, or has already been used.";
+      return;
+    }
+    status.textContent = "You are about to sign in to OPanel as:";
+    // textContent, never innerHTML: the username is panel data, and this page
+    // runs before any session exists.
+    go.textContent = "Continue as " + d.username;
+    go.hidden = false;
+    note.hidden = false;
+    go.addEventListener("click", function () {
+      go.disabled = true;
+      document.getElementById("sso-form").submit();
+    });
+  }).catch(function () {
+    status.textContent = "Could not check this sign-in link.";
+  });
 })();
 """,
         media_type="application/javascript",
@@ -229,78 +283,108 @@ def sso_intermediary_script():
     )
 
 
-def _reject_cross_site_sso(request: Request) -> None:
-    """Refuse an SSO handshake initiated by another site.
+@app.post("/sso/preview", include_in_schema=False)
+def sso_preview(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Name the account a token belongs to, without consuming it.
 
-    Both SSO routes set opanel_session at path="/", replacing whatever session
-    the visitor already holds, and neither goes through get_current_user -- so
-    the double-submit CSRF control lives somewhere these routes never reach.
-    A cross-site form post or top-level navigation could therefore drop a
-    victim's browser into an account chosen by whoever sent the link, which is
-    session fixation with the roles reversed: the victim goes on working in the
-    attacker's panel.
+    Whoever holds the token can already sign in as that account, so this
+    discloses nothing they could not obtain by using it -- and it is what makes
+    the confirmation meaningful.
+    """
+    from app.models.entities import User
+    from app.services.provisioning import peek_sso_token
+
+    token = (payload or {}).get("token") or ""
+    if not isinstance(token, str) or not token:
+        return {"username": None}
+    user_id = peek_sso_token(db, token)
+    if user_id is None:
+        return {"username": None}
+    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    return {"username": user.username if user else None}
+
+
+def _reject_cross_site_sso(request: Request) -> None:
+    """Refuse an SSO POST initiated by another origin.
+
+    Defence in depth only, and deliberately narrow: the attack this route
+    needed protecting from is a redirect to /sso#<token>, where the form post
+    that follows is same-origin by construction. That one is stopped by making
+    the page require a click, not by this. What this does stop is a form on
+    another site posting straight here and skipping the confirmation.
 
     Sec-Fetch-Site is sent by every current browser and is not settable from
-    script. A non-browser client omits it and is unaffected, which is what the
-    WHMCS integration needs.
+    script. A non-browser client omits it and is unaffected.
     """
     fetch_site = (request.headers.get("sec-fetch-site") or "").lower()
-    if fetch_site and fetch_site not in {"same-origin", "same-site", "none"}:
+    if fetch_site and fetch_site not in {"same-origin", "same-site"}:
         raise HTTPException(status_code=403, detail="Cross-site SSO is not allowed")
 
 
-def _sso_user_or_401(db: Session, token: str):
-    """Consume the token and return the account it names, or raise."""
+def _sso_user_or_error(db: Session, token: str):
+    """Consume the token and return the account, or a RedirectResponse."""
     from app.models.entities import User
     from app.services.provisioning import consume_sso_token
 
     user_id = consume_sso_token(db, token)
     if user_id is None:
-        raise HTTPException(status_code=401, detail="Invalid or expired SSO token")
+        return RedirectResponse(url="/?sso=invalid", status_code=302)
     user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
     if user is None:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
+        return RedirectResponse(url="/?sso=invalid", status_code=302)
     # An SSO link must not be a way around two-factor authentication. The
     # password path enforces user.totp_enabled and impersonation re-prompts the
     # admin's own code; these routes went straight from consume_sso_token to
     # _issue_login_session, so an account that had deliberately turned 2FA on
-    # still had a parallel door at lower assurance. There is nowhere to prompt
-    # for a code mid-redirect, so the honest answer is to send them to the
-    # normal login form.
+    # still had a parallel door at lower assurance.
+    #
+    # Sent to the login form rather than answered with a raw JSON 403: there is
+    # no exception handler for HTTPException here, so a customer clicking
+    # "Log in to OPanel" in WHMCS would have been shown a bare error blob in a
+    # new tab with nowhere to go.
     if getattr(user, "totp_enabled", False):
-        raise HTTPException(
-            status_code=403,
-            detail="This account uses two-factor authentication. Sign in from the panel login page.",
-        )
+        return RedirectResponse(url="/?sso=2fa", status_code=302)
     return user
 
 
 @app.post("/sso", include_in_schema=False)
-def sso_login_post(request: Request, response: Response, token: str = Form(...), db: Session = Depends(get_db)):
-    """Consume a one-time SSO token submitted via POST body."""
+def sso_login_post(
+    request: Request,
+    token: str = Form(...),
+    nonce: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Consume a one-time SSO token submitted from the confirmation page."""
     from app.api.auth import _issue_login_session
 
     _reject_cross_site_sso(request)
-    user = _sso_user_or_401(db, token)
+    cookie_nonce = request.cookies.get(SSO_NONCE_COOKIE) or ""
+    if not cookie_nonce or not secrets.compare_digest(cookie_nonce, nonce or ""):
+        return RedirectResponse(url="/?sso=expired", status_code=302)
+
+    result = _sso_user_or_error(db, token)
+    if isinstance(result, RedirectResponse):
+        result.delete_cookie(SSO_NONCE_COOKIE, path="/sso")
+        return result
+
     redirect = RedirectResponse(url="/", status_code=302)
-    _issue_login_session(redirect, request, user)
+    _issue_login_session(redirect, request, result)
+    redirect.delete_cookie(SSO_NONCE_COOKIE, path="/sso")
     return redirect
 
 
 @app.get("/sso/{token}", include_in_schema=False)
-def sso_login(token: str, request: Request, response: Response, db: Session = Depends(get_db)):
-    """Consume a one-time SSO token from WHMCS bpanel and create a session.
+def sso_login(token: str):
+    """Deprecated entry point, kept for links already handed out.
 
-    Deprecated: kept for backward compatibility. New SSO links use the
-    fragment-based /sso endpoint to keep the token out of server logs.
+    It used to consume the token and set a session cookie on a bare top-level
+    navigation, so following a link was the whole login -- the single cheapest
+    version of the attack above. It now only forwards to the confirmation page,
+    moving the token into the fragment on the way so it also stops reaching
+    access logs. Nothing is consumed here.
     """
-    from app.api.auth import _issue_login_session
+    return RedirectResponse(url=f"/sso#{quote(token, safe='')}", status_code=302)
 
-    _reject_cross_site_sso(request)
-    user = _sso_user_or_401(db, token)
-    redirect = RedirectResponse(url="/", status_code=302)
-    _issue_login_session(redirect, request, user)
-    return redirect
 
 @app.get("/{full_path:path}", include_in_schema=False)
 def serve_spa(full_path: str):

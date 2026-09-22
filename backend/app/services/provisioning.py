@@ -620,6 +620,25 @@ def create_sso_login(db: Session, external_id: str, panel_url: str) -> dict:
     }
 
 
+def peek_sso_token(db: Session, raw_token: str) -> Optional[int]:
+    """Validate an SSO token WITHOUT consuming it. Returns user_id or None.
+
+    The sign-in page needs to name the account before the visitor commits, so
+    the confirmation can say whose panel they are about to enter. Whoever holds
+    the token can already log in as that account, so naming it discloses
+    nothing new -- and showing it is what lets someone notice they were handed
+    a link to a stranger's account.
+    """
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    sso = db.query(PanelSsoToken).filter(
+        PanelSsoToken.token_hash == token_hash,
+        PanelSsoToken.used_at.is_(None),
+    ).first()
+    if sso is None or sso.expires_at < datetime.utcnow():
+        return None
+    return sso.user_id
+
+
 def consume_sso_token(db: Session, raw_token: str) -> Optional[int]:
     """Validate and consume an SSO token. Returns user_id or None."""
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
