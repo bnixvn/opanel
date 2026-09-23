@@ -927,7 +927,7 @@ Environment=APP_DIR=${APP_DIR}
 Environment=REPO_URL=${REPO_URL:-https://github.com/bnixvn/opanel.git}
 Environment=GIT_REMOTE=${GIT_REMOTE:-origin}
 Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-branch}
-Environment=BRANCH=${BRANCH:-main}
+Environment=BRANCH=$(panel_update_branch)
 Environment=RELEASE_TAG=${RELEASE_TAG:-}
 Environment=RELEASE_PATTERN=${RELEASE_PATTERN:-v[0-9]*.[0-9]*.[0-9]*}
 Environment=SKIP_PULL=${SKIP_PULL:-false}
@@ -950,6 +950,20 @@ TIMER
   echo "Panel auto update enabled at ${time_value}"
 }
 
+# The branch this box updates from: opanel_UPDATE_BRANCH in backend/.env (the
+# staging box sets "staging"), else main. sudo resets the environment, so a
+# BRANCH the panel exported never arrives here; the .env is the one place all
+# three update paths -- this button, the auto-update timer and a bare
+# opanel-update -- can agree on.
+panel_update_branch() {
+  local branch
+  branch="$(env_get opanel_UPDATE_BRANCH)"
+  branch="${branch//\"/}"
+  branch="${branch:-main}"
+  git check-ref-format --branch "$branch" >/dev/null 2>&1 || branch="main"
+  printf '%s' "$branch"
+}
+
 run_panel_update() {
   [[ -f "$UPDATE_SCRIPT" ]] || deny "missing $UPDATE_SCRIPT"
   local unit="opanel-panel-update"
@@ -967,7 +981,7 @@ run_panel_update() {
       --property="Environment=REPO_URL=${REPO_URL:-https://github.com/bnixvn/opanel.git}" \
       --property="Environment=GIT_REMOTE=${GIT_REMOTE:-origin}" \
       --property="Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-branch}" \
-      --property="Environment=BRANCH=${BRANCH:-main}" \
+      --property="Environment=BRANCH=$(panel_update_branch)" \
       --property="Environment=RELEASE_TAG=${RELEASE_TAG:-}" \
       --property="Environment=RELEASE_PATTERN=${RELEASE_PATTERN:-v[0-9]*.[0-9]*.[0-9]*}" \
       --property="Environment=SKIP_PULL=${SKIP_PULL:-false}" \
@@ -982,7 +996,7 @@ run_panel_update() {
     REPO_URL="${REPO_URL:-https://github.com/bnixvn/opanel.git}" \
     GIT_REMOTE="${GIT_REMOTE:-origin}" \
     UPDATE_CHANNEL="${UPDATE_CHANNEL:-branch}" \
-    BRANCH="${BRANCH:-main}" \
+    BRANCH="$(panel_update_branch)" \
     RELEASE_TAG="${RELEASE_TAG:-}" \
     RELEASE_PATTERN="${RELEASE_PATTERN:-v[0-9]*.[0-9]*.[0-9]*}" \
     SKIP_PULL="${SKIP_PULL:-false}" \

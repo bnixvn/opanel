@@ -99,7 +99,12 @@ fi
 REPO_URL="${REPO_URL:-https://github.com/bnixvn/opanel.git}"
 GIT_REMOTE="${GIT_REMOTE-origin}"                 # remote name in the local checkout
 UPDATE_CHANNEL="${UPDATE_CHANNEL-branch}"         # branch, release, or tag
-BRANCH="${BRANCH-main}"                           # used when UPDATE_CHANNEL=branch
+# A box can follow a branch other than main -- the staging box tracks staging
+# -- by setting opanel_UPDATE_BRANCH in backend/.env. Read here, before env_get
+# exists, so a bare `opanel-update` lands where the panel's Update button and
+# the auto-update timer do (the helper reads the same key).
+_ENV_BRANCH="$(awk -F= '$1 == "opanel_UPDATE_BRANCH" { sub(/^[^=]*=/, ""); gsub(/[" \r]/, ""); print; exit }' "$APP_DIR/backend/.env" 2>/dev/null || true)"
+BRANCH="${BRANCH-${_ENV_BRANCH:-main}}"          # used when UPDATE_CHANNEL=branch
 RELEASE_TAG="${RELEASE_TAG-}"                     # used when UPDATE_CHANNEL=tag
 RELEASE_PATTERN="${RELEASE_PATTERN:-v[0-9]*.[0-9]*.[0-9]*}"
 RELEASE_ZIP_URL="${RELEASE_ZIP_URL:-}"             # optional archive URL template with {tag}
