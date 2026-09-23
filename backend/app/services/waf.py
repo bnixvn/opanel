@@ -726,18 +726,35 @@ def access_log_report(
     if verdict not in {"", "allow", "block"}:
         raise ValueError("Verdict must be allow, block, or empty")
     safe_limit, safe_offset, safe_lines = _validate_access_log_options(limit, offset, lines)
+    entries, domains, paths = access_log_entries(website_domains, domain, verdict, query, safe_lines)
+    total = len(entries)
+    return {
+        "entries": entries[safe_offset:safe_offset + safe_limit],
+        "total": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "domains": domains,
+        "paths": paths,
+        "lines": safe_lines,
+    }
+
+
+def access_log_entries(
+    website_domains: Iterable[str],
+    domain: str = "",
+    verdict: str = "",
+    query: str = "",
+    lines: int = 5000,
+) -> tuple[list[dict], list[str], dict[str, str]]:
+    """Every parsed access-log entry in the last ``lines`` of each log, newest first.
+
+    The report pages through these; the MCP traffic summary needs all of them
+    at once to count, which paging 500 at a time would re-read the logs for.
+    """
+    _, _, safe_lines = _validate_access_log_options(1, 0, lines)
     domains = _domains_for_log(website_domains, domain)
-    paths: dict[str, str] = {}
     if not domains:
-        return {
-            "entries": [],
-            "total": 0,
-            "limit": safe_limit,
-            "offset": safe_offset,
-            "domains": [],
-            "paths": {},
-            "lines": safe_lines,
-        }
+        return [], [], {}
     result = shell.privileged(
         "waf-access-log-read",
         helper_args=[str(safe_lines), *domains],
@@ -757,16 +774,7 @@ def access_log_report(
         if entry and _entry_matches(entry, domain, verdict, query.strip()):
             entries.append(entry)
     entries.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
-    total = len(entries)
-    return {
-        "entries": entries[safe_offset:safe_offset + safe_limit],
-        "total": total,
-        "limit": safe_limit,
-        "offset": safe_offset,
-        "domains": domains,
-        "paths": paths,
-        "lines": safe_lines,
-    }
+    return entries, domains, paths
 
 
 def clear_access_logs(website_domains: Iterable[str], domain: str = "") -> CommandResult:
@@ -828,3 +836,93 @@ def save_custom_rules(content: str):
         input=_validate_custom_rules(content),
         fallback=["bash", "-lc", "cat >/tmp/opanel-waf-custom.conf && echo WAF custom rules saved"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Rules written on an operator's behalf (the MCP add_waf_rule tool)
+# ---------------------------------------------------------------------------
+# Raw ModSecurity is never taken from an AI client: an action can run a
+# program, and a rule that fails to parse can keep the web server from coming
+# back up. The client names what to match and the value; the directive is
+# built here from a fixed template, the value restricted to characters that
+# cannot end the quoted operand or trigger macro expansion (%{...}).
+#
+# Phase 1 only. SecRequestBodyAccess is Off on these boxes, so a phase:2 rule
+# would load and then never fire.
+MCP_RULE_ID_MIN = 1090000
+MCP_RULE_ID_MAX = 1099999
+MCP_RULE_MARKER = "# opanel-mcp:"
+
+_MCP_MATCHES = {
+    # match: (variable, operator, transformations, lowercase the value)
+    "ip": ("REMOTE_ADDR", "@ipMatch", "t:none", False),
+    "path": ("REQUEST_FILENAME", "@beginsWith", "t:none", False),
+    "user_agent": ("REQUEST_HEADERS:User-Agent", "@contains", "t:none,t:lowercase", True),
+    "query": ("QUERY_STRING", "@contains", "t:none,t:urlDecodeUni,t:lowercase", True),
+}
+_MCP_PATH_RE = re.compile(r"^/[A-Za-z0-9._/~@+,=!*()-]{0,199}$")
+_MCP_TEXT_RE = re.compile(r"^[A-Za-z0-9 ._/~:;,+=@()!*-]{3,120}$")
+_MCP_NOTE_RE = re.compile(r"[^A-Za-z0-9 ._,:()-]")
+_RULE_ID_RE = re.compile(r"\bid:(\d+)")
+
+
+def mcp_rule_matches() -> list[str]:
+    return list(_MCP_MATCHES)
+
+
+def _mcp_value(match: str, value: str) -> str:
+    import ipaddress
+
+    value = (value or "").strip()
+    if match == "ip":
+        try:
+            return str(ipaddress.ip_network(value, strict=False))
+        except ValueError as exc:
+            raise ValueError("value must be an IPv4/IPv6 address or CIDR network") from exc
+    if match == "path":
+        if not _MCP_PATH_RE.fullmatch(value):
+            raise ValueError("path must start with / and use only letters, digits and . _ / ~ @ + , = ! * ( ) -")
+        return value
+    if not _MCP_TEXT_RE.fullmatch(value):
+        raise ValueError("value must be 3-120 characters of letters, digits, spaces and . _ / ~ : ; , + = @ ( ) ! * -")
+    return value.lower()
+
+
+def mcp_rule_signature(match: str, value: str) -> str:
+    """The part of a generated rule that identifies it, id aside."""
+    if match not in _MCP_MATCHES:
+        raise ValueError(f"match must be one of: {', '.join(_MCP_MATCHES)}")
+    variable, operator, _, _ = _MCP_MATCHES[match]
+    return f'SecRule {variable} "{operator} {_mcp_value(match, value)}"'
+
+
+def render_mcp_rule(match: str, value: str, rule_id: int, note: str = "", author: str = "") -> str:
+    if not MCP_RULE_ID_MIN <= int(rule_id) <= MCP_RULE_ID_MAX:
+        raise ValueError("rule id outside the MCP range")
+    signature = mcp_rule_signature(match, value)
+    transforms = _MCP_MATCHES[match][2]
+    clean_note = _MCP_NOTE_RE.sub("", note or "")[:80].strip() or f"block {match}"
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        f"{MCP_RULE_MARKER} {clean_note} (added {stamp}{' by ' + author if author else ''})\n"
+        f"{signature} \"id:{int(rule_id)},phase:1,{transforms},deny,status:403,log,"
+        f"msg:'opanel mcp: {clean_note}'\""
+    )
+
+
+def next_mcp_rule_id(texts: Iterable[str]) -> int:
+    """One past the highest MCP-range id in any of ``texts``.
+
+    Every site file and the server-wide custom file can end up loaded into the
+    same vhost, so a duplicate anywhere stops ModSecurity loading the rules.
+    """
+    used = [
+        int(found)
+        for text in texts
+        for found in _RULE_ID_RE.findall(text or "")
+        if MCP_RULE_ID_MIN <= int(found) <= MCP_RULE_ID_MAX
+    ]
+    next_id = (max(used) + 1) if used else MCP_RULE_ID_MIN
+    if next_id > MCP_RULE_ID_MAX:
+        raise ValueError("No MCP WAF rule ids left; tidy up old rules first")
+    return next_id

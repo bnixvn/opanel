@@ -82,7 +82,9 @@ async def mcp_endpoint(request: Request, db: Session = Depends(get_db)):
         return _unauthorized("The MCP token is invalid, expired or revoked")
     token, user = found
     # Tools issue certificates and restart services; keep that off the event loop.
-    reply = await run_in_threadpool(_dispatch, mcp.Context(db=db, user=user, token=token), body)
+    client_ip = request.client.host if request.client else ""
+    ctx = mcp.Context(db=db, user=user, token=token, client_ip=client_ip)
+    reply = await run_in_threadpool(_dispatch, ctx, body)
     if reply is None or reply == []:
         # Only notifications or responses came in: accepted, nothing to say.
         return Response(status_code=202)

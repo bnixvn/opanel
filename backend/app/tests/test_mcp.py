@@ -305,3 +305,136 @@ def test_removing_the_addon_revokes_every_token(env):
     addons_api.uninstall_addon("mcp", None, env.admin, env.db)
     assert env.db.query(McpToken).count() == 0
     assert addons.is_enabled("mcp") is False
+
+
+# ---------------------------------------------------------------------------
+# Traffic monitoring and the admin's blocking tools
+# ---------------------------------------------------------------------------
+def _entry(ip, path="/", status=200, verdict="allow", domain="alice.test", ua="curl/8"):
+    return {"domain": domain, "ip": ip, "path": path, "status": status, "verdict": verdict,
+            "user_agent": ua, "timestamp": "2026-09-23T10:00:00Z"}
+
+
+def test_users_get_traffic_tools_but_not_blocking(env):
+    names = tool_names(env, env.token(env.alice, can_write=True))
+    assert {"read_waf_access_log", "traffic_summary"} <= names
+    assert not names & {"block_ip", "add_waf_rule", "list_firewall_rules", "list_waf_rules"}
+
+
+def test_an_admin_action_token_gets_blocking(env):
+    assert {"block_ip", "add_waf_rule", "list_firewall_rules", "list_waf_rules"} <= tool_names(
+        env, env.token(env.admin, can_write=True))
+    # read-only admin: sees the rules, cannot change them
+    names = tool_names(env, env.token(env.admin))
+    assert {"list_firewall_rules", "list_waf_rules"} <= names
+    assert not names & {"block_ip", "add_waf_rule"}
+
+
+def test_traffic_summary_counts_and_is_scoped(env, monkeypatch):
+    from app.services import waf
+
+    seen = {}
+
+    def fake_entries(domains, domain="", verdict="", query="", lines=5000):
+        seen["domains"] = list(domains)
+        return [_entry("198.51.100.9", "/wp-login.php", 403, "block"),
+                _entry("198.51.100.9", "/wp-login.php", 403, "block"),
+                _entry("203.0.113.5", "/", 200)], list(domains), {}
+
+    monkeypatch.setattr(waf, "access_log_entries", fake_entries)
+    summary = payload(call(env, env.token(env.alice), "traffic_summary"))
+    assert seen["domains"] == ["alice.test"]
+    assert summary["requests"] == 3 and summary["blocked"] == 2
+    assert summary["status_classes"] == {"4xx": 2, "2xx": 1}
+    assert summary["top_ips"][0]["ip"] == "198.51.100.9"
+    assert summary["top_ips"][0]["top_paths"] == ["/wp-login.php"]
+
+    other = call(env, env.token(env.alice), "traffic_summary", {"domain": "bob.test"})
+    assert other["result"]["isError"] is True
+
+
+@pytest.fixture
+def firewall_calls(monkeypatch):
+    from app.services import firewall, mcp as mcp_service
+
+    blocked = []
+    monkeypatch.setattr(firewall, "list_rules", lambda: [{"id": 3, "action": "deny", "type": "ip",
+                                                           "network": "91.92.93.0/24"}])
+    monkeypatch.setattr(firewall, "block_ip", lambda network, *a, **k: blocked.append(network))
+    monkeypatch.setattr(mcp_service, "_server_addresses", lambda: {"15.235.155.243"})
+    return blocked
+
+
+@pytest.mark.parametrize("ip, why", [
+    ("0.0.0.0/0", "too wide"),
+    ("15.0.0.0/8", "too wide"),
+    ("10.0.0.5", "private"),
+    ("127.0.0.1", "private"),
+    ("15.235.155.0/24", "this server"),
+    ("not-an-ip", "address"),
+])
+def test_block_ip_refuses_what_would_lock_people_out(env, firewall_calls, ip, why):
+    reply = call(env, env.token(env.admin, can_write=True), "block_ip", {"ip": ip})
+    assert reply["result"]["isError"] is True
+    assert why in reply["result"]["content"][0]["text"]
+    assert firewall_calls == []
+
+
+def test_block_ip_blocks_once(env, firewall_calls):
+    raw = env.token(env.admin, can_write=True)
+    assert payload(call(env, raw, "block_ip", {"ip": "45.155.205.9", "reason": "wp-login brute force"})) == {
+        "ip": "45.155.205.9/32", "blocked": True, "already": False}
+    assert firewall_calls == ["45.155.205.9/32"]
+    again = payload(call(env, raw, "block_ip", {"ip": "91.92.93.0/24"}))
+    assert again["already"] is True and firewall_calls == ["45.155.205.9/32"]
+    audit = env.db.query(AuditLog).filter(AuditLog.action == "mcp_tool", AuditLog.target == "block_ip").all()
+    assert audit and "wp-login brute force" in audit[0].detail
+
+
+def test_block_ip_never_blocks_the_calling_client(env, firewall_calls):
+    from app.services import mcp as mcp_service
+
+    ctx = mcp_service.Context(db=env.db, user=env.admin,
+                              token=env.db.query(McpToken).first() or SimpleNamespace(can_write=True),
+                              client_ip="45.155.205.77")
+    assert "MCP client" in mcp_service._refuse_block(ctx, "45.155.205.0/24")
+
+
+def test_add_waf_rule_generates_a_safe_rule_and_saves_it(env, monkeypatch):
+    from app.api import waf as waf_api
+    from app.services import waf
+
+    saved = {}
+    monkeypatch.setattr(waf, "custom_rules", lambda: SimpleNamespace(stdout='SecRule X "@rx y" "id:1090004,phase:1"'))
+    monkeypatch.setattr(waf_api, "save_waf_custom_rules",
+                        lambda payload, current_user: saved.update(content=payload.content))
+    raw = env.token(env.admin, can_write=True)
+    result = payload(call(env, raw, "add_waf_rule", {"match": "user_agent", "value": "EvilScanner/2.0",
+                                                     "note": "scanner seen in log"}))
+    assert result["scope"] == "server-wide" and result["rule_id"] == 1090005
+    assert 'SecRule REQUEST_HEADERS:User-Agent "@contains evilscanner/2.0"' in saved["content"]
+    assert "phase:1" in result["rule"] and "exec" not in result["rule"]
+
+    # raw ModSecurity and macro expansion never get through
+    for bad in ('x" "id:1,exec:/bin/sh', "%{REMOTE_ADDR}"):
+        reply = call(env, raw, "add_waf_rule", {"match": "user_agent", "value": bad})
+        assert reply["result"]["isError"] is True
+
+
+def test_add_waf_rule_to_one_site_keeps_its_other_rules(env, monkeypatch):
+    from app.api import waf as waf_api
+    from app.services import waf
+
+    site = env.db.query(Website).filter_by(domain="alice.test").one()
+    site.waf_custom_rules = "# hand-written rule kept"
+    env.db.commit()
+    captured = {}
+    monkeypatch.setattr(waf, "custom_rules", lambda: SimpleNamespace(stdout=""))
+    monkeypatch.setattr(waf_api, "save_website_waf",
+                        lambda payload, website_id, db, current_user: captured.update(
+                            rules=payload.custom_rules, website_id=website_id))
+    result = payload(call(env, env.token(env.admin, can_write=True), "add_waf_rule",
+                          {"match": "path", "value": "/xmlrpc.php", "domain": "alice.test"}))
+    assert result["scope"] == "alice.test"
+    assert captured["rules"].startswith("# hand-written rule kept")
+    assert 'SecRule REQUEST_FILENAME "@beginsWith /xmlrpc.php"' in captured["rules"]

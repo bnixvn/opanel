@@ -4874,7 +4874,7 @@ ${effect}${order}`)) return;
           <label className="schedule-toggle mcp-write-toggle">
             <input type="checkbox" checked={mcpForm.can_write}
               onChange={e => setMcpForm(prev => ({ ...prev, can_write: e.target.checked }))} />
-            <span>Allow actions (run backups, issue certificates, switch the WAF{isAdmin ? ', restart services' : ''})</span>
+            <span>Allow actions (run backups, issue certificates, switch the WAF{isAdmin ? ', restart services, block IPs, add WAF rules' : ''})</span>
           </label>
           <p className="hint">Without “Allow actions” the token can only read. Up to {mcpInfo?.max_tokens || 10} tokens per account.</p>
 

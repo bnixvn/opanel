@@ -59,7 +59,10 @@ SERVER_INSTRUCTIONS = (
     "Tools for the OPanel hosting control panel. Websites are named by domain. "
     "Everything you can see belongs to the account that owns the token, unless "
     "that account is an administrator. Tools that change something are only "
-    "offered to a token created with actions allowed; nothing here deletes."
+    "offered to a token created with actions allowed; nothing here deletes. "
+    "To look into traffic, start with traffic_summary and drill into "
+    "read_waf_access_log. When something needs stopping, prefer add_waf_rule on "
+    "the one website involved; block_ip drops the address for the whole server."
 )
 
 
@@ -139,6 +142,9 @@ class Context:
     db: Session
     user: User
     token: McpToken
+    # Where the MCP client is calling from, so block_ip can refuse to cut off
+    # the very client asking.
+    client_ip: str = ""
 
     @property
     def is_admin(self) -> bool:
@@ -516,6 +522,213 @@ def _restart_service(ctx: Context, args: dict):
     if result.returncode != 0:
         raise ToolError((result.stderr or result.stdout or f"{action} failed").strip()[:1000])
     return {"service": args["service"], "action": action, "ok": True}
+
+
+# -- traffic ----------------------------------------------------------------
+@_tool("read_waf_access_log", "Read the access log",
+       "Recent requests to your websites as the web server logged them: time, client IP, method, path, "
+       "status, user agent, and whether the WAF blocked it. Filter by site, verdict or a search term.",
+       {"domain": {"type": "string", "description": "One website; omit for all of yours"},
+        "verdict": {"type": "string", "enum": ["allow", "block"], "description": "Only allowed or only blocked"},
+        "search": {"type": "string", "description": "Match against IP, path, user agent, status, reason"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Entries to return (default 50)"},
+        "lines": {"type": "integer", "minimum": 100, "maximum": 20000,
+                  "description": "How far back to read each log, in lines (default 5000)"}})
+def _read_waf_access_log(ctx: Context, args: dict):
+    from app.api import waf as waf_api
+
+    report = waf_api.get_waf_access_logs(
+        domain=(args.get("domain") or "").strip().lower(), verdict=args.get("verdict") or "",
+        q=args.get("search") or "", limit=int(args.get("limit") or 50), offset=0,
+        lines=int(args.get("lines") or 5000), db=ctx.db, current_user=ctx.user,
+    )
+    keep = ("domain", "time", "ip", "method", "path", "status", "verdict", "reason", "user_agent", "referer")
+    return {"total_matching": report["total"], "lines_read_per_log": report["lines"],
+            "entries": [{key: entry.get(key) for key in keep} for entry in report["entries"]]}
+
+
+def _top(counter: dict, n: int) -> list:
+    return sorted(counter.items(), key=lambda item: item[1], reverse=True)[:n]
+
+
+@_tool("traffic_summary", "Traffic summary",
+       "Aggregate the recent access log of your websites: requests and blocks, status codes, and the "
+       "busiest client IPs, paths and user agents. Use this to spot scanners, brute-force attempts and bad bots.",
+       {"domain": {"type": "string", "description": "One website; omit for all of yours"},
+        "lines": {"type": "integer", "minimum": 100, "maximum": 20000,
+                  "description": "How far back to read each log, in lines (default 5000)"},
+        "top": {"type": "integer", "minimum": 3, "maximum": 50, "description": "Entries per top list (default 10)"}})
+def _traffic_summary(ctx: Context, args: dict):
+    from app.api import waf as waf_api
+    from app.services import waf
+
+    domain = (args.get("domain") or "").strip().lower()
+    readable = waf_api._readable_domains(ctx.db, ctx.user)
+    if domain and domain not in readable:
+        raise ToolError(f"No website {domain!r} on this account")
+    entries, domains, _ = waf.access_log_entries(readable, domain, "", "", int(args.get("lines") or 5000))
+    top = int(args.get("top") or 10)
+    statuses: dict[str, int] = {}
+    per_domain: dict[str, int] = {}
+    ips: dict[str, dict] = {}
+    paths: dict[str, int] = {}
+    agents: dict[str, int] = {}
+    blocked = 0
+    for entry in entries:
+        status = int(entry.get("status") or 0)
+        status_class = f"{status // 100}xx" if status else "other"
+        statuses[status_class] = statuses.get(status_class, 0) + 1
+        per_domain[entry["domain"]] = per_domain.get(entry["domain"], 0) + 1
+        is_block = entry.get("verdict") == "block"
+        blocked += is_block
+        ip = entry.get("ip") or "?"
+        slot = ips.setdefault(ip, {"requests": 0, "blocked": 0, "errors_4xx": 0, "paths": {}, "last_seen": ""})
+        slot["requests"] += 1
+        slot["blocked"] += is_block
+        slot["errors_4xx"] += 400 <= status < 500
+        path = (entry.get("path") or "").split("?", 1)[0][:200]
+        slot["paths"][path] = slot["paths"].get(path, 0) + 1
+        slot["last_seen"] = max(slot["last_seen"], entry.get("timestamp") or "")
+        paths[path] = paths.get(path, 0) + 1
+        agent = (entry.get("user_agent") or "-")[:160]
+        agents[agent] = agents.get(agent, 0) + 1
+    timestamps = [entry.get("timestamp") for entry in entries if entry.get("timestamp")]
+    return {
+        "domains": domains,
+        "window": {"from": min(timestamps) if timestamps else None, "to": max(timestamps) if timestamps else None},
+        "requests": len(entries),
+        "blocked": blocked,
+        "status_classes": statuses,
+        "requests_per_domain": dict(_top(per_domain, 50)),
+        "top_ips": [{"ip": ip, **{k: v for k, v in data.items() if k != "paths"},
+                     "top_paths": [p for p, _ in _top(data["paths"], 3)]}
+                    for ip, data in sorted(ips.items(), key=lambda item: item[1]["requests"], reverse=True)[:top]],
+        "top_paths": [{"path": p, "requests": n} for p, n in _top(paths, top)],
+        "top_user_agents": [{"user_agent": a, "requests": n} for a, n in _top(agents, top)],
+    }
+
+
+@_tool("list_firewall_rules", "Firewall rules",
+       "The panel firewall's rules: open ports, allowed and blocked addresses.", admin_only=True)
+def _list_firewall_rules(ctx: Context, args: dict):
+    from app.services import firewall
+
+    return {"enabled": firewall.is_enabled(), "rules": firewall.list_rules()}
+
+
+@_tool("list_waf_rules", "Custom WAF rules",
+       "The server-wide custom WAF rules and, for a website, its own custom rules. Rules added through "
+       "MCP are marked with '# opanel-mcp:'.",
+       {"domain": {"type": "string", "description": "Also show this website's custom rules"}}, admin_only=True)
+def _list_waf_rules(ctx: Context, args: dict):
+    from app.services import waf
+
+    out = {"server_wide": (waf.custom_rules().stdout or "").strip()}
+    if args.get("domain"):
+        website = _website(ctx, args["domain"])
+        out["site"] = {"domain": website.domain, "waf_enabled": bool(website.waf_enabled),
+                       "custom_rules": waf.website_custom_rules(website)}
+    return out
+
+
+def _server_addresses() -> set[str]:
+    from app.services.shell import shell
+
+    try:
+        result = shell.run(["hostname", "-I"], check=False)
+    except Exception:  # noqa: BLE001
+        return set()
+    return set((result.stdout or "").split())
+
+
+def _refuse_block(ctx: Context, network: str):
+    """Why this network must not be blocked, or None.
+
+    Blocking is the one action here that can lock people out of the whole box,
+    so the tool refuses what no traffic analysis should ever conclude: the
+    machine itself, the client asking, special-purpose ranges, and networks so
+    wide they would take out a country's worth of visitors at once.
+    """
+    import ipaddress
+
+    try:
+        net = ipaddress.ip_network(network, strict=False)
+    except ValueError:
+        return "ip must be an IPv4/IPv6 address or CIDR network"
+    if (net.version == 4 and net.prefixlen < 16) or (net.version == 6 and net.prefixlen < 32):
+        return "network is too wide to block (at most a /16 for IPv4, /32 for IPv6)"
+    if net.is_loopback or net.is_unspecified or net.is_link_local or net.is_multicast or net.is_private \
+            or net.is_reserved:
+        return "that is a private or special-purpose range, not an internet client"
+    for protected in _server_addresses() | ({ctx.client_ip} if ctx.client_ip else set()):
+        try:
+            if ipaddress.ip_address(protected) in net:
+                return f"{network} contains {protected}, which is this server or the MCP client itself"
+        except ValueError:
+            continue
+    return None
+
+
+@_tool("block_ip", "Block an address",
+       "Drop all traffic from an IP address or network at the server firewall. Refused for this server's "
+       "own addresses, the MCP client's address, private ranges and networks wider than /16. If a site sits "
+       "behind a CDN or proxy, the address in its log may be the proxy's: blocking that cuts off real visitors.",
+       {"ip": {"type": "string", "description": "An address, e.g. 203.0.113.7, or a network, e.g. 203.0.113.0/24"},
+        "reason": {"type": "string", "description": "Why, for the audit log"}},
+       required=("ip",), admin_only=True, writes=True)
+def _block_ip(ctx: Context, args: dict):
+    import ipaddress
+
+    from app.services import firewall
+
+    reason = _refuse_block(ctx, args["ip"])
+    if reason:
+        raise ToolError(f"Not blocked: {reason}")
+    network = str(ipaddress.ip_network(args["ip"].strip(), strict=False))
+    for rule in firewall.list_rules():
+        if rule.get("action") == "deny" and rule.get("type") == "ip" and rule.get("network") == network \
+                and not rule.get("port"):
+            return {"ip": network, "blocked": True, "already": True, "rule_id": rule.get("id")}
+    firewall.block_ip(network)
+    return {"ip": network, "blocked": True, "already": False}
+
+
+@_tool("add_waf_rule", "Add a WAF rule",
+       "Make the WAF answer 403 to requests matching a client IP, a path prefix, a user-agent substring or a "
+       "query-string substring, on one website or server-wide. The rule is generated by the panel; raw "
+       "ModSecurity is not accepted.",
+       {"match": {"type": "string", "enum": ["ip", "path", "user_agent", "query"], "description": "What to match"},
+        "value": {"type": "string", "description": "IP/CIDR, a path starting with /, or a substring (3-120 chars)"},
+        "domain": {"type": "string", "description": "One website; omit to apply server-wide"},
+        "note": {"type": "string", "description": "Why, kept next to the rule (80 chars)"}},
+       required=("match", "value"), admin_only=True, writes=True)
+def _add_waf_rule(ctx: Context, args: dict):
+    from app.api import waf as waf_api
+    from app.services import waf
+
+    match, value = args["match"], args["value"]
+    signature = waf.mcp_rule_signature(match, value)
+    server_wide = (waf.custom_rules().stdout or "").strip()
+    site_texts = [w.waf_custom_rules or "" for w in ctx.db.query(Website).all()]
+    website = _website(ctx, args["domain"]) if args.get("domain") else None
+    current = waf.website_custom_rules(website) if website else server_wide
+    if signature in current:
+        return {"scope": website.domain if website else "server-wide", "already": True, "rule": signature}
+    rule_id = waf.next_mcp_rule_id([server_wide, *site_texts])
+    rule = waf.render_mcp_rule(match, value, rule_id, args.get("note") or "", ctx.user.username)
+    updated = f"{current}\n\n{rule}".strip()
+    if website:
+        waf_api.save_website_waf(
+            payload=waf_api.WebsiteWafRulesUpdate(
+                enabled_rule_ids=sorted(waf.website_enabled_rule_ids(website)), custom_rules=updated),
+            website_id=website.id, db=ctx.db, current_user=ctx.user,
+        )
+    else:
+        waf_api.save_waf_custom_rules(payload=waf_api.WafCustomRulesUpdate(content=updated), current_user=ctx.user)
+    out = {"scope": website.domain if website else "server-wide", "already": False, "rule_id": rule_id, "rule": rule}
+    if website and not website.waf_enabled:
+        out["warning"] = "The WAF is off for this website, so the rule has no effect until it is turned on."
+    return out
 
 
 def visible_tools(ctx: Context) -> list[Tool]:

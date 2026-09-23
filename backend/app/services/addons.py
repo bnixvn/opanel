@@ -73,8 +73,10 @@ ADDONS: dict[str, dict] = {
             "and other MCP clients can connect to with a personal token. Each "
             "token acts as the account that created it: a customer's token sees "
             "that customer's websites, databases and backups and nothing else. "
-            "Tools can list and inspect, read site logs, run backups, issue "
-            "certificates and switch the WAF; none of them delete anything."
+            "Tools can list and inspect, read site and access logs, summarise "
+            "traffic, run backups, issue certificates and switch the WAF; an "
+            "administrator's can also block addresses and add WAF rules. None of "
+            "them delete anything."
         ),
         "category": "integration",
         "version": "1",
