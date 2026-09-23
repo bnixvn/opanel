@@ -3766,13 +3766,36 @@ addon_fail2ban_install() {
   echo "fail2ban installed and started"
 }
 
+addon_fail2ban_remove_chains() {
+  # A ban must not outlive the addon. Stopping the service normally makes
+  # fail2ban undo its own rules, but if anything still references a f2b chain
+  # the delete fails silently and the DROPs stay in force with no fail2ban
+  # left to lift them. Take them out directly.
+  local binary spec chain
+  local -a parts=()
+  for binary in iptables ip6tables; do
+    while IFS= read -r spec; do
+      if [[ -n "$spec" ]]; then
+        read -ra parts <<<"$spec"
+        "$binary" -D INPUT "${parts[@]:2}" 2>/dev/null || true
+      fi
+    done < <("$binary" -S INPUT 2>/dev/null | grep -E -- ' -j f2b-[A-Za-z0-9_.-]+$' || true)
+    while IFS= read -r chain; do
+      if [[ -n "$chain" ]]; then
+        "$binary" -F "$chain" 2>/dev/null || true
+        "$binary" -X "$chain" 2>/dev/null || true
+      fi
+    done < <("$binary" -S 2>/dev/null | awk '/^-N f2b-/ { print $2 }' || true)
+  done
+}
+
 addon_fail2ban_uninstall() {
   export DEBIAN_FRONTEND=noninteractive
+  # Stop first so fail2ban unwinds what it can while it still knows about it.
   systemctl disable --now fail2ban >/dev/null 2>&1 || true
-  # Purge drops its chains; without this a removed addon leaves bans in place
-  # with nothing left to lift them.
   apt-get purge -y fail2ban >/dev/null 2>&1 || apt-get remove -y fail2ban >/dev/null 2>&1 || true
   rm -f "$FAIL2BAN_JAIL_FILE" "$FAIL2BAN_FILTER_FILE"
+  addon_fail2ban_remove_chains
   echo "fail2ban removed"
 }
 
@@ -3812,23 +3835,46 @@ iptables_restore_addon_precedence() {
   # Final order is BLOCKLIST, USER, f2b..., OPANEL_INPUT: an admin's explicit
   # rule outranks an automatic ban, and an automatic ban outranks a blanket
   # default allow.
-  local binary target jump
+  #
+  # Each rule is moved by its exact specification. Deleting by target alone
+  # missed fail2ban's own "-p tcp -j f2b-sshd" and left a second, bare jump
+  # beside it -- dead duplicates below OPANEL_INPUT, and worse, a reference
+  # that stopped fail2ban from removing its own chain on shutdown, so bans
+  # outlived the addon with nothing left able to lift them.
+  local binary target spec chain
   for binary in iptables ip6tables; do
-    local -a jumps=()
-    while read -r jump; do
-      if [[ -n "$jump" ]]; then jumps+=("$jump"); fi
+    local -a specs=()
+    while IFS= read -r spec; do
+      if [[ -n "$spec" ]]; then specs+=("$spec"); fi
     done < <("$binary" -S INPUT 2>/dev/null \
-      | awk '{for (i = 1; i < NF; i++) if ($i == "-j" && $(i + 1) ~ /^f2b-/) print $(i + 1)}' \
-      | sort -u || true)
-    if [[ ${#jumps[@]} -eq 0 ]]; then continue; fi
-    for jump in "${jumps[@]}"; do
-      while "$binary" -D INPUT -j "$jump" 2>/dev/null; do :; done
+      | grep -E -- ' -j f2b-[A-Za-z0-9_.-]+$' || true)
+    if [[ ${#specs[@]} -eq 0 ]]; then continue; fi
+
+    # One jump per chain. A box upgraded from the version that added bare
+    # duplicates has two rules per chain; keep the more specific one, which is
+    # the one fail2ban itself tracks and will expect to delete later.
+    local -A keep=()
+    local -a parts=()
+    for spec in "${specs[@]}"; do
+      read -ra parts <<<"$spec"
+      chain="${parts[${#parts[@]}-1]}"
+      if [[ -z "${keep[$chain]:-}" || ${#spec} -gt ${#keep[$chain]} ]]; then
+        keep["$chain"]="$spec"
+      fi
     done
+
+    for spec in "${specs[@]}"; do
+      read -ra parts <<<"$spec"
+      "$binary" -D INPUT "${parts[@]:2}" 2>/dev/null || true
+    done
+
     target="$("$binary" -L INPUT -n --line-numbers 2>/dev/null \
       | awk '$2 == "OPANEL_INPUT" { print $1; exit }' || true)"
     if [[ ! "$target" =~ ^[0-9]+$ ]]; then target=1; fi
-    for jump in "${jumps[@]}"; do
-      "$binary" -I INPUT "$target" -j "$jump" 2>/dev/null || true
+
+    for chain in "${!keep[@]}"; do
+      read -ra parts <<<"${keep[$chain]}"
+      "$binary" -I INPUT "$target" "${parts[@]:2}" 2>/dev/null || true
     done
   done
 }

@@ -275,14 +275,44 @@ def test_bans_are_placed_above_the_default_allowances_but_below_admin_rules():
         "the insert position is taken from where the default-allow jump sits, "
         "so bans land directly above it"
     )
-    # Only f2b chains are moved. Re-inserting OPANEL_USER or OPANEL_BLOCKLIST
-    # here would put an automatic ban ahead of an admin's explicit rule.
-    moved = re.findall(r'-[DI] INPUT (?:"\$target" )?-j "?\$?\{?(\w+)', body)
-    assert moved, "no insert/delete found -- the anchor probably moved"
-    assert all(name == "jump" for name in moved), (
-        f"this function may only reposition the collected f2b jumps, saw {set(moved)}"
+    # Only f2b chains are collected, so OPANEL_USER and OPANEL_BLOCKLIST keep
+    # their positions: an admin's explicit rule stays ahead of an automatic ban.
+    assert " -j f2b-[A-Za-z0-9_.-]+$" in body, (
+        "the collection filter must select only f2b jumps"
     )
-    assert "f2b-" in body, "the collection filter must select only f2b chains"
+    for managed in ("OPANEL_USER", "OPANEL_BLOCKLIST"):
+        assert f'-D INPUT -j {managed}' not in body and f'-I INPUT "$target" -j {managed}' not in body, (
+            f"{managed} must not be repositioned here"
+        )
+
+
+def test_the_whole_rule_is_moved_not_just_its_target():
+    """Deleting by target alone missed fail2ban's own "-p tcp -j f2b-sshd" and
+    left a second bare jump beside it. The duplicates below OPANEL_INPUT were
+    only the visible half: the extra reference also stopped fail2ban removing
+    its chain on shutdown, so bans outlived the addon."""
+    index = HELPER.index("iptables_restore_addon_precedence()")
+    body = HELPER[index:index + 2600]
+    assert '"${parts[@]:2}"' in body, (
+        "the rule must be replayed by its full specification"
+    )
+    assert body.count('"${parts[@]:2}"') >= 2, "both the delete and the insert"
+    assert '-D INPUT "${parts[@]:2}"' in body
+    assert '-I INPUT "$target" "${parts[@]:2}"' in body
+
+
+def test_uninstall_takes_the_chains_away():
+    """Purging the package does not touch netfilter. Leaving a f2b chain full
+    of DROPs behind means a removed addon goes on blocking with nothing left
+    that could unban."""
+    assert "addon_fail2ban_remove_chains()" in HELPER
+    body = HELPER[HELPER.index("addon_fail2ban_uninstall()"):][:900]
+    assert "addon_fail2ban_remove_chains" in body
+    cleanup = HELPER[HELPER.index("addon_fail2ban_remove_chains()"):][:1400]
+    assert '-F "$chain"' in cleanup and '-X "$chain"' in cleanup, (
+        "a chain has to be flushed before it can be deleted"
+    )
+    assert "ip6tables" in cleanup, "v6 bans would otherwise survive the removal"
 
 
 def test_a_ban_covers_every_port():
