@@ -4515,7 +4515,7 @@ ${effect}${order}`)) return;
 
       {isAdmin && activeBackupTab === 'schedule' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
-          <div><h3>Scheduled backups</h3><p className="hint">Runs a full user backup on a schedule, with an optional off-server destination. A daily schedule rotates through seven files named for the day &mdash; <code>username-monday.tar.gz</code> and so on &mdash; so you keep a week and the eighth day overwrites the first.</p></div>
+          <div><h3>Scheduled backups</h3><p className="hint">Runs a full user backup on a schedule, with an optional off-server destination. A daily schedule rotates through seven files named for the day &mdash; <code>username-monday.tar.gz</code> and so on &mdash; so you keep a week and the eighth day overwrites the first. With a destination, that week is kept there: each archive is removed from this server once it has uploaded, and stays here only if the upload fails.</p></div>
           <button disabled={!!loading} onClick={refreshScheduledBackupArea}><RefreshCw size={14}/> Refresh</button>
         </div>
         <div className="sftp-form schedule-form backup-schedule-form">

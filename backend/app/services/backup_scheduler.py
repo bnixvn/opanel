@@ -250,6 +250,11 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
                 if on_progress else None,
             )
             target = _upload_if_configured(db, schedule, archive, user.username)
+            if schedule.target_id:
+                # The week lives on the destination now; keeping it here too
+                # doubled the disk a schedule with a destination was meant to
+                # spare. A failed upload raised above and leaves it in place.
+                backup.discard_local_copy(archive)
             backup.prune_user_backups(user.username, schedule.retention)
             messages.append(f"{user.username}: {target}")
             # An archive with a hole in it still ran, so it is not an error --

@@ -179,10 +179,16 @@ def create_backup(website: Website, db_name: Optional[str] = None,
             sql_file.write_text(f"-- DRY RUN database dump for {db_name}\n", encoding="utf-8")
     if skipped is None:
         skipped = []
-    with tarfile.open(archive, "w:gz") as tar:
-        _add_tree(tar, website.root_path, "site", skipped)
-        if sql_file.exists():
-            tar.add(sql_file, arcname=f"database/{sql_file.name}")
+    try:
+        with tarfile.open(archive, "w:gz") as tar:
+            _add_tree(tar, website.root_path, "site", skipped)
+            if sql_file.exists():
+                tar.add(sql_file, arcname=f"database/{sql_file.name}")
+    finally:
+        # The dump is inside the archive, and restore reads it from there.
+        # Left beside it, every site backup kept a second, uncompressed copy
+        # of the database that nothing ever removed.
+        sql_file.unlink(missing_ok=True)
     if skipped:
         logger.warning("Backup of %s skipped %d unreadable path(s): %s",
                        website.domain, len(skipped),
@@ -713,6 +719,21 @@ def delete_user_restore_backup(backup_file: str) -> str:
         raise FileNotFoundError("Backup not found")
     path.unlink()
     return str(path)
+
+
+def discard_local_copy(archive: str) -> None:
+    """Remove an archive that has just been uploaded off-server.
+
+    A backup sent to S3 or SFTP used to stay on this disk as well, so a
+    schedule with a destination kept a week of full-account archives in both
+    places -- tens of gigabytes on the very disk the destination was meant to
+    spare. Call this only once the upload has succeeded: when it fails, the
+    local archive is the one copy there is, and it stays.
+    """
+    try:
+        user_backup_path(archive).unlink()
+    except FileNotFoundError:
+        pass
 
 
 def prune_user_backups(username: str, keep: int) -> None:

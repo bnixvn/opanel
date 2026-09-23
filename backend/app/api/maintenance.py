@@ -512,11 +512,14 @@ def _run_user_backup_job(job_id: str, request_user_id: int, target_user_id: int,
                                                                 folder=user.username)
         detail = f"{archive}" + (f" -> {target_name}:{remote_file}" if remote_file else "")
         log_action(db, request_user.id, "backup_user", user.username, detail)
+        if remote_file:
+            # Sent off-server, so not kept here too; see discard_local_copy.
+            backup.discard_local_copy(archive)
         note = backup.describe_skipped(skipped)
         _set_backup_job(
             job_id,
             status="done",
-            backup_file=archive,
+            backup_file="" if remote_file else archive,
             remote_file=remote_file,
             target=target_name,
             message="Full user backup completed" + (f". {note}" if note else ""),
@@ -545,11 +548,12 @@ def _run_sftp_backup_job(job_id: str, request_user_id: int, website_id: int, tar
         target_name, remote_file = upload_archive_to_target(db, target_id, archive,
                                                             folder=website.domain)
         log_action(db, request_user.id, "backup_sftp", website.domain, f"{target_name}:{remote_file}")
+        backup.discard_local_copy(archive)
         note = backup.describe_skipped(skipped)
         _set_backup_job(
             job_id,
             status="done",
-            backup_file=archive,
+            backup_file="",
             remote_file=remote_file,
             target=target_name,
             message="SFTP backup completed" + (f". {note}" if note else ""),
