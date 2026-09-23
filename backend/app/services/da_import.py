@@ -29,6 +29,7 @@ from app.core.secrets import decrypt, encrypt
 from app.core.security import hash_password
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.services import mariadb, openlitespeed, site_users, waf
+from app.services.shell import shell
 
 logger = logging.getLogger("opanel.da_import")
 
@@ -833,34 +834,76 @@ def _config_targets_database(directory: Path, db_name: str) -> bool:
     return False
 
 
-def _update_app_db_config(public: Path, db_name: str, db_user: str, db_password: str) -> None:
-    """Point the site's configs at the imported database.
+def _write_plain(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
 
-    The document root is always rewritten; anything further out is only
-    rewritten when it already names this database.
+
+def _site_config_writer(root_path: str, linux_user: str):
+    """Write a config file inside a site as the site's own Linux user.
+
+    The copied tree belongs to the site user, so the opanel account cannot
+    write wp-config.php there: every import reported "App config not updated
+    ... Permission denied". Usually harmlessly, because the config already held
+    the credentials the database was given -- but when the import had to change
+    them (a name that needed normalising, a password DirectAdmin kept only as a
+    hash) the write was needed, failed, and left the site unable to connect.
     """
-    _update_config_dir(public, db_name, db_user, db_password)
+    # Resolved like site_users.document_root, which the paths handed in here
+    # are built from.
+    root = Path(root_path).resolve()
+
+    def write(path: Path, text: str) -> None:
+        relative = str(path.relative_to(root)).replace("\\", "/")
+        shell.privileged(
+            "site-file-write",
+            helper_args=[linux_user, str(root), relative],
+            input=text,
+            fallback=["tee", str(path)],
+        )
+
+    return write
+
+
+def _update_app_db_config(public: Path, db_name: str, db_user: str, db_password: str,
+                          write=_write_plain) -> list[Path]:
+    """Point the site's configs at the imported database; returns what changed.
+
+    The document root is always considered; anything further out only when it
+    already names this database. A file that already says all of this is left
+    alone.
+    """
+    changed = _update_config_dir(public, db_name, db_user, db_password, write)
     for directory in _candidate_config_dirs(public):
         if directory == public:
             continue
         if not _config_targets_database(directory, db_name):
             continue
-        _update_config_dir(directory, db_name, db_user, db_password)
+        changed += _update_config_dir(directory, db_name, db_user, db_password, write)
+    return changed
 
 
-def _update_config_dir(public: Path, db_name: str, db_user: str, db_password: str) -> None:
+def _update_config_dir(public: Path, db_name: str, db_user: str, db_password: str,
+                       write=_write_plain) -> list[Path]:
+    changed: list[Path] = []
+
+    def save(path: Path, before: str, after: str) -> None:
+        if after != before:
+            write(path, after)
+            changed.append(path)
+
     wp = public / "wp-config.php"
     if wp.exists():
-        text = wp.read_text(encoding="utf-8", errors="ignore")
-        text = _replace_define(text, "DB_NAME", db_name)
+        before = wp.read_text(encoding="utf-8", errors="ignore")
+        text = _replace_define(before, "DB_NAME", db_name)
         text = _replace_define(text, "DB_USER", db_user)
         text = _replace_define(text, "DB_PASSWORD", db_password)
         text = _replace_define(text, "DB_HOST", "localhost")
-        wp.write_text(text, encoding="utf-8")
+        save(wp, before, text)
 
     env_file = public / ".env"
     if env_file.exists():
-        lines = env_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+        env_before = env_file.read_text(encoding="utf-8", errors="ignore")
+        lines = env_before.splitlines()
         replacements = {
             "DB_DATABASE": db_name,
             "DB_USERNAME": db_user,
@@ -883,11 +926,12 @@ def _update_config_dir(public: Path, db_name: str, db_user: str, db_password: st
         for env_key, env_val in replacements.items():
             if env_key not in seen:
                 out.append(f"{env_key}={env_val}")
-        env_file.write_text("\n".join(out) + "\n", encoding="utf-8")
+        save(env_file, env_before, "\n".join(out) + "\n")
 
     config_php = public / "configuration.php"
     if config_php.exists():
-        text = config_php.read_text(encoding="utf-8", errors="ignore")
+        php_before = config_php.read_text(encoding="utf-8", errors="ignore")
+        text = php_before
         var_map = {
             "db": db_name,
             "db_name": db_name,
@@ -908,7 +952,8 @@ def _update_config_dir(public: Path, db_name: str, db_user: str, db_password: st
             pattern = re.compile(r"((?:public\s+)?\$" + re.escape(var_name) + r"\s*=\s*)['\"][^'\"]*['\"](\s*;)")
             if pattern.search(text):
                 text = pattern.sub(lambda m, v=var_val: f"{m.group(1)}'{v}'{m.group(2)}", text, count=1)
-        config_php.write_text(text, encoding="utf-8")
+        save(config_php, php_before, text)
+    return changed
 
 
 # ---------------------------------------------------------------------------
@@ -1279,8 +1324,13 @@ def _process_archive(
                     # so a config the panel cannot parse or write must not be
                     # reported as a failed database import.
                     try:
-                        _update_app_db_config(public, db_name, db_user, db_password)
-                    except OSError as exc:
+                        rewritten = _update_app_db_config(
+                            public, db_name, db_user, db_password,
+                            write=_site_config_writer(root_path, linux_user),
+                        )
+                        for path in rewritten:
+                            _log(f"    Pointed {path} at database {db_name}")
+                    except (OSError, RuntimeError, ValueError) as exc:
                         _log(f"    WARNING: could not update app config for {domain}: {exc}")
                         summary["warnings"].append(f"App config not updated for {domain}: {exc}")
 
