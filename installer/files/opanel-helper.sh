@@ -3721,6 +3721,11 @@ lines = [
     "# was caught on: a single chain per jail is also what lets the panel keep",
     "# these jumps above its own default port allowances.",
     "banaction = iptables-allports",
+    "# Create each jail's chain when the jail starts, not at its first ban.",
+    "# Left on demand, a jail that has banned nobody yet has no chain for the",
+    "# panel to position, and fail2ban later inserts it at the top of INPUT --",
+    "# above the admin rules that are supposed to outrank an automatic ban.",
+    "actionstart_on_demand = false",
     "",
 ]
 
@@ -3762,6 +3767,7 @@ addon_fail2ban_install() {
   addon_fail2ban_write_jails
   systemctl enable fail2ban >/dev/null 2>&1 || true
   systemctl restart fail2ban || deny "fail2ban failed to start -- check: journalctl -u fail2ban"
+  addon_fail2ban_wait_for_chains
   iptables_restore_addon_precedence
   echo "fail2ban installed and started"
 }
@@ -3823,6 +3829,26 @@ addon_fail2ban_log() {
 }
 
 # --- Keeping addon firewall rules effective ---------------------------------
+addon_fail2ban_wait_for_chains() {
+  # systemctl returns once the server is up, which is before its jails have
+  # inserted anything. Repositioning a chain set that has not appeared yet
+  # leaves each jump wherever fail2ban puts it afterwards, which is the top of
+  # INPUT -- ahead of the admin rules. Wait for one chain per jail, briefly.
+  local want have attempt
+  want="$(fail2ban-client status 2>/dev/null \
+    | sed -n 's/.*Number of jail:[[:space:]]*//p' | head -n 1 | tr -d '[:space:]')"
+  if [[ ! "$want" =~ ^[0-9]+$ ]]; then want=0; fi
+  if [[ "$want" -eq 0 ]]; then return 0; fi
+  for attempt in $(seq 1 20); do
+    have="$(iptables -S 2>/dev/null | grep -c '^-N f2b-' || true)"
+    if [[ ! "$have" =~ ^[0-9]+$ ]]; then have=0; fi
+    if [[ "$have" -ge "$want" ]]; then return 0; fi
+    sleep 1
+  done
+  # Not fatal: the next firewall change reasserts the order anyway.
+  return 0
+}
+
 iptables_restore_addon_precedence() {
   # OPANEL_INPUT accepts the default ports (22/80/443/the panel) from any
   # source, and an ACCEPT inside a user chain ends traversal of INPUT. A f2b
@@ -4176,6 +4202,7 @@ case "$cmd" in
       fail2ban)
         systemctl enable fail2ban >/dev/null 2>&1 || true
         systemctl restart fail2ban || deny "fail2ban failed to start"
+        addon_fail2ban_wait_for_chains
         iptables_restore_addon_precedence
         echo "fail2ban started"
         ;;
@@ -4207,6 +4234,7 @@ case "$cmd" in
     addon_fail2ban_write_filter
     addon_fail2ban_write_jails
     systemctl restart fail2ban || deny "fail2ban rejected the new settings -- check: journalctl -u fail2ban"
+    addon_fail2ban_wait_for_chains
     iptables_restore_addon_precedence
     echo "fail2ban reconfigured"
     ;;

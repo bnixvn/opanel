@@ -321,6 +321,41 @@ def test_a_ban_covers_every_port():
     assert "banaction = iptables-allports" in HELPER
 
 
+def test_each_jail_gets_its_chain_at_start_not_at_its_first_ban():
+    """Observed on the test box: fail2ban listed both jails but only f2b-sshd
+    existed, because sshd had a ban to restore and opanel-panel had banned
+    nobody yet. The panel had no chain to position, and fail2ban would later
+    insert one at the top of INPUT -- ahead of the admin rules that are meant
+    to outrank an automatic ban."""
+    assert "actionstart_on_demand = false" in HELPER
+
+
+def test_the_chains_are_waited_for_before_being_repositioned():
+    """systemctl returns once the server is up, which is before its jails have
+    inserted anything."""
+    assert "addon_fail2ban_wait_for_chains()" in HELPER
+    # Every path that restarts fail2ban and then repositions must wait between.
+    for case in ("addon_fail2ban_install()", "  addon-enable)", "  addon-fail2ban-configure)"):
+        index = HELPER.index(case)
+        body = HELPER[index:index + 1600]
+        if "iptables_restore_addon_precedence" not in body:
+            continue
+        assert "addon_fail2ban_wait_for_chains" in body, f"{case} repositions without waiting"
+        assert body.index("addon_fail2ban_wait_for_chains") < body.index(
+            "iptables_restore_addon_precedence"
+        ), f"{case} waits after it has already moved things"
+
+
+def test_the_firewall_rebuild_does_not_wait():
+    """iptables-enable runs on every firewall change and every update; a
+    twenty-second wait there would be paid by operations that have nothing to
+    do with the addon. It is also unnecessary: nothing was just restarted."""
+    index = HELPER.index("  iptables-enable)")
+    body = HELPER[index:index + 1200]
+    assert "iptables_restore_addon_precedence" in body
+    assert "addon_fail2ban_wait_for_chains" not in body
+
+
 # --------------------------------------------------------------------------
 # where the jails read from
 # --------------------------------------------------------------------------
