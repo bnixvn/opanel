@@ -4095,29 +4095,29 @@ case "$cmd" in
 
   # ---- ClamAV malware scanning (optional) -------------------------------
   addon-status)
-    require_addon_id "${2:-}"
-    case "$2" in
+    require_addon_id "${1:-}"
+    case "$1" in
       fail2ban) addon_fail2ban_status ;;
     esac
     ;;
 
   addon-install)
-    require_addon_id "${2:-}"
-    case "$2" in
+    require_addon_id "${1:-}"
+    case "$1" in
       fail2ban) addon_fail2ban_install ;;
     esac
     ;;
 
   addon-uninstall)
-    require_addon_id "${2:-}"
-    case "$2" in
+    require_addon_id "${1:-}"
+    case "$1" in
       fail2ban) addon_fail2ban_uninstall ;;
     esac
     ;;
 
   addon-enable)
-    require_addon_id "${2:-}"
-    case "$2" in
+    require_addon_id "${1:-}"
+    case "$1" in
       fail2ban)
         systemctl enable fail2ban >/dev/null 2>&1 || true
         systemctl restart fail2ban || deny "fail2ban failed to start"
@@ -4128,8 +4128,8 @@ case "$cmd" in
     ;;
 
   addon-disable)
-    require_addon_id "${2:-}"
-    case "$2" in
+    require_addon_id "${1:-}"
+    case "$1" in
       fail2ban)
         systemctl disable --now fail2ban >/dev/null 2>&1 || true
         echo "fail2ban stopped"
@@ -4161,14 +4161,14 @@ case "$cmd" in
     ;;
 
   addon-fail2ban-unban)
-    require_addon_ip "${2:-}"
+    require_addon_ip "${1:-}"
     command -v fail2ban-client >/dev/null 2>&1 || deny "fail2ban is not installed"
-    fail2ban-client unban "$2" || deny "could not unban $2"
-    echo "$2 unbanned"
+    fail2ban-client unban "$1" || deny "could not unban $1"
+    echo "$1 unbanned"
     ;;
 
   addon-fail2ban-log)
-    addon_fail2ban_log "${2:-40}"
+    addon_fail2ban_log "${1:-40}"
     ;;
 
   clamav-install)

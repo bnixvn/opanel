@@ -120,6 +120,20 @@ def test_every_addon_case_validates_before_dispatching():
         assert "require_addon_id" in body, f"{case} dispatches without validating"
 
 
+def test_the_addon_cases_read_the_argument_the_dispatcher_leaves_them():
+    """The helper does cmd="${1:-}" then shift, so a subcommand's first argument
+    is $1. Written as $2 these cases validated an empty string and rejected
+    every id including the real one -- the whole feature was dead, and a test
+    that only looked for the presence of require_addon_id passed anyway."""
+    assert 'cmd="${1:-}"' in HELPER and "\nshift || true" in HELPER, (
+        "the convention this test depends on has moved"
+    )
+    block = HELPER[HELPER.index("  addon-status)"):HELPER.index("  clamav-install)")]
+    offenders = re.findall(r'\$\{?2\b[^}]*\}?', block)
+    assert not offenders, f"addon cases reading the wrong positional: {offenders}"
+    assert 'require_addon_id "${1:-}"' in block
+
+
 # --------------------------------------------------------------------------
 # install / uninstall bookkeeping
 # --------------------------------------------------------------------------
