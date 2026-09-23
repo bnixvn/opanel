@@ -507,9 +507,10 @@ def terminate_account(db: Session, external_id: str) -> bool:
     websites = db.query(Website).filter(Website.owner_id == account.user_id).all() if user else []
 
     for website in websites:
-        # Full teardown: remove files and the vhost. Databases are dropped
-        # below, by ownership rather than per website.
+        # Full teardown: remove files, the vhost and the certificates. Databases
+        # are dropped below, by ownership rather than per website.
         openlitespeed.remove_vhost(website.domain)
+        ssl.release_site_certificates(db, website, also_deleting=[w.id for w in websites])
         wordpress.delete_wordpress(website.root_path)
         db.delete(website)
 

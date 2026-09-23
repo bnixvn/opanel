@@ -509,6 +509,49 @@ def remove_manual_ssl(domain: str) -> None:
         raise RuntimeError((result.stderr or result.stdout or "Could not remove manual SSL").strip())
 
 
+def release_site_certificates(db, website, also_deleting=()) -> list[str]:
+    """Remove the certificates a website being deleted leaves on the box.
+
+    Deleting a site used to leave its manual certificate -- every one a
+    DirectAdmin import installs -- in ssl/sites/<domain> for good: 38 of them
+    after one migration's accounts were deleted. A certificate stays only while
+    another website serves it through reuse; ``also_deleting`` names websites
+    going in the same operation, so an account's parent site and the
+    subdomains reusing its wildcard release it together instead of each
+    keeping it for the other.
+
+    Best effort: a certificate left behind is debris, not a reason to refuse
+    the deletion. Returns what was removed, as reuse names.
+    """
+    from app.models.entities import Website
+
+    safe = _safe_domain(website.domain)
+    keep_for = {website.id, *also_deleting}
+
+    def reused(source: str) -> bool:
+        return db.query(Website.id).filter(
+            Website.ssl_mode == "reuse",
+            Website.ssl_reuse_name == f"{source}:{safe}",
+            ~Website.id.in_(keep_for),
+        ).first() is not None
+
+    removed: list[str] = []
+    if not reused("manual"):
+        try:
+            remove_manual_ssl(safe)
+            removed.append(f"manual:{safe}")
+        except (RuntimeError, ValueError, OSError):
+            pass
+    if getattr(website, "ssl_wildcard", False) and (website.ssl_mode or "") == "letsencrypt" \
+            and not reused("letsencrypt"):
+        try:
+            remove_wildcard_ssl(safe)
+            removed.append(f"letsencrypt:{safe}")
+        except (RuntimeError, ValueError, OSError):
+            pass
+    return removed
+
+
 def remove_manual_ssl_files(cert_path: str | None, key_path: str | None, ca_path: str | None) -> None:
     if cert_path:
         try:

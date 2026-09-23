@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.core.permissions import Role, ensure_role
 from app.core.security import hash_password
 from app.core.step_up import require_sensitive_action_step_up
-from app.models.entities import AuditLog, BackupSchedule, DatabaseAccount, User, Website
+from app.models.entities import AuditLog, BackupSchedule, DatabaseAccount, User, Website, WebsiteAlias
 from app.schemas.schemas import (
     AuditLogOut,
     UserCreate,
@@ -19,7 +19,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import mariadb, openlitespeed, site_users, storage_quota, wordpress
+from app.services import mariadb, openlitespeed, site_users, ssl, storage_quota, wordpress
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -57,13 +57,15 @@ def _remove_user_from_backup_schedules(db: Session, user_id: int) -> None:
             db.delete(schedule)
 
 
-def _delete_owned_website(db: Session, website: Website) -> None:
+def _delete_owned_website(db: Session, website: Website, also_deleting=()) -> None:
     # .all(), not .first(): a website may carry more than one database, and the
     # extra rows used to survive the deletion with their MariaDB schemas intact.
     db_items = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).all()
     for db_item in db_items:
         mariadb.drop_database(db_item.db_name, db_item.db_user)
+    db.query(WebsiteAlias).filter(WebsiteAlias.website_id == website.id).delete(synchronize_session=False)
     openlitespeed.remove_vhost(website.domain)
+    ssl.release_site_certificates(db, website, also_deleting)
     wordpress.delete_wordpress(website.root_path)
     for db_item in db_items:
         db.delete(db_item)
@@ -222,7 +224,7 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
             if website.linux_user and website.linux_user != panel_linux_user:
                 raise ValueError(f"Website {website.domain} is not owned by Linux user {panel_linux_user}")
         for website in websites:
-            _delete_owned_website(db, website)
+            _delete_owned_website(db, website, also_deleting=[w.id for w in websites])
             deleted_domains.append(website.domain)
         # Anything owned but not attached to one of those websites.
         _delete_orphan_databases(db, user.id)

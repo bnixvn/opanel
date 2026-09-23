@@ -758,25 +758,24 @@ def set_website_webserver_custom(website_id: int, payload: WebsiteNginxCustom, r
 @router.delete("/{website_id}")
 def delete_website(website_id: int, request: Request, delete_files: bool = True, delete_database: bool = True, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     website = _get_authorized_website(db, website_id, current_user)
-    db_item = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).first()
-    if delete_database and db_item:
-        mariadb.drop_database(db_item.db_name, db_item.db_user)
+    # .all(): a website can carry more than one database, and .first() left the
+    # rest behind with their MariaDB schemas intact.
+    db_items = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).all()
+    if delete_database:
+        for db_item in db_items:
+            mariadb.drop_database(db_item.db_name, db_item.db_user)
     db.query(WebsiteAlias).filter(WebsiteAlias.website_id == website.id).delete(synchronize_session=False)
     try:
         openlitespeed.remove_vhost(website.domain)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"Cannot delete webserver config: {exc}") from exc
-    if getattr(website, "ssl_wildcard", False) and getattr(website, "ssl_mode", "none") == "letsencrypt":
-        try:
-            ssl.remove_wildcard_ssl(website.domain)
-        except Exception:  # noqa: BLE001
-            pass
+    ssl.release_site_certificates(db, website)
     if delete_files:
         if website.linux_user:
             site_users.delete_site_runtime(website.root_path, website.linux_user)
         else:
             wordpress.delete_wordpress(website.root_path)
-    if db_item:
+    for db_item in db_items:
         db.delete(db_item)
     db.delete(website)
     db.commit()

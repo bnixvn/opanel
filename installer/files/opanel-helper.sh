@@ -3025,6 +3025,14 @@ delete_panel_user_runtime() {
     done
   done
   restart_openlitespeed 2>/dev/null || true
+  # Stale lsphp sockets and pid files, opanel-<user>-<site hash>-lsphpNN.sock.
+  # Matched exactly rather than by opanel-<user>-*, which for a user "baba"
+  # would also take "baba-x"'s sockets.
+  local sock
+  for sock in /tmp/lshttpd/opanel-"$user"-*; do
+    [[ "$(basename -- "$sock")" =~ ^opanel-${user}-[0-9a-f]{12}-lsphp[0-9]+\.sock(\.pid)?$ ]] || continue
+    rm -f -- "$sock"
+  done
   crontab -r -u "$user" 2>/dev/null || true
   pkill -u "$user" 2>/dev/null || true
   userdel "$user" 2>/dev/null || true
@@ -3406,6 +3414,9 @@ delete_site_php_pools() {
       rm -f "$pool_file"
     done
   done
+  # The site's lsphp socket and pid file outlive its pool; the glob carries
+  # the site hash, so it cannot reach another site of the same user.
+  rm -f /tmp/lshttpd/$glob 2>/dev/null || true
   restart_openlitespeed 2>/dev/null || true
 }
 
@@ -4140,6 +4151,11 @@ case "$cmd" in
     # so they go with it. Leaving them behind accumulated orphaned rule files --
     # 42 of them on a box that had deleted that many sites.
     rm -f "/usr/local/lsws/conf/opanel/waf/sites/${safe_domain}.conf"
+    # Same for its logs: the vhost's access and error log, and the per-domain
+    # directory holding its PHP error log. Every caller of this subcommand is
+    # removing the site for good, and 54 deleted domains had left 162 of these.
+    rm -f "/var/log/openlitespeed/${safe_domain}.access.log" "/var/log/openlitespeed/${safe_domain}.error.log"
+    rm -rf "/var/log/openlitespeed/${safe_domain}"
     ols_sync_main_config
     restart_openlitespeed 2>/dev/null || true
     ;;
