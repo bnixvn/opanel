@@ -3834,14 +3834,26 @@ addon_fail2ban_log() {
 # --- Keeping addon firewall rules effective ---------------------------------
 addon_fail2ban_wait_for_chains() {
   # systemctl returns once the server is up, which is before its jails have
-  # inserted anything. Repositioning a chain set that has not appeared yet
-  # leaves each jump wherever fail2ban puts it afterwards, which is the top of
-  # INPUT -- ahead of the admin rules. Wait for one chain per jail, briefly.
+  # inserted anything: measured on the test box, the chains appear about two
+  # seconds later. Repositioning an empty chain set leaves each jump wherever
+  # fail2ban puts it afterwards, which is the top of INPUT -- ahead of the
+  # admin rules.
+  #
+  # The jail count has to be read only once the server answers. The first
+  # version read it immediately, got nothing back, took that for "no jails"
+  # and returned without waiting at all.
   local want have attempt
-  want="$(fail2ban-client status 2>/dev/null \
-    | sed -n 's/.*Number of jail:[[:space:]]*//p' | head -n 1 | tr -d '[:space:]')"
-  if [[ ! "$want" =~ ^[0-9]+$ ]]; then want=0; fi
+  want=0
+  for attempt in $(seq 1 20); do
+    if fail2ban-client ping >/dev/null 2>&1; then
+      want="$(fail2ban-client status 2>/dev/null         | sed -n 's/.*Number of jail:[[:space:]]*//p' | head -n 1 | tr -d '[:space:]')"
+      if [[ "$want" =~ ^[0-9]+$ ]] && [[ "$want" -gt 0 ]]; then break; fi
+      want=0
+    fi
+    sleep 1
+  done
   if [[ "$want" -eq 0 ]]; then return 0; fi
+
   for attempt in $(seq 1 20); do
     have="$(iptables -S 2>/dev/null | grep -c '^-N f2b-' || true)"
     if [[ ! "$have" =~ ^[0-9]+$ ]]; then have=0; fi

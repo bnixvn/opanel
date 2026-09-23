@@ -539,3 +539,19 @@ def test_the_registry_is_handed_out_as_a_copy():
     snapshot["nginx"] = {"id": "nginx"}
     assert addons.ADDONS["fail2ban"]["name"] == "Fail2ban"
     assert not addons.is_known("nginx")
+
+
+def test_the_wait_asks_the_server_only_once_it_answers():
+    """The first version read the jail count immediately, got nothing back --
+    the server takes a second or two to accept a connection -- took that for
+    "no jails", and returned without waiting. A fresh install then positioned an
+    empty chain set, and the chains appeared afterwards wherever fail2ban put
+    them."""
+    body = HELPER[HELPER.index("addon_fail2ban_wait_for_chains()"):][:2200]
+    ping = body.index("fail2ban-client ping")
+    count = body.index("Number of jail")
+    assert ping < count, "the jail count must be read after the server answers"
+    # And a first empty read must not end the wait.
+    assert "want=0" in body and body.count("for attempt in $(seq 1 20)") == 2, (
+        "one loop to reach the server, one to wait for the chains"
+    )
