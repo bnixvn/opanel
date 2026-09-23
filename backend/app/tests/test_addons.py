@@ -107,8 +107,9 @@ def test_the_two_allowlists_agree():
     match = re.search(r"ADDON_IDS=\(([^)]*)\)", HELPER)
     assert match, "helper allowlist not found"
     helper_ids = set(re.findall(r'"([^"]+)"', match.group(1)))
-    assert helper_ids == set(addons.ADDONS), (
-        f"helper has {helper_ids}, panel registry has {set(addons.ADDONS)}"
+    # A panel addon (MCP) needs nothing from root, so the helper never sees it.
+    assert helper_ids == addons.helper_addon_ids(), (
+        f"helper has {helper_ids}, panel registry has {addons.helper_addon_ids()}"
     )
 
 

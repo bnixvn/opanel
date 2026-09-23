@@ -13,7 +13,7 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Activity, Archive, ArrowLeft, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import './style.css';
 import './brand.css';
@@ -29,7 +29,7 @@ const NGINX_REWRITE_MODES = [
   { value: 'codeigniter', label: 'CodeIgniter' },
   { value: 'seohburl', label: 'SEO HB URL' },
 ];
-const SETTINGS_PAGE_KEYS = ['settings', 'security', 'malware', 'php', 'firewall', 'waf', 'wafLogs', 'updates', 'addons', 'services'];
+const SETTINGS_PAGE_KEYS = ['settings', 'security', 'malware', 'php', 'firewall', 'waf', 'wafLogs', 'updates', 'addons', 'mcp', 'services'];
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const PAGE_ROUTES = {
   dashboard: '/',
@@ -49,6 +49,7 @@ const PAGE_ROUTES = {
   wafLogs: '/waf-logs',
   updates: '/updates',
   addons: '/addons',
+  mcp: '/mcp',
   services: '/services',
 };
 const ROUTE_PAGES = new Map([
@@ -517,6 +518,11 @@ function App() {
   const [apiTokens, setApiTokens] = useState([]);
   const [apiTokenForm, setApiTokenForm] = useState({ name: '', scopes: ['provisioning:read', 'provisioning:write'], expires_days: 365, ip_allowlist: '' });
   const [createdToken, setCreatedToken] = useState(null);
+  const [mcpInfo, setMcpInfo] = useState(null);
+  const [mcpTokens, setMcpTokens] = useState([]);
+  const [mcpAllTokens, setMcpAllTokens] = useState([]);
+  const [mcpForm, setMcpForm] = useState({ name: '', can_write: false, expires_days: 90, current_password: '', code: '' });
+  const [mcpCreated, setMcpCreated] = useState(null);
   // Profile modal
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [profileForm, setProfileForm] = useState({ email: '', password: '', current_password: '', code: '' });
@@ -1266,6 +1272,60 @@ function App() {
     if (!confirm(`Delete token "${token.name}"? This cannot be undone.`)) return;
     const data = await request(`/api-tokens/${token.id}`, { method: 'DELETE' }, 'Deleting token...');
     if (data?.ok) { setNotice('Token deleted.'); loadApiTokens(); }
+  }
+
+  // --- MCP ---
+  // The endpoint an MCP client is pointed at, spelled out in full because the
+  // client runs somewhere else and cannot resolve a relative path.
+  const mcpEndpoint = new URL(`${API}/mcp`, window.location.origin).href;
+
+  async function loadMcpInfo() {
+    const data = await request('/mcp/info', { silent: true }, '');
+    if (data) setMcpInfo(data);
+    return data;
+  }
+
+  async function loadMcp() {
+    const info = await loadMcpInfo();
+    if (!info) return;
+    const mine = await request('/mcp/tokens', {}, '');
+    if (Array.isArray(mine)) setMcpTokens(mine);
+  }
+
+  async function loadMcpAllTokens() {
+    const data = await request('/mcp/tokens?all=true', {}, '');
+    if (Array.isArray(data)) setMcpAllTokens(data);
+  }
+
+  async function createMcpToken() {
+    if (!mcpForm.name.trim() || !mcpForm.current_password) return;
+    setMcpCreated(null);
+    const body = {
+      name: mcpForm.name.trim(),
+      can_write: mcpForm.can_write,
+      expires_days: Number(mcpForm.expires_days) || 90,
+      current_password: mcpForm.current_password,
+    };
+    if (currentUser?.totp_enabled) body.code = mcpForm.code.trim();
+    const data = await request('/mcp/tokens', { method: 'POST', body: JSON.stringify(body) }, 'Creating MCP token...');
+    // The password is cleared whatever happened: it was for this one request.
+    setMcpForm(prev => ({ ...prev, current_password: '', code: '' }));
+    if (data?.token) {
+      setMcpCreated(data);
+      setMcpForm({ name: '', can_write: false, expires_days: 90, current_password: '', code: '' });
+      loadMcp();
+    }
+  }
+
+  async function revokeMcpToken(token, fromAddonPanel = false) {
+    const owner = token.username && token.username !== currentUser?.username ? ` (${token.username})` : '';
+    if (!confirm(`Revoke MCP token "${token.name}"${owner}? Anything using it stops working at once.`)) return;
+    const data = await request(`/mcp/tokens/${token.id}`, { method: 'DELETE' }, 'Revoking token...');
+    if (data?.ok) {
+      setNotice('MCP token revoked.');
+      loadMcp();
+      if (fromAddonPanel) loadMcpAllTokens();
+    }
   }
 
   // --- Profile ---
@@ -3408,9 +3468,20 @@ ${effect}${order}`)) return;
       if (!websites.length) refreshAll();
     }
     if (isAuthenticated && page === 'addons' && isAdmin) loadAddons();
+    if (isAuthenticated && page === 'mcp') loadMcp();
     if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); loadNetworkStatus(); }
     if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); loadRestoreBackups(); loadDaBackups(); loadDaImportJobs(); }
   }, [isAuthenticated, page, currentUser?.role]);
+
+  // Whether MCP is on decides if the page is offered at all, and an admin can
+  // switch it on the Addons page without leaving the panel.
+  useEffect(() => {
+    if (isAuthenticated) loadMcpInfo();
+  }, [isAuthenticated, addonList]);
+
+  useEffect(() => {
+    if (isAuthenticated && page === 'addons' && isAdmin && addonList.some(a => a.id === 'mcp' && a.installed)) loadMcpAllTokens();
+  }, [isAuthenticated, page, isAdmin, addonList]);
 
   useEffect(() => {
     if (!scanJob?.job_id || !['queued', 'running'].includes(scanJob.status)) return undefined;
@@ -3485,6 +3556,8 @@ ${effect}${order}`)) return;
     ['wafLogs', 'Access Logs', FileText],
     ...(isAdmin ? [['updates', 'Updates', RefreshCw]] : []),
     ...(isAdmin ? [['addons', 'Addons', PackageOpen]] : []),
+    // Offered to a customer only once an admin has turned MCP on.
+    ...((isAdmin || mcpInfo?.enabled) ? [['mcp', 'AI assistants (MCP)', Bot]] : []),
     ...(isAdmin ? [['services', 'Services Status', Server]] : []),
   ];
 
@@ -4710,6 +4783,135 @@ ${effect}${order}`)) return;
     </>;
   }
 
+  function mcpClientSnippets(token) {
+    const bearer = `Bearer ${token || '<your-token>'}`;
+    return [
+      ['Claude Code', `claude mcp add --transport http opanel ${mcpEndpoint} --header "Authorization: ${bearer}"`],
+      ['Cursor (~/.cursor/mcp.json)', JSON.stringify({ mcpServers: { opanel: { url: mcpEndpoint, headers: { Authorization: bearer } } } }, null, 2)],
+      ['VS Code (.vscode/mcp.json)', JSON.stringify({ servers: { opanel: { type: 'http', url: mcpEndpoint, headers: { Authorization: bearer } } } }, null, 2)],
+    ];
+  }
+
+  function renderMcpTokenRows(tokens, { showOwner = false, fromAddonPanel = false } = {}) {
+    const now = Date.now();
+    return <div className="table">
+      {tokens.map(t => {
+        const expired = t.expires_at && new Date(t.expires_at).getTime() <= now;
+        return <div className="row" key={t.id}>
+          <div className="token-info">
+            <strong>{t.name}{showOwner && t.username ? ` — ${t.username}` : ''}</strong>
+            <small>Prefix: {t.prefix}… | Created: {t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}
+              {' | '}Expires: {t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'never'}
+              {' | '}Last used: {t.last_used_at ? new Date(t.last_used_at).toLocaleString() : 'never'}</small>
+          </div>
+          {expired
+            ? <span className="badge warn">Expired</span>
+            : <span className={t.can_write ? 'badge warn' : 'badge ok'}>{t.can_write ? 'Read + actions' : 'Read-only'}</span>}
+          <button className="mini danger" disabled={!!loading} onClick={() => revokeMcpToken(t, fromAddonPanel)}><Trash2 size={14}/> Revoke</button>
+        </div>;
+      })}
+    </div>;
+  }
+
+  function renderMcp() {
+    const enabled = !!mcpInfo?.enabled;
+    return <>
+      <section className="section">
+        <div className="section-title">
+          <div>
+            <h2>AI assistants (MCP)</h2>
+            <p className="hint">Connect Claude Code, Cursor, VS Code or another MCP client to this panel. A token acts as
+              your account: it sees your websites, databases and backups{isAdmin ? ' (as an administrator, every account’s)' : ''} and
+              nothing else, and it never deletes anything.</p>
+          </div>
+          <button className="secondary-light" disabled={!!loading} onClick={loadMcp}><RefreshCw size={14}/> Refresh</button>
+        </div>
+
+        {mcpInfo === null && <p className="hint">Loading…</p>}
+        {mcpInfo !== null && !enabled && <div className="info-box"><AlertCircle size={14}/> {isAdmin
+          ? <>MCP is not running on this panel. Install or start the <strong>MCP server</strong> addon on the Addons page first.
+              {' '}<button className="mini" onClick={() => navigateToPage('addons')}><PackageOpen size={13}/> Open Addons</button></>
+          : 'MCP is not enabled on this panel. Ask your administrator to turn it on.'}</div>}
+
+        {enabled && <>
+          <div className="token-copy-row" style={{marginBottom: 12}}>
+            <span className="hint">Endpoint</span>
+            <code>{mcpEndpoint}</code>
+            <button className="mini" onClick={() => { copyToClipboard(mcpEndpoint); setNotice('Copied to clipboard.'); }}><Copy size={14}/> Copy</button>
+          </div>
+
+          {mcpCreated && <div className="token-created-notice">
+            <p><strong>Token created.</strong> Copy it now — it is shown only once.</p>
+            <div className="token-copy-row">
+              <code>{mcpCreated.token}</code>
+              <button className="mini" onClick={() => { copyToClipboard(mcpCreated.token); setNotice('Copied to clipboard.'); }}><Copy size={14}/> Copy</button>
+            </div>
+            {mcpClientSnippets(mcpCreated.token).map(([label, text]) => <div key={label} style={{marginTop: 10}}>
+              <div className="token-copy-row">
+                <strong>{label}</strong>
+                <button className="mini" onClick={() => { copyToClipboard(text); setNotice(`${label} setup copied.`); }}><Copy size={14}/> Copy</button>
+              </div>
+              <pre className="addon-log mcp-snippet">{text}</pre>
+            </div>)}
+            <button className="mini secondary-light" onClick={() => setMcpCreated(null)}>Dismiss</button>
+          </div>}
+
+          <h3>New token</h3>
+          <div className="token-create-form">
+            <label><span>Name</span><input value={mcpForm.name} maxLength={64} placeholder="Claude Code on my laptop"
+              onChange={e => setMcpForm(prev => ({ ...prev, name: e.target.value }))} /></label>
+            <label><span>Expires</span><select value={mcpForm.expires_days}
+              onChange={e => setMcpForm(prev => ({ ...prev, expires_days: Number(e.target.value) }))}>
+              {[30, 90, 180, 365].map(days => <option key={days} value={days}>{days} days</option>)}
+            </select></label>
+            <label><span>Your password</span><input type="password" autoComplete="current-password" value={mcpForm.current_password}
+              onChange={e => setMcpForm(prev => ({ ...prev, current_password: e.target.value }))} /></label>
+            {currentUser?.totp_enabled && <label><span>2FA code</span><input inputMode="numeric" autoComplete="one-time-code"
+              value={mcpForm.code} onChange={e => setMcpForm(prev => ({ ...prev, code: e.target.value }))} /></label>}
+            <button disabled={!!loading || !mcpForm.name.trim() || !mcpForm.current_password
+              || (currentUser?.totp_enabled && !mcpForm.code.trim())} onClick={createMcpToken}><Plus size={14}/> Create token</button>
+          </div>
+          <label className="schedule-toggle mcp-write-toggle">
+            <input type="checkbox" checked={mcpForm.can_write}
+              onChange={e => setMcpForm(prev => ({ ...prev, can_write: e.target.checked }))} />
+            <span>Allow actions (run backups, issue certificates, switch the WAF{isAdmin ? ', restart services' : ''})</span>
+          </label>
+          <p className="hint">Without “Allow actions” the token can only read. Up to {mcpInfo?.max_tokens || 10} tokens per account.</p>
+
+          <h3>Your tokens</h3>
+          {mcpTokens.length === 0 ? <p className="hint">No MCP tokens yet.</p> : renderMcpTokenRows(mcpTokens)}
+
+          {!mcpCreated && <>
+            <h3>Connecting a client</h3>
+            <p className="hint">Replace &lt;your-token&gt; with a token from above. The client must trust this panel’s
+              HTTPS certificate; a self-signed one is refused.</p>
+            {mcpClientSnippets('').map(([label, text]) => <div key={label} style={{marginTop: 10}}>
+              <strong>{label}</strong>
+              <pre className="addon-log mcp-snippet">{text}</pre>
+            </div>)}
+          </>}
+        </>}
+      </section>
+    </>;
+  }
+
+  function renderAddonMcp(addon) {
+    if (!addon.installed) return null;
+    return <div className="addon-panel">
+      <div className="addon-panel-head">
+        <strong>Tokens on this panel</strong>
+        <div className="actions">
+          <button className="mini secondary-light" disabled={!!loading} onClick={loadMcpAllTokens}><RefreshCw size={13}/> Refresh</button>
+          <button className="mini" onClick={() => navigateToPage('mcp')}><Bot size={13}/> Create my token</button>
+        </div>
+      </div>
+      <p className="hint">Endpoint: <code>{mcpEndpoint}</code></p>
+      {mcpAllTokens.length === 0
+        ? <p className="hint">No account has created an MCP token yet.</p>
+        : renderMcpTokenRows(mcpAllTokens, { showOwner: true, fromAddonPanel: true })}
+    </div>;
+  }
+
   function renderAddons() {
     if (!isAdmin) return <section className="section"><h2>Addons</h2><p className="hint">No permission.</p></section>;
     return <section className="section">
@@ -4770,6 +4972,7 @@ ${effect}${order}`)) return;
                 {addon.notes.map((note, idx) => <li key={idx}>{note}</li>)}
               </ul>}
               {addon.id === 'fail2ban' && renderAddonFail2ban(addon)}
+              {addon.id === 'mcp' && renderAddonMcp(addon)}
             </div>}
           </div>;
         })}
@@ -5914,6 +6117,7 @@ ${effect}${order}`)) return;
     // Admin only, and guarded here too so a bookmarked /services does not
     // paint a page whose every request will 403.
     if (page === 'addons') return isAdmin ? renderAddons() : renderDashboard();
+    if (page === 'mcp') return renderMcp();
     if (page === 'services') return isAdmin ? renderServices() : renderDashboard();
     if (page === 'settings') return renderPanelSettings();
     if (page === 'users') return renderUsers();

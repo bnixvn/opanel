@@ -64,7 +64,58 @@ ADDONS: dict[str, dict] = {
             "suggested there so a misconfiguration cannot lock you out.",
         ],
     },
+    "mcp": {
+        "id": "mcp",
+        "name": "MCP server",
+        "summary": "Lets AI assistants read and operate the panel through the Model Context Protocol.",
+        "description": (
+            "Adds an MCP endpoint at /api/mcp that Claude Code, Cursor, VS Code "
+            "and other MCP clients can connect to with a personal token. Each "
+            "token acts as the account that created it: a customer's token sees "
+            "that customer's websites, databases and backups and nothing else. "
+            "Tools can list and inspect, read site logs, run backups, issue "
+            "certificates and switch the WAF; none of them delete anything."
+        ),
+        "category": "integration",
+        "version": "1",
+        # Nothing to install on the box: the endpoint is part of the panel, so
+        # installing it only turns it on. See _is_panel_addon.
+        "kind": "panel",
+        "packages": [],
+        "service": "",
+        "features": ["mcp_tokens"],
+        "notes": [
+            "Every user creates their own tokens on the MCP page. A token is "
+            "read-only unless it was created with actions allowed.",
+            "Stopping the addon turns the endpoint off and keeps the tokens; "
+            "removing it also revokes every token.",
+            "Clients connect over HTTPS, so the panel needs a certificate they "
+            "trust; a self-signed one will be refused.",
+        ],
+    },
 }
+
+
+def _is_panel_addon(definition: dict) -> bool:
+    """An addon that lives inside the panel and needs nothing from root.
+
+    Its installed/running state is the panel's own bookkeeping; there is no
+    package to ask the box about, and the helper does not know its id.
+    """
+    return definition.get("kind") == "panel"
+
+
+def helper_addon_ids() -> set[str]:
+    """The addons the root helper operates; its allowlist must match this."""
+    return {key for key, value in ADDONS.items() if not _is_panel_addon(value)}
+
+
+def is_enabled(addon_id: str) -> bool:
+    """Whether a panel addon is installed and switched on."""
+    if not is_known(addon_id):
+        return False
+    entry = _entry(addon_id)
+    return bool(entry.get("installed")) and bool(entry.get("running", True))
 
 
 def registry() -> dict[str, dict]:
@@ -139,6 +190,18 @@ def status(addon_id: str) -> dict:
     entry = _entry(addon_id)
     live = {"installed": False, "running": False, "enabled": False, "version": ""}
     detail = ""
+    if _is_panel_addon(definition):
+        installed = bool(entry.get("installed"))
+        running = installed and bool(entry.get("running", True))
+        live.update(installed=installed, running=running, enabled=running,
+                    version=definition["version"] if installed else "")
+    else:
+        detail = _helper_status(addon_id, live)
+    return _describe(definition, entry, live, detail)
+
+
+def _helper_status(addon_id: str, live: dict) -> str:
+    detail = ""
     try:
         result = shell.privileged("addon-status", helper_args=[addon_id], check=False)
         if result.returncode == 0:
@@ -151,9 +214,13 @@ def status(addon_id: str) -> dict:
             detail = (result.stderr or result.stdout or "").strip()
     except Exception as exc:  # noqa: BLE001 - a status read must not raise
         detail = str(exc)
+    return detail
 
+
+def _describe(definition: dict, entry: dict, live: dict, detail: str) -> dict:
     return {
         "id": definition["id"],
+        "kind": definition.get("kind") or "system",
         "name": definition["name"],
         "summary": definition["summary"],
         "description": definition["description"],
@@ -222,6 +289,10 @@ def install(addon_id: str, actor: str = "") -> dict:
         raise ValueError(f"{definition['name']} is already {current['busy_action'] or 'working'}")
     if current["installed"]:
         raise ValueError(f"{definition['name']} is already installed")
+    if _is_panel_addon(definition):
+        _update_state(addon_id, installed=True, running=True, last_error="", installed_by=actor,
+                      installed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        return status(addon_id)
     _update_state(addon_id, busy=True, busy_action="install", last_error="", installed_by=actor)
     _background(addon_id, "install", "addon-install")
     return status(addon_id)
@@ -234,6 +305,10 @@ def uninstall(addon_id: str, actor: str = "") -> dict:
         raise ValueError(f"{definition['name']} is already {current['busy_action'] or 'working'}")
     if not current["installed"]:
         raise ValueError(f"{definition['name']} is not installed")
+    if _is_panel_addon(definition):
+        _update_state(addon_id, installed=False, running=False, last_error="",
+                      installed_at="", installed_by="")
+        return status(addon_id)
     _update_state(addon_id, busy=True, busy_action="uninstall", last_error="")
     _background(addon_id, "uninstall", "addon-uninstall")
     return status(addon_id)
@@ -245,6 +320,9 @@ def set_running(addon_id: str, running: bool) -> dict:
     current = status(addon_id)
     if not current["installed"]:
         raise ValueError(f"{definition['name']} is not installed")
+    if _is_panel_addon(definition):
+        _update_state(addon_id, running=bool(running))
+        return status(addon_id)
     _run_addon_command("addon-enable" if running else "addon-disable", addon_id)
     return status(addon_id)
 

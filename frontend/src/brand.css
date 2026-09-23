@@ -456,3 +456,7 @@ label span em{font-style:normal;font-weight:600;font-size:11px;color:var(--text-
 .php-opcache-toggle button{width:100%;justify-content:flex-start}
 .waf-custom-readonly{margin:0;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
 .backup-item-actions{display:flex;gap:8px;align-items:center}
+/* MCP page: the "allow actions" switch sits on its own line under the token form. */
+.mcp-write-toggle{display:inline-flex;margin:10px 0 4px}
+/* Client setup snippets carry a 60-character token; wrap rather than widen the page. */
+.mcp-snippet{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}

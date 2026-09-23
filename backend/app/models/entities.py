@@ -244,6 +244,32 @@ class ApiToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class McpToken(Base):
+    """A credential for the panel's MCP endpoint, owned by one account.
+
+    Separate from ApiToken, which is a machine credential for provisioning and
+    belongs to nobody. An MCP token acts as the account that created it -- an
+    end user's token sees that user's websites and nothing else -- and only a
+    token created with can_write may call a tool that changes anything.
+    """
+
+    __tablename__ = "mcp_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    # SHA-256 of the token; the token itself is shown once and never stored.
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # The token's first characters, so a list can tell two tokens apart.
+    prefix: Mapped[str] = mapped_column(String(16), default="")
+    can_write: Mapped[bool] = mapped_column(Boolean, default=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship()
+
+
 class HostingPlan(Base):
     __tablename__ = "hosting_plans"
 

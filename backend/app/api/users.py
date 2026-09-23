@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.core.permissions import Role, ensure_role
 from app.core.security import hash_password
 from app.core.step_up import require_sensitive_action_step_up
-from app.models.entities import AuditLog, BackupSchedule, DatabaseAccount, User, Website, WebsiteAlias
+from app.models.entities import AuditLog, BackupSchedule, DatabaseAccount, McpToken, User, Website, WebsiteAlias
 from app.schemas.schemas import (
     AuditLogOut,
     UserCreate,
@@ -229,6 +229,7 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
         # Anything owned but not attached to one of those websites.
         _delete_orphan_databases(db, user.id)
         _remove_user_from_backup_schedules(db, user.id)
+        db.query(McpToken).filter(McpToken.user_id == user.id).delete(synchronize_session=False)
         site_users.delete_panel_user(user.username)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

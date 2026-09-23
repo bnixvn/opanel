@@ -128,6 +128,10 @@ def uninstall_addon(
     except ValueError as exc:
         code = 404 if not addons.is_known(addon_id) else 409
         raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if addon_id == "mcp":
+        # Removing it is the end of every token, not a pause: Stop is the pause.
+        from app.api import mcp as mcp_api
+        mcp_api.revoke_all(db)
     log_action(db, current_user.id, "addon_uninstall", addon_id, request=request)
     return result
 
