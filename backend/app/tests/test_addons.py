@@ -352,6 +352,69 @@ def test_the_filter_anchors_the_address_at_the_end():
     )
 
 
+# fail2ban's own expansion of <HOST>, near enough to compile here.
+_HOST = r"(?P<host>[\w\-.^_]*\w|\[?[0-9a-fA-F:]+\]?)"
+
+
+def _compiled_failregex():
+    index = HELPER.index("failregex = ")
+    pattern = HELPER[index + len("failregex = "):HELPER.index("\n", index)]
+    return re.compile(pattern.replace("<HOST>", _HOST))
+
+
+def test_the_filter_matches_the_line_the_panel_actually_writes():
+    """Written anchored at the start, this matched nothing: the journal carries
+    the whole formatted record, so the line arrives behind a level and logger
+    prefix that uvicorn's formatter owns. fail2ban-regex reported 0 of 1 lines
+    matched on the box while the jail sat there reporting itself as running --
+    a control that says it is working and reads nothing.
+
+    Both prefix shapes are covered because that prefix is not the panel's to
+    promise; a uvicorn version can change it.
+    """
+    compiled = _compiled_failregex()
+    for line, expected in (
+        # Exactly what was observed on the box.
+        ("WARNI [opanel.auth] opanel-auth: authentication failure (password) "
+         "for user 'nosuchuser' from 203.0.113.55", "203.0.113.55"),
+        # What logging.basicConfig alone would produce.
+        ("WARNING:opanel.auth:opanel-auth: authentication failure (second factor) "
+         "for user 'admin' from 198.51.100.9", "198.51.100.9"),
+        # No prefix at all.
+        ("opanel-auth: authentication failure (password) for user '_unknown' "
+         "from 2001:db8::1", "2001:db8::1"),
+    ):
+        match = compiled.match(line)
+        assert match, f"filter missed: {line}"
+        assert match.group("host") == expected
+
+
+def test_the_filter_ignores_a_line_that_is_not_an_auth_failure():
+    compiled = _compiled_failregex()
+    for line in (
+        "WARNI [opanel.auth] Redis unavailable (nope), falling back to in-memory",
+        "INFO [uvicorn.access] 203.0.113.55 - POST /api/auth/login 200",
+        "opanel-auth: authentication failure (password) for user 'x'",
+    ):
+        assert not compiled.match(line), f"filter should not match: {line}"
+
+
+def test_a_sanitised_name_cannot_spell_a_second_candidate_address():
+    """The permissive prefix is only safe because the one attacker-controlled
+    field cannot contain a space, a quote or a parenthesis."""
+    from app.api.auth import _safe_log_name
+
+    forged = _safe_log_name("victim' from 203.0.113.1 (x) for user 'attacker")
+    line = (
+        f"WARNI [opanel.auth] opanel-auth: authentication failure (password) "
+        f"for user '{forged}' from 198.51.100.9"
+    )
+    match = _compiled_failregex().match(line)
+    assert match and match.group("host") == "198.51.100.9", (
+        f"a forged name changed which address gets banned: {forged!r}"
+    )
+
+
 # --------------------------------------------------------------------------
 # admin only, all of it
 # --------------------------------------------------------------------------

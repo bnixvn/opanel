@@ -3636,7 +3636,16 @@ addon_fail2ban_write_filter() {
   cat >"$FAIL2BAN_FILTER_FILE" <<'FILTER'
 # Managed by opanel -- edits are overwritten when the addon is reconfigured.
 [Definition]
-failregex = ^\s*opanel-auth: authentication failure \([^)]*\) for user '[^']*' from <HOST>\s*$
+# The leading .* is deliberate. The journal carries the whole formatted record,
+# so the line arrives with a level and logger prefix that uvicorn's formatter
+# owns -- "WARNI [opanel.auth] " today, something else after a version bump.
+# Anchoring at the start matched nothing at all, and a jail that reads nothing
+# still reports itself as running.
+#
+# The prefix cannot be used to forge a match: the only attacker-controlled part
+# of the line is the account name, and app/api/auth.py strips it to
+# [A-Za-z0-9._@-], which cannot spell a space, a quote or a parenthesis.
+failregex = ^.*opanel-auth: authentication failure \([^)]*\) for user '[^']*' from <HOST>\s*$
 ignoreregex =
 FILTER
   chmod 0644 "$FAIL2BAN_FILTER_FILE"
