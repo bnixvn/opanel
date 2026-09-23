@@ -4261,7 +4261,9 @@ case "$cmd" in
   addon-fail2ban-unban)
     require_addon_ip "${1:-}"
     command -v fail2ban-client >/dev/null 2>&1 || deny "fail2ban is not installed"
-    fail2ban-client unban "$1" || deny "could not unban $1"
+    # fail2ban-client prints the number it lifted; the panel shows this stdout
+    # to the admin as a notice, so let only our sentence through.
+    fail2ban-client unban "$1" >/dev/null || deny "could not unban $1"
     echo "$1 unbanned"
     ;;
 
