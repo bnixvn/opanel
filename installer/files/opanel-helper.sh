@@ -2985,6 +2985,19 @@ ensure_panel_user_home() {
   chmod a-s "$home_dir" 2>/dev/null || true
   chmod -t "$home_dir" 2>/dev/null || true
   clear_path_acl "$home_dir"
+  grant_panel_home_access "$home_dir"
+}
+
+# The usermod -aG above reaches a process only when it starts, so an
+# opanel-api already running when this user was created -- by a DirectAdmin
+# import, or from the Users page -- could not enter the new home until it was
+# restarted: the Users page returned 500 on the storage walk, and the file
+# manager and backups failed on the new sites. A named-user ACL is checked at
+# access time. It grants the same r-x the group does and no write, so the
+# directory still meets sshd's ChrootDirectory rules.
+grant_panel_home_access() {
+  command -v setfacl >/dev/null 2>&1 || return 0
+  setfacl -m u:opanel:r-x "$1" 2>/dev/null || true
 }
 
 set_panel_user_password() {

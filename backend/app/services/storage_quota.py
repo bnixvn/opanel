@@ -1,3 +1,4 @@
+import logging
 import os
 import stat
 import subprocess
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.permissions import is_admin_role
 from app.models.entities import User, Website
 
+logger = logging.getLogger("opanel.storage_quota")
 
 BYTES_PER_MB = 1024 * 1024
 STATIC_SITE_ESTIMATE_BYTES = 1 * BYTES_PER_MB
@@ -62,9 +64,19 @@ def path_usage_bytes(path: str | Path) -> int:
     return total
 
 
+def _reachable(path: str) -> bool:
+    # Path.exists() raises on EACCES rather than returning False, and one
+    # unreadable site root used to turn the whole Users page into a 500.
+    try:
+        return Path(path).exists()
+    except OSError:
+        logger.warning("storage usage: cannot reach %s", path)
+        return False
+
+
 def _du_bytes(paths: list[str]) -> int | None:
     """Apparent size of ``paths`` via `du`, or None when du is unavailable/failed."""
-    real = [p for p in paths if p and Path(p).exists()]
+    real = [p for p in paths if p and _reachable(p)]
     if not real:
         return 0
     try:

@@ -664,6 +664,9 @@ harden_existing_panel_users() {
     chmod -t "$home_dir" 2>/dev/null || true
     if command -v setfacl >/dev/null 2>&1; then
       setfacl -b -k "$home_dir" 2>/dev/null || true
+      # Mirrors grant_panel_home_access in the helper: the ACL, unlike the
+      # group, reaches an opanel-api that was already running.
+      setfacl -m u:opanel:r-x "$home_dir" 2>/dev/null || true
     fi
     if [[ "$do_recursive" == 1 ]]; then
       find "$home_dir" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | while IFS= read -r -d '' site_dir; do
