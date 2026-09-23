@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     # migration window only.
     strict_decrypt: bool = True
     pma_signon_secret: str = ""
+    # The branch this box updates from (opanel_UPDATE_BRANCH): "staging" on the
+    # staging box, main everywhere else. update.sh and the helper read it from
+    # this .env too; declared here because an unknown key in .env stops the
+    # panel starting at all.
+    opanel_update_branch: str = "main"
 
     @field_validator("secret_key")
     @classmethod

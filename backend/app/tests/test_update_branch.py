@@ -54,3 +54,13 @@ def test_update_sh_defaults_to_the_box_branch(tmp_path, env_line, preset, expect
         env["BRANCH"] = preset
     result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
     assert result.stdout == expected, result.stderr
+
+
+def test_the_panel_starts_with_the_branch_key_in_its_env_file(tmp_path):
+    """An unknown key in .env is a start-up failure (extra_forbidden); the
+    staging box's first update died on exactly this."""
+    from app.core.config import Settings
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("opanel_UPDATE_BRANCH=staging\n", encoding="utf-8")
+    assert Settings(_env_file=str(env_file)).opanel_update_branch == "staging"
