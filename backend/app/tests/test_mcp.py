@@ -188,9 +188,10 @@ def test_an_admin_action_token_gets_everything(env):
     assert {"list_users", "list_services", "restart_service", "run_backup_schedule", "create_backup"} <= names
 
 
-def test_every_tool_says_it_deletes_nothing(env):
+def test_only_delete_file_is_marked_destructive(env):
+    """Clients ask the user before a destructive tool; exactly one tool destroys data."""
     tools = rpc(env, env.token(env.admin, can_write=True), "tools/list").json()["result"]["tools"]
-    assert all(tool["annotations"]["destructiveHint"] is False for tool in tools)
+    assert [t["name"] for t in tools if t["annotations"]["destructiveHint"]] == ["delete_file"]
     assert all(tool["inputSchema"]["additionalProperties"] is False for tool in tools)
 
 
@@ -438,3 +439,102 @@ def test_add_waf_rule_to_one_site_keeps_its_other_rules(env, monkeypatch):
     assert result["scope"] == "alice.test"
     assert captured["rules"].startswith("# hand-written rule kept")
     assert 'SecRule REQUEST_FILENAME "@beginsWith /xmlrpc.php"' in captured["rules"]
+
+
+# ---------------------------------------------------------------------------
+# Unblocking, and a website's files
+# ---------------------------------------------------------------------------
+def test_unblock_ip_removes_only_the_matching_block(env, monkeypatch):
+    from app.services import firewall
+
+    deleted = []
+    monkeypatch.setattr(firewall, "list_rules", lambda: [
+        {"id": 3, "action": "deny", "type": "ip", "network": "45.155.205.9/32"},
+        {"id": 4, "action": "allow", "type": "ip", "network": "45.155.205.9/32"},
+        {"id": 5, "action": "deny", "type": "ip", "network": "91.92.93.0/24"},
+    ])
+    monkeypatch.setattr(firewall, "delete_rule", lambda rule_id: deleted.append(rule_id))
+    raw = env.token(env.admin, can_write=True)
+    assert payload(call(env, raw, "unblock_ip", {"ip": "45.155.205.9"}))["removed_rule_ids"] == [3]
+    assert deleted == [3]
+    assert call(env, raw, "unblock_ip", {"ip": "8.8.8.8"})["result"]["isError"] is True
+    assert "unblock_ip" not in tool_names(env, env.token(env.alice, can_write=True))
+
+
+@pytest.fixture
+def site(env, tmp_path):
+    """A real website folder for alice, with no Linux user so writes stay in-process."""
+    root = tmp_path / "files.test"
+    (root / "public_html" / "uploads").mkdir(parents=True)
+    (root / "public_html" / ".git").mkdir()
+    (root / "public_html" / "index.php").write_text("<?php\necho 'hello';\n// TODO fix the header\n", encoding="utf-8")
+    (root / "public_html" / "uploads" / "evil.php").write_text("<?php // TODO in uploads", encoding="utf-8")
+    (root / "public_html" / ".git" / "config").write_text("TODO in git", encoding="utf-8")
+    env.db.add(Website(domain="files.test", owner_id=env.alice.id, root_path=str(root), document_root="public_html",
+                       linux_user=None, php_version="8.3", app_type="php", status="active"))
+    env.db.commit()
+    return root
+
+
+def test_file_tools_follow_the_token(env):
+    reader = tool_names(env, env.token(env.alice))
+    assert {"list_files", "read_file", "search_files"} <= reader
+    assert not reader & {"write_file", "delete_file", "move_file", "create_directory"}
+    assert {"write_file", "delete_file", "move_file", "create_directory"} <= tool_names(
+        env, env.token(env.alice, can_write=True))
+
+
+def test_list_read_and_search_a_real_site(env, site):
+    raw = env.token(env.alice)
+    listing = payload(call(env, raw, "list_files", {"domain": "files.test"}))
+    assert {e["name"] for e in listing["entries"]} >= {"index.php", "uploads"}
+
+    part = payload(call(env, raw, "read_file", {"domain": "files.test", "path": "public_html/index.php",
+                                                "start_line": 2, "line_count": 1}))
+    assert part == {"path": "public_html/index.php", "total_lines": 3, "start_line": 2, "end_line": 2,
+                    "content": "echo 'hello';\n"}
+
+    found = payload(call(env, raw, "search_files", {"domain": "files.test", "text": "todo"}))
+    assert [(m["path"], m["line"]) for m in found["matches"]] == [("public_html/index.php", 3)]
+
+
+def test_another_users_files_are_not_found(env, site):
+    reply = call(env, env.token(env.bob), "read_file", {"domain": "files.test", "path": "public_html/index.php"})
+    assert reply["result"]["isError"] is True and "No website" in reply["result"]["content"][0]["text"]
+
+
+def test_paths_cannot_escape_the_site(env, site):
+    reply = call(env, env.token(env.alice), "read_file", {"domain": "files.test", "path": "../../etc/passwd"})
+    assert reply["result"]["isError"] is True
+
+
+def test_write_file_creates_through_the_file_manager_and_logs_no_content(env, site):
+    raw = env.token(env.alice, can_write=True)
+    secret = "<?php define('DB_PASSWORD', 'hunter2');"
+    result = payload(call(env, raw, "write_file", {"domain": "files.test", "path": "public_html/lib/config.php",
+                                                   "content": secret}))
+    assert result["written"] is True
+    assert (site / "public_html" / "lib" / "config.php").read_text(encoding="utf-8") == secret
+    audit = env.db.query(AuditLog).filter(AuditLog.target == "write_file").one()
+    assert "hunter2" not in audit.detail and "characters" in audit.detail
+
+
+def test_delete_file_never_takes_the_site_or_its_web_root(env, site):
+    raw = env.token(env.alice, can_write=True)
+    for path in ("", "/", "public_html", "public_html/"):
+        reply = call(env, raw, "delete_file", {"domain": "files.test", "path": path or "."})
+        assert reply["result"]["isError"] is True
+    assert (site / "public_html" / "index.php").exists()
+
+
+def test_move_file_moves_then_renames(env, monkeypatch):
+    from app.api import maintenance
+
+    calls = []
+    monkeypatch.setattr(maintenance, "move_entries",
+                        lambda payload, db, current_user: calls.append(("move", payload.paths, payload.destination_path)))
+    monkeypatch.setattr(maintenance, "rename_entry",
+                        lambda payload, db, current_user: calls.append(("rename", payload.path, payload.new_name)))
+    call(env, env.token(env.alice, can_write=True), "move_file",
+         {"domain": "alice.test", "path": "public_html/a.php", "new_path": "public_html/old/b.php"})
+    assert calls == [("move", ["public_html/a.php"], "public_html/old"), ("rename", "public_html/old/a.php", "b.php")]

@@ -74,9 +74,10 @@ ADDONS: dict[str, dict] = {
             "token acts as the account that created it: a customer's token sees "
             "that customer's websites, databases and backups and nothing else. "
             "Tools can list and inspect, read site and access logs, summarise "
-            "traffic, run backups, issue certificates and switch the WAF; an "
-            "administrator's can also block addresses and add WAF rules. None of "
-            "them delete anything."
+            "traffic, read, write and delete a website's files, run backups, "
+            "issue certificates and switch the WAF; an administrator's can also "
+            "block and unblock addresses and add WAF rules. Deleting a file is "
+            "marked destructive, so clients ask before running it."
         ),
         "category": "integration",
         "version": "1",

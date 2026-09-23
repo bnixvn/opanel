@@ -4822,7 +4822,8 @@ ${effect}${order}`)) return;
             <h2>AI assistants (MCP)</h2>
             <p className="hint">Connect Claude Code, Cursor, VS Code or another MCP client to this panel. A token acts as
               your account: it sees your websites, databases and backups{isAdmin ? ' (as an administrator, every account’s)' : ''} and
-              nothing else, and it never deletes anything.</p>
+              nothing else. With actions allowed it can also edit your websites’ files, so an assistant can build and fix
+              your sites; deleting a file always asks you first in the client.</p>
           </div>
           <button className="secondary-light" disabled={!!loading} onClick={loadMcp}><RefreshCw size={14}/> Refresh</button>
         </div>
@@ -4874,7 +4875,7 @@ ${effect}${order}`)) return;
           <label className="schedule-toggle mcp-write-toggle">
             <input type="checkbox" checked={mcpForm.can_write}
               onChange={e => setMcpForm(prev => ({ ...prev, can_write: e.target.checked }))} />
-            <span>Allow actions (run backups, issue certificates, switch the WAF{isAdmin ? ', restart services, block IPs, add WAF rules' : ''})</span>
+            <span>Allow actions (write and delete files, run backups, issue certificates, switch the WAF{isAdmin ? ', restart services, block and unblock IPs, add WAF rules' : ''})</span>
           </label>
           <p className="hint">Without “Allow actions” the token can only read. Up to {mcpInfo?.max_tokens || 10} tokens per account.</p>
 
