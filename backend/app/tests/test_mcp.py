@@ -272,12 +272,15 @@ def test_token_management_rules(env, monkeypatch):
     from app.api import mcp as mcp_api
     from fastapi import HTTPException
 
-    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"), headers={})
-    payload_in = mcp_api.McpTokenCreate(name="laptop", can_write=True, current_password="wrong")
-    with pytest.raises(HTTPException):
-        mcp_api.create_mcp_token(payload_in, request, env.db, env.alice)
+    ok = mcp_api.McpTokenCreate(name="laptop", can_write=True)
 
-    ok = mcp_api.McpTokenCreate(name="laptop", can_write=True, current_password="PasswordLongEnough1")
+    # the signed-in session is enough -- but only while the addon is on
+    addons.set_running("mcp", False)
+    with pytest.raises(HTTPException) as off:
+        mcp_api.create_mcp_token(ok, None, env.db, env.alice)
+    assert off.value.status_code == 409
+    addons.set_running("mcp", True)
+
     created = mcp_api.create_mcp_token(ok, None, env.db, env.alice)
     assert created["token"].startswith("opmcp_") and created["can_write"] is True
 

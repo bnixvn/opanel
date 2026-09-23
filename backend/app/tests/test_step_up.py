@@ -25,7 +25,8 @@ def test_sensitive_step_up_rejects_missing_current_password():
     with pytest.raises(HTTPException) as exc:
         step_up.require_sensitive_action_step_up(_user(), None)
 
-    assert exc.value.status_code == 401
+    # 403: a 401 would sign the user out of the session being confirmed.
+    assert exc.value.status_code == 403
 
 
 def test_sensitive_step_up_requires_totp_when_enabled():
@@ -35,7 +36,7 @@ def test_sensitive_step_up_requires_totp_when_enabled():
     with pytest.raises(HTTPException) as exc:
         step_up.require_sensitive_action_step_up(user, "correct-password", "000000")
 
-    assert exc.value.status_code == 401
+    assert exc.value.status_code == 403
 
 
 def test_sensitive_step_up_accepts_current_password_and_valid_totp():

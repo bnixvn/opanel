@@ -20,7 +20,6 @@ from starlette.concurrency import run_in_threadpool
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_admin_role
-from app.core.step_up import require_sensitive_action_step_up
 from app.models.entities import McpToken, User
 from app.services import addons, mcp
 from app.services.audit import log_action
@@ -112,8 +111,6 @@ class McpTokenCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     can_write: bool = False
     expires_days: int = Field(default=90, ge=1, le=365)
-    current_password: Optional[str] = None
-    code: Optional[str] = None
 
 
 @router.get("/info")
@@ -144,9 +141,9 @@ def create_mcp_token(payload: McpTokenCreate, request: Request, db: Session = De
                      current_user: User = Depends(get_current_user)):
     if not _enabled():
         raise HTTPException(status_code=409, detail="MCP is not enabled on this panel")
-    # A token is a standing credential for the whole account, so minting one
-    # asks for the password again, like changing it does.
-    require_sensitive_action_step_up(current_user, payload.current_password, payload.code)
+    # No password re-entry: the operator chose to trust the signed-in session
+    # here. A token is still shown once, listed with its owner, and revocable
+    # by its owner or any admin.
     try:
         token, raw = mcp.create_token(db, current_user, payload.name, payload.can_write, payload.expires_days)
     except ValueError as exc:

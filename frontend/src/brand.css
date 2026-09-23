@@ -460,3 +460,6 @@ label span em{font-style:normal;font-weight:600;font-size:11px;color:var(--text-
 .mcp-write-toggle{display:inline-flex;margin:10px 0 4px}
 /* Client setup snippets carry a 60-character token; wrap rather than widen the page. */
 .mcp-snippet{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+/* The MCP token form has three fields, not the API-token form's four. */
+.token-create-form.mcp-token-form{grid-template-columns:minmax(0,1fr) 140px auto}
+@media(max-width:768px){.token-create-form.mcp-token-form{grid-template-columns:1fr}}

@@ -19,10 +19,13 @@ def verify_totp(user: User, code: str | None) -> bool:
     return pyotp.TOTP(secret).verify(clean_code, valid_window=1)
 
 
+# 403, not 401. The session is fine -- the confirmation failed -- and the
+# frontend treats any 401 as an expired session and signs the user out, so a
+# mistyped current password used to end the session it was confirming.
 def require_current_password(user: User, password: str | None) -> None:
     if not password or not verify_password(password, user.hashed_password):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Current password is incorrect",
         )
 
@@ -30,7 +33,7 @@ def require_current_password(user: User, password: str | None) -> None:
 def require_totp_if_enabled(user: User, code: str | None) -> None:
     if user.totp_enabled and not verify_totp(user, code):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid authentication code",
         )
 

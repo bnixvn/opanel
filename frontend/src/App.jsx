@@ -521,7 +521,7 @@ function App() {
   const [mcpInfo, setMcpInfo] = useState(null);
   const [mcpTokens, setMcpTokens] = useState([]);
   const [mcpAllTokens, setMcpAllTokens] = useState([]);
-  const [mcpForm, setMcpForm] = useState({ name: '', can_write: false, expires_days: 90, current_password: '', code: '' });
+  const [mcpForm, setMcpForm] = useState({ name: '', can_write: false, expires_days: 90 });
   const [mcpCreated, setMcpCreated] = useState(null);
   // Profile modal
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -1298,21 +1298,17 @@ function App() {
   }
 
   async function createMcpToken() {
-    if (!mcpForm.name.trim() || !mcpForm.current_password) return;
+    if (!mcpForm.name.trim()) return;
     setMcpCreated(null);
     const body = {
       name: mcpForm.name.trim(),
       can_write: mcpForm.can_write,
       expires_days: Number(mcpForm.expires_days) || 90,
-      current_password: mcpForm.current_password,
     };
-    if (currentUser?.totp_enabled) body.code = mcpForm.code.trim();
     const data = await request('/mcp/tokens', { method: 'POST', body: JSON.stringify(body) }, 'Creating MCP token...');
-    // The password is cleared whatever happened: it was for this one request.
-    setMcpForm(prev => ({ ...prev, current_password: '', code: '' }));
     if (data?.token) {
       setMcpCreated(data);
-      setMcpForm({ name: '', can_write: false, expires_days: 90, current_password: '', code: '' });
+      setMcpForm({ name: '', can_write: false, expires_days: 90 });
       loadMcp();
     }
   }
@@ -4858,19 +4854,14 @@ ${effect}${order}`)) return;
           </div>}
 
           <h3>New token</h3>
-          <div className="token-create-form">
+          <div className="token-create-form mcp-token-form">
             <label><span>Name</span><input value={mcpForm.name} maxLength={64} placeholder="Claude Code on my laptop"
               onChange={e => setMcpForm(prev => ({ ...prev, name: e.target.value }))} /></label>
             <label><span>Expires</span><select value={mcpForm.expires_days}
               onChange={e => setMcpForm(prev => ({ ...prev, expires_days: Number(e.target.value) }))}>
               {[30, 90, 180, 365].map(days => <option key={days} value={days}>{days} days</option>)}
             </select></label>
-            <label><span>Your password</span><input type="password" autoComplete="current-password" value={mcpForm.current_password}
-              onChange={e => setMcpForm(prev => ({ ...prev, current_password: e.target.value }))} /></label>
-            {currentUser?.totp_enabled && <label><span>2FA code</span><input inputMode="numeric" autoComplete="one-time-code"
-              value={mcpForm.code} onChange={e => setMcpForm(prev => ({ ...prev, code: e.target.value }))} /></label>}
-            <button disabled={!!loading || !mcpForm.name.trim() || !mcpForm.current_password
-              || (currentUser?.totp_enabled && !mcpForm.code.trim())} onClick={createMcpToken}><Plus size={14}/> Create token</button>
+            <button disabled={!!loading || !mcpForm.name.trim()} onClick={createMcpToken}><Plus size={14}/> Create token</button>
           </div>
           <label className="schedule-toggle mcp-write-toggle">
             <input type="checkbox" checked={mcpForm.can_write}
