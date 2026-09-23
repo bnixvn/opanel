@@ -318,7 +318,7 @@ def test_uninstall_takes_the_chains_away():
 def test_a_ban_covers_every_port():
     """A jail that banned only the port it caught still let the address reach
     every other service."""
-    assert "banaction = iptables-allports" in HELPER
+    assert "iptables-allports" in HELPER
 
 
 def test_each_jail_gets_its_chain_at_start_not_at_its_first_ban():
@@ -326,8 +326,17 @@ def test_each_jail_gets_its_chain_at_start_not_at_its_first_ban():
     existed, because sshd had a ban to restore and opanel-panel had banned
     nobody yet. The panel had no chain to position, and fail2ban would later
     insert one at the top of INPUT -- ahead of the admin rules that are meant
-    to outrank an automatic ban."""
-    assert "actionstart_on_demand = false" in HELPER
+    to outrank an automatic ban.
+
+    It has to be an action parameter. As a [DEFAULT] jail option it was written
+    to the file, accepted without complaint, and did nothing: fail2ban reads it
+    off the action, and iptables-allports ships conditional sections, which
+    makes it turn on-demand start on by itself.
+    """
+    assert "action = iptables-allports[actionstart_on_demand=false]" in HELPER
+    # The ineffective placement must not creep back: a bare jail-level line,
+    # rendered by the template as its own config entry.
+    assert '"actionstart_on_demand = false",' not in HELPER
 
 
 def test_the_chains_are_waited_for_before_being_repositioned():
