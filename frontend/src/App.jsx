@@ -29,7 +29,7 @@ const NGINX_REWRITE_MODES = [
   { value: 'codeigniter', label: 'CodeIgniter' },
   { value: 'seohburl', label: 'SEO HB URL' },
 ];
-const SETTINGS_PAGE_KEYS = ['settings', 'security', 'malware', 'php', 'firewall', 'waf', 'wafLogs', 'updates', 'services'];
+const SETTINGS_PAGE_KEYS = ['settings', 'security', 'malware', 'php', 'firewall', 'waf', 'wafLogs', 'updates', 'addons', 'services'];
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const PAGE_ROUTES = {
   dashboard: '/',
@@ -48,6 +48,7 @@ const PAGE_ROUTES = {
   waf: '/waf',
   wafLogs: '/waf-logs',
   updates: '/updates',
+  addons: '/addons',
   services: '/services',
 };
 const ROUTE_PAGES = new Map([
@@ -496,6 +497,12 @@ function App() {
   const [panelFaviconFile, setPanelFaviconFile] = useState(null);
   const [panelSslEmail, setPanelSslEmail] = useState('');
   const [updatesStatus, setUpdatesStatus] = useState(null);
+  const [addonList, setAddonList] = useState([]);
+  const [addonOpen, setAddonOpen] = useState('');
+  const [f2bSettings, setF2bSettings] = useState(null);
+  const [f2bDraft, setF2bDraft] = useState(null);
+  const [f2bBanned, setF2bBanned] = useState([]);
+  const [f2bLog, setF2bLog] = useState('');
   const [showUpdateLog, setShowUpdateLog] = useState(false);
   const [osUpdating, setOsUpdating] = useState(false);
   const [panelUpdating, setPanelUpdating] = useState(false);
@@ -3114,6 +3121,68 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     if (data) await loadWafAccessLogs({ ...wafAccessFilters, offset: 0 }, false);
   }
 
+  async function loadAddons(silent = false) {
+    const data = await request('/addons', { silent }, silent ? '' : 'Loading addons...');
+    if (data) setAddonList(data.addons || []);
+    return data?.addons || [];
+  }
+
+  async function installAddon(addon) {
+    const data = await request(`/addons/${addon.id}/install`, { method: 'POST' }, `Installing ${addon.name}...`);
+    if (data) {
+      setNotice(`${addon.name} is installing in the background. This page follows along.`);
+      loadAddons(true);
+    }
+  }
+
+  async function uninstallAddon(addon) {
+    // Removing an addon takes its protection away, so make the admin say the
+    // name rather than clicking through a generic confirm.
+    const typed = window.prompt(`Remove ${addon.name} and stop what it is doing?\n\nType the addon name to confirm:`);
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== addon.id) { setError('Name did not match; nothing was removed.'); return; }
+    const data = await request(`/addons/${addon.id}/uninstall`, { method: 'POST' }, `Removing ${addon.name}...`);
+    if (data) loadAddons(true);
+  }
+
+  async function setAddonRunning(addon, running) {
+    const data = await request(`/addons/${addon.id}/service`, {
+      method: 'POST', body: JSON.stringify({ running }),
+    }, running ? `Starting ${addon.name}...` : `Stopping ${addon.name}...`);
+    if (data) { setNotice(`${addon.name} ${running ? 'started' : 'stopped'}.`); loadAddons(true); }
+  }
+
+  async function loadFail2ban(silent = false) {
+    const [settings, banned, log] = await Promise.all([
+      request('/addons/fail2ban/settings', { silent: true }),
+      request('/addons/fail2ban/banned', { silent: true }),
+      request('/addons/fail2ban/log?lines=40', { silent: true }),
+    ]);
+    if (settings) { setF2bSettings(settings); setF2bDraft(prev => prev || settings); }
+    if (banned) setF2bBanned(banned.banned || []);
+    if (log) setF2bLog(log.log || '');
+  }
+
+  async function saveFail2banSettings() {
+    if (!f2bDraft) return;
+    const data = await request('/addons/fail2ban/settings', {
+      method: 'POST', body: JSON.stringify(f2bDraft),
+    }, 'Applying Fail2ban settings...');
+    if (data) {
+      setF2bSettings(data);
+      setF2bDraft(data);
+      setNotice('Fail2ban settings applied.');
+      loadFail2ban(true);
+    }
+  }
+
+  async function unbanAddress(address) {
+    const data = await request('/addons/fail2ban/unban', {
+      method: 'POST', body: JSON.stringify({ address }),
+    }, `Unbanning ${address}...`);
+    if (data) setF2bBanned(data.banned || []);
+  }
+
   async function loadUpdates(force = false) {
     const data = await request(`/updates/status${force ? '?refresh=true' : ''}`, {}, 'Loading update status...');
     if (data) setUpdatesStatus(data);
@@ -3333,6 +3402,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
       loadQuarantine();
       if (!websites.length) refreshAll();
     }
+    if (isAuthenticated && page === 'addons' && isAdmin) loadAddons();
     if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); loadNetworkStatus(); }
     if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); loadRestoreBackups(); loadDaBackups(); loadDaImportJobs(); }
   }, [isAuthenticated, page, currentUser?.role]);
@@ -3362,6 +3432,22 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     wafAccessFilters.q,
     wafAccessFilters.limit,
   ]);
+
+  // An install is an apt run in a background thread, so the only way the page
+  // learns it finished is to ask again. Polling stops as soon as nothing is busy.
+  useEffect(() => {
+    if (page !== 'addons' || !isAdmin) return undefined;
+    if (!addonList.some(addon => addon.busy)) return undefined;
+    const timer = setInterval(() => { loadAddons(true); }, 3000);
+    return () => clearInterval(timer);
+  }, [page, isAdmin, addonList]);
+
+  // Fail2ban's own panels are only worth fetching once it is actually there.
+  useEffect(() => {
+    if (page !== 'addons' || !isAdmin) return;
+    const f2b = addonList.find(addon => addon.id === 'fail2ban');
+    if (f2b && f2b.installed) loadFail2ban(true);
+  }, [page, isAdmin, addonList.find(a => a.id === 'fail2ban')?.installed]);
 
   useEffect(() => { setMobileMenuOpen(false); }, [page]);
 
@@ -3393,6 +3479,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     ['waf', 'WAF', Shield],
     ['wafLogs', 'Access Logs', FileText],
     ...(isAdmin ? [['updates', 'Updates', RefreshCw]] : []),
+    ...(isAdmin ? [['addons', 'Addons', PackageOpen]] : []),
     ...(isAdmin ? [['services', 'Services Status', Server]] : []),
   ];
 
@@ -4507,6 +4594,149 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
           </div>}
         </div>
       </div>}
+    </section>;
+  }
+
+  function renderAddonFail2ban(addon) {
+    const draft = f2bDraft || {};
+    const dirty = f2bSettings && JSON.stringify(draft) !== JSON.stringify(f2bSettings);
+    const setDraft = (patch) => setF2bDraft(prev => ({ ...(prev || f2bSettings || {}), ...patch }));
+    return <>
+      <div className="addon-panel">
+        <div className="addon-panel-head">
+          <strong>Ban rules</strong>
+          <span className="hint">Applied to both jails.</span>
+        </div>
+        <div className="firewall-form addon-form">
+          <label>
+            <span>Failures before a ban</span>
+            <input type="number" min="1" max="100" value={draft.maxretry ?? 5}
+              onChange={e => setDraft({ maxretry: Number(e.target.value) })} />
+          </label>
+          <label>
+            <span>Counted within (seconds)</span>
+            <input type="number" min="10" value={draft.findtime ?? 600}
+              onChange={e => setDraft({ findtime: Number(e.target.value) })} />
+          </label>
+          <label>
+            <span>Ban lasts (seconds)</span>
+            <input type="number" min="-1" value={draft.bantime ?? 3600}
+              onChange={e => setDraft({ bantime: Number(e.target.value) })} />
+          </label>
+          <label>
+            <span>Watch SSH</span>
+            <select value={draft.jail_sshd ? 'on' : 'off'} onChange={e => setDraft({ jail_sshd: e.target.value === 'on' })}>
+              <option value="on">On</option><option value="off">Off</option>
+            </select>
+          </label>
+          <label>
+            <span>Watch panel logins</span>
+            <select value={draft.jail_panel ? 'on' : 'off'} onChange={e => setDraft({ jail_panel: e.target.value === 'on' })}>
+              <option value="on">On</option><option value="off">Off</option>
+            </select>
+          </label>
+          <label className="addon-form-wide">
+            <span>Never ban</span>
+            <input type="text" placeholder="203.0.113.7 198.51.100.0/24" value={draft.ignoreip ?? ''}
+              onChange={e => setDraft({ ignoreip: e.target.value })} />
+          </label>
+        </div>
+        <p className="hint">Ban lasts <code>-1</code> to ban permanently. Loopback is always exempt. Put your own
+          address in Never ban so a wrong rule cannot lock you out of the panel.</p>
+        <div className="actions">
+          <button disabled={!!loading || !dirty} onClick={saveFail2banSettings}><Save size={14}/> Apply settings</button>
+          {dirty && <button className="secondary-light" disabled={!!loading}
+            onClick={() => setF2bDraft(f2bSettings)}><RotateCcw size={14}/> Discard changes</button>}
+        </div>
+      </div>
+
+      <div className="addon-panel">
+        <div className="addon-panel-head">
+          <strong>Banned right now</strong>
+          <button className="secondary-light" disabled={!!loading} onClick={() => loadFail2ban()}><RefreshCw size={13}/> Refresh</button>
+        </div>
+        {f2bBanned.length === 0
+          ? <p className="hint">Nothing is banned.</p>
+          : <table className="table addon-ban-table"><thead><tr><th>Address</th><th>Jail</th><th></th></tr></thead>
+              <tbody>{f2bBanned.map(entry => <tr key={`${entry.jail}-${entry.address}`}>
+                <td><code>{entry.address}</code></td>
+                <td>{entry.jail}</td>
+                <td className="row-actions"><button className="secondary-light" disabled={!!loading}
+                  onClick={() => unbanAddress(entry.address)}><Check size={13}/> Unban</button></td>
+              </tr>)}</tbody></table>}
+      </div>
+
+      {f2bLog && <div className="addon-panel">
+        <div className="addon-panel-head"><strong>Recent activity</strong></div>
+        <pre className="addon-log">{f2bLog}</pre>
+      </div>}
+    </>;
+  }
+
+  function renderAddons() {
+    if (!isAdmin) return <section className="section"><h2>Addons</h2><p className="hint">No permission.</p></section>;
+    return <section className="section">
+      <div className="section-title">
+        <div>
+          <h2>Addons</h2>
+          <p className="hint">Optional components this panel release can install for you. Each one ships with the
+            panel, so a new addon arrives with a panel update.</p>
+        </div>
+        <button className="secondary-light" disabled={!!loading} onClick={() => loadAddons()}><RefreshCw size={14}/> Refresh</button>
+      </div>
+
+      {addonList.length === 0 && <p className="hint">No addons in this release.</p>}
+
+      <div className="addon-grid">
+        {addonList.map(addon => {
+          const open = addonOpen === addon.id;
+          const stateBadge = addon.busy
+            ? <span className="badge warn">{addon.busy_action === 'uninstall' ? 'Removing' : 'Installing'}</span>
+            : !addon.installed
+              ? <span className="badge">Not installed</span>
+              : addon.running
+                ? <span className="badge ok">Running</span>
+                : <span className="badge warn">Stopped</span>;
+          return <div className="addon-card" key={addon.id}>
+            <div className="addon-card-head">
+              <div className="addon-card-title">
+                <PackageOpen size={16}/>
+                <strong>{addon.name}</strong>
+                {addon.version && <span className="hint addon-version">v{addon.version}</span>}
+              </div>
+              {stateBadge}
+            </div>
+            <p className="addon-summary">{addon.summary}</p>
+            {addon.installed && addon.enabled === false &&
+              <p className="hint">Installed but not set to start on boot.</p>}
+            {addon.last_error && <p className="hint addon-error"><AlertCircle size={13}/> {addon.last_error}</p>}
+            {addon.detail && !addon.last_error && <p className="hint">{addon.detail}</p>}
+            {addon.installed_at && <p className="hint">Installed {addon.installed_at}{addon.installed_by ? ` by ${addon.installed_by}` : ''}</p>}
+
+            <div className="actions addon-actions">
+              {!addon.installed && <button disabled={!!loading || addon.busy} onClick={() => installAddon(addon)}>
+                <Download size={14}/> Install</button>}
+              {addon.installed && !addon.running && <button disabled={!!loading || addon.busy}
+                onClick={() => setAddonRunning(addon, true)}><Play size={14}/> Start</button>}
+              {addon.installed && addon.running && <button className="secondary-light" disabled={!!loading || addon.busy}
+                onClick={() => setAddonRunning(addon, false)}><Square size={14}/> Stop</button>}
+              {addon.installed && <button className="secondary-light" disabled={!!loading || addon.busy}
+                onClick={() => setAddonOpen(open ? '' : addon.id)}>
+                <SettingsIcon size={14}/> {open ? 'Hide' : 'Manage'}</button>}
+              {addon.installed && <button className="danger-light" disabled={!!loading || addon.busy}
+                onClick={() => uninstallAddon(addon)}><Trash2 size={14}/> Remove</button>}
+            </div>
+
+            {open && <div className="addon-detail">
+              <p className="addon-description">{addon.description}</p>
+              {(addon.notes || []).length > 0 && <ul className="addon-notes">
+                {addon.notes.map((note, idx) => <li key={idx}>{note}</li>)}
+              </ul>}
+              {addon.id === 'fail2ban' && renderAddonFail2ban(addon)}
+            </div>}
+          </div>;
+        })}
+      </div>
     </section>;
   }
 
@@ -5646,6 +5876,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     if (page === 'updates') return renderUpdates();
     // Admin only, and guarded here too so a bookmarked /services does not
     // paint a page whose every request will 403.
+    if (page === 'addons') return isAdmin ? renderAddons() : renderDashboard();
     if (page === 'services') return isAdmin ? renderServices() : renderDashboard();
     if (page === 'settings') return renderPanelSettings();
     if (page === 'users') return renderUsers();

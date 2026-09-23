@@ -1259,3 +1259,26 @@ class ProvisioningEnvelope(BaseModel):
     success: bool = True
     data: Optional[Any] = None
     error: Optional[str] = None
+
+
+# --- Addons ----------------------------------------------------------------
+class AddonServiceToggle(BaseModel):
+    running: bool
+
+
+class Fail2banSettingsIn(BaseModel):
+    """Every field optional: the page saves only what changed.
+
+    Ranges are enforced in the service layer rather than here, so the same
+    limits apply however the values arrive.
+    """
+    maxretry: Optional[int] = None
+    bantime: Optional[int] = None
+    findtime: Optional[int] = None
+    jail_sshd: Optional[bool] = None
+    jail_panel: Optional[bool] = None
+    ignoreip: Optional[str] = None
+
+
+class Fail2banUnbanIn(BaseModel):
+    address: str

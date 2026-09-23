@@ -1258,3 +1258,31 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
 .network-address-row+.network-address-row{border-top:1px solid var(--border)}
 .network-address-row strong{min-width:56px;font-size:12px;font-weight:600;color:var(--text-secondary)}
 .network-address-row code{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 8px;font-size:13px;word-break:break-all}
+
+/* --- Addons ---------------------------------------------------------------
+   Every colour here comes from the existing tokens, so both themes follow
+   without a second definition. */
+.addon-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-top:12px}
+.addon-card{display:flex;flex-direction:column;gap:8px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;min-width:0}
+.addon-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.addon-card-title{display:flex;align-items:center;gap:8px;min-width:0}
+.addon-card-title strong{font-size:15px}
+.addon-version{font-size:12px;font-weight:600;color:var(--text-secondary)}
+.addon-summary{margin:0;font-size:13px;color:var(--text-secondary);line-height:1.5}
+.addon-error{display:flex;align-items:center;gap:6px;color:var(--danger-text)}
+.addon-actions{flex-wrap:wrap;margin-top:2px}
+.addon-detail{display:grid;gap:12px;border-top:1px solid var(--border);margin-top:4px;padding-top:12px}
+.addon-description{margin:0;font-size:13px;line-height:1.6}
+.addon-notes{margin:0;padding-left:18px;display:grid;gap:6px;font-size:12px;color:var(--text-secondary);line-height:1.5}
+.addon-panel{display:grid;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;min-width:0}
+.addon-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.addon-form{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.addon-form-wide{grid-column:1/-1}
+.addon-ban-table{width:100%}
+.addon-ban-table code{word-break:break-all}
+/* Wide content scrolls inside its own box; the page body never does. */
+.addon-log{margin:0;max-height:260px;overflow:auto;background:var(--console-bg);color:var(--console-text);border:1px solid var(--console-border);border-radius:var(--radius-sm);padding:10px;font-family:var(--font-mono);font-size:12px;line-height:1.5;white-space:pre}
+@media(max-width:520px){
+  .addon-grid{grid-template-columns:1fr}
+  .addon-card{padding:13px}
+}

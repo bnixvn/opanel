@@ -1,6 +1,7 @@
 import base64
 import logging
 import json
+import re
 import secrets
 import time
 from collections import defaultdict, deque
@@ -82,6 +83,33 @@ def _client_key(request: Request) -> str:
 def _username_key(username: str) -> str:
     name = (username or "").strip().lower()
     return f"user:{name}" if name else "user:_unknown"
+
+
+# Anything outside this is dropped from a logged name. The Fail2ban addon reads
+# these lines out of the journal and bans the address it finds, so a name is an
+# attacker-supplied string on a path that decides who gets blocked: a newline
+# would forge a whole entry, and a spelled-out " from <address> " would offer
+# the filter a second candidate. Removing the characters outright is what makes
+# both impossible -- there is nothing left to escape.
+_LOG_NAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._@-]+")
+_LOG_NAME_MAX = 64
+
+
+def _safe_log_name(username: str) -> str:
+    cleaned = _LOG_NAME_SAFE_RE.sub("", username or "")[:_LOG_NAME_MAX]
+    return cleaned or "_unknown"
+
+
+def _log_auth_failure(request: Request, username: str, reason: str) -> None:
+    """Record a failed sign-in where Fail2ban's journal filter can see it.
+
+    The address goes last and the name is stripped to a safe charset, so the
+    filter's anchored `from <HOST>$` can only ever match the real peer.
+    """
+    logging.getLogger("opanel.auth").warning(
+        "opanel-auth: authentication failure (%s) for user '%s' from %s",
+        reason, _safe_log_name(username), _client_key(request),
+    )
 
 
 def _is_secure_request(request: Request) -> bool:
@@ -410,6 +438,7 @@ def login(
     if not user or not user.is_active or not password_ok:
         _record_failure(ip_key, apply_lockout=True)
         _record_failure(user_key, apply_lockout=False)
+        _log_auth_failure(request, form.username, "password")
         # Only now. A correct password never reaches this branch, so the real
         # owner cannot be locked out, while an attacker guessing against one
         # account is throttled however many addresses they spread across.
@@ -428,6 +457,9 @@ def login(
     def _second_factor_failed(detail: str):
         _record_failure(ip_key, apply_lockout=True)
         _record_failure(user_key, apply_lockout=False)
+        # Worth banning on too: reaching here means the password was already
+        # right, so repeated failures are someone working on a live credential.
+        _log_auth_failure(request, form.username, "second factor")
         _enforce_rate_limit(user_key)
         return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
 

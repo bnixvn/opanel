@@ -3583,6 +3583,247 @@ cmd="${1:-}"
 shift || true
 audit_log "$@"
 
+# --- Addons -----------------------------------------------------------------
+#
+# The panel may name an addon; it may never supply a command. This array is the
+# helper's own copy of the registry in backend/app/services/addons.py, so a
+# panel that has been talked into asking for something outside it gets nothing.
+# Two lists that must agree is a real cost, and the alternative -- letting the
+# caller say what to install -- is handing root to whoever can reach the API.
+ADDON_IDS=("fail2ban")
+
+require_addon_id() {
+  local id="${1:-}" known
+  [[ "$id" =~ ^[a-z][a-z0-9-]{1,31}$ ]] || deny "invalid addon id"
+  for known in "${ADDON_IDS[@]}"; do
+    if [[ "$id" == "$known" ]]; then
+      return 0
+    fi
+  done
+  deny "unknown addon: $id"
+}
+
+require_addon_ip() {
+  # Loose on shape, strict on alphabet: fail2ban-client is the authority on
+  # whether an address exists, but nothing that could reach a shell gets past
+  # here.
+  local value="${1:-}"
+  [[ "$value" =~ ^[0-9a-fA-F.:]{3,49}$ ]] || deny "invalid address"
+}
+
+# --- Fail2ban ---------------------------------------------------------------
+FAIL2BAN_JAIL_FILE="/etc/fail2ban/jail.d/opanel.local"
+FAIL2BAN_FILTER_FILE="/etc/fail2ban/filter.d/opanel-panel.conf"
+FAIL2BAN_SETTINGS_FILE="/var/lib/opanel/addons/fail2ban-settings.json"
+
+addon_fail2ban_status() {
+  local installed=0 running=0 enabled=0 version=""
+  if command -v fail2ban-server >/dev/null 2>&1; then
+    installed=1
+    version="$(fail2ban-server --version 2>/dev/null \
+      | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1 || true)"
+  fi
+  if systemctl is-active --quiet fail2ban 2>/dev/null; then running=1; fi
+  if systemctl is-enabled --quiet fail2ban 2>/dev/null; then enabled=1; fi
+  echo "installed=${installed} running=${running} enabled=${enabled} version=${version}"
+}
+
+addon_fail2ban_write_filter() {
+  install -d -o root -g root -m 0755 /etc/fail2ban/filter.d
+  # Matches the line app/api/auth.py logs on a failed sign-in. The address is
+  # last and anchored, and the name has already been stripped to a safe
+  # alphabet there, so <HOST> cannot be fed a forged candidate.
+  cat >"$FAIL2BAN_FILTER_FILE" <<'FILTER'
+# Managed by opanel -- edits are overwritten when the addon is reconfigured.
+[Definition]
+failregex = ^\s*opanel-auth: authentication failure \([^)]*\) for user '[^']*' from <HOST>\s*$
+ignoreregex =
+FILTER
+  chmod 0644 "$FAIL2BAN_FILTER_FILE"
+}
+
+addon_fail2ban_write_jails() {
+  # Reads the settings JSON and renders jail.d/opanel.local. Python does the
+  # parsing so a value never passes through word splitting.
+  local panel_port
+  panel_port="$(env_get PANEL_PORT)"
+  panel_port="${panel_port:-$DEFAULT_PANEL_PORT}"
+  install -d -o root -g root -m 0755 /etc/fail2ban/jail.d
+  python3 - "$FAIL2BAN_SETTINGS_FILE" "$FAIL2BAN_JAIL_FILE" "$panel_port" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+settings_path, jail_path, panel_port = sys.argv[1], sys.argv[2], sys.argv[3]
+
+defaults = {
+    "maxretry": 5,
+    "bantime": 3600,
+    "findtime": 600,
+    "jail_sshd": True,
+    "jail_panel": True,
+    "ignoreip": "",
+}
+try:
+    raw = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+except Exception:
+    raw = {}
+cfg = dict(defaults)
+if isinstance(raw, dict):
+    for key in defaults:
+        if key in raw:
+            cfg[key] = raw[key]
+
+
+def whole(value, low, high, fallback):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return number if low <= number <= high else fallback
+
+
+year = 365 * 24 * 3600
+cfg["maxretry"] = whole(cfg["maxretry"], 1, 100, 5)
+cfg["findtime"] = whole(cfg["findtime"], 10, year, 600)
+bantime = -1 if str(cfg["bantime"]).strip() == "-1" else whole(cfg["bantime"], 10, year, 3600)
+
+# Loopback is always exempt; a panel is operated from the box itself.
+ignore = ["127.0.0.1/8", "::1"]
+for token in str(cfg.get("ignoreip") or "").replace(",", " ").split():
+    if re.fullmatch(r"[0-9a-fA-F:.]+(/\d{1,3})?", token) and len(token) <= 49:
+        if token not in ignore:
+            ignore.append(token)
+
+port = panel_port if re.fullmatch(r"\d{1,5}", panel_port or "") else "2222"
+
+lines = [
+    "# Managed by opanel -- edited through the panel's Addons page.",
+    "[DEFAULT]",
+    "# The journal is where the panel's own log lines land, and sshd's too on a",
+    "# systemd box; no log file has to exist for either jail to work.",
+    "backend = systemd",
+    f"bantime = {bantime}",
+    f"findtime = {cfg['findtime']}",
+    f"maxretry = {cfg['maxretry']}",
+    "ignoreip = " + " ".join(ignore),
+    "# A banned address is blocked on every port rather than only the one it",
+    "# was caught on: a single chain per jail is also what lets the panel keep",
+    "# these jumps above its own default port allowances.",
+    "banaction = iptables-allports",
+    "",
+]
+
+if bool(cfg["jail_sshd"]):
+    lines += ["[sshd]", "enabled = true", ""]
+else:
+    lines += ["[sshd]", "enabled = false", ""]
+
+if bool(cfg["jail_panel"]):
+    lines += [
+        "[opanel-panel]",
+        "enabled = true",
+        "filter = opanel-panel",
+        f"port = {port}",
+        "journalmatch = _SYSTEMD_UNIT=opanel-api.service",
+        "",
+    ]
+else:
+    lines += ["[opanel-panel]", "enabled = false", ""]
+
+Path(jail_path).write_text("\n".join(lines), encoding="utf-8")
+print(f"wrote {jail_path}")
+PY
+  chmod 0644 "$FAIL2BAN_JAIL_FILE"
+}
+
+addon_fail2ban_install() {
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update --allow-releaseinfo-change >/dev/null 2>&1 || true
+  apt-get install -y fail2ban || deny "apt-get install fail2ban failed"
+  # Without python3-systemd the journal backend cannot read anything, and both
+  # jails would sit enabled and blind.
+  apt-get install -y python3-systemd >/dev/null 2>&1 || true
+  install -d -o opanel -g opanel -m 0750 /var/lib/opanel/addons 2>/dev/null || \
+    install -d -m 0750 /var/lib/opanel/addons
+  # Debian ships a jail.conf that enables sshd with its own defaults. Ours is
+  # in jail.d, which is read after it, so these values win.
+  addon_fail2ban_write_filter
+  addon_fail2ban_write_jails
+  systemctl enable fail2ban >/dev/null 2>&1 || true
+  systemctl restart fail2ban || deny "fail2ban failed to start -- check: journalctl -u fail2ban"
+  iptables_restore_addon_precedence
+  echo "fail2ban installed and started"
+}
+
+addon_fail2ban_uninstall() {
+  export DEBIAN_FRONTEND=noninteractive
+  systemctl disable --now fail2ban >/dev/null 2>&1 || true
+  # Purge drops its chains; without this a removed addon leaves bans in place
+  # with nothing left to lift them.
+  apt-get purge -y fail2ban >/dev/null 2>&1 || apt-get remove -y fail2ban >/dev/null 2>&1 || true
+  rm -f "$FAIL2BAN_JAIL_FILE" "$FAIL2BAN_FILTER_FILE"
+  echo "fail2ban removed"
+}
+
+addon_fail2ban_banned() {
+  command -v fail2ban-client >/dev/null 2>&1 || deny "fail2ban is not installed"
+  local jails jail addresses
+  jails="$(fail2ban-client status 2>/dev/null \
+    | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' ' ' || true)"
+  for jail in $jails; do
+    [[ "$jail" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || continue
+    addresses="$(fail2ban-client status "$jail" 2>/dev/null \
+      | sed -n 's/.*Banned IP list:[[:space:]]*//p' || true)"
+    echo "${jail}: ${addresses}"
+  done
+}
+
+addon_fail2ban_log() {
+  local count="${1:-40}"
+  [[ "$count" =~ ^[0-9]{1,3}$ ]] || count=40
+  if [[ -f /var/log/fail2ban.log ]]; then
+    tail -n "$count" /var/log/fail2ban.log
+  else
+    journalctl -u fail2ban -n "$count" --no-pager 2>/dev/null || true
+  fi
+}
+
+# --- Keeping addon firewall rules effective ---------------------------------
+iptables_restore_addon_precedence() {
+  # OPANEL_INPUT accepts the default ports (22/80/443/the panel) from any
+  # source, and an ACCEPT inside a user chain ends traversal of INPUT. A f2b
+  # jump below it therefore never runs: fail2ban goes on listing the ban while
+  # the packets have already been accepted -- a control that reports success
+  # and does nothing. iptables_reorder_managed_jumps re-inserts the panel's
+  # three jumps at 1/2/3 on every firewall change, which is what pushes f2b
+  # down, so this runs after it.
+  #
+  # Final order is BLOCKLIST, USER, f2b..., OPANEL_INPUT: an admin's explicit
+  # rule outranks an automatic ban, and an automatic ban outranks a blanket
+  # default allow.
+  local binary target jump
+  for binary in iptables ip6tables; do
+    local -a jumps=()
+    while read -r jump; do
+      if [[ -n "$jump" ]]; then jumps+=("$jump"); fi
+    done < <("$binary" -S INPUT 2>/dev/null \
+      | awk '{for (i = 1; i < NF; i++) if ($i == "-j" && $(i + 1) ~ /^f2b-/) print $(i + 1)}' \
+      | sort -u || true)
+    if [[ ${#jumps[@]} -eq 0 ]]; then continue; fi
+    for jump in "${jumps[@]}"; do
+      while "$binary" -D INPUT -j "$jump" 2>/dev/null; do :; done
+    done
+    target="$("$binary" -L INPUT -n --line-numbers 2>/dev/null \
+      | awk '$2 == "OPANEL_INPUT" { print $1; exit }' || true)"
+    if [[ ! "$target" =~ ^[0-9]+$ ]]; then target=1; fi
+    for jump in "${jumps[@]}"; do
+      "$binary" -I INPUT "$target" -j "$jump" 2>/dev/null || true
+    done
+  done
+}
+
 case "$cmd" in
 
   # ---- systemctl --------------------------------------------------------
@@ -3853,6 +4094,83 @@ case "$cmd" in
     ;;
 
   # ---- ClamAV malware scanning (optional) -------------------------------
+  addon-status)
+    require_addon_id "${2:-}"
+    case "$2" in
+      fail2ban) addon_fail2ban_status ;;
+    esac
+    ;;
+
+  addon-install)
+    require_addon_id "${2:-}"
+    case "$2" in
+      fail2ban) addon_fail2ban_install ;;
+    esac
+    ;;
+
+  addon-uninstall)
+    require_addon_id "${2:-}"
+    case "$2" in
+      fail2ban) addon_fail2ban_uninstall ;;
+    esac
+    ;;
+
+  addon-enable)
+    require_addon_id "${2:-}"
+    case "$2" in
+      fail2ban)
+        systemctl enable fail2ban >/dev/null 2>&1 || true
+        systemctl restart fail2ban || deny "fail2ban failed to start"
+        iptables_restore_addon_precedence
+        echo "fail2ban started"
+        ;;
+    esac
+    ;;
+
+  addon-disable)
+    require_addon_id "${2:-}"
+    case "$2" in
+      fail2ban)
+        systemctl disable --now fail2ban >/dev/null 2>&1 || true
+        echo "fail2ban stopped"
+        ;;
+    esac
+    ;;
+
+  addon-fail2ban-configure)
+    # Settings arrive as JSON on stdin, so no value is ever interpolated into a
+    # command line. Every field is re-validated while rendering the file: the
+    # panel validates for the user's benefit, the helper for the box's.
+    command -v fail2ban-client >/dev/null 2>&1 || deny "fail2ban is not installed"
+    install -d -o opanel -g opanel -m 0750 /var/lib/opanel/addons 2>/dev/null || \
+      install -d -m 0750 /var/lib/opanel/addons
+    umask 077
+    cat >"$FAIL2BAN_SETTINGS_FILE.tmp"
+    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$FAIL2BAN_SETTINGS_FILE.tmp" \
+      || { rm -f "$FAIL2BAN_SETTINGS_FILE.tmp"; deny "settings were not valid JSON"; }
+    mv "$FAIL2BAN_SETTINGS_FILE.tmp" "$FAIL2BAN_SETTINGS_FILE"
+    addon_fail2ban_write_filter
+    addon_fail2ban_write_jails
+    systemctl restart fail2ban || deny "fail2ban rejected the new settings -- check: journalctl -u fail2ban"
+    iptables_restore_addon_precedence
+    echo "fail2ban reconfigured"
+    ;;
+
+  addon-fail2ban-banned)
+    addon_fail2ban_banned
+    ;;
+
+  addon-fail2ban-unban)
+    require_addon_ip "${2:-}"
+    command -v fail2ban-client >/dev/null 2>&1 || deny "fail2ban is not installed"
+    fail2ban-client unban "$2" || deny "could not unban $2"
+    echo "$2 unbanned"
+    ;;
+
+  addon-fail2ban-log)
+    addon_fail2ban_log "${2:-40}"
+    ;;
+
   clamav-install)
     install_clamav_engine
     ;;
@@ -4177,6 +4495,10 @@ case "$cmd" in
     iptables_reorder_managed_jumps
     iptables_add_default_allowances
     firewall_blocklist_apply 2>/dev/null || true
+    # The reorder above just re-inserted the panel's jumps at 1/2/3, pushing any
+    # addon chain below the blanket port allowances and silently disabling every
+    # ban it holds. Put them back on top of OPANEL_INPUT.
+    iptables_restore_addon_precedence 2>/dev/null || true
     # Without this the chains live only in memory. A box that reboots comes
     # back with whatever netfilter-persistent last saved -- which on one live
     # server meant OPANEL_INPUT and OPANEL_USER at zero references and an
