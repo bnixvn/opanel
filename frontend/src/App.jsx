@@ -409,6 +409,8 @@ function App() {
   const [daBackups, setDaBackups] = useState([]);
   const [daBackupDir, setDaBackupDir] = useState('');
   const [daImportJobs, setDaImportJobs] = useState([]);
+  const [daPicks, setDaPicks] = useState([]);
+  const [daOverwrite, setDaOverwrite] = useState(false);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState(() => standaloneEditor?.websiteId || '');
   const [sslMode, setSslMode] = useState('letsencrypt');
   const [manualSslForm, setManualSslForm] = useState({ certificate: '', private_key: '', ca_bundle: '' });
@@ -2671,6 +2673,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
       const data = await res.json();
       if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Failed to load DA backups.')); return; }
       setDaBackups(data.items || []);
+      setDaPicks(prev => prev.filter(name => (data.items || []).some(item => item.filename === name)));
       setDaBackupDir(data.directory || '');
     } catch (err) { setError('Failed to load DA backups.'); }
   }
@@ -2720,46 +2723,29 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     } catch (err) { setError('Failed to delete DA backup.'); }
   }
 
-  async function startDaImport(backupFile) {
-    if (!confirm(`Import DirectAdmin backup "${backupFile}"?\n\nThis will create panel users, websites, databases, and configure OLS vhosts.`)) return;
-    try {
-      setError(''); setLoading('Importing DA backup...');
-      const csrfToken = readCookie('opanel_csrf');
-      const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
-      const url = new URL(`${API}/maintenance/da-import`, window.location.origin);
-      url.searchParams.set('backup_file', backupFile);
-      const res = await fetch(url, { method: 'POST', credentials: 'include', headers });
-      const data = await res.json();
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Import failed.')); return; }
-      setNotice(`DA import started: ${data.backup_file}`);
-      await loadDaImportJobs();
-      // Poll for completion
-      const pollJob = async () => {
-        let attempts = 0;
-        const maxAttempts = 120; // 2 minutes max
-        while (attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          const pollRes = await fetch(`${API}/maintenance/da-import/jobs/${data.job_id}`, { credentials: 'include' });
-          if (pollRes.ok) {
-            const job = await pollRes.json();
-            if (job.status === 'done') {
-              setNotice(`DA import complete: ${job.message}`);
-              await loadDaImportJobs();
-              await loadDaBackups();
-              return;
-            } else if (job.status === 'error') {
-              setError(`DA import failed: ${job.error || job.message}`);
-              await loadDaImportJobs();
-              return;
-            }
-          }
-          attempts++;
-        }
-        await loadDaImportJobs();
-      };
-      pollJob();
-    } catch (err) { setError('Failed to start DA import.'); }
-    finally { setLoading(''); }
+  async function startDaImport(files) {
+    if (!files.length) return;
+    const names = files.map(name => `  - ${name}`).join('\n');
+    const effect = daOverwrite
+      ? `Overwrite is on. A user or website already on this server is replaced by what the archive carries: its files are copied over the ones there, its databases are re-imported, and the panel user gets a new password. Websites the account has that the archive does not mention are kept.`
+      : `Overwrite is off. An archive whose user or domains are already on this server stops without touching them; the others still import.`;
+    const order = files.length > 1 ? `\n\nThey run one after another on the server, so you can leave this page.` : '';
+    if (!confirm(`Import ${files.length} DirectAdmin backup(s)?
+
+${names}
+
+This creates panel users, websites, databases and OLS vhosts.
+
+${effect}${order}`)) return;
+    const data = await request('/maintenance/da-import-batch', {
+      method: 'POST', body: JSON.stringify({ backup_files: files, overwrite: daOverwrite }),
+    }, 'Queueing DA import...');
+    if (!data) return;
+    setDaPicks(prev => prev.filter(name => !files.includes(name)));
+    const queued = data.jobs?.length || 0;
+    const skipped = data.skipped || [];
+    setNotice(`Queued ${queued} DA import(s).${skipped.length ? ` Already queued, not added again: ${skipped.join(', ')}.` : ''}`);
+    await loadDaImportJobs();
   }
 
   async function openPhpMyAdmin(databaseId) {
@@ -3380,6 +3366,25 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     const timer = setInterval(loadBackupJobs, jobsRunning ? 2000 : 5000);
     return () => clearInterval(timer);
   }, [isAuthenticated, page, selectedWebsiteId, selectedBackupUserId, jobsRunning]);
+
+  // A batch of DA imports can run for hours, so follow the queue for as long
+  // as anything is in it rather than for a fixed number of polls.
+  const daQueued = Object.fromEntries(daImportJobs
+    .filter(job => job.status === 'running' || job.status === 'queued')
+    .map(job => [job.backup_file, job.status]));
+  const daImportsRunning = Object.keys(daQueued).length > 0;
+  const daImportsWereRunning = useRef(false);
+
+  useEffect(() => {
+    if (!isAuthenticated || page !== 'backups' || !daImportsRunning) return undefined;
+    const timer = setInterval(loadDaImportJobs, 3000);
+    return () => clearInterval(timer);
+  }, [isAuthenticated, page, daImportsRunning]);
+
+  useEffect(() => {
+    if (daImportsWereRunning.current && !daImportsRunning) setNotice('DA import queue finished. See Import Jobs for each archive.');
+    daImportsWereRunning.current = daImportsRunning;
+  }, [daImportsRunning]);
 
   useEffect(() => {
     if (isAuthenticated && page === 'users') { loadUsers(); loadPlans(); }
@@ -4448,14 +4453,44 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
 
         <h4 style={{margin: '1rem 0 0.5rem'}}>Archives</h4>
         {daBackups.length === 0 && <EmptyState icon={Archive} message="No DA backup archives found. Upload a DirectAdmin backup to get started." />}
+        {daBackups.length > 0 && <div className="restore-toolbar">
+          <label className="schedule-toggle">
+            <input
+              type="checkbox"
+              checked={daPicks.length > 0 && daPicks.length === daBackups.length}
+              ref={box => { if (box) box.indeterminate = daPicks.length > 0 && daPicks.length < daBackups.length; }}
+              onChange={e => setDaPicks(e.target.checked ? daBackups.map(item => item.filename) : [])}
+            />
+            <span>Select all</span>
+          </label>
+          <label className="schedule-toggle" title="Replace a panel user or website that is already on this server instead of stopping on it">
+            <input type="checkbox" checked={daOverwrite} onChange={e => setDaOverwrite(e.target.checked)} />
+            <span>Overwrite existing</span>
+          </label>
+          <span className="hint">{daPicks.length ? `${daPicks.length} selected` : `${daBackups.length} archive${daBackups.length === 1 ? '' : 's'}`}</span>
+          <button disabled={!!loading || daPicks.length === 0} onClick={() => startDaImport(daPicks)}>
+            <RotateCcw size={14}/> Import selected
+          </button>
+        </div>}
         <div className="backup-list">
-          {daBackups.map(item => <div className="backup-item" key={item.filename}>
-            <span>{item.filename}<small>{(item.size / 1024 / 1024).toFixed(1)} MB</small></span>
-            <div className="actions">
-              <button disabled={!!loading} onClick={() => startDaImport(item.filename)}><RotateCcw size={14}/> Import</button>
-              <button className="danger" disabled={!!loading} onClick={() => deleteDaBackup(item.filename)}><Trash2 size={14}/></button>
-            </div>
-          </div>)}
+          {daBackups.map(item => {
+            const picked = daPicks.includes(item.filename);
+            return <div className={`backup-item restore-row${picked ? ' picked' : ''}`} key={item.filename}>
+              <label className="restore-pick">
+                <input
+                  type="checkbox"
+                  checked={picked}
+                  onChange={() => setDaPicks(prev => picked ? prev.filter(f => f !== item.filename) : [...prev, item.filename])}
+                />
+              </label>
+              <span>{item.filename}<small>{formatBytes(item.size)}</small></span>
+              <span>{daQueued[item.filename] && <span className="badge">{daQueued[item.filename] === 'running' ? 'Running' : 'Queued'}</span>}</span>
+              <div className="actions">
+                <button disabled={!!loading} onClick={() => startDaImport([item.filename])}><RotateCcw size={14}/> Import</button>
+                <button className="danger" disabled={!!loading} onClick={() => deleteDaBackup(item.filename)}><Trash2 size={14}/></button>
+              </div>
+            </div>;
+          })}
         </div>
 
         {daImportJobs.length > 0 && <>
@@ -4465,10 +4500,12 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
               <span>
                 {job.backup_file}
                 <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'} style={{marginLeft: '0.5rem'}}>{job.status}</span>
+                {job.overwrite && <span className="badge" style={{marginLeft: '0.5rem'}}>overwrite</span>}
                 <small>{job.message || '...'}</small>
                 {job.summary && <small style={{whiteSpace: 'pre-wrap'}}>
                   Domains: {job.summary.imported_domains?.join(', ') || 'none'}{job.summary.subdomains?.length ? ` | Subdomains: ${job.summary.subdomains.length}` : ''}{job.summary.databases?.length ? ` | DBs: ${job.summary.databases.length}` : ''}{job.summary.ssl_enabled_domains?.length ? ` | SSL: ${job.summary.ssl_enabled_domains.join(', ')}` : ''}
                 </small>}
+                {job.summary?.warnings?.map((warning, i) => <small key={i}>{warning}</small>)}
                 {job.error && <small style={{color: 'var(--danger)'}}>{job.error}</small>}
               </span>
             </div>)}

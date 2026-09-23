@@ -903,6 +903,15 @@ class UserRestoreBackup(BaseModel):
     backup_file: str
 
 
+class DAImportBatch(BaseModel):
+    """DirectAdmin archives to import, one queued job each. overwrite applies
+    to every archive in the batch: without it, one whose user or domains are
+    already here fails on its own and the rest still run."""
+
+    backup_files: list[str] = Field(min_length=1, max_length=200)
+    overwrite: bool = False
+
+
 class BackupScheduleCreate(BaseModel):
     user_id: Optional[int] = None
     user_ids: list[int] = Field(default_factory=list)

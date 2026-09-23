@@ -24,6 +24,7 @@ from app.schemas.schemas import (
     BackupCreate,
     CronCreate,
     CronDelete,
+    DAImportBatch,
     PhpConfigUpdate,
     PhpConfigRestore,
     RestoreBackup,
@@ -1020,7 +1021,10 @@ def delete_user_restore_backup(backup_file: str, request: Request, db: Session =
 # DirectAdmin backup import
 # ---------------------------------------------------------------------------
 
-DA_IMPORT_JOB_LIMIT = 10
+# Enough to keep every result of the largest batch on screen: a finished job is
+# evicted to make room, so a limit below the batch size would drop the first
+# archives' outcomes before the last ones had run.
+DA_IMPORT_JOB_LIMIT = 200
 _da_import_job_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="opanel-da-import")
 _da_import_jobs: dict[str, dict] = {}
 _da_import_jobs_lock = threading.Lock()
@@ -1031,6 +1035,7 @@ def _public_da_import_job(job: dict) -> dict:
         "job_id": job["job_id"],
         "status": job["status"],
         "backup_file": job.get("backup_file", ""),
+        "overwrite": bool(job.get("overwrite")),
         "message": job.get("message", ""),
         "error": job.get("error", ""),
         "summary": job.get("summary"),
@@ -1134,21 +1139,13 @@ def delete_da_backup(backup_file: str, request: Request, db: Session = Depends(g
     return {"deleted": deleted}
 
 
-@router.post("/da-import")
-def start_da_import(backup_file: str, request: Request, db: Session = Depends(get_db),
-                    overwrite: bool = False,
-                    current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.admin)
-    # Validate file exists
-    try:
-        da_import.list_da_backups()  # triggers dir check
-    except Exception:
-        pass
+def _queue_da_import(backup_file: str, overwrite: bool) -> dict:
     job_id = uuid.uuid4().hex
     job = {
         "job_id": job_id,
         "status": "queued",
         "backup_file": backup_file,
+        "overwrite": overwrite,
         "message": "Queued",
         "error": "",
         "summary": None,
@@ -1156,10 +1153,62 @@ def start_da_import(backup_file: str, request: Request, db: Session = Depends(ge
         "started_at": "",
         "finished_at": "",
     }
-    _remember_da_import_job(job)
+    public = _remember_da_import_job(job)
     _da_import_job_executor.submit(_run_da_import_job, job_id, backup_file, overwrite)
-    log_action(db, current_user.id, "start_da_import", backup_file, request=request)
-    return _public_da_import_job(job)
+    return public
+
+
+@router.post("/da-import")
+def start_da_import(backup_file: str, request: Request, db: Session = Depends(get_db),
+                    overwrite: bool = False,
+                    current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        da_import.da_backup_path(backup_file)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"{backup_file}: {exc}") from exc
+    job = _queue_da_import(backup_file, overwrite)
+    log_action(db, current_user.id, "start_da_import", backup_file,
+               "overwrite" if overwrite else "", request=request)
+    return job
+
+
+@router.post("/da-import-batch")
+def start_da_import_batch(payload: DAImportBatch, request: Request, db: Session = Depends(get_db),
+                          current_user: User = Depends(get_current_user)):
+    """Queue several DirectAdmin archives at once.
+
+    One job per archive on the single-worker executor, so they still run one
+    after another -- each import creates Linux users, writes vhosts and reloads
+    OpenLiteSpeed, and two at once would race on all three. What this saves is
+    the operator's time: tick them all, start once, come back to the results.
+    """
+    ensure_role(current_user.role, Role.admin)
+    files = list(dict.fromkeys(item.strip() for item in payload.backup_files if item.strip()))
+    if not files:
+        raise HTTPException(status_code=400, detail="Select at least one backup")
+    # Check every name before queueing any, so a typo does not leave half a
+    # batch running.
+    for backup_file in files:
+        try:
+            da_import.da_backup_path(backup_file)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"{backup_file}: {exc}") from exc
+    # A second click while the first batch is still going would import the same
+    # archive twice: the repeat either fails on the clash or, with overwrite,
+    # redoes the whole import for nothing.
+    with _da_import_jobs_lock:
+        pending = {
+            j.get("backup_file") for j in _da_import_jobs.values()
+            if j.get("status") in {"queued", "running"}
+        }
+    skipped = [f for f in files if f in pending]
+    jobs = [_queue_da_import(f, payload.overwrite) for f in files if f not in pending]
+    if jobs:
+        log_action(db, current_user.id, "start_da_import_batch",
+                   f"{len(jobs)} archive(s)" + (" overwrite" if payload.overwrite else ""),
+                   ", ".join(j["backup_file"] for j in jobs)[:500], request=request)
+    return {"jobs": jobs, "skipped": skipped}
 
 
 @router.get("/da-import/jobs")

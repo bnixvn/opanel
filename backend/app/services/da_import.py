@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.core.config import settings
-from app.core.secrets import encrypt
+from app.core.secrets import decrypt, encrypt
 from app.core.security import hash_password
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.services import mariadb, openlitespeed, site_users, waf
@@ -965,6 +965,45 @@ def _overwrite_scope(db, username: str, domains: list[str]) -> list[str]:
     )
 
 
+FOREIGN_DATABASE = "belongs to another account"
+
+
+def _claim_database(
+    db, db_name: str, owner_id: int, overwrite: bool, done: set[str],
+) -> tuple[Optional[str], Optional[DatabaseAccount]]:
+    """Whether to import db_name now: (why to skip it, or None; the existing
+    record to load it into, or None to create one).
+
+    A second dump of a name this run already loaded is a duplicate, and a name
+    another account holds is never touched. What is left is the account's own
+    copy from an earlier import. Overwrite used to skip that too -- it only
+    cleared the databases linked to a website the archive names, so a
+    standalone database, or one an older import had left unlinked, kept its old
+    data while the job reported success.
+
+    Under overwrite that record is handed back rather than deleted: it may be
+    linked to a website the archive does not carry, and that site's config
+    holds the password on it, so the dump is loaded under the same record.
+    """
+    if db_name in done:
+        return "already imported from this archive", None
+    existing = db.query(DatabaseAccount).filter(DatabaseAccount.db_name == db_name).first()
+    if existing is None:
+        return None, None
+    if existing.owner_id != owner_id:
+        return FOREIGN_DATABASE, None
+    if not overwrite:
+        return "already imported", None
+    return None, existing
+
+
+def _stored_password(account: DatabaseAccount) -> Optional[str]:
+    try:
+        return decrypt(account.db_password) or None
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Core import: process a single extracted DA backup
 # ---------------------------------------------------------------------------
@@ -1086,6 +1125,7 @@ def _process_archive(
     # Discover SQL files
     sql_files = _discover_sql_files(root)
     imported_sql_keys: set[str] = set()
+    imported_db_names: set[str] = set()
     websites = []
     # What each vhost was rendered with, so it can be rendered again once a
     # certificate exists for it -- the vhost is written before SSL is sorted
@@ -1178,14 +1218,17 @@ def _process_archive(
                     set(),
                 )
 
-                existing_account = db.query(DatabaseAccount).filter(DatabaseAccount.db_name == db_name).first()
-                if existing_account is not None:
-                    # Already imported (e.g. re-running an import, or a
-                    # standalone .sql dump that duplicates a domain-matched
-                    # one) — skip instead of retrying the INSERT and hitting
-                    # the db_name UNIQUE constraint.
+                skip_reason, reuse = _claim_database(db, db_name, user.id, overwrite, imported_db_names)
+                if skip_reason is not None:
+                    # Skip instead of retrying the INSERT and hitting the
+                    # db_name UNIQUE constraint; marking the key keeps the
+                    # unassigned-SQL pass below from trying it again.
                     imported_sql_keys.add(matched_key)
-                    _log(f"    Database {db_name} already imported, skipping")
+                    _log(f"    Database {db_name} {skip_reason}, skipping")
+                    if skip_reason == FOREIGN_DATABASE:
+                        summary["warnings"].append(
+                            f"Database {db_name} for {domain} {skip_reason}; not imported"
+                        )
                 else:
                     # Reuse the password the site already has. Generating a new
                     # one leaves wp-config.php (or whatever config the app
@@ -1213,15 +1256,22 @@ def _process_archive(
                     # Import SQL
                     mariadb.import_database(db_name, str(temp_sql))
 
-                    # Store credentials in panel DB
-                    item = DatabaseAccount(
-                        owner_id=user.id,
-                        website_id=website.id,
-                        db_name=db_name,
-                        db_user=db_user,
-                        db_password=encrypt(db_password),
-                    )
-                    db.add(item)
+                    # Store credentials in panel DB. An overwrite loads into
+                    # the record already here: link it to this site unless
+                    # another site of the account already has it.
+                    if reuse is None:
+                        db.add(DatabaseAccount(
+                            owner_id=user.id,
+                            website_id=website.id,
+                            db_name=db_name,
+                            db_user=db_user,
+                            db_password=encrypt(db_password),
+                        ))
+                    else:
+                        if reuse.website_id is None:
+                            reuse.website_id = website.id
+                        reuse.db_user = db_user
+                        reuse.db_password = encrypt(db_password)
                     db.commit()
 
                     # Update app config files with the DB credentials. This
@@ -1235,6 +1285,7 @@ def _process_archive(
                         summary["warnings"].append(f"App config not updated for {domain}: {exc}")
 
                     imported_sql_keys.add(matched_key)
+                    imported_db_names.add(db_name)
                     summary["databases"].append({
                         "domain": domain,
                         "source": str(matched_sql),
@@ -1313,27 +1364,38 @@ def _process_archive(
         temp_sql = None
         try:
             db_name = _normalize_db_identifier(key, key, set())
-            if db.query(DatabaseAccount).filter(DatabaseAccount.db_name == db_name).first() is not None:
-                # Already imported via the per-domain match above (or a
-                # previous run) — skip instead of retrying the INSERT and
-                # hitting the db_name UNIQUE constraint.
-                _log(f"    Database {db_name} already imported, skipping")
+            skip_reason, reuse = _claim_database(db, db_name, user.id, overwrite, imported_db_names)
+            if skip_reason is not None:
+                _log(f"    Database {db_name} {skip_reason}, skipping")
+                if skip_reason == FOREIGN_DATABASE:
+                    summary["warnings"].append(f"Database {db_name} {skip_reason}; not imported")
                 continue
             temp_sql = _temporary_sql_file(sql_path)
-            db_user = _normalize_db_identifier(key, key, set())
-            db_password, _reused = _import_db_password({}, _da_db_credentials(sql_path, root))
+            # No site in this archive reads this database, but one the archive
+            # does not carry may, so an overwrite keeps the SQL user and
+            # password the panel already has on record for it.
+            kept_password = _stored_password(reuse) if reuse is not None else None
+            if kept_password:
+                db_user, db_password = reuse.db_user, kept_password
+            else:
+                db_user = _normalize_db_identifier(key, key, set())
+                db_password, _reused = _import_db_password({}, _da_db_credentials(sql_path, root))
             mariadb.assert_db_user_available(db, db_user, user.id)
             mariadb.create_database_credentials(db_name, db_user, db_password, allow_existing=True)
             mariadb.import_database(db_name, str(temp_sql))
-            item = DatabaseAccount(
-                owner_id=user.id,
-                website_id=None,
-                db_name=db_name,
-                db_user=db_user,
-                db_password=encrypt(db_password),
-            )
-            db.add(item)
+            if reuse is None:
+                db.add(DatabaseAccount(
+                    owner_id=user.id,
+                    website_id=None,
+                    db_name=db_name,
+                    db_user=db_user,
+                    db_password=encrypt(db_password),
+                ))
+            else:
+                reuse.db_user = db_user
+                reuse.db_password = encrypt(db_password)
             db.commit()
+            imported_db_names.add(db_name)
             summary["databases"].append({
                 "domain": None,
                 "source": str(sql_path),
@@ -1458,6 +1520,11 @@ def _process_archive(
 def da_backup_dir() -> str:
     """Return the DA backup directory path."""
     return settings.da_backup_dir
+
+
+def da_backup_path(backup_file: str) -> Path:
+    """The archive a DA backup filename names; FileNotFoundError if none."""
+    return _resolve_da_backup_path(backup_file)
 
 
 def list_da_backups() -> list[dict]:
