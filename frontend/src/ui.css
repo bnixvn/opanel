@@ -8,7 +8,10 @@
    ========================================================================== */
 
 body{font-size:14px;line-height:1.55;letter-spacing:0}
-h1,h2,h3,h4{letter-spacing:-.01em}
+/* Monospace: no tightened tracking anywhere. */
+/* Form controls take the browser's own UI font unless told otherwise. */
+button,input,select,textarea,optgroup{font-family:inherit}
+h1,h2,h3,h4{letter-spacing:0}
 
 /* ---------- Sidebar ---------- */
 .sidebar{background:var(--nav-bg);border-right:1px solid var(--nav-border);color:var(--nav-text)}
@@ -170,7 +173,7 @@ label > span{font-size:12.5px;font-weight:600;color:var(--text-secondary)}
 .dash-resources .resource-card:first-child{border-left:0;padding-left:0}
 .dash-resources .resource-head{font-size:12.5px;font-weight:500;color:var(--text-secondary)}
 .dash-resources .resource-icon{width:auto;height:auto;background:transparent;border:0;color:var(--text-muted)}
-.dash-resources .resource-card strong{font-size:24px;font-weight:600;line-height:1.1;letter-spacing:-.01em;color:var(--text)}
+.dash-resources .resource-card strong{font-size:24px;font-weight:600;line-height:1.1;letter-spacing:0;color:var(--text)}
 .dash-resources .resource-track{height:6px;border:0;border-radius:999px;background:var(--surface-alt)}
 .dash-resources .resource-card small{font-size:12px;font-weight:500;color:var(--text-muted)}
 
@@ -234,7 +237,7 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 /* Panel users: fixed columns so role, status, disk and actions line up from
    one account to the next (the admin row has fewer buttons). */
 @media(min-width:951px){
-  .user-row{grid-template-columns:minmax(180px,1.3fr) 96px 104px minmax(150px,190px) minmax(0,1.6fr)}
+  .user-row{grid-template-columns:minmax(150px,1fr) 132px 132px 160px minmax(0,1.7fr)}
   .user-row>.badge{justify-self:start}
   .user-row .row-actions{justify-content:flex-end}
 }

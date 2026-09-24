@@ -130,7 +130,7 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
       cursorBlink: true,
       cursorStyle: 'block',
       fontSize: 14,
-      fontFamily: 'Consolas, "Cascadia Code", "Fira Code", monospace',
+      fontFamily: 'Consolas, "Liberation Mono", Menlo, monospace',
       scrollback: 2000,
       // Always-dark surface matching the panel's console tokens (--console-* in
       // style.css); xterm needs literal colours, not vars. Pure neutral, with
