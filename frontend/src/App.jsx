@@ -18,6 +18,7 @@ import { Terminal } from './components/Terminal';
 import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
 import './style.css';
 import './brand.css';
+import './ui.css';
 import './file-manager.css';
 
 const API = import.meta.env.VITE_API_URL || '/api';
@@ -30,7 +31,6 @@ const NGINX_REWRITE_MODES = [
   { value: 'codeigniter', label: tr("CodeIgniter") },
   { value: 'seohburl', label: tr("SEO HB URL") },
 ];
-const SETTINGS_PAGE_KEYS = ['settings', 'security', 'malware', 'php', 'firewall', 'waf', 'wafLogs', 'updates', 'addons', 'mcp', 'services'];
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const PAGE_ROUTES = {
   dashboard: '/',
@@ -503,7 +503,11 @@ function App() {
   }, [notice]);
   const [loading, setLoading] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  // Create forms stay folded until asked for, so each page opens on its list.
+  const [showCreateSite, setShowCreateSite] = useState(false);
+  const [showCreateDb, setShowCreateDb] = useState(false);
+  const userMenuRef = useRef(null);
   const [panelSettings, setPanelSettings] = useState({ app_name: 'opanel', panel_url: '', panel_hostname: '', panel_port: 2222, logo_url: '', favicon_url: '/favicon.png', ssl_enabled: false });
   const [panelSettingsForm, setPanelSettingsForm] = useState({ app_name: 'opanel', panel_hostname: '', panel_port: 2222, ssl_enabled: false });
   const [appVersion, setAppVersion] = useState('');
@@ -3521,43 +3525,55 @@ function App() {
 
   useEffect(() => { setMobileMenuOpen(false); }, [page]);
 
+  // The account menu closes on a click anywhere else, on Escape, and on navigation.
   useEffect(() => {
-    if (SETTINGS_PAGE_KEYS.includes(page)) setSettingsMenuOpen(true);
-  }, [page]);
+    if (!userMenuOpen) return undefined;
+    const onPointer = event => { if (!userMenuRef.current?.contains(event.target)) setUserMenuOpen(false); };
+    const onKey = event => { if (event.key === 'Escape') setUserMenuOpen(false); };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onPointer); document.removeEventListener('keydown', onKey); };
+  }, [userMenuOpen]);
+
+  useEffect(() => { setUserMenuOpen(false); }, [page]);
 
   function roleLabel(role) {
     return role === 'admin' ? tr("Admin") : tr("End user");
   }
 
-  const mainNavItems = [
-    ['dashboard', tr("Dashboard"), Home],
-    ['websites', tr("Websites"), Globe],
-    ['ssl', tr("SSL"), Lock],
-    ['databases', tr("Database"), Database],
-    ['cron', tr("Cron"), Clock],
-    ['files', tr("File manager"), FolderOpen],
-    ['backups', tr("Backups"), Archive],
-    ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
-  ];
+  // The sidebar in three labelled groups -- what a site needs, what guards it,
+  // and the server itself -- so nothing hides behind a collapsed "Settings".
+  const navSections = [
+    { key: 'home', items: [['dashboard', tr("Dashboard"), Home]] },
+    { key: 'hosting', title: tr("Hosting"), items: [
+      ['websites', tr("Websites"), Globe],
+      ['ssl', tr("SSL"), Lock],
+      ['databases', tr("Databases"), Database],
+      ['cron', tr("Cron"), Clock],
+      ['files', tr("File manager"), FolderOpen],
+      ['backups', tr("Backups"), Archive],
+    ] },
+    { key: 'security', title: tr("Security"), items: [
+      ...(isAdmin ? [['firewall', tr("Firewall"), BrickWall]] : []),
+      ['waf', tr("WAF"), ShieldAlert],
+      ...(isAdmin ? [['malware', tr("Malware scanner"), Bug]] : []),
+      ['wafLogs', tr("Access logs"), ScrollText],
+      ['security', tr("Account security"), LockKeyhole],
+    ] },
+    { key: 'system', title: tr("System"), items: [
+      ...(isAdmin ? [['services', tr("Services"), Activity]] : []),
+      ...(isAdmin ? [['php', tr("PHP config"), Code2]] : []),
+      ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
+      ...(isAdmin ? [['settings', tr("Panel settings"), SettingsIcon]] : []),
+      ...(isAdmin ? [['updates', tr("Updates"), RefreshCw]] : []),
+      ...(isAdmin ? [['addons', tr("Addons"), PackageOpen]] : []),
+      // Offered to a customer only once an admin has turned MCP on.
+      ...((isAdmin || mcpInfo?.enabled) ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
+    ] },
+  ].filter(section => section.items.length > 0);
 
-  const settingsNavItems = [
-    ...(isAdmin ? [['settings', tr("Panel settings"), SettingsIcon]] : []),
-    ['security', tr("Security"), Shield],
-    ...(isAdmin ? [['malware', tr("Malware Scanner"), Search]] : []),
-    ...(isAdmin ? [['php', tr("PHP config"), Code2]] : []),
-    ...(isAdmin ? [['firewall', tr("Firewall"), Shield]] : []),
-    ['waf', tr("WAF"), Shield],
-    ['wafLogs', tr("Access Logs"), FileText],
-    ...(isAdmin ? [['updates', tr("Updates"), RefreshCw]] : []),
-    ...(isAdmin ? [['addons', tr("Addons"), PackageOpen]] : []),
-    // Offered to a customer only once an admin has turned MCP on.
-    ...((isAdmin || mcpInfo?.enabled) ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
-    ...(isAdmin ? [['services', tr("Services Status"), Server]] : []),
-  ];
-
-  const navItems = [...mainNavItems, ...settingsNavItems];
+  const navItems = navSections.flatMap(section => section.items);
   const activeNavItem = navItems.find(([key]) => key === page) || navItems[0];
-  const settingsIsActive = SETTINGS_PAGE_KEYS.includes(page);
 
   function renderNotifications() {
     const errorMessage = formatApiError(error, '').trim();
@@ -3710,26 +3726,26 @@ function App() {
           { target: 'websites', label: tr("Websites"), icon: Globe, hint: websites.length ? plural(websites.length, 'site') : tr("No websites yet") },
           { target: 'ssl', label: tr("SSL"), icon: Lock, hint: sslActive ? tr("{0} of {1} secured", sslActive, websites.length) : tr("Nothing secured yet") },
           { target: 'databases', label: tr("Databases"), icon: Database, hint: plural(databases.length, 'database') },
+          { target: 'cron', label: tr("Cron"), icon: Clock, hint: tr("Scheduled jobs") },
           { target: 'files', label: tr("File manager"), icon: FolderOpen, hint: currentUser && !isAdmin
             ? tr("{0} of {1}", formatBytes(currentUser.storage_used_bytes), formatBytes(storageLimitBytes(currentUser)))
             : tr("Browse and edit files") },
-          { target: 'cron', label: tr("Cron"), icon: Clock, hint: tr("Scheduled jobs") },
           { target: 'backups', label: tr("Backups"), icon: Archive, hint: tr("Create and restore") },
         ],
       },
       {
-        title: tr("Protection"),
+        title: tr("Security"),
         icon: ShieldCheck,
         items: [
-          { target: 'security', label: tr("Security"), icon: LockKeyhole, hint: tr("Login and access") },
-          { target: 'waf', label: tr("WAF"), icon: ShieldAlert, hint: tr("Request filtering") },
           ...(isAdmin ? [{ target: 'firewall', label: tr("Firewall"), icon: BrickWall, hint: tr("Ports and IP rules") }] : []),
+          { target: 'waf', label: tr("WAF"), icon: ShieldAlert, hint: tr("Request filtering") },
           ...(isAdmin ? [{ target: 'malware', label: tr("Malware scanner"), icon: Bug, hint: tr("Scan site files") }] : []),
           { target: 'wafLogs', label: tr("Access logs"), icon: ScrollText, hint: tr("Requests and blocks") },
+          { target: 'security', label: tr("Account security"), icon: LockKeyhole, hint: tr("Login and access") },
         ],
       },
       {
-        title: tr("Server"),
+        title: tr("System"),
         icon: Server,
         items: [
           ...(isAdmin ? [{ target: 'services', label: tr("Services"), icon: Activity, hint: tr("Start, stop, restart") }] : []),
@@ -3898,7 +3914,7 @@ function App() {
           <option value={1000}>{tr("1000 lines")}</option>
           <option value={2000}>{tr("2000 lines")}</option>
         </select>
-        <button disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, logViewer.kind, logViewer.lines, logViewer.domain)}><RefreshCw size={14}/> {tr("Refresh")}</button>
+        <button className="secondary" disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, logViewer.kind, logViewer.lines, logViewer.domain)}><RefreshCw size={14}/> {tr("Refresh")}</button>
       </div>
       <pre className="log-output">{logViewer.exists
         ? (logViewer.content || tr("Log is empty."))
@@ -3913,9 +3929,17 @@ function App() {
       ? websites.filter(s => (s.domain || '').toLowerCase().includes(wsQuery)
           || (s.aliases || []).some(a => (a.domain || '').toLowerCase().includes(wsQuery)))
       : websites;
+    const createOpen = showCreateSite || websites.length === 0;
+    const openCreate = () => {
+      setShowCreateSite(true);
+      setTimeout(() => { const el = document.getElementById('create-website-domain'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); }, 0);
+    };
     return <>
-      <section className="section">
-        <h2>{tr("Create website")}</h2>
+      {createOpen && <section className="section create-panel">
+        <div className="section-title">
+          <h2>{tr("Create website")}</h2>
+          {websites.length > 0 && <button type="button" className="secondary icon-only mini" onClick={() => setShowCreateSite(false)} aria-label={tr("Close")} title={tr("Close")}><X size={15}/></button>}
+        </div>
         <div className="form-row create-site-row">
           <input id="create-website-domain" value={domain} onChange={e => setDomain(e.target.value)} placeholder="domain.com" />
           <select value={siteType} onChange={e => setSiteType(e.target.value)}>
@@ -3974,11 +3998,14 @@ function App() {
         <p className="hint">{wpFieldsEnabled
           ? tr("WordPress will be installed and the panel will show the URL, admin account, and password after creation.")
           : tr("A virtual host will be created with public_html/ folder. Upload your PHP, HTML, or static files via File Manager.")}</p>
-      </section>
+      </section>}
       <section className="section">
         <div className="section-title">
           <h2>{tr("Website list")}</h2>
-          <button disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> {tr("Refresh")}</button>
+          <div className="actions">
+            <button className="secondary" disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> {tr("Refresh")}</button>
+            {!createOpen && <button type="button" onClick={openCreate}><Plus size={15}/> {tr("New website")}</button>}
+          </div>
         </div>
         {websites.length > 0 && <div className="website-search">
           <Search size={15}/>
@@ -3986,7 +4013,7 @@ function App() {
           {websiteSearch && <button className="mini secondary-light" onClick={() => setWebsiteSearch('')}><X size={13}/></button>}
           <span className="hint">{wsQuery ? tr("{0} of {1}", filteredWebsites.length, websites.length) : (websites.length === 1 ? tr("{0} website", websites.length) : tr("{0} websites", websites.length))}</span>
         </div>}
-        {websites.length === 0 && <EmptyState icon={Globe} message={tr("No websites yet.")} action={{ label: tr("New website"), icon: Plus, onClick: () => { const el = document.getElementById('create-website-domain'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
+        {websites.length === 0 && <EmptyState icon={Globe} message={tr("No websites yet.")} action={{ label: tr("New website"), icon: Plus, onClick: openCreate }} />}
         {websites.length > 0 && filteredWebsites.length === 0 && <EmptyState icon={Globe} message={tr("No domain matches “{0}”.", websiteSearch)} />}
         <div className="site-grid">
           {filteredWebsites.map(site => <div className="site-stack" key={site.id}>
@@ -3999,7 +4026,7 @@ function App() {
             </div>
             <div className="site-meta">
               <span className={`badge site-ssl-badge ${site.ssl_enabled ? 'ok' : ''}`}>{site.ssl_wildcard ? tr("Wildcard") : site.ssl_mode === 'reuse' ? tr("Shared cert") : site.ssl_enabled ? tr("SSL OK") : tr("No SSL")}</span>
-              <span>{tr("Type")} <strong>{site.app_type || tr("wordpress")}</strong></span>
+              <span>{({ wordpress: tr("WordPress"), php: tr("PHP"), static: tr("Static") })[site.app_type || 'wordpress'] || site.app_type}</span>
               <span>{tr("PHP")} <strong>{site.php_version}</strong></span>
               {site.app_type === 'php' && site.nginx_rewrite_mode && site.nginx_rewrite_mode !== 'none' && <span>{tr("Rewrite")} <strong>{site.nginx_rewrite_mode}</strong></span>}
               {site.waf_enabled && <span className="badge ok">{tr("WAF")}</span>}
@@ -4060,7 +4087,16 @@ function App() {
             ? tr("SSL Enabled")
             : tr("SSL Disabled");
     const sslUpdated = currentSite?.ssl_updated_at ? new Date(currentSite.ssl_updated_at).toLocaleString() : '';
-    return <section className="section">
+    // Unsecured sites first, then the rest by name, so the ones that need a
+    // certificate are at the top of the overview.
+    const sslSites = [...websites].sort((a, b) => (a.ssl_enabled === b.ssl_enabled ? (a.domain || '').localeCompare(b.domain || '') : a.ssl_enabled ? 1 : -1));
+    const securedCount = websites.filter(site => site.ssl_enabled).length;
+    const siteSslLabel = site => site.ssl_mode === 'manual' ? tr("Manual SSL")
+      : site.ssl_mode === 'reuse' ? tr("Shared cert")
+        : site.ssl_wildcard ? tr("Wildcard")
+          : site.ssl_enabled ? tr("SSL OK") : tr("No SSL");
+    return <>
+    <section className="section" id="ssl-manage">
       <h2>{tr("SSL Certificate")}</h2>
       <WebsiteSelect />
       {currentSite && <div className="info-box" style={{marginTop:8}}>
@@ -4121,7 +4157,20 @@ function App() {
         <textarea rows={7} disabled={!!manualSslFiles.ca_bundle} value={manualSslForm.ca_bundle} onChange={e => setManualSslForm(prev => ({ ...prev, ca_bundle: e.target.value }))} placeholder={tr("Optional CA bundle")} />
         <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={installManualSsl}><Upload size={15}/> {tr("Install Manual SSL")}</button>
       </div>}
-    </section>;
+    </section>
+    {websites.length > 0 && <section className="section">
+      <div className="section-title">
+        <div><h2>{tr("All websites")}</h2><p className="hint">{tr("{0} of {1} secured", securedCount, websites.length)}</p></div>
+      </div>
+      <div className="table ssl-overview">
+        {sslSites.map(site => <div className={`row ssl-overview-row${String(site.id) === String(selectedWebsiteId) ? ' selected' : ''}`} key={site.id}>
+          <span className="ssl-overview-domain"><strong>{site.domain}</strong>{site.ssl_updated_at && <small>{tr("Updated")} {new Date(site.ssl_updated_at).toLocaleDateString()}</small>}</span>
+          <span className={`badge ${site.ssl_enabled ? 'ok' : 'warn'}`}>{siteSslLabel(site)}</span>
+          <button type="button" className="mini secondary" onClick={() => { setSelectedWebsiteId(String(site.id)); document.getElementById('ssl-manage')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>{site.ssl_enabled ? tr("Manage") : tr("Set up SSL")}</button>
+        </div>)}
+      </div>
+    </section>}
+    </>;
   }
 
   function renderDatabases() {
@@ -4138,11 +4187,24 @@ function App() {
       });
       doCopy.then(() => { setCopiedField(field); setTimeout(() => setCopiedField(null), 2000); }).catch(() => setError(tr("Copy failed.")));
     }
+    const createOpen = showCreateDb || databases.length === 0;
+    const openCreate = () => {
+      setShowCreateDb(true);
+      setTimeout(() => { const el = document.getElementById('create-database-name'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); }, 0);
+    };
     return <section className="section">
       <div className="section-title">
         <h2>{tr("Databases")}</h2>
-        <button disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> {tr("Refresh")}</button>
+        <div className="actions">
+          <button className="secondary" disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> {tr("Refresh")}</button>
+          {!createOpen && <button type="button" onClick={openCreate}><Plus size={15}/> {tr("New database")}</button>}
+        </div>
       </div>
+      {createOpen && <div className="create-inline">
+        <div className="create-inline-head">
+          <strong>{tr("Create database")}</strong>
+          {databases.length > 0 && <button type="button" className="secondary icon-only mini" onClick={() => setShowCreateDb(false)} aria-label={tr("Close")} title={tr("Close")}><X size={15}/></button>}
+        </div>
       <div className="form-row">
         <input id="create-database-name" value={newDatabase.db_name} onChange={e => setNewDatabase(prev => ({ ...prev, db_name: e.target.value }))} placeholder="database_name" />
         <input value={newDatabase.db_user} onChange={e => setNewDatabase(prev => ({ ...prev, db_user: e.target.value }))} placeholder={tr("db_user (default = db_name)")} />
@@ -4150,6 +4212,7 @@ function App() {
         <button className="mini secondary-light" title={tr("Generate random password")} onClick={() => setNewDatabase(prev => ({ ...prev, db_password: generateRandomPassword() }))}><Dices size={13}/></button>
         <button disabled={!!loading || !newDatabase.db_name.trim()} onClick={createDatabase}><Plus size={15}/> {tr("Create database")}</button>
       </div>
+      </div>}
       {createdDbInfo && <div className="info-box db-created-box">
         <div className="db-created-head"><strong>{tr("Database created successfully")}</strong><button className="mini secondary-light" onClick={() => setCreatedDbInfo(null)}><X size={13}/></button></div>
         <div className="db-created-grid">
@@ -4158,7 +4221,7 @@ function App() {
           <label>{tr("Password")}</label><span><code>{createdDbInfo.db_password}</code> <button className="mini secondary-light" title={copiedField === 'db_password' ? tr("Copied!") : tr("Copy")} onClick={() => copyToClipboard(createdDbInfo.db_password, 'db_password')}>{copiedField === 'db_password' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
         </div>
       </div>}
-      {databases.length === 0 && !createdDbInfo && <EmptyState icon={Database} message={tr("No databases found.")} action={{ label: tr("New database"), icon: Plus, onClick: () => { const el = document.getElementById('create-database-name'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
+      {databases.length === 0 && !createdDbInfo && <EmptyState icon={Database} message={tr("No databases found.")} action={{ label: tr("New database"), icon: Plus, onClick: openCreate }} />}
       {databases.length > 0 && <div className="list-search">
         <Search size={15}/>
         <input value={databaseSearch} onChange={e => setDatabaseSearch(e.target.value)} placeholder={tr("Filter databases…")} />
@@ -4170,9 +4233,9 @@ function App() {
         {filteredDatabases.map(db => {
           return <div className="row db-row" key={db.id}>
           <span><strong>{db.db_name}</strong>{isAdmin && <small className="db-owner">{dbOwnerLabel(db)}</small>}</span>
-          <span style={{color:'var(--text-muted)'}}>{db.db_user}</span>
+          <span className="db-user"><small>{tr("User")}</small> {db.db_user}</span>
           <span className="db-actions">
-            <button disabled={!!loading} onClick={() => openPhpMyAdmin(db.id)}>{tr("phpMyAdmin")}</button>
+            <button className="mini secondary" disabled={!!loading} onClick={() => openPhpMyAdmin(db.id)}>{tr("phpMyAdmin")}</button>
             <button className="mini secondary-light" disabled={!!loading} title={tr("Download SQL dump")}
                     aria-label={tr("Download SQL dump of {0}", db.db_name)}
                     onClick={() => downloadDatabase(db.id, db.db_name)}><Download size={14}/></button>
@@ -4197,7 +4260,7 @@ function App() {
     return <section className="section">
       <div className="section-title">
         <div><h2>{tr("Cron manager")}</h2></div>
-        <button disabled={!selectedWebsiteId || !!loading} onClick={listCron}><RefreshCw size={14}/> {tr("Refresh")}</button>
+        <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={listCron}><RefreshCw size={14}/> {tr("Refresh")}</button>
       </div>
       <div className="cron-form">
         <WebsiteSelect />
@@ -4226,7 +4289,7 @@ function App() {
     return <section className="section">
       <div className="section-title">
         <div><h2>{tr("File manager")}</h2></div>
-        <button disabled={!selectedWebsiteId || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14}/> {tr("Refresh")}</button>
+        <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14}/> {tr("Refresh")}</button>
       </div>
       <div className="file-manager">
         <div className="file-panel">
@@ -4242,9 +4305,9 @@ function App() {
               {fileBreadcrumbs(fileListPath).map(crumb => <button className="crumb" key={crumb.path} onClick={() => listFiles(crumb.path)}>{crumb.label}</button>)}
             </div>
             <div className="file-toolbar">
-              <button disabled={!selectedWebsiteId || fileListPath === '' || !!loading} onClick={() => listFiles(parentFilePath(fileListPath))}>{tr("Up")}</button>
-              <button disabled={!selectedWebsiteId || !!loading} onClick={makeFileDirectory}><Plus size={14}/> {tr("Folder")}</button>
-              <button disabled={!selectedWebsiteId || !!loading} onClick={makeFile}><FileText size={14}/> {tr("File")}</button>
+              <button className="secondary" disabled={!selectedWebsiteId || fileListPath === '' || !!loading} onClick={() => listFiles(parentFilePath(fileListPath))}>{tr("Up")}</button>
+              <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={makeFileDirectory}><Plus size={14}/> {tr("Folder")}</button>
+              <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={makeFile}><FileText size={14}/> {tr("File")}</button>
               <label className={`upload-button ${(!selectedWebsiteId || !!loading) ? 'disabled' : ''}`}>
                 <Upload size={14}/> {tr("Upload")}
                 <input type="file" disabled={!selectedWebsiteId || !!loading} onChange={e => { uploadSiteFile(e.target.files?.[0]); e.target.value = ''; }} />
@@ -4253,10 +4316,10 @@ function App() {
                 <option value="zip">{tr("zip")}</option>
                 <option value="tar.gz">tar.gz</option>
               </select>
-              <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={copySelectedFiles}><Copy size={14}/> {tr("Copy")}</button>
-              <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={moveSelectedFiles}><MoveRight size={14}/> {tr("Move")}</button>
-              <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={archiveSelectedFiles}><Archive size={14}/> {tr("Archive")}</button>
-              <button disabled={!selectedArchive || !!loading} onClick={extractSelectedArchive}><PackageOpen size={14}/> {tr("Extract")}</button>
+              <button className="secondary" disabled={selectedFilePaths.length === 0 || !!loading} onClick={copySelectedFiles}><Copy size={14}/> {tr("Copy")}</button>
+              <button className="secondary" disabled={selectedFilePaths.length === 0 || !!loading} onClick={moveSelectedFiles}><MoveRight size={14}/> {tr("Move")}</button>
+              <button className="secondary" disabled={selectedFilePaths.length === 0 || !!loading} onClick={archiveSelectedFiles}><Archive size={14}/> {tr("Archive")}</button>
+              <button className="secondary" disabled={!selectedArchive || !!loading} onClick={extractSelectedArchive}><PackageOpen size={14}/> {tr("Extract")}</button>
               <button className="danger" disabled={selectedFilePaths.length === 0 || !!loading} onClick={deleteSelectedFiles}><Trash2 size={14}/> {tr("Delete")}</button>
             </div>
             {visibleFileJobs.length > 0 && <div className="file-job-list">
@@ -4349,7 +4412,7 @@ function App() {
       {activeBackupTab === 'logs' && <div className="backup-tab-panel backup-logs-panel">
         <div className="backup-panel-title">
           <div><h3>{tr("Backup logs")}</h3><p className="hint">{tr("Recent queued, running, completed, and failed backup tasks.")}</p></div>
-          <button disabled={!!loading} onClick={() => loadBackupJobs(true)}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={() => loadBackupJobs(true)}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         {backupJobs.length === 0 && <EmptyState icon={FileText} message={tr("No backup logs found.")} />}
         {backupJobs.length > 0 && <div className="backup-job-list">
@@ -4380,8 +4443,8 @@ function App() {
         <WebsiteSelect />
         <div className="actions backup-toolbar">
           <button disabled={!selectedWebsiteId || !!loading} onClick={createBackup}><Plus size={14}/> {tr("Create backup")}</button>
-          <button disabled={!selectedWebsiteId || !!loading} onClick={refreshBackupArea}><RefreshCw size={14}/> {tr("Refresh")}</button>
-          <label className="upload-button">
+          <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={refreshBackupArea}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <label className="upload-button secondary">
             <Upload size={14}/> {tr("Upload backup")}
             <input type="file" accept=".tar.gz,application/gzip" onChange={e => { uploadBackup(e.target.files?.[0]); e.target.value = ''; }} />
           </label>
@@ -4391,8 +4454,8 @@ function App() {
           {backups.map(file => <div className="backup-item" key={file}>
             <span>{file.split('/').pop()}</span>
             <div className="actions">
-              <button disabled={!!loading} onClick={() => downloadBackup(file)}><Download size={14}/> {tr("Download")}</button>
-              <button disabled={!!loading} onClick={() => restoreBackup(file)}><RotateCcw size={14}/> {tr("Restore")}</button>
+              <button className="secondary" disabled={!!loading} onClick={() => downloadBackup(file)}><Download size={14}/> {tr("Download")}</button>
+              <button className="secondary" disabled={!!loading} onClick={() => restoreBackup(file)}><RotateCcw size={14}/> {tr("Restore")}</button>
               <button className="danger" disabled={!!loading} onClick={() => deleteBackup(file)}><Trash2 size={14}/></button>
             </div>
           </div>)}
@@ -4402,7 +4465,7 @@ function App() {
       {isAdmin && activeBackupTab === 'user' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
           <div><h3>{tr("Backup user")}</h3><p className="hint">{tr("Includes the panel user, all owned websites, source files, database dumps, and restore metadata.")}</p></div>
-          <button disabled={!!loading} onClick={refreshUserBackupArea}><RefreshCw size={14}/> {tr("Reload")}</button>
+          <button className="secondary" disabled={!!loading} onClick={refreshUserBackupArea}><RefreshCw size={14}/> {tr("Reload")}</button>
         </div>
         <div className="sftp-run-row user-backup-row backup-run-row">
           <select value={selectedBackupUserId} onChange={e => setSelectedBackupUserId(e.target.value)}>
@@ -4417,15 +4480,15 @@ function App() {
         </div>
         {selectedBackupUser && <p className="hint">{tr("Current user:")} <strong>{selectedBackupUser.username}</strong></p>}
         <div className="actions backup-subactions">
-          <button disabled={!selectedBackupUserId || !!loading} onClick={() => listUserBackups()}><RefreshCw size={14}/> {tr("Refresh list")}</button>
+          <button className="secondary" disabled={!selectedBackupUserId || !!loading} onClick={() => listUserBackups()}><RefreshCw size={14}/> {tr("Refresh list")}</button>
         </div>
         {selectedBackupUserId && userBackups.length === 0 && <EmptyState icon={Archive} message={tr("No user backups found.")} />}
         <div className="backup-list">
           {userBackups.map(file => <div className="backup-item" key={file}>
             <span>{file.split('/').pop()}</span>
             <div className="actions">
-              <button disabled={!!loading} onClick={() => downloadUserBackup(file)}><Download size={14}/> {tr("Download")}</button>
-              <button disabled={!!loading} onClick={() => restoreUserBackup(file)}><RotateCcw size={14}/> {tr("Restore user")}</button>
+              <button className="secondary" disabled={!!loading} onClick={() => downloadUserBackup(file)}><Download size={14}/> {tr("Download")}</button>
+              <button className="secondary" disabled={!!loading} onClick={() => restoreUserBackup(file)}><RotateCcw size={14}/> {tr("Restore user")}</button>
               <button className="danger" disabled={!!loading} onClick={() => deleteUserBackup(file)}><Trash2 size={14}/></button>
             </div>
           </div>)}
@@ -4440,8 +4503,8 @@ function App() {
             <p className="hint">{tr("Every full-user backup on this server: the ones the panel made, and anything uploaded to")} {restoreBackupDir || '/var/backups/opanel/users/restore'}{tr(". Tick the ones to restore and run them in one go.")}</p>
           </div>
           <div className="actions">
-            <button disabled={!!loading} onClick={loadRestoreBackups}><RefreshCw size={14}/> {tr("Refresh")}</button>
-            <label className="upload-button">
+            <button className="secondary" disabled={!!loading} onClick={loadRestoreBackups}><RefreshCw size={14}/> {tr("Refresh")}</button>
+            <label className="upload-button secondary">
               <Upload size={14}/> {tr("Upload backups")}
               <input type="file" multiple accept=".tar.gz,application/gzip" onChange={e => { uploadUserBackups(e.target.files); e.target.value = ''; }} />
             </label>
@@ -4495,7 +4558,7 @@ function App() {
                 </span>
                 <div className="actions">
                   {item.source !== 's3' && <>
-                    <button disabled={!!loading} onClick={() => downloadUserBackup(item.backup_file)}><Download size={14}/> {tr("Download")}</button>
+                    <button className="secondary" disabled={!!loading} onClick={() => downloadUserBackup(item.backup_file)}><Download size={14}/> {tr("Download")}</button>
                     <button className="danger" disabled={!!loading} onClick={() => deleteRestoreBackup(item.backup_file)}><Trash2 size={14}/></button>
                   </>}
                 </div>
@@ -4510,7 +4573,7 @@ function App() {
         <div className="backup-panel-title">
           <div><h3>{tr("Import DirectAdmin Backups")}</h3><p className="hint">{tr("Upload and import DirectAdmin user backups (")}{daBackupDir || '/home/admin/opanel-backups/da'}{tr("). Archives are extracted, users/websites/databases created, and OLS vhosts configured automatically.")}</p></div>
           <div className="actions">
-            <button disabled={!!loading} onClick={() => { loadDaBackups(); loadDaImportJobs(); }}><RefreshCw size={14}/> {tr("Refresh")}</button>
+            <button className="secondary" disabled={!!loading} onClick={() => { loadDaBackups(); loadDaImportJobs(); }}><RefreshCw size={14}/> {tr("Refresh")}</button>
             <label className="upload-button">
               <Upload size={14}/> {tr("Upload archive")}
               <input type="file" multiple accept=".tar.gz,.tar.bz2,.tar.xz,.tar.zst,.tar,.tgz,.tbz2,.txz" onChange={e => { uploadDaBackups(e.target.files); e.target.value = ''; }} />
@@ -4583,7 +4646,7 @@ function App() {
       {isAdmin && activeBackupTab === 'schedule' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
           <div><h3>{tr("Scheduled backups")}</h3><p className="hint">{tr("Runs a full user backup on a schedule, with an optional off-server destination. A daily schedule rotates through seven files named for the day —")} <code>username-monday.tar.gz</code> {tr("and so on — so you keep a week and the eighth day overwrites the first. With a destination, that week is kept there: each archive is removed from this server once it has uploaded, and stays here only if the upload fails.")}</p></div>
-          <button disabled={!!loading} onClick={refreshScheduledBackupArea}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={refreshScheduledBackupArea}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="sftp-form schedule-form backup-schedule-form">
           <label className="schedule-toggle">
@@ -4624,7 +4687,7 @@ function App() {
                 })()}
               </span>
               <div className="actions">
-                <button disabled={!!loading} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14}/> {tr("Run now")}</button>
+                <button className="secondary" disabled={!!loading} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14}/> {tr("Run now")}</button>
                 <button className="danger" disabled={!!loading} onClick={() => deleteBackupSchedule(item.id)}><Trash2 size={14}/></button>
               </div>
             </div>;
@@ -4635,7 +4698,7 @@ function App() {
       {isAdmin && activeBackupTab === 'destination' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
           <div><h3>{tr("Backup Destination")}</h3><p className="hint">{tr("Where off-server backup copies are sent. SFTP, or any S3-compatible object storage.")}</p></div>
-          <button disabled={!!loading} onClick={loadSftpTargets}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadSftpTargets}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="sftp-form sftp-target-form">
           <input value={newSftpTarget.name} onChange={e => setNewSftpTarget(prev => ({ ...prev, name: e.target.value }))} placeholder={tr("Destination name")} />
@@ -4939,7 +5002,7 @@ function App() {
             <div className="actions addon-actions">
               {!addon.installed && <button disabled={!!loading || addon.busy} onClick={() => installAddon(addon)}>
                 <Download size={14}/> {tr("Install")}</button>}
-              {addon.installed && !addon.running && <button disabled={!!loading || addon.busy}
+              {addon.installed && !addon.running && <button className="secondary" disabled={!!loading || addon.busy}
                 onClick={() => setAddonRunning(addon, true)}><Play size={14}/> {tr("Start")}</button>}
               {addon.installed && addon.running && <button className="secondary-light" disabled={!!loading || addon.busy}
                 onClick={() => setAddonRunning(addon, false)}><Square size={14}/> {tr("Stop")}</button>}
@@ -4967,8 +5030,8 @@ function App() {
   function renderServices() {
     return <section className="section">
       <div className="section-title">
-        <h2>{tr("Services Status")}</h2>
-        <button disabled={!!loading} onClick={checkAllServices}><RefreshCw size={15}/> {tr("Refresh")}</button>
+        <div><h2>{tr("Services")}</h2><p className="hint">{tr("Auto-refreshes every 10s")}</p></div>
+        <button className="secondary" disabled={!!loading} onClick={checkAllServices}><RefreshCw size={15}/> {tr("Refresh")}</button>
       </div>
       <div className="service-grid">
         {serviceNames.map(name => {
@@ -4978,11 +5041,10 @@ function App() {
           const inactive = text.includes('inactive') || text.includes('failed');
           return <div className="service-card" key={name}>
             <div><strong>{name}</strong><span className={active ? 'badge ok' : inactive ? 'badge bad' : 'badge'}>{active ? tr("Running") : inactive ? tr("Stopped") : '...'}</span></div>
-            <small>{tr("Auto-refreshes every 10s")}</small>
             {isAdmin && <div className="service-actions">
-              <button onClick={() => runServiceAction(name, 'start')}><Play size={13}/> {tr("Start")}</button>
-              {!['opanel-api', 'redis-server'].includes(name) && <button onClick={() => runServiceAction(name, 'stop')}><Square size={13}/> {tr("Stop")}</button>}
-              <button onClick={() => runServiceAction(name, 'restart')}><RotateCcw size={13}/> {tr("Restart")}</button>
+              <button className="secondary" disabled={active} onClick={() => runServiceAction(name, 'start')}><Play size={13}/> {tr("Start")}</button>
+              {!['opanel-api', 'redis-server'].includes(name) && <button className="danger-light" disabled={inactive} onClick={() => runServiceAction(name, 'stop')}><Square size={13}/> {tr("Stop")}</button>}
+              <button className="secondary" onClick={() => runServiceAction(name, 'restart')}><RotateCcw size={13}/> {tr("Restart")}</button>
             </div>}
           </div>;
         })}
@@ -5007,7 +5069,7 @@ function App() {
         <label className="php-opcache-toggle"><span>{tr("OPcache")}</span>
           <button
             type="button"
-            className={phpConfig.opcache_enable ? '' : 'secondary'}
+            className={phpConfig.opcache_enable ? 'toggle-on' : 'secondary'}
             aria-pressed={!!phpConfig.opcache_enable}
             disabled={!!loading}
             onClick={() => setPhpConfig(prev => ({ ...prev, opcache_enable: !prev.opcache_enable }))}
@@ -5045,7 +5107,7 @@ function App() {
       {notInstalled.length > 0 && <div className="user-create-card" style={{ marginTop: 16 }}>
         <h3>{tr("Install PHP")}</h3>
         <div className="php-install-grid">
-          {notInstalled.map(v => <button key={v} disabled={!!loading} onClick={() => installPhpVersion(v)}>{tr("+ PHP")} {v}</button>)}
+          {notInstalled.map(v => <button key={v} className="secondary" disabled={!!loading} onClick={() => installPhpVersion(v)}>{tr("+ PHP")} {v}</button>)}
         </div>
       </div>}
     </section>;
@@ -5061,12 +5123,12 @@ function App() {
       <section className="section">
         <div className="section-title">
           <div><h2>{tr("Firewall (iptables)")}</h2><p className="hint">{tr("Keep SSH and web ports allowed before enabling.")}</p></div>
-        </div>
-        <div className="actions">
-          <button disabled={!!loading} onClick={loadFirewall}><RefreshCw size={14}/> {tr("Refresh")}</button>
-          <button disabled={!!loading} onClick={enableFirewall}><Shield size={14}/> {tr("Enable")}</button>
-          <button disabled={!!loading} onClick={disableFirewall}>{tr("Disable")}</button>
-          <button disabled={!!loading} onClick={reloadFirewall}>{tr("Reload")}</button>
+          <div className="actions">
+            <button className="secondary" disabled={!!loading} onClick={loadFirewall}><RefreshCw size={14}/> {tr("Refresh")}</button>
+            <button className="secondary" disabled={!!loading} onClick={reloadFirewall}>{tr("Reload")}</button>
+            <button className="danger-light" disabled={!!loading} onClick={disableFirewall}>{tr("Disable")}</button>
+            <button disabled={!!loading} onClick={enableFirewall}><Shield size={14}/> {tr("Enable")}</button>
+          </div>
         </div>
         <div className="info-box firewall-open-ports">
           <strong>{tr("Open ports")}</strong>
@@ -5077,15 +5139,18 @@ function App() {
             </span>)}
           </div> : <p className="hint">{tr("No open port rules found in OPANEL chains.")}</p>}
         </div>
-        <div className="info-box firewall-status">
-          <strong>{tr("iptables status")}</strong>
+        <details className="raw-output firewall-status">
+          <summary>{tr("iptables status")}</summary>
+          <div className="raw-output-body">
           <pre>{firewallText}</pre>
           <div className="firewall-delete-inline">
             <label><span>{tr("Delete UserZone #")}</span><input value={firewallDeleteNumber} onChange={e => setFirewallDeleteNumber(e.target.value)} placeholder="12" inputMode="numeric" /></label>
             <button className="danger" disabled={!!loading || !firewallDeleteNumber} onClick={() => deleteFirewallRule()}>{tr("Delete")}</button>
           </div>
-        </div>
+          </div>
+        </details>
       </section>
+      <div className="firewall-rule-forms">
       <section className="section">
         <h2>{tr("Open port")}</h2>
         <div className="firewall-form">
@@ -5112,10 +5177,11 @@ function App() {
           <button className="danger" disabled={!!loading || !firewallBlockIp} onClick={blockFirewallIp}>{tr("Block")}</button>
         </div>
       </section>
+      </div>
       <section className="section">
         <div className="section-title">
           <div><h2>{tr("Blocklist URLs")}</h2><p className="hint">{tr("TXT files are fetched daily at 01:00 and enforced by ipset, so large lists do not create thousands of firewall rules.")}</p></div>
-          <button disabled={!!loading} onClick={loadFirewallBlocklists}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadFirewallBlocklists}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="firewall-form firewall-blocklist-form">
           <label><span>{tr("TXT URL")}</span><input value={firewallBlocklistUrl} onChange={e => setFirewallBlocklistUrl(e.target.value)} placeholder="https://example.com/blocklist.txt" /></label>
@@ -5128,7 +5194,7 @@ function App() {
             <div className="firewall-rule-actions"><button className="danger" disabled={!!loading} onClick={() => deleteFirewallBlocklistUrl(url)}><Trash2 size={14}/> {tr("Delete")}</button></div>
           </div>)}
         </div>}
-        <div className="info-box firewall-status"><strong>{tr("Blocklist status")}</strong><pre>{blocklistText}</pre></div>
+        <details className="raw-output firewall-status"><summary>{tr("Blocklist status")}</summary><pre>{blocklistText}</pre></details>
       </section>
     </>;
   }
@@ -5147,7 +5213,7 @@ function App() {
         {isAdmin && <section className="section">
           <div className="section-title">
             <div><h2>{tr("WAF")}</h2><p className="hint">{tr("Engine status. Rules are configured per website below.")}</p></div>
-            <button disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> {tr("Refresh")}</button>
+            <button className="secondary" disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> {tr("Refresh")}</button>
           </div>
           <div className="info-box firewall-status"><strong>{tr("Status")}</strong><pre>{statusText}</pre></div>
         </section>}
@@ -5392,7 +5458,7 @@ function App() {
         </div>
         <div className="actions">
           <button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={14}/> {tr("Refresh status")}</button>
-          <button disabled={!!loading || osUpdating} onClick={runOsUpdate}><RefreshCw size={14} className={osUpdating ? 'spin' : ''}/> {osUpdating ? tr("Updating OS...") : tr("Update OS now")}</button>
+          <button className="secondary" disabled={!!loading || osUpdating} onClick={runOsUpdate}><RefreshCw size={14} className={osUpdating ? 'spin' : ''}/> {osUpdating ? tr("Updating OS...") : tr("Update OS now")}</button>
           <button disabled={!!loading || panelUpdating} onClick={runPanelUpdate}><RotateCcw size={14} className={panelUpdating ? 'spin' : ''}/> {panelUpdating ? tr("Updating panel...") : tr("Update panel now")}</button>
         </div>
         {showUpdateLog && <div className="info-box firewall-status update-log-box">
@@ -5447,7 +5513,7 @@ function App() {
                 : tr("Sign in with a fingerprint, face, screen lock, or security key.")}
             </p>
           </div>
-          <button disabled={!!loading} onClick={loadPasskeys}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadPasskeys}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         {pk.available === false && <p className="hint">{pk.unavailable_reason}</p>}
         {keys.length > 0 && <div className="table">
@@ -5475,7 +5541,7 @@ function App() {
       <section className="section">
         <div className="section-title">
           <div><h2>{tr("Google Authenticator 2FA")}</h2><p className="hint">{tr("Current status:")} <strong>{enabled ? tr("Enabled") : tr("Disabled")}</strong></p></div>
-          <button disabled={!!loading} onClick={loadTwoFactorStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadTwoFactorStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         {!enabled && keys.length > 0 && <p className="hint">{tr("Used when a passkey is not available on the device you are signing in from.")}</p>}
         {!enabled && canEnableTotp && <div className="security-grid">
@@ -5555,7 +5621,7 @@ function App() {
               {mw.realtime_active && <span className="badge ok" style={{marginLeft:6}}>{tr("Real-time on")}</span>}
             </p>
           </div>
-          <button disabled={!!loading} onClick={loadMalwareScanStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadMalwareScanStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="info-box">
           <p className="hint">{mw.detail || tr("Checking status...")}</p>
@@ -5739,7 +5805,7 @@ function App() {
           <div className="info-box">
             <strong>{tr("Scheduled scan")} <code>{root}</code></strong>
             <p className="hint">{tr("Runs automatically on the server clock, even when nobody is logged in to the panel. Use “Run a scan now” above for an on-demand scan.")}</p>
-            <div className="firewall-form">
+            <div className="schedule-form">
               <label><span>{tr("Enabled")}</span>
                 <select value={sched.enabled ? 'on' : 'off'} onChange={e => setField({ enabled: e.target.value === 'on' })}>
                   <option value="off">{tr("Off")}</option>
@@ -5756,7 +5822,7 @@ function App() {
               </label>
               {sched.frequency === 'weekly' && <label><span>{tr("Day of week")}</span>
                 <select value={Number(sched.weekday) || 0} onChange={e => setField({ weekday: Number(e.target.value) })}>
-                  {WEEKDAY_LABELS.map((label, index) => <option key={label} value={index}>{label}</option>)}
+                  {WEEKDAY_LABELS.map((label, index) => <option key={label} value={index}>{tr(label)}</option>)}
                 </select>
               </label>}
               {sched.frequency === 'monthly' && <label><span>{tr("Day of month")}</span>
@@ -5785,7 +5851,7 @@ function App() {
       <section className="section">
         <div className="section-title">
           <div><h2>{tr("Panel settings")}</h2><p className="hint">{tr("Branding and hostname.")}</p></div>
-          <button disabled={!!loading} onClick={loadPanelSettings}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadPanelSettings}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="panel-settings-grid panel-settings-compact">
           <label><span>{tr("Panel name")}</span><input value={panelSettingsForm.app_name} onChange={e => setPanelSettingsForm(prev => ({ ...prev, app_name: e.target.value }))} placeholder={tr("OPanel")} /></label>
@@ -5800,7 +5866,7 @@ function App() {
             <h2>{tr("Server network")}</h2>
             <p className="hint">{tr("Addresses this server answers on. Detected live, so an IPv6 block added later shows up here.")}</p>
           </div>
-          <button disabled={!!loading} onClick={loadNetworkStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadNetworkStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="info-box">
           <div className="network-address-row">
@@ -5821,7 +5887,7 @@ function App() {
           <div className="actions" style={{marginTop:12}}>
             {networkStatus.ipv6_enabled
               ? <button className="danger" disabled={!!loading} onClick={() => toggleIpv6(false)}>{tr("Disable IPv6")}</button>
-              : <button disabled={!!loading || !networkStatus.ipv6_available} onClick={() => toggleIpv6(true)}><Network size={14}/> {tr("Enable IPv6")}</button>}
+              : <button className="secondary" disabled={!!loading || !networkStatus.ipv6_available} onClick={() => toggleIpv6(true)}><Network size={14}/> {tr("Enable IPv6")}</button>}
           </div>
           <p className="hint" style={{marginTop:8}}>
             {networkStatus.ipv6_available
@@ -5838,19 +5904,19 @@ function App() {
           <div className="brand-asset-card">
             <div className="brand-preview">{renderBrandMark('settings-brand-mark')}</div>
             <label><span>{tr("Logo")}</span><input type="file" accept="image/png,image/jpeg,image/webp,image/x-icon" onChange={e => setPanelLogoFile(e.target.files?.[0] || null)} /></label>
-            <button disabled={!!loading || !panelLogoFile} onClick={() => uploadPanelAsset('logo')}><Upload size={14}/> {tr("Upload logo")}</button>
+            <button className="secondary" disabled={!!loading || !panelLogoFile} onClick={() => uploadPanelAsset('logo')}><Upload size={14}/> {tr("Upload logo")}</button>
           </div>
           <div className="brand-asset-card">
             <div className="brand-preview favicon-preview">{panelSettings.favicon_url ? <img src={panelSettings.favicon_url} alt="" /> : <Image size={28}/>}</div>
             <label><span>{tr("Favicon")}</span><input type="file" accept="image/png,image/jpeg,image/webp,image/x-icon" onChange={e => setPanelFaviconFile(e.target.files?.[0] || null)} /></label>
-            <button disabled={!!loading || !panelFaviconFile} onClick={() => uploadPanelAsset('favicon')}><Upload size={14}/> {tr("Upload favicon")}</button>
+            <button className="secondary" disabled={!!loading || !panelFaviconFile} onClick={() => uploadPanelAsset('favicon')}><Upload size={14}/> {tr("Upload favicon")}</button>
           </div>
         </div>
       </section>
       <section className="section">
         <div className="section-title">
           <div><h2>{tr("API Tokens")}</h2><p className="hint">{tr("Provisioning tokens for WHMCS or external billing systems.")}</p></div>
-          <button disabled={!!loading} onClick={loadApiTokens}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadApiTokens}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         {createdToken && <div className="token-created-notice">
           <p><strong>{tr("Token created!")}</strong> {tr("Copy it now — it will not be shown again.")}</p>
@@ -5888,7 +5954,7 @@ function App() {
       <section className="section">
         <div className="section-title">
           <div><h2>{tr("Panel Users")}</h2><p className="hint">{tr("Manage panel accounts, hosting packages, and create new users.")}</p></div>
-          <button disabled={!!loading} onClick={loadUsers}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadUsers}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="tab-bar">
           <button className={usersTab === 'list' ? 'tab active' : 'tab'} onClick={() => setUsersTab('list')}><Users size={14}/> {tr("List Users")}</button>
@@ -5973,7 +6039,7 @@ function App() {
       <section className="section">
         <div className="section-title">
           <div><h2>{tr("Hosting Packages")}</h2><p className="hint">{tr("Manage provisioning plans for WHMCS and billing systems.")}</p></div>
-          <button disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="token-create-form">
           <label><span>{tr("Name")}</span><input value={newPlan.name} onChange={e => { const name = e.target.value; setNewPlan(prev => ({ ...prev, name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') })); }} placeholder={tr("Starter")} /></label>
@@ -6062,7 +6128,7 @@ function App() {
           <span className="editor-chip">{editorMode}</span>
           <span className="editor-chip">{editorLineCount} {tr("line(s)")}</span>
           <span className="editor-chip">{tr("Ln")} {editorCursor.line}{tr(", Col")} {editorCursor.column}</span>
-          <button disabled={!selectedWebsiteId || !!loading} onClick={() => readFile(filePath)}><RefreshCw size={14}/> {tr("Reload")}</button>
+          <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={() => readFile(filePath)}><RefreshCw size={14}/> {tr("Reload")}</button>
           <button disabled={!selectedWebsiteId || !!loading} onClick={writeFile}>{tr("Save")}</button>
           <button disabled={!selectedWebsiteId || !filePath || !!loading} onClick={() => downloadFile(filePath)}><Download size={14}/></button>
           <button className="secondary-light" onClick={() => window.close()}><X size={14}/> {tr("Close")}</button>
@@ -6161,19 +6227,12 @@ function App() {
           <button className="sidebar-close" onClick={() => setMobileMenuOpen(false)} aria-label={tr("Close menu")}><X size={18}/></button>
         </div>
         <nav className="sidebar-nav">
-          {mainNavItems.map(([key, label, Icon]) => <button key={key} type="button" className={page === key ? 'active' : ''} onClick={() => navigateToPage(key)} aria-current={page === key ? 'page' : undefined}>
-            <Icon size={17}/>{label}
-          </button>)}
-          <div className={`sidebar-nav-group ${settingsMenuOpen ? 'open' : ''}`}>
-            <button className={`sidebar-group-toggle ${settingsIsActive ? 'active' : ''}`} onClick={() => setSettingsMenuOpen(open => !open)} aria-expanded={settingsMenuOpen} aria-controls="settings-submenu">
-              <SettingsIcon size={17}/><span>{tr("Settings")}</span><ChevronDown className="sidebar-group-chevron" size={16}/>
-            </button>
-            {settingsMenuOpen && <div className="sidebar-subnav" id="settings-submenu">
-              {settingsNavItems.map(([key, label, Icon]) => <button key={key} type="button" className={page === key ? 'active' : ''} onClick={() => navigateToPage(key)} aria-current={page === key ? 'page' : undefined}>
-                <Icon size={16}/>{label}
-              </button>)}
-            </div>}
-          </div>
+          {navSections.map(section => <div className="sidebar-section" key={section.key}>
+            {section.title && <p className="sidebar-section-title">{section.title}</p>}
+            {section.items.map(([key, label, Icon]) => <button key={key} type="button" className={page === key ? 'active' : ''} onClick={() => navigateToPage(key)} aria-current={page === key ? 'page' : undefined}>
+              <Icon size={16}/><span>{label}</span>
+            </button>)}
+          </div>)}
         </nav>
         {renderLanguageToggle('secondary compact-btn sidebar-lang')}
         {appVersion && <div className="sidebar-version">v{appVersion}</div>}
@@ -6184,16 +6243,26 @@ function App() {
             <Menu size={20}/><span><ActiveIcon size={17}/>{activeNavItem?.[1] || tr("Menu")}</span>
           </button>
           <div className="page-title">
-            <p className="eyebrow">{tr("Server Management Panel")}</p>
             <h1>{activeNavItem?.[1] || panelSettings.app_name || tr("opanel")}</h1>
           </div>
-          <div className="login logged-in">
-            <div className="account-pill"><span>{tr("Logged in as")}</span><strong>{currentUser?.username || username}</strong></div>
-            <div className="top-actions">
-              {renderLanguageToggle('secondary compact-btn top-lang')}
-              <button className="secondary compact-btn icon-only" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
-              <button className="secondary compact-btn" onClick={openProfileModal} aria-label={tr("Profile settings")} title={tr("Profile settings")}><KeyRound size={15}/><span className="btn-label">{tr("Profile")}</span></button>
-              <button className="secondary compact-btn" onClick={logout} aria-label={tr("Logout")} title={tr("Logout")}><LogOut size={15}/><span className="btn-label">{tr("Logout")}</span></button>
+          <div className="top-actions">
+            {renderLanguageToggle('secondary compact-btn top-lang')}
+            <button className="secondary compact-btn icon-only" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
+            <div className="user-menu" ref={userMenuRef}>
+              <button type="button" className="user-menu-trigger" onClick={() => setUserMenuOpen(open => !open)} aria-haspopup="menu" aria-expanded={userMenuOpen} title={tr("Logged in as")}>
+                <span className="user-avatar" aria-hidden="true">{(currentUser?.username || username || '?').slice(0, 1).toUpperCase()}</span>
+                <span className="user-menu-name">{currentUser?.username || username}</span>
+                <ChevronDown size={14} className="user-menu-chevron"/>
+              </button>
+              {userMenuOpen && <div className="user-menu-panel" role="menu">
+                <div className="user-menu-head">
+                  <strong>{currentUser?.username || username}</strong>
+                  <small>{currentUser?.email || roleLabel(currentUser?.role)}</small>
+                </div>
+                <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); openProfileModal(); }}><KeyRound size={15}/>{tr("Profile")}</button>
+                <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); navigateToPage('security'); }}><LockKeyhole size={15}/>{tr("Account security")}</button>
+                <button type="button" role="menuitem" className="user-menu-logout" onClick={() => { setUserMenuOpen(false); logout(); }}><LogOut size={15}/>{tr("Logout")}</button>
+              </div>}
             </div>
           </div>
         </section>
