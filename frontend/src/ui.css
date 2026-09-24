@@ -37,8 +37,6 @@ h1,h2,h3,h4{letter-spacing:0}
 .sidebar-version{color:var(--nav-muted);margin:auto 16px 14px;padding:0}
 .sidebar .sidebar-close{background:transparent;color:var(--nav-text);border:1px solid transparent}
 .sidebar .sidebar-close:hover:not(:disabled){background:var(--nav-hover);color:var(--nav-text-strong);border-color:var(--nav-border)}
-.sidebar .sidebar-lang,
-.sidebar .sidebar-lang:hover:not(:disabled){background:var(--nav-hover);color:var(--nav-text-strong);border:1px solid var(--nav-border)}
 .sidebar{scrollbar-color:var(--nav-border) transparent}
 
 /* ---------- Top bar ---------- */
@@ -258,12 +256,91 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .user-row .user-metric{justify-self:start}
 
 /* Schedules: every field on one row, however many the frequency needs. */
-.schedule-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;align-items:end}
-.schedule-form label{display:grid;gap:6px;min-width:0}
-.schedule-form button{justify-self:start}
+.scan-schedule-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;align-items:end}
+.scan-schedule-form label{display:grid;gap:6px;min-width:0}
+.scan-schedule-form button{justify-self:start}
 
 /* A switch that is on reads as a status (green), not as the page's main button. */
 .toggle-on,.toggle-on:hover:not(:disabled){background:var(--success-bg);color:var(--success-text);border:1px solid var(--success-border)}
+
+/* Buttons that hold more than one line of content must not take the fixed
+   control height, or their rows spill over the next one. */
+.scan-history-item,.waf-site-row,.file-list .file-name{height:auto;min-height:0}
+.scan-history-item{min-height:50px}
+.waf-site-row{min-height:46px;padding:10px 12px}
+
+/* ---------- Labelled form fields ---------- */
+.field{display:grid;gap:6px;min-width:0;align-content:start}
+.field-label{font-size:12.5px;font-weight:600;color:var(--text-secondary)}
+.field .check-line{font-size:13.5px;font-weight:500;min-height:38px}
+.schedule-picker{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,150px);gap:8px}
+.schedule-picker input{font-family:var(--font-mono);font-size:13px}
+
+/* Cron: website + schedule, then template + command, then the button. */
+.cron-builder{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:14px 16px;align-items:end}
+.cron-builder .field:nth-child(4) input{font-family:var(--font-mono);font-size:13px}
+.cron-add{justify-self:start}
+.cron-item .cron-expr{margin-left:6px;padding:1px 6px;border-radius:var(--radius-sm);background:var(--surface-alt);color:var(--text-secondary);font-family:var(--font-mono);font-size:12px;font-weight:500}
+
+/* Scheduled backups: accounts, schedule, destination, button -- labelled and
+   side by side on a desktop, one per line on a phone. */
+.backup-schedule-builder{display:grid;grid-template-columns:minmax(200px,1fr) minmax(280px,1.4fr) minmax(180px,1fr) auto;gap:14px 16px;align-items:start;padding:14px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md)}
+.backup-schedule-builder select[multiple]{min-height:96px}
+.backup-schedule-add{align-self:end}
+
+/* File manager: the mode column opens the permissions editor. */
+.file-list button.file-mode{display:inline-flex;align-items:center;justify-content:center;height:26px;min-height:26px;padding:0 8px;background:var(--surface-alt);color:var(--text-secondary);border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:12px;font-weight:600}
+.file-list button.file-mode:hover:not(:disabled){background:var(--surface-hover);color:var(--primary-ink);border-color:var(--primary-soft)}
+.chmod-card{width:420px}
+.chmod-grid{width:100%;border-collapse:collapse}
+.chmod-grid th,.chmod-grid td{padding:9px 8px;text-align:center;border-bottom:1px solid var(--border);font-size:13px}
+.chmod-grid thead th{font-weight:600;color:var(--text-secondary)}
+.chmod-grid tbody th{text-align:left;font-weight:600;color:var(--text)}
+.chmod-grid input{width:18px;height:18px}
+.chmod-mode-row{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin:14px 0 10px}
+.chmod-mode-row label{display:grid;gap:6px;width:130px}
+.chmod-mode-row label span{font-size:12.5px;font-weight:600;color:var(--text-secondary)}
+.chmod-mode-row input{font-family:var(--font-mono);font-size:15px;letter-spacing:.12em}
+.chmod-presets{display:flex;gap:6px;flex-wrap:wrap}
+.chmod-presets .mini{font-family:var(--font-mono)}
+.modal-card > .modal-actions{padding:0 20px 18px}
+
+/* Malware: one scan on its own page. */
+.scan-detail-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.scan-detail-stats > div{display:grid;gap:4px;padding:12px 14px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md)}
+.scan-detail-stats small{font-size:12px;color:var(--text-muted);font-weight:600}
+.scan-detail-stats strong{font-size:20px;font-weight:700;color:var(--text)}
+.scan-detail-stats .text-danger{color:var(--danger)}
+
+/* Copy blocks (MCP): label and copy button on one line, the value below. */
+.copy-block{display:grid;gap:6px;min-width:0}
+.copy-block + .copy-block{margin-top:12px}
+.copy-block-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.copy-block-head span{font-size:13px;font-weight:600;color:var(--text-secondary)}
+.copy-block-code{display:block;margin:0;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--font-mono);font-size:12.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+
+/* A checkbox with a title and a long description: the whole card is the
+   hit area and the box keeps its size. */
+.option-card{display:grid;grid-template-columns:22px minmax(0,1fr);gap:12px;align-items:start;margin:12px 0 4px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);cursor:pointer}
+.option-card:hover{border-color:var(--primary-soft);background:var(--surface-hover)}
+.option-card input{width:20px;height:20px;min-height:0;margin:1px 0 0;accent-color:var(--primary);cursor:pointer}
+.option-card span{display:grid;gap:3px;min-width:0}
+.option-card strong{font-size:14px;color:var(--text)}
+.option-card small{font-size:12.5px;line-height:1.45;color:var(--text-muted)}
+
+/* WAF: rule panels never push past their card. */
+.waf-rules-grid > *{min-width:0}
+.waf-rule-panel textarea{max-width:100%}
+.waf-rule-panel .hint,.waf-custom-readonly{overflow-wrap:anywhere}
+
+/* Panel users tabs scroll sideways rather than widen the page. */
+.tab-bar{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;max-width:100%}
+.tab-bar .tab{flex:none}
+.tab-bar,.segmented-control.backup-tabs{scrollbar-width:none}
+.tab-bar::-webkit-scrollbar,.segmented-control.backup-tabs::-webkit-scrollbar{display:none}
+
+/* A row of status badges wraps between badges, never inside one. */
+.badge-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px}
 
 /* ---------- Responsive ---------- */
 @media(max-width:950px){
@@ -283,4 +360,50 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 @media(max-width:520px){
   .dash-resources .resource-card{padding:2px 12px}
   .dash-resources .resource-card strong{font-size:20px}
+}
+
+/* ---------- Phones ---------- */
+@media(max-width:720px){
+  /* Title on the left, its buttons beside it (or on the next line), never a
+     full-width Refresh bar. */
+  .section-title,.backup-panel-title,.backup-panel-heading{display:flex;flex-direction:row;flex-wrap:wrap;align-items:flex-start;gap:10px}
+  .backup-panel-title > div:first-child,.backup-panel-heading > div:first-child{flex:1 1 200px}
+  .backup-panel-title > button,.backup-panel-heading > button{width:auto;min-width:0}
+  .schedule-picker{grid-template-columns:1fr}
+  .section-title > div:first-child{flex:1 1 200px}
+  .section-title > button,.section-title > .actions{flex:none;width:auto}
+  .section-title > .actions{display:flex;flex-wrap:nowrap;gap:8px}
+  .section-title > .actions button,.section-title > button{width:auto}
+
+  .cron-builder,.backup-schedule-builder{grid-template-columns:1fr}
+  .cron-add,.backup-schedule-add{justify-self:stretch}
+  .scan-detail-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+
+  /* Websites: no folder path, and the six actions on one line. */
+  .site-head small{display:none}
+  .site-actions,.site-feature-actions{width:100%}
+  .site-feature-actions,.site-card .site-feature-actions{display:flex;flex-wrap:nowrap;gap:6px;justify-content:flex-start}
+  .site-feature-actions .site-icon-button{flex:1 1 0;width:auto;min-width:0;max-width:52px}
+
+  /* Databases: name, then login user, then one line of actions. */
+  .db-row{grid-template-columns:1fr;gap:6px}
+  .db-actions{justify-content:flex-start;flex-wrap:nowrap}
+
+  /* WAF site list: domain, state and "Configure" on one line. */
+  .waf-site-row{grid-template-columns:minmax(0,1fr) auto auto;gap:8px}
+  .waf-site-open{justify-self:end}
+  .waf-default-groups{max-height:none;overflow:visible;padding-right:0}
+
+  /* A badge longer than the screen may wrap; shorter ones stay whole. */
+  .badge{max-width:100%;overflow-wrap:anywhere}
+  .scan-history-item{grid-template-columns:22px minmax(0,1fr) auto;align-items:center}
+  .scan-history-item > .badge{grid-column:auto;justify-self:end}
+
+  /* Account security: the passkey button is as wide as the 2FA ones. */
+  .passkey-add{display:grid;grid-template-columns:1fr;gap:8px}
+  .passkey-add button{width:100%}
+
+  .copy-block-code{font-size:12px}
+  .user-row .row-actions button{white-space:normal;height:auto;min-height:40px;line-height:1.25;padding-block:6px}
+  .token-create-form.mcp-token-form{grid-template-columns:1fr}
 }

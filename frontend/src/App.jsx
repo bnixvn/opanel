@@ -32,6 +32,20 @@ const NGINX_REWRITE_MODES = [
   { value: 'seohburl', label: tr("SEO HB URL") },
 ];
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// Common cron schedules, offered as a dropdown next to the raw expression.
+const CRON_PRESETS = [
+  ['* * * * *', 'Every minute'],
+  ['*/5 * * * *', 'Every 5 minutes'],
+  ['*/15 * * * *', 'Every 15 minutes'],
+  ['*/30 * * * *', 'Every 30 minutes'],
+  ['0 * * * *', 'Every hour'],
+  ['0 */6 * * *', 'Every 6 hours'],
+  ['0 0 * * *', 'Daily at 00:00'],
+  ['0 2 * * *', 'Daily at 02:00'],
+  ['0 0 * * 0', 'Weekly, Sunday 00:00'],
+  ['0 0 1 * *', 'Monthly, day 1 at 00:00'],
+];
+const normalizeCron = value => String(value || '').trim().split(/\s+/).join(' ');
 const PAGE_ROUTES = {
   dashboard: '/',
   websites: '/website',
@@ -504,6 +518,10 @@ function App() {
   const [loading, setLoading] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  // Which schedule pickers the user switched to a hand-written expression.
+  const [customSchedules, setCustomSchedules] = useState({});
+  const [malwareDetailJob, setMalwareDetailJob] = useState(null);
+  const [chmodTarget, setChmodTarget] = useState(null);
   // Create forms stay folded until asked for, so each page opens on its list.
   const [showCreateSite, setShowCreateSite] = useState(false);
   const [showCreateDb, setShowCreateDb] = useState(false);
@@ -1678,6 +1696,14 @@ function App() {
     setScanLoading(['queued', 'running'].includes(job?.status));
   }
 
+  // A history entry opens on its own page: summary, threats and the log.
+  async function openMalwareScanDetail(job) {
+    setMalwareDetailJob(job);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const data = await request(`/panel-settings/malware-scan/jobs/${job.job_id}`, { silent: true }, '');
+    if (data) setMalwareDetailJob(data);
+  }
+
   async function loadLatestMalwareScanJob() {
     const data = await request('/panel-settings/malware-scan/jobs/latest', { silent: true }, '');
     if (!data) return null;
@@ -2159,6 +2185,12 @@ function App() {
       const newPath = [fileListPath, name].filter(Boolean).join('/');
       openFileEditorTab(newPath);
     }
+  }
+
+  async function saveFilePermissions() {
+    if (!chmodTarget) return;
+    const data = await request('/maintenance/files/chmod', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: chmodTarget.path, mode: chmodTarget.mode }) }, tr("Changing permissions..."));
+    if (data) { setChmodTarget(null); setNotice(tr("Permissions of {0} set to {1}.", chmodTarget.name, chmodTarget.mode)); await listFiles(fileListPath); }
   }
 
   async function renameFileItem(item) {
@@ -3535,7 +3567,7 @@ function App() {
     return () => { document.removeEventListener('mousedown', onPointer); document.removeEventListener('keydown', onKey); };
   }, [userMenuOpen]);
 
-  useEffect(() => { setUserMenuOpen(false); }, [page]);
+  useEffect(() => { setUserMenuOpen(false); setMalwareDetailJob(null); }, [page]);
 
   function roleLabel(role) {
     return role === 'admin' ? tr("Admin") : tr("End user");
@@ -4136,7 +4168,7 @@ function App() {
         <button className={sslMode === 'manual' ? 'active' : ''} onClick={() => setSslMode('manual')}><KeyRound size={14}/> {tr("Manual SSL")}</button>
       </div>
       {sslMode === 'letsencrypt' ? <>
-        <button disabled={!selectedWebsiteId || !!loading} onClick={() => enableSsl(selectedWebsiteId)} style={{marginTop:8}}><Lock size={15}/> {tr("Install / Renew SSL")}</button>
+        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={() => enableSsl(selectedWebsiteId)}><Lock size={15}/> {tr("Install / Renew SSL")}</button>
         <p className="hint">{tr("certbot HTTP-01 — the domain must point to this server's IP before issuing.")}</p>
       </> : sslMode === 'wildcard' ? <div className="manual-ssl-grid">
         <label style={{gridColumn:'1 / -1'}}>{tr("Cloudflare API Token")}
@@ -4278,25 +4310,79 @@ function App() {
     </section>;
   }
 
+  function cronScheduleLabel(expr) {
+    const preset = CRON_PRESETS.find(([value]) => value === normalizeCron(expr));
+    return preset ? tr(preset[1]) : expr;
+  }
+
+  // A preset dropdown beside the raw expression. Picking a preset fills the
+  // expression; typing in it (or choosing "Custom") switches to custom.
+  function renderSchedulePicker(key, value, onChange, inputId) {
+    const preset = CRON_PRESETS.find(([expr]) => expr === normalizeCron(value));
+    const custom = customSchedules[key] || !preset;
+    return <div className="schedule-picker">
+      <select value={custom ? 'custom' : preset[0]} onChange={e => {
+        const next = e.target.value;
+        if (next === 'custom') {
+          setCustomSchedules(prev => ({ ...prev, [key]: true }));
+          setTimeout(() => document.getElementById(inputId)?.focus(), 0);
+          return;
+        }
+        setCustomSchedules(prev => ({ ...prev, [key]: false }));
+        onChange(next);
+      }}>
+        {CRON_PRESETS.map(([expr, label]) => <option key={expr} value={expr}>{tr(label)}</option>)}
+        <option value="custom">{tr("Custom…")}</option>
+      </select>
+      <input id={inputId} value={value} spellCheck={false} placeholder="*/15 * * * *" aria-label={tr("Cron expression")}
+        onChange={e => { setCustomSchedules(prev => ({ ...prev, [key]: true })); onChange(e.target.value); }} />
+    </div>;
+  }
+
+  function cronCommandTemplates(site) {
+    const host = site?.domain || 'example.com';
+    const base = `${site?.ssl_enabled ? 'https' : 'http'}://${host}`;
+    const wordpress = !site || (site.app_type || 'wordpress') === 'wordpress';
+    return [
+      ...(wordpress ? [['wp-cron', 'WordPress cron (wp-cron.php)', `wget -q -O - ${base}/wp-cron.php?doing_wp_cron`]] : []),
+      ...(wordpress ? [['wp-due', 'WP-CLI: run due cron events', 'wp cron event run --due-now']] : []),
+      ...(wordpress ? [['wp-plugins', 'WP-CLI: update all plugins', 'wp plugin update --all']] : []),
+      ...(wordpress ? [['wp-themes', 'WP-CLI: update all themes', 'wp theme update --all']] : []),
+      ...(wordpress ? [['wp-core', 'WP-CLI: update WordPress core', 'wp core update']] : []),
+      ['url', 'Call a URL (curl)', `curl -s ${base}/`],
+      ['php', 'Run a PHP script', 'php -q cron.php'],
+    ];
+  }
+
   function renderCron() {
+    const templates = cronCommandTemplates(currentSite);
+    const template = templates.find(([, , command]) => command === cronCommand.trim());
     return <section className="section">
       <div className="section-title">
         <div><h2>{tr("Cron manager")}</h2></div>
         <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={listCron}><RefreshCw size={14}/> {tr("Refresh")}</button>
       </div>
-      <div className="cron-form">
-        <WebsiteSelect />
-        <input value={cronSchedule} onChange={e => setCronSchedule(e.target.value)} placeholder="*/15 * * * *" />
-        <input value={cronCommand} onChange={e => setCronCommand(e.target.value)} placeholder={tr("wget -q -O - https://example.com/wp-cron.php")} />
-        <button disabled={!selectedWebsiteId || !!loading} onClick={addCron}><Plus size={14}/> {tr("Add cron")}</button>
+      <div className="cron-builder">
+        <div className="field"><span className="field-label">{tr("Website")}</span><WebsiteSelect /></div>
+        <div className="field"><span className="field-label">{tr("Schedule")}</span>{renderSchedulePicker('cron', cronSchedule, setCronSchedule, 'cron-schedule-input')}</div>
+        <div className="field"><span className="field-label">{tr("Command template")}</span>
+          <select value={template ? template[0] : 'custom'} onChange={e => { const picked = templates.find(([key]) => key === e.target.value); if (picked) setCronCommand(picked[2]); }}>
+            {templates.map(([key, label]) => <option key={key} value={key}>{tr(label)}</option>)}
+            <option value="custom">{tr("Custom command")}</option>
+          </select>
+        </div>
+        <div className="field"><span className="field-label">{tr("Command")}</span>
+          <input value={cronCommand} spellCheck={false} onChange={e => setCronCommand(e.target.value)} placeholder={tr("wget -q -O - https://example.com/wp-cron.php")} />
+        </div>
+        <button className="cron-add" disabled={!selectedWebsiteId || !cronCommand.trim() || !!loading} onClick={addCron}><Plus size={14}/> {tr("Add cron")}</button>
       </div>
       {selectedWebsiteId && <p className="hint">{tr("Cron runs as")} <strong>{cronUser || currentSite?.linux_user || tr("www-data")}</strong> {tr("for the selected website. Accepted commands:")} <code>wget</code>/<code>curl</code> {tr("to an http(s) URL, WP-CLI maintenance commands, or a")} <code>.php</code> {tr("file inside this website. Output is discarded automatically.")}</p>}
       <div className="cron-list">
         {selectedWebsiteId && cronItems.length === 0 && <EmptyState icon={Clock} message={tr("No cron jobs found for this website.")} />}
         {cronItems.map(item => <div className="cron-item" key={`${item.index}-${item.line}`}>
           <span className="badge">#{item.index}</span>
-          <span><strong>{item.schedule}</strong><small>{item.command || item.line}</small></span>
-          <button className="mini danger" disabled={!!loading} onClick={() => deleteCron(item.index)}><Trash2 size={13}/></button>
+          <span><strong>{cronScheduleLabel(item.schedule)} <code className="cron-expr">{item.schedule}</code></strong><small>{item.command || item.line}</small></span>
+          <button className="mini danger" disabled={!!loading} onClick={() => deleteCron(item.index)} aria-label={tr("Delete")} title={tr("Delete")}><Trash2 size={13}/></button>
         </div>)}
       </div>
     </section>;
@@ -4363,7 +4449,8 @@ function App() {
               <button className="file-name" onClick={() => item.is_dir ? listFiles(item.path) : (isTextEditable(item) ? openFileEditorTab(item.path) : downloadFile(item.path))}>
                 {item.is_dir ? <FolderOpen size={16}/> : <FileText size={16}/>} <strong>{item.name}</strong>
               </button>
-              <span className="file-mode">{item.mode || '---'}</span>
+              <button type="button" className="file-mode" disabled={!!loading} title={tr("Change permissions")} aria-label={tr("Change permissions of {0}", item.name)}
+                onClick={() => setChmodTarget({ path: item.path, name: item.name, is_dir: item.is_dir, mode: (item.mode || (item.is_dir ? '755' : '644')).slice(-3) })}>{item.mode || '---'}</button>
               <span className="file-size">{item.is_dir ? tr("Folder") : formatBytes(item.size)}</span>
               <div className="file-row-actions">
                 {!item.is_dir && <button className="mini secondary-light" disabled={!!loading} onClick={() => downloadFile(item.path)}><Download size={13}/></button>}
@@ -4670,26 +4757,30 @@ function App() {
           <div><h3>{tr("Scheduled backups")}</h3><p className="hint">{tr("Runs a full user backup on a schedule, with an optional off-server destination. A daily schedule rotates through seven files named for the day —")} <code>username-monday.tar.gz</code> {tr("and so on — so you keep a week and the eighth day overwrites the first. With a destination, that week is kept there: each archive is removed from this server once it has uploaded, and stays here only if the upload fails.")}</p></div>
           <button className="secondary" disabled={!!loading} onClick={refreshScheduledBackupArea}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
-        <div className="sftp-form schedule-form backup-schedule-form">
-          <label className="schedule-toggle">
-            <input type="checkbox" checked={!!newBackupSchedule.all_users} onChange={e => setNewBackupSchedule(prev => ({ ...prev, all_users: e.target.checked }))} />
-            <span>{tr("All users")}</span>
-          </label>
-          <select multiple value={newBackupSchedule.user_ids || []} disabled={!!newBackupSchedule.all_users} onChange={e => setNewBackupSchedule(prev => ({ ...prev, user_ids: Array.from(e.target.selectedOptions, option => option.value) }))}>
-            {users.map(user => <option key={user.id} value={String(user.id)}>{user.username}</option>)}
-          </select>
-          <input value={newBackupSchedule.schedule} onChange={e => setNewBackupSchedule(prev => ({ ...prev, schedule: e.target.value }))} placeholder="0 2 * * *" />
-          <select value={newBackupSchedule.target_id} onChange={e => setNewBackupSchedule(prev => ({ ...prev, target_id: e.target.value }))}>
-            <option value="">{tr("Local only")}</option>
-            {sftpTargets.map(target => <option key={target.id} value={target.id}>{target.name}</option>)}
-          </select>
-          <button disabled={(!newBackupSchedule.all_users && (!newBackupSchedule.user_ids || newBackupSchedule.user_ids.length === 0)) || !!loading} onClick={createBackupSchedule}><Clock size={14}/> {tr("Schedule")}</button>
+        <div className="backup-schedule-builder">
+          <div className="field"><span className="field-label">{tr("Accounts")}</span>
+            <label className="check-line">
+              <input type="checkbox" checked={!!newBackupSchedule.all_users} onChange={e => setNewBackupSchedule(prev => ({ ...prev, all_users: e.target.checked }))} />
+              {tr("All users")}
+            </label>
+            {!newBackupSchedule.all_users && <select multiple value={newBackupSchedule.user_ids || []} onChange={e => setNewBackupSchedule(prev => ({ ...prev, user_ids: Array.from(e.target.selectedOptions, option => option.value) }))}>
+              {users.map(user => <option key={user.id} value={String(user.id)}>{user.username}</option>)}
+            </select>}
+          </div>
+          <div className="field"><span className="field-label">{tr("Schedule")}</span>{renderSchedulePicker('backup', newBackupSchedule.schedule, value => setNewBackupSchedule(prev => ({ ...prev, schedule: value })), 'backup-schedule-input')}</div>
+          <div className="field"><span className="field-label">{tr("Destination")}</span>
+            <select value={newBackupSchedule.target_id} onChange={e => setNewBackupSchedule(prev => ({ ...prev, target_id: e.target.value }))}>
+              <option value="">{tr("Local only")}</option>
+              {sftpTargets.map(target => <option key={target.id} value={target.id}>{target.name}</option>)}
+            </select>
+          </div>
+          <button className="backup-schedule-add" disabled={(!newBackupSchedule.all_users && (!newBackupSchedule.user_ids || newBackupSchedule.user_ids.length === 0)) || !!loading} onClick={createBackupSchedule}><Clock size={14}/> {tr("Schedule")}</button>
         </div>
         <div className="backup-list">
           {backupSchedules.map(item => {
             const scheduleTarget = sftpTargets.find(target => target.id === item.target_id);
             return <div className="backup-item" key={item.id}>
-              <span>{scheduleUserLabel(item)} - {item.schedule}{scheduleTarget ? ` - ${scheduleTarget.name}` : ''}
+              <span>{scheduleUserLabel(item)} - {cronScheduleLabel(item.schedule)}{scheduleTarget ? ` - ${scheduleTarget.name}` : ''}
                 {(() => {
                   // A run started from this row reports on this row. Sending
                   // someone to another tab to find out whether their click did
@@ -4891,6 +4982,18 @@ function App() {
     </div>;
   }
 
+  // A label, the value in a code block of its own, and a copy button:
+  // stacked on a phone, the button beside the label on a wider screen.
+  function renderCopyBlock(label, text, { multiline = false, copiedMessage } = {}) {
+    return <div className="copy-block">
+      <div className="copy-block-head">
+        <span>{label}</span>
+        <button type="button" className="mini secondary" onClick={() => { copyToClipboard(text); setNotice(copiedMessage || tr("Copied to clipboard.")); }}><Copy size={13}/> {tr("Copy")}</button>
+      </div>
+      {multiline ? <pre className="copy-block-code">{text}</pre> : <code className="copy-block-code">{text}</code>}
+    </div>;
+  }
+
   function renderMcp() {
     const enabled = !!mcpInfo?.enabled;
     return <>
@@ -4900,68 +5003,61 @@ function App() {
             <h2>{tr("AI assistants (MCP)")}</h2>
             <p className="hint">{tr("Connect Claude Code, Cursor, VS Code or another MCP client to this panel. A token acts as your account: it sees your websites, databases and backups")}{isAdmin ? tr(" (as an administrator, every account’s)") : ''} {tr("and nothing else. With actions allowed it can also edit your websites’ files, so an assistant can build and fix your sites; deleting a file always asks you first in the client.")}</p>
           </div>
-          <button className="secondary-light" disabled={!!loading} onClick={loadMcp}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary" disabled={!!loading} onClick={loadMcp}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
-
         {mcpInfo === null && <p className="hint">{tr("Loading…")}</p>}
         {mcpInfo !== null && !enabled && <div className="info-box"><AlertCircle size={14}/> {isAdmin
           ? <>{tr("MCP is not running on this panel. Install or start the")} <strong>{tr("MCP server")}</strong> {tr("addon on the Addons page first.")}
               {' '}<button className="mini" onClick={() => navigateToPage('addons')}><PackageOpen size={13}/> {tr("Open Addons")}</button></>
           : tr("MCP is not enabled on this panel. Ask your administrator to turn it on.")}</div>}
-
-        {enabled && <>
-          <div className="token-copy-row" style={{marginBottom: 12}}>
-            <span className="hint">{tr("Endpoint")}</span>
-            <code>{mcpEndpoint}</code>
-            <button className="mini" onClick={() => { copyToClipboard(mcpEndpoint); setNotice(tr("Copied to clipboard.")); }}><Copy size={14}/> {tr("Copy")}</button>
-          </div>
-
-          {mcpCreated && <div className="token-created-notice">
-            <p><strong>{tr("Token created.")}</strong> {tr("Copy it now — it is shown only once.")}</p>
-            <div className="token-copy-row">
-              <code>{mcpCreated.token}</code>
-              <button className="mini" onClick={() => { copyToClipboard(mcpCreated.token); setNotice(tr("Copied to clipboard.")); }}><Copy size={14}/> {tr("Copy")}</button>
-            </div>
-            {mcpClientSnippets(mcpCreated.token).map(([label, text]) => <div key={label} style={{marginTop: 10}}>
-              <div className="token-copy-row">
-                <strong>{label}</strong>
-                <button className="mini" onClick={() => { copyToClipboard(text); setNotice(tr("{0} setup copied.", label)); }}><Copy size={14}/> {tr("Copy")}</button>
-              </div>
-              <pre className="addon-log mcp-snippet">{text}</pre>
-            </div>)}
-            <button className="mini secondary-light" onClick={() => setMcpCreated(null)}>{tr("Dismiss")}</button>
-          </div>}
-
-          <h3>{tr("New token")}</h3>
-          <div className="token-create-form mcp-token-form">
-            <label><span>{tr("Name")}</span><input value={mcpForm.name} maxLength={64} placeholder={tr("Claude Code on my laptop")}
-              onChange={e => setMcpForm(prev => ({ ...prev, name: e.target.value }))} /></label>
-            <label><span>{tr("Expires")}</span><select value={mcpForm.expires_days}
-              onChange={e => setMcpForm(prev => ({ ...prev, expires_days: Number(e.target.value) }))}>
-              {[30, 90, 180, 365].map(days => <option key={days} value={days}>{days} {tr("days")}</option>)}
-            </select></label>
-            <button disabled={!!loading || !mcpForm.name.trim()} onClick={createMcpToken}><Plus size={14}/> {tr("Create token")}</button>
-          </div>
-          <label className="schedule-toggle mcp-write-toggle">
-            <input type="checkbox" checked={mcpForm.can_write}
-              onChange={e => setMcpForm(prev => ({ ...prev, can_write: e.target.checked }))} />
-            <span>{tr("Allow actions (write and delete files, run backups, issue certificates, switch the WAF")}{isAdmin ? tr(", restart services, block and unblock IPs, add WAF rules") : ''})</span>
-          </label>
-          <p className="hint">{tr("Without “Allow actions” the token can only read. Up to")} {mcpInfo?.max_tokens || 10} {tr("tokens per account.")}</p>
-
-          <h3>{tr("Your tokens")}</h3>
-          {mcpTokens.length === 0 ? <p className="hint">{tr("No MCP tokens yet.")}</p> : renderMcpTokenRows(mcpTokens)}
-
-          {!mcpCreated && <>
-            <h3>{tr("Connecting a client")}</h3>
-            <p className="hint">{tr("Replace <your-token> with a token from above. The client must trust this panel’s HTTPS certificate; a self-signed one is refused.")}</p>
-            {mcpClientSnippets('').map(([label, text]) => <div key={label} style={{marginTop: 10}}>
-              <strong>{label}</strong>
-              <pre className="addon-log mcp-snippet">{text}</pre>
-            </div>)}
-          </>}
-        </>}
+        {enabled && renderCopyBlock(tr("Endpoint"), mcpEndpoint)}
       </section>
+
+      {enabled && mcpCreated && <section className="section token-created-notice">
+        <div className="section-title">
+          <div><h2>{tr("Token created.")}</h2><p className="hint">{tr("Copy it now — it is shown only once.")}</p></div>
+          <button className="secondary" onClick={() => setMcpCreated(null)}>{tr("Dismiss")}</button>
+        </div>
+        {renderCopyBlock(tr("Token"), mcpCreated.token)}
+        {mcpClientSnippets(mcpCreated.token).map(([label, text]) => <React.Fragment key={label}>
+          {renderCopyBlock(label, text, { multiline: true, copiedMessage: tr("{0} setup copied.", label) })}
+        </React.Fragment>)}
+      </section>}
+
+      {enabled && <section className="section">
+        <h2>{tr("New token")}</h2>
+        <div className="token-create-form mcp-token-form">
+          <label><span>{tr("Name")}</span><input value={mcpForm.name} maxLength={64} placeholder={tr("Claude Code on my laptop")}
+            onChange={e => setMcpForm(prev => ({ ...prev, name: e.target.value }))} /></label>
+          <label><span>{tr("Expires")}</span><select value={mcpForm.expires_days}
+            onChange={e => setMcpForm(prev => ({ ...prev, expires_days: Number(e.target.value) }))}>
+            {[30, 90, 180, 365].map(days => <option key={days} value={days}>{days} {tr("days")}</option>)}
+          </select></label>
+          <button disabled={!!loading || !mcpForm.name.trim()} onClick={createMcpToken}><Plus size={14}/> {tr("Create token")}</button>
+        </div>
+        <label className="option-card">
+          <input type="checkbox" checked={mcpForm.can_write}
+            onChange={e => setMcpForm(prev => ({ ...prev, can_write: e.target.checked }))} />
+          <span>
+            <strong>{tr("Allow actions")}</strong>
+            <small>{tr("Write and delete files, run backups, issue certificates, switch the WAF")}{isAdmin ? tr(", restart services, block and unblock IPs, add WAF rules") : ''}. {tr("Without it the token can only read.")}</small>
+          </span>
+        </label>
+        <p className="hint">{tr("Up to")} {mcpInfo?.max_tokens || 10} {tr("tokens per account.")}</p>
+      </section>}
+
+      {enabled && <section className="section">
+        <h2>{tr("Your tokens")}</h2>
+        {mcpTokens.length === 0 ? <p className="hint">{tr("No MCP tokens yet.")}</p> : renderMcpTokenRows(mcpTokens)}
+      </section>}
+
+      {enabled && !mcpCreated && <section className="section">
+        <div><h2>{tr("Connecting a client")}</h2>
+          <p className="hint">{tr("Replace <your-token> with a token from above. The client must trust this panel’s HTTPS certificate; a self-signed one is refused.")}</p></div>
+        {mcpClientSnippets('').map(([label, text]) => <React.Fragment key={label}>
+          {renderCopyBlock(label, text, { multiline: true, copiedMessage: tr("{0} setup copied.", label) })}
+        </React.Fragment>)}
+      </section>}
     </>;
   }
 
@@ -5222,7 +5318,9 @@ function App() {
   }
 
   function renderWaf() {
-    const statusText = wafRules.status?.stdout || wafRules.status?.stderr || tr("Click Refresh to load WAF status.");
+    // The status probe prints "installed" or "not-installed"; that is all the page needs to say.
+    const wafProbe = `${wafRules.status?.stdout || ''}`;
+    const wafEngine = /not-installed/.test(wafProbe) ? 'off' : /\binstalled\b/.test(wafProbe) ? 'on' : 'unknown';
     const selectedSite = websites.find(site => String(site.id) === String(selectedWafWebsiteId));
     const groupedRules = (wafSiteConfig?.default_rules || wafRules.default_rule_definitions || []).reduce((groups, rule) => {
       const category = rule.category || 'General';
@@ -5232,14 +5330,6 @@ function App() {
     }, {});
     return <>
       {!wafSiteConfig && <>
-        {isAdmin && <section className="section">
-          <div className="section-title">
-            <div><h2>{tr("WAF")}</h2><p className="hint">{tr("Engine status. Rules are configured per website below.")}</p></div>
-            <button className="secondary" disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> {tr("Refresh")}</button>
-          </div>
-          <div className="info-box firewall-status"><strong>{tr("Status")}</strong><pre>{statusText}</pre></div>
-        </section>}
-
         {isAdmin && <section className="section">
           <div className="section-title">
             <div>
@@ -5256,7 +5346,11 @@ function App() {
 
         <section className="section">
           <div className="section-title">
-            <div><h2>{isAdmin ? tr("Websites") : tr("Your websites")}</h2><p className="hint">{tr("Open a website to configure its rules and bad bots.")}</p></div>
+            <div>
+              <h2>{isAdmin ? tr("Websites") : tr("Your websites")} {isAdmin && <span className={wafEngine === 'on' ? 'badge ok' : wafEngine === 'off' ? 'badge warn' : 'badge'}>{wafEngine === 'on' ? tr("WAF engine on") : wafEngine === 'off' ? tr("WAF engine off") : tr("WAF engine: checking…")}</span>}</h2>
+              <p className="hint">{tr("Open a website to configure its rules and bad bots.")}</p>
+            </div>
+            {isAdmin && <button className="secondary" disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> {tr("Refresh")}</button>}
           </div>
           {websites.length === 0
             ? <EmptyState icon={Globe} message={tr("No websites yet.")} />
@@ -5628,19 +5722,59 @@ function App() {
       if (['error', 'interrupted'].includes(job.status)) return 'badge bad';
       return 'badge warn';
     };
+    if (malwareDetailJob) {
+      const job = malwareDetailJob;
+      const started = job.started_at ? new Date(job.started_at) : null;
+      const finished = job.finished_at ? new Date(job.finished_at) : null;
+      const seconds = started && finished ? Math.max(0, Math.round((finished - started) / 1000)) : null;
+      const duration = seconds == null ? '—' : seconds >= 3600 ? `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m` : seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+      return <section className="section scan-detail">
+        <div className="section-title">
+          <div className="waf-detail-title">
+            <button className="secondary" onClick={() => setMalwareDetailJob(null)}><ArrowLeft size={14}/> {tr("Malware scanner")}</button>
+            <div><h2>{scanJobTitle(job)}</h2><p className="hint">{scanJobStamp(job)}</p></div>
+          </div>
+          <span className={scanJobBadgeClass(job)}>{job.status}</span>
+        </div>
+        <div className="scan-detail-stats">
+          <div><small>{tr("Files scanned")}</small><strong>{job.scanned || 0}{job.total_files ? ` / ${job.total_files}` : ''}</strong></div>
+          <div><small>{tr("Threats found")}</small><strong className={job.infected > 0 ? 'text-danger' : ''}>{job.infected || 0}</strong></div>
+          <div><small>{tr("Errors")}</small><strong>{job.errors || 0}</strong></div>
+          <div><small>{tr("Duration")}</small><strong>{duration}</strong></div>
+        </div>
+        {job.message && <p className="hint">{job.message}</p>}
+        {job.error && <p className="hint" style={{ color: 'var(--danger)' }}>{job.error}</p>}
+        <h3>{tr("Threats")}</h3>
+        {job.threats && job.threats.length > 0
+          ? <div className="scan-threat-list">
+              {job.threats.map((t, i) => <div key={i} className="scan-threat-item">
+                <strong>{t.signature}</strong>
+                <span>{t.domain ? `${t.domain}: ` : ''}{t.path}</span>
+                {(t.quarantined || quarantine.some(q => q.original_path === t.path))
+                  ? <span className="badge ok">{tr("Quarantined")}</span>
+                  : <button className="secondary-light" disabled={!!loading} onClick={() => quarantineThreat(t.path, t.signature)}>{tr("Quarantine")}</button>}
+              </div>)}
+            </div>
+          : <div className="quarantine-empty"><CheckCircle size={16}/> {tr("No threats in this scan.")}</div>}
+        {job.log && job.log.length > 0 && <details className="raw-output" open={job.infected > 0 || job.status === 'error'}>
+          <summary>{tr("Scan log")}</summary>
+          <pre className="malware-scan-log">{job.log.join('\n')}</pre>
+        </details>}
+      </section>;
+    }
     return <>
       {isAdmin && <section className="section">
         <div className="section-title">
           <div>
             <h2>{tr("Malware Scanner")}</h2>
-            <p className="hint">
+            <p className="hint badge-row">
               {mwActive ? <span className="badge ok">{tr("Active")}</span>
                 : mwEnabled && mwInstalled ? <span className="badge warn">{tr("Enabled — clamd not running")}</span>
                 : mwEnabled && !mwInstalled ? <span className="badge warn">{tr("Installing ClamAV...")}</span>
                 : mwInstalled && !mwEnabled ? <span className="badge">{tr("Installed — scanning disabled")}</span>
                 : <span className="badge">{tr("Not installed")}</span>}
-              {mwInstalled && <span className="badge" style={{marginLeft:6}}>{tr("Engine:")} {mw.engine || tr("ClamAV")}{mw.lmd_version ? tr(" (LMD {0})", mw.lmd_version) : ''}</span>}
-              {mw.realtime_active && <span className="badge ok" style={{marginLeft:6}}>{tr("Real-time on")}</span>}
+              {mwInstalled && <span className="badge">{tr("Engine:")} {mw.engine || tr("ClamAV")}{mw.lmd_version ? tr(" (LMD {0})", mw.lmd_version) : ''}</span>}
+              {mw.realtime_active && <span className="badge ok">{tr("Real-time on")}</span>}
             </p>
           </div>
           <button className="secondary" disabled={!!loading} onClick={loadMalwareScanStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
@@ -5719,7 +5853,7 @@ function App() {
               {scanJobs.slice(0, 8).map(job => <button
                 key={job.job_id}
                 className={`scan-history-item ${job.status}${activeScanJob.job_id === job.job_id ? ' active' : ''}`}
-                onClick={() => showMalwareScanJob(job)}
+                onClick={() => openMalwareScanDetail(job)}
                 disabled={!!loading}
                 type="button"
               >
@@ -5827,7 +5961,7 @@ function App() {
           <div className="info-box">
             <strong>{tr("Scheduled scan")} <code>{root}</code></strong>
             <p className="hint">{tr("Runs automatically on the server clock, even when nobody is logged in to the panel. Use “Run a scan now” above for an on-demand scan.")}</p>
-            <div className="schedule-form">
+            <div className="scan-schedule-form">
               <label><span>{tr("Enabled")}</span>
                 <select value={sched.enabled ? 'on' : 'off'} onChange={e => setField({ enabled: e.target.value === 'on' })}>
                   <option value="off">{tr("Off")}</option>
@@ -6216,7 +6350,6 @@ function App() {
           <div>
             <p className="eyebrow">{tr("Server Management Panel")}</p>
             <h1>{panelSettings.app_name || tr("opanel")}</h1>
-            <p className="hint">{tr("Manage websites, databases, backups, SSL, and services.")}</p>
           </div>
         </div>
         <div className="login-form">
@@ -6256,7 +6389,6 @@ function App() {
             </button>)}
           </div>)}
         </nav>
-        {renderLanguageToggle('secondary compact-btn sidebar-lang')}
         {appVersion && <div className="sidebar-version">v{appVersion}</div>}
       </aside>
       <div className="content">
@@ -6350,6 +6482,57 @@ function App() {
         </div>
       </div>
     </div>}
+    {chmodTarget && (() => {
+      // Three-digit octal mode edited as a grid of checkboxes. The server
+      // refuses what is unsafe (execute bits on files, world-writable
+      // anything), so those boxes are locked here rather than failing later.
+      const digits = (chmodTarget.mode.padStart(3, '0').slice(-3)).split('').map(d => parseInt(d, 8) || 0);
+      const valid = /^[0-7]{3}$/.test(chmodTarget.mode);
+      const setBit = (who, bit, on) => {
+        const next = [...digits];
+        next[who] = on ? (next[who] | bit) : (next[who] & ~bit);
+        setChmodTarget(prev => ({ ...prev, mode: next.join('') }));
+      };
+      const locked = (who, bit) => (bit === 2 && who === 2) || (!chmodTarget.is_dir && bit === 1) || (chmodTarget.is_dir && who === 0 && bit === 1);
+      const presets = chmodTarget.is_dir ? ['755', '750', '711', '700'] : ['644', '640', '600', '444'];
+      return <div className="modal-overlay" onClick={() => setChmodTarget(null)}>
+        <div className="modal-card chmod-card" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <h3>{tr("Permissions")} — {chmodTarget.name}</h3>
+            <button className="secondary-light" onClick={() => setChmodTarget(null)} aria-label={tr("Close")}><X size={16}/></button>
+          </div>
+          <div className="modal-body">
+            <table className="chmod-grid">
+              <thead><tr><th></th><th>{tr("Read")}</th><th>{tr("Write")}</th><th>{tr("Execute")}</th></tr></thead>
+              <tbody>
+                {[tr("Owner"), tr("Group"), tr("Public")].map((label, who) => <tr key={label}>
+                  <th scope="row">{label}</th>
+                  {[4, 2, 1].map(bit => <td key={bit}>
+                    <input type="checkbox" checked={(digits[who] & bit) !== 0} disabled={locked(who, bit)}
+                      onChange={e => setBit(who, bit, e.target.checked)} aria-label={`${label} ${bit === 4 ? tr("Read") : bit === 2 ? tr("Write") : tr("Execute")}`} />
+                  </td>)}
+                </tr>)}
+              </tbody>
+            </table>
+            <div className="chmod-mode-row">
+              <label><span>{tr("Numeric mode")}</span>
+                <input value={chmodTarget.mode} maxLength={3} inputMode="numeric" onChange={e => setChmodTarget(prev => ({ ...prev, mode: e.target.value.replace(/[^0-7]/g, '').slice(0, 3) }))} />
+              </label>
+              <div className="chmod-presets">
+                {presets.map(mode => <button key={mode} type="button" className={`mini ${chmodTarget.mode === mode ? 'toggle-on' : 'secondary'}`} onClick={() => setChmodTarget(prev => ({ ...prev, mode }))}>{mode}</button>)}
+              </div>
+            </div>
+            <p className="hint">{chmodTarget.is_dir
+              ? tr("Folders need execute for anyone who may read them, and cannot be writable by everyone.")
+              : tr("Files cannot be executable or writable by everyone. 644 is the usual choice; 600 keeps a file private to the site.")}</p>
+          </div>
+          <div className="modal-actions">
+            <button className="secondary-light" onClick={() => setChmodTarget(null)}>{tr("Cancel")}</button>
+            <button disabled={!!loading || !valid} onClick={saveFilePermissions}><Save size={14}/> {tr("Apply")}</button>
+          </div>
+        </div>
+      </div>;
+    })()}
     {renderNotifications()}
   </main>;
 }
