@@ -3695,14 +3695,16 @@ function App() {
     return <article className="resource-card">
       <div className="resource-head"><span className="resource-icon"><Icon size={16}/></span><span>{label}</span></div>
       <strong>{value}</strong>
-      {safePercent !== null && <div className="resource-track"><span style={{ width: `${safePercent}%` }}></span></div>}
+      {/* A meter without a percentage keeps an empty track, so every card's
+          value and detail sit on the same lines as its neighbours'. */}
+      {safePercent !== null ? <div className="resource-track"><span style={{ width: `${safePercent}%` }}></span></div> : <div className="resource-track is-empty" aria-hidden="true"></div>}
       <small>{detail}</small>
     </article>;
   }
 
   function FeatureTile({ icon: Icon, label, hint, target }) {
     return <button type="button" className="feature-tile" onClick={() => navigateToPage(target)}>
-      <span className="feature-tile-icon"><Icon size={26}/></span>
+      <span className="feature-tile-icon"><Icon size={18}/></span>
       <span className="feature-tile-label">{label}</span>
       <small>{hint}</small>
     </button>;
@@ -3756,23 +3758,43 @@ function App() {
         ],
       },
     ];
-    return <>
-      {isAdmin && <section className="resource-grid">
-        <ResourceCard icon={Cpu} label={tr("CPU")} value={formatPercent(cpu.percent)} percent={cpu.percent} detail={cpu.load?.length ? tr("Load {0}", cpu.load.join(' / ')) : tr("{0} cores", cpu.cores || '--')} />
-        <ResourceCard icon={MemoryStick} label={tr("RAM")} value={formatPercent(memory.percent)} percent={memory.percent} detail={`${formatBytes(memory.used)} / ${formatBytes(memory.total)}`} />
-        <ResourceCard icon={HardDrive} label={tr("Disk")} value={formatPercent(disk.percent)} percent={disk.percent} detail={`${formatBytes(disk.used)} / ${formatBytes(disk.total)}`} />
-        <ResourceCard icon={Network} label={tr("Network")} value={`${formatBytes(networkTotal)}/s`} detail={tr("Down {0}/s / Up {1}/s", formatBytes(network.rx_per_sec), formatBytes(network.tx_per_sec))} />
+    return <div className="dashboard">
+      {isAdmin && <section className="section dash-card dash-resources">
+        <div className="dash-card-head"><span className="dash-card-icon"><Activity size={16}/></span><h2>{tr("Server resources")}</h2></div>
+        <div className="resource-grid">
+          <ResourceCard icon={Cpu} label={tr("CPU")} value={formatPercent(cpu.percent)} percent={cpu.percent} detail={cpu.load?.length ? tr("Load {0}", cpu.load.join(' / ')) : tr("{0} cores", cpu.cores || '--')} />
+          <ResourceCard icon={MemoryStick} label={tr("RAM")} value={formatPercent(memory.percent)} percent={memory.percent} detail={`${formatBytes(memory.used)} / ${formatBytes(memory.total)}`} />
+          <ResourceCard icon={HardDrive} label={tr("Disk")} value={formatPercent(disk.percent)} percent={disk.percent} detail={`${formatBytes(disk.used)} / ${formatBytes(disk.total)}`} />
+          <ResourceCard icon={Network} label={tr("Network")} value={`${formatBytes(networkTotal)}/s`} detail={tr("Down {0}/s / Up {1}/s", formatBytes(network.rx_per_sec), formatBytes(network.tx_per_sec))} />
+        </div>
       </section>}
-      {featureGroups.filter(group => group.items.length > 0).map(group => <section className="section feature-group" key={group.title}>
-        <div className="feature-group-head">
-          <span className="feature-group-icon"><group.icon size={15}/></span>
-          <h2>{group.title}</h2>
-        </div>
-        <div className="feature-grid">
-          {group.items.map(item => <FeatureTile key={item.target} {...item} />)}
-        </div>
-      </section>)}
-    </>;
+      {!isAdmin && currentUser && (() => {
+        // A customer's counterpart to the server meters: how much of the plan is used.
+        const storageLimit = storageLimitBytes(currentUser);
+        const siteLimit = Number(currentUser.website_limit) || 0;
+        const dbLimit = Number(currentUser.database_limit) || 0;
+        const usedBytes = Number(currentUser.storage_used_bytes) || 0;
+        const pct = (used, limit) => limit > 0 ? (used / limit) * 100 : null;
+        return <section className="section dash-card dash-resources" style={{ '--meter-cols': 3 }}>
+          <div className="dash-card-head"><span className="dash-card-icon"><Activity size={16}/></span><h2>{tr("Plan usage")}</h2></div>
+          <div className="resource-grid">
+            <ResourceCard icon={HardDrive} label={tr("Storage")} value={storageLimit ? formatPercent(pct(usedBytes, storageLimit)) : formatBytes(usedBytes)} percent={storageLimit ? pct(usedBytes, storageLimit) : null} detail={storageLimit ? tr("{0} of {1}", formatBytes(usedBytes), formatBytes(storageLimit)) : tr("unlimited")} />
+            <ResourceCard icon={Globe} label={tr("Websites")} value={siteLimit ? `${websites.length} / ${siteLimit}` : String(websites.length)} percent={pct(websites.length, siteLimit)} detail={siteLimit ? tr("{0} of {1}", websites.length, siteLimit) : tr("unlimited")} />
+            <ResourceCard icon={Database} label={tr("Databases")} value={dbLimit ? `${databases.length} / ${dbLimit}` : String(databases.length)} percent={pct(databases.length, dbLimit)} detail={dbLimit ? tr("{0} of {1}", databases.length, dbLimit) : tr("unlimited")} />
+          </div>
+        </section>;
+      })()}
+      {/* One card per group, side by side, each a list of links -- the same
+          card shape as the resources above, so the page reads as one grid. */}
+      <div className="dash-groups" style={{ '--dash-cols': featureGroups.filter(group => group.items.length > 0).length }}>
+        {featureGroups.filter(group => group.items.length > 0).map(group => <section className="section dash-card dash-group" key={group.title}>
+          <div className="dash-card-head"><span className="dash-card-icon"><group.icon size={16}/></span><h2>{group.title}</h2></div>
+          <div className="dash-links">
+            {group.items.map(item => <FeatureTile key={item.target} {...item} />)}
+          </div>
+        </section>)}
+      </div>
+    </div>;
   }
 
   function renderNginxEditor() {

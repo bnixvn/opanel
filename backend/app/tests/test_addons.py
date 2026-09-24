@@ -514,7 +514,7 @@ def test_every_addon_endpoint_requires_admin():
 
 
 def test_the_page_is_hidden_and_not_reachable_by_url():
-    index = APP_JSX.index("['addons', 'Addons', PackageOpen]")
+    index = APP_JSX.index("['addons', tr(\"Addons\"), PackageOpen]")
     assert "isAdmin ?" in APP_JSX[max(0, index - 120):index]
     line_start = APP_JSX.index("if (page === 'addons')")
     line = APP_JSX[line_start:APP_JSX.index("\n", line_start)]

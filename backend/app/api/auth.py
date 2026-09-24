@@ -545,6 +545,7 @@ def session_status(
         "is_active": current_user.is_active,
         "website_limit": current_user.website_limit,
         "storage_limit_mb": current_user.storage_limit_mb,
+        "database_limit": current_user.database_limit,
         "totp_enabled": current_user.totp_enabled,
     }
     user_data.update(storage_quota.storage_usage_summary(db, current_user))
