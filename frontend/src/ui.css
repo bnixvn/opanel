@@ -342,6 +342,16 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 /* A row of status badges wraps between badges, never inside one. */
 .badge-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px}
 
+/* Row-shaped buttons keep dark text on hover: the generic button hover paints
+   text white for the solid blue buttons, which left these rows unreadable on
+   their light hover fill. */
+.waf-site-row:hover:not(:disabled),
+.scan-history-item:hover:not(:disabled),
+.feature-tile:hover:not(:disabled),
+.file-list button.file-name:hover:not(:disabled),
+.crumb:hover:not(:disabled){color:var(--text)}
+.waf-site-row:hover:not(:disabled) .waf-site-open{color:var(--primary-ink)}
+
 /* ---------- Responsive ---------- */
 @media(max-width:950px){
   .topbar{padding:0 12px}
@@ -372,7 +382,7 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .schedule-picker{grid-template-columns:1fr}
   .section-title > div:first-child{flex:1 1 200px}
   .section-title > button,.section-title > .actions{flex:none;width:auto}
-  .section-title > .actions{display:flex;flex-wrap:nowrap;gap:8px}
+  .section-title > .actions{display:flex;flex-wrap:wrap;gap:8px}
   .section-title > .actions button,.section-title > button{width:auto}
 
   .cron-builder,.backup-schedule-builder{grid-template-columns:1fr}

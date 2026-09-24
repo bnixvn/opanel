@@ -3567,7 +3567,9 @@ function App() {
     return () => { document.removeEventListener('mousedown', onPointer); document.removeEventListener('keydown', onKey); };
   }, [userMenuOpen]);
 
-  useEffect(() => { setUserMenuOpen(false); setMalwareDetailJob(null); }, [page]);
+  useEffect(() => { setUserMenuOpen(false); setMalwareDetailJob(null); window.scrollTo(0, 0); }, [page]);
+  // Opening or leaving one website's WAF settings is a page change too.
+  useEffect(() => { window.scrollTo(0, 0); }, [wafSiteConfig?.domain]);
 
   function roleLabel(role) {
     return role === 'admin' ? tr("Admin") : tr("End user");
