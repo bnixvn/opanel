@@ -524,6 +524,7 @@ function App() {
   const [malwareDetailJob, setMalwareDetailJob] = useState(null);
   const [chmodTarget, setChmodTarget] = useState(null);
   const [sftpInfo, setSftpInfo] = useState(null);
+  const [dashSummary, setDashSummary] = useState(null);
   const [showCreateSftp, setShowCreateSftp] = useState(false);
   const [sftpForm, setSftpForm] = useState({ owner_id: '', suffix: '', website_id: '', subpath: '', password: '' });
   const [sftpPasswordFor, setSftpPasswordFor] = useState(null);
@@ -1321,6 +1322,11 @@ function App() {
     const data = await request('/mcp/info', { silent: true }, '');
     if (data) setMcpInfo(data);
     return data;
+  }
+
+  async function loadDashboardSummary() {
+    const data = await request('/dashboard/summary', { silent: true }, '');
+    if (data) setDashSummary(data);
   }
 
   async function loadSftp() {
@@ -3539,6 +3545,7 @@ function App() {
     }
     if (isAuthenticated && page === 'addons' && isAdmin) loadAddons();
     if (isAuthenticated && page === 'mcp') loadMcp();
+    if (isAuthenticated && page === 'dashboard') loadDashboardSummary();
     if (isAuthenticated && page === 'sftp') { loadSftp(); if (isAdmin) loadUsers(); if (!websites.length) refreshAll(); }
     if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); loadNetworkStatus(); }
     if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); loadRestoreBackups(); loadDaBackups(); loadDaImportJobs(); }
@@ -3778,63 +3785,88 @@ function App() {
     </article>;
   }
 
-  function FeatureTile({ icon: Icon, label, hint, target }) {
-    return <button type="button" className="feature-tile" onClick={() => navigateToPage(target)}>
-      <span className="feature-tile-icon"><Icon size={18}/></span>
-      <span className="feature-tile-label">{label}</span>
-      <small>{hint}</small>
-    </button>;
-  }
-
   function renderDashboard() {
     const cpu = resourceUsage?.cpu || {};
     const memory = resourceUsage?.memory || {};
     const disk = resourceUsage?.disk || {};
     const network = resourceUsage?.network || {};
     const networkTotal = (Number(network.rx_per_sec) || 0) + (Number(network.tx_per_sec) || 0);
-    const plural = (count, word) => tr(count === 1 ? `{0} ${word}` : `{0} ${word}s`, count);
-    const sslActive = websites.filter(site => site.ssl_enabled).length;
-    // The counts the stats row used to carry now sit on the feature they
-    // describe, so the number and the way to act on it are the same tile.
-    const featureGroups = [
-      {
-        title: tr("Hosting"),
-        icon: Layers,
-        items: [
-          { target: 'websites', label: tr("Websites"), icon: Globe, hint: websites.length ? plural(websites.length, 'site') : tr("No websites yet") },
-          { target: 'ssl', label: tr("SSL"), icon: Lock, hint: sslActive ? tr("{0} of {1} secured", sslActive, websites.length) : tr("Nothing secured yet") },
-          { target: 'databases', label: tr("Databases"), icon: Database, hint: plural(databases.length, 'database') },
-          { target: 'cron', label: tr("Cron"), icon: Clock, hint: tr("Scheduled jobs") },
-          { target: 'files', label: tr("File manager"), icon: FolderOpen, hint: currentUser && !isAdmin
-            ? tr("{0} of {1}", formatBytes(currentUser.storage_used_bytes), formatBytes(storageLimitBytes(currentUser)))
-            : tr("Browse and edit files") },
-          { target: 'sftp', label: tr("SFTP accounts"), icon: KeyRound, hint: tr("Logins for FileZilla and other clients") },
-          { target: 'backups', label: tr("Backups"), icon: Archive, hint: tr("Create and restore") },
-        ],
-      },
-      {
-        title: tr("Security"),
-        icon: ShieldCheck,
-        items: [
-          ...(isAdmin ? [{ target: 'firewall', label: tr("Firewall"), icon: BrickWall, hint: tr("Ports and IP rules") }] : []),
-          { target: 'waf', label: tr("WAF"), icon: ShieldAlert, hint: tr("Request filtering") },
-          ...(isAdmin ? [{ target: 'malware', label: tr("Malware scanner"), icon: Bug, hint: tr("Scan site files") }] : []),
-          { target: 'wafLogs', label: tr("Access logs"), icon: ScrollText, hint: tr("Requests and blocks") },
-          { target: 'security', label: tr("Account security"), icon: LockKeyhole, hint: tr("Login and access") },
-        ],
-      },
-      {
-        title: tr("System"),
-        icon: Server,
-        items: [
-          ...(isAdmin ? [{ target: 'services', label: tr("Services"), icon: Activity, hint: tr("Start, stop, restart") }] : []),
-          ...(isAdmin ? [{ target: 'php', label: tr("PHP config"), icon: Code2, hint: tr("Versions and limits") }] : []),
-          ...(isAdmin ? [{ target: 'users', label: tr("Panel users"), icon: Users, hint: tr("Accounts and limits") }] : []),
-          ...(isAdmin ? [{ target: 'settings', label: tr("Panel settings"), icon: SettingsIcon, hint: tr("Hostname and mail") }] : []),
-          ...(isAdmin ? [{ target: 'updates', label: tr("Updates"), icon: RefreshCw, hint: tr("Panel version") }] : []),
-        ],
-      },
+    const sum = dashSummary || {};
+    const sites = sum.websites || { total: websites.length, active: websites.length, suspended: 0 };
+    const ssl = sum.ssl || { total: websites.length, secured: websites.filter(site => site.ssl_enabled).length, unsecured: [], unsecured_count: 0 };
+    const dbCount = sum.databases?.total ?? databases.length;
+    const shortDate = value => value ? new Date(value).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+
+    // What each status card says, and how loudly: ok / warn / bad / neutral.
+    // A customer's plan-usage card above already counts websites and
+    // databases, so their cards start at SSL.
+    const cards = [
+      ...(isAdmin ? [{ key: 'websites', icon: Globe, label: tr("Websites"), value: String(sites.total),
+        detail: sites.suspended ? tr("{0} suspended", sites.suspended) : sites.total ? tr("All running") : tr("No websites yet"),
+        tone: sites.suspended ? 'warn' : 'ok' }] : []),
+      { key: 'ssl', icon: Lock, label: tr("SSL"), value: `${ssl.secured}/${ssl.total}`,
+        detail: ssl.unsecured_count ? tr("{0} without SSL", ssl.unsecured_count) : tr("All secured"),
+        tone: ssl.unsecured_count ? 'warn' : 'ok' },
+      ...(isAdmin ? [{ key: 'databases', icon: Database, label: tr("Databases"), value: String(dbCount), detail: tr("MariaDB"), tone: 'neutral' }] : []),
     ];
+    if (isAdmin) {
+      const backups = sum.backups;
+      cards.push({ key: 'backups', icon: Archive, label: tr("Backups"),
+        value: backups ? shortDate(backups.last_run_at) : '—',
+        detail: !backups ? tr("Checking…") : !backups.schedules ? tr("No schedule") : backups.failed ? tr("Last run failed") : tr("{0} schedule(s)", backups.schedules),
+        tone: !backups ? 'neutral' : !backups.schedules ? 'warn' : backups.failed ? 'bad' : 'ok' });
+      const fw = sum.firewall?.enabled;
+      cards.push({ key: 'firewall', icon: BrickWall, label: tr("Firewall"),
+        value: fw === true ? tr("On") : fw === false ? tr("Off") : '—', detail: tr("iptables"),
+        tone: fw === true ? 'ok' : fw === false ? 'bad' : 'neutral' });
+      const engine = sum.waf?.engine;
+      cards.push({ key: 'waf', icon: ShieldAlert, label: tr("WAF"),
+        value: engine === 'on' ? tr("On") : engine === 'off' ? tr("Off") : '—', detail: tr("ModSecurity engine"),
+        tone: engine === 'on' ? 'ok' : engine === 'off' ? 'warn' : 'neutral' });
+      const mw = sum.malware;
+      const last = mw?.last_scan;
+      cards.push({ key: 'malware', icon: Bug, label: tr("Malware scanner"),
+        value: !mw ? '—' : !mw.installed ? tr("Off") : last?.infected ? tr("{0} threat(s)", last.infected) : last ? tr("Clean") : tr("No scan yet"),
+        detail: last ? shortDate(last.finished_at) : mw && !mw.installed ? tr("Not installed") : tr("Last scan"),
+        tone: !mw ? 'neutral' : !mw.installed ? 'warn' : last?.infected ? 'bad' : last ? 'ok' : 'neutral' });
+      const services = sum.services;
+      cards.push({ key: 'services', icon: Activity, label: tr("Services"),
+        value: services ? `${services.running}/${services.total}` : '—',
+        detail: services?.stopped?.length ? tr("Stopped: {0}", services.stopped.join(', ')) : services ? tr("All running") : tr("Checking…"),
+        tone: !services ? 'neutral' : services.stopped?.length ? 'bad' : 'ok' });
+    } else {
+      const wafOn = websites.filter(site => site.waf_enabled).length;
+      cards.push({ key: 'waf', icon: ShieldAlert, label: tr("WAF"), value: `${wafOn}/${websites.length}`,
+        detail: wafOn === websites.length ? tr("On for every website") : tr("{0} website(s) without WAF", websites.length - wafOn),
+        tone: wafOn === websites.length ? 'ok' : 'warn' });
+      cards.push({ key: 'security', icon: LockKeyhole, label: tr("Account security"),
+        value: currentUser?.totp_enabled ? tr("On") : tr("Off"), detail: tr("Two-factor sign-in"),
+        tone: currentUser?.totp_enabled ? 'ok' : 'warn' });
+    }
+
+    // Things that want a look, most urgent first.
+    const attention = [];
+    if (isAdmin && sum.services?.stopped?.length) attention.push({ tone: 'bad', text: tr("Stopped: {0}", sum.services.stopped.join(', ')), action: tr("Open"), target: 'services' });
+    if (isAdmin && sum.firewall?.enabled === false) attention.push({ tone: 'bad', text: tr("The firewall is off."), action: tr("Open"), target: 'firewall' });
+    if (isAdmin && sum.malware?.last_scan?.infected) attention.push({ tone: 'bad', text: tr("The last malware scan found {0} threat(s).", sum.malware.last_scan.infected), action: tr("Open"), target: 'malware' });
+    if (isAdmin && sum.backups?.failed) attention.push({ tone: 'bad', text: tr("{0} scheduled backup(s) failed on their last run.", sum.backups.failed), action: tr("Open"), target: 'backups' });
+    if (ssl.unsecured_count) attention.push({ tone: 'warn', text: tr("{0} website(s) without SSL: {1}", ssl.unsecured_count, ssl.unsecured.join(', ') + (ssl.unsecured_count > ssl.unsecured.length ? '…' : '')), action: tr("Set up SSL"), target: 'ssl' });
+    if (sites.suspended) attention.push({ tone: 'warn', text: tr("{0} website(s) suspended.", sites.suspended), action: tr("Open"), target: 'websites' });
+    if (isAdmin && sum.backups && !sum.backups.schedules) attention.push({ tone: 'warn', text: tr("No scheduled backup is set up."), action: tr("Set up"), target: 'backups' });
+    if (isAdmin && sum.waf?.engine === 'off') attention.push({ tone: 'warn', text: tr("The WAF engine is not installed."), action: tr("Open"), target: 'waf' });
+    if (isAdmin && sum.malware && !sum.malware.installed) attention.push({ tone: 'warn', text: tr("The malware scanner is not installed."), action: tr("Open"), target: 'malware' });
+    if (!isAdmin && !currentUser?.totp_enabled) attention.push({ tone: 'info', text: tr("Two-factor sign-in is off for your account."), action: tr("Turn on"), target: 'security' });
+    if (isAdmin && sum.updates?.update_available) attention.push({ tone: 'info', text: tr("Panel update {0} is available.", sum.updates.latest_version), action: tr("Open"), target: 'updates' });
+
+    const quickActions = [
+      { key: 'site', icon: Plus, label: tr("New website"), run: () => { setShowCreateSite(true); navigateToPage('websites'); }, primary: true },
+      { key: 'db', icon: Database, label: tr("New database"), run: () => { setShowCreateDb(true); navigateToPage('databases'); } },
+      { key: 'ssl', icon: Lock, label: tr("Set up SSL"), run: () => navigateToPage('ssl') },
+      { key: 'backup', icon: Archive, label: tr("Back up a website"), run: () => navigateToPage('backups') },
+      { key: 'sftp', icon: KeyRound, label: tr("New SFTP account"), run: () => { setShowCreateSftp(true); navigateToPage('sftp'); } },
+      ...(isAdmin ? [{ key: 'user', icon: Users, label: tr("Panel users"), run: () => navigateToPage('users') }] : []),
+    ];
+
     return <div className="dashboard">
       {isAdmin && <section className="section dash-card dash-resources">
         <div className="dash-card-head"><span className="dash-card-icon"><Activity size={16}/></span><h2>{tr("Server resources")}</h2></div>
@@ -3861,15 +3893,35 @@ function App() {
           </div>
         </section>;
       })()}
-      {/* One card per group, side by side, each a list of links -- the same
-          card shape as the resources above, so the page reads as one grid. */}
-      <div className="dash-groups" style={{ '--dash-cols': featureGroups.filter(group => group.items.length > 0).length }}>
-        {featureGroups.filter(group => group.items.length > 0).map(group => <section className="section dash-card dash-group" key={group.title}>
-          <div className="dash-card-head"><span className="dash-card-icon"><group.icon size={16}/></span><h2>{group.title}</h2></div>
-          <div className="dash-links">
-            {group.items.map(item => <FeatureTile key={item.target} {...item} />)}
+
+      {/* State, not navigation: each card says how something stands and opens its page. */}
+      <div className={`status-grid${cards.length > 4 ? ' many' : ''}`} style={{ '--status-cols': Math.min(4, cards.length) }}>
+        {cards.map(card => <button type="button" key={card.key} className={`status-card tone-${card.tone}`} onClick={() => navigateToPage(card.key === 'security' ? 'security' : card.key)}>
+          <span className="status-card-head"><card.icon size={15}/><span>{card.label}</span></span>
+          <strong>{card.value}</strong>
+          <small>{card.detail}</small>
+        </button>)}
+      </div>
+
+      <div className="dash-bottom">
+        <section className="section dash-card">
+          <div className="dash-card-head"><span className="dash-card-icon"><AlertCircle size={16}/></span><h2>{tr("Needs attention")}</h2></div>
+          {attention.length === 0
+            ? <div className="attention-ok"><CheckCircle size={16}/> {dashSummary ? tr("Everything looks fine.") : tr("Checking…")}</div>
+            : <div className="attention-list">
+                {attention.map((item, index) => <div className={`attention-item tone-${item.tone}`} key={index}>
+                  {item.tone === 'info' ? <RefreshCw size={15}/> : <AlertCircle size={15}/>}
+                  <span>{item.text}</span>
+                  <button type="button" className="mini secondary" onClick={() => navigateToPage(item.target)}>{item.action}</button>
+                </div>)}
+              </div>}
+        </section>
+        <section className="section dash-card">
+          <div className="dash-card-head"><span className="dash-card-icon"><Zap size={16}/></span><h2>{tr("Quick actions")}</h2></div>
+          <div className="quick-actions">
+            {quickActions.map(action => <button type="button" key={action.key} className={action.primary ? '' : 'secondary'} onClick={action.run}><action.icon size={15}/> {action.label}</button>)}
           </div>
-        </section>)}
+        </section>
       </div>
     </div>;
   }

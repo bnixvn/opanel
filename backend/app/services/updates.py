@@ -262,6 +262,27 @@ def _read_panel_update_log(max_lines: int = 100) -> list[str]:
     return lines
 
 
+def cached_release_summary() -> dict:
+    """Whether a panel update is waiting, from the last recorded check only.
+
+    For the dashboard: panel_release_status() may run git ls-remote when its
+    cache is stale, and opening the dashboard must not wait on the network.
+    """
+    state = _read_update_state()
+    latest_version = state.get("latest_version") or APP_VERSION
+    return {
+        "current_version": APP_VERSION,
+        "latest_version": latest_version,
+        "update_available": _update_available(
+            state.get("installed_commit") or "",
+            state.get("latest_commit") or "",
+            APP_VERSION,
+            state.get("remote_version") or "",
+        ),
+        "last_checked_at": state.get("last_checked_at") or "",
+    }
+
+
 def status(force_refresh: bool = False):
     result = shell.privileged(
         "updates-status",

@@ -174,25 +174,42 @@ label > span{font-size:12.5px;font-weight:600;color:var(--text-secondary)}
 .dash-resources .resource-track{height:6px;border:0;border-radius:999px;background:var(--surface-alt)}
 .dash-resources .resource-card small{font-size:12px;font-weight:500;color:var(--text-muted)}
 
-.dash-groups{display:grid;grid-template-columns:repeat(var(--dash-cols,3),minmax(0,1fr));gap:16px;align-items:stretch}
 .dash-resources .resource-track.is-empty{visibility:hidden}
-/* Groups stay side by side down to tablet width, then stack -- never two up
-   and one left over. */
-@media(max-width:720px){.dash-groups{grid-template-columns:1fr}}
-.dash-links{display:grid;gap:2px;margin:0 -8px}
-.dash-group .feature-tile{
-  white-space:normal;
-  display:grid;grid-template-columns:34px minmax(0,1fr) 10px;grid-template-rows:auto auto;column-gap:12px;row-gap:0;
-  align-items:center;justify-items:start;width:100%;height:auto;min-height:54px;padding:8px;
-  text-align:left;background:transparent;border:1px solid transparent;border-radius:var(--radius-md);box-shadow:none;transform:none;
+/* Eight admin cards go 4 + 4, then 2 x 4 on a narrower screen -- never 3 + 3 + 2. */
+@media(max-width:1100px){.status-grid.many{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Dashboard status cards: a coloured rail says ok / warn / bad at a glance. */
+.status-grid{display:grid;grid-template-columns:repeat(var(--status-cols,4),minmax(0,1fr));gap:12px}
+.status-card{
+  display:grid;grid-template-columns:100%;gap:6px;justify-items:start;justify-content:stretch;align-content:start;width:100%;height:auto;min-height:0;padding:14px 16px;
+  text-align:left;white-space:normal;background:var(--surface);color:var(--text);border:1px solid var(--border);
+  border-left:4px solid var(--border-hover);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);
 }
-.dash-group .feature-tile::after{content:'';grid-column:3;grid-row:1 / span 2;width:6px;height:6px;border-top:1.5px solid var(--text-muted);border-right:1.5px solid var(--text-muted);transform:rotate(45deg)}
-.dash-group .feature-tile-icon{grid-column:1;grid-row:1 / span 2;width:34px;height:34px;display:grid;place-items:center;border-radius:var(--radius-md);background:var(--surface-alt);color:var(--primary-ink)}
-.dash-group .feature-tile-label{grid-column:2;font-size:13.5px;font-weight:600;line-height:1.3;color:var(--text)}
-.dash-group .feature-tile small{grid-column:2;font-size:12.5px;font-weight:400;line-height:1.35;color:var(--text-muted)}
-.dash-group .feature-tile:hover:not(:disabled){background:var(--surface-hover);border-color:transparent;transform:none}
-.dash-group .feature-tile:hover .feature-tile-icon{background:var(--primary);color:var(--primary-contrast)}
-.dash-group .feature-tile:hover::after{border-color:var(--primary-ink)}
+.status-card:hover:not(:disabled){background:var(--surface-hover);color:var(--text);border-color:var(--primary-soft)}
+.status-card-head{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--text-secondary)}
+.status-card-head svg{color:var(--text-muted)}
+.status-card strong{font-size:22px;font-weight:700;line-height:1.15;color:var(--text)}
+.status-card small{font-size:12.5px;line-height:1.4;color:var(--text-muted);overflow-wrap:anywhere}
+.status-card-head{line-height:1.3}
+.status-card.tone-ok{border-left-color:var(--success)}
+.status-card.tone-warn{border-left-color:var(--warning)}
+.status-card.tone-bad{border-left-color:var(--danger)}
+.status-card.tone-bad strong{color:var(--danger)}
+.status-card.tone-warn small{color:var(--warning-text)}
+.status-card.tone-bad small{color:var(--danger-text)}
+
+.dash-bottom{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(260px,1fr);gap:16px;align-items:start}
+.attention-list{display:grid;gap:8px}
+.attention-item{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)}
+.attention-item span{font-size:13.5px;line-height:1.4;min-width:0;overflow-wrap:anywhere}
+.attention-item.tone-bad{background:var(--danger-bg);border-color:var(--danger-border)}
+.attention-item.tone-bad svg{color:var(--danger)}
+.attention-item.tone-warn{background:var(--warning-bg);border-color:var(--warning-border)}
+.attention-item.tone-warn svg{color:var(--warning)}
+.attention-item.tone-info svg{color:var(--primary-ink)}
+.attention-ok{display:flex;align-items:center;gap:8px;padding:12px;border-radius:var(--radius-md);background:var(--success-bg);color:var(--success-text);border:1px solid var(--success-border);font-weight:600;font-size:13.5px}
+.quick-actions{display:grid;grid-template-columns:1fr;gap:8px}
+.quick-actions button{justify-content:flex-start;width:100%}
 
 /* ---------- Status / raw output ---------- */
 details.raw-output{border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt)}
@@ -405,6 +422,11 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .cron-builder,.backup-schedule-builder{grid-template-columns:1fr}
   .cron-add,.backup-schedule-add{justify-self:stretch}
   .scan-detail-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .status-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .dash-bottom{grid-template-columns:1fr}
+  .status-card strong{font-size:19px}
+  .attention-item{grid-template-columns:18px minmax(0,1fr)}
+  .attention-item button{grid-column:2;justify-self:start}
 
   /* Websites: no folder path, and the six actions on one line. */
   .site-head small{display:none}

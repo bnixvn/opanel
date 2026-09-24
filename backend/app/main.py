@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from app.api import addons, api_tokens, auth, databases, firewall, maintenance, mcp, panel_settings as panel_settings_api, plans, provisioning, services, sftp, terminal, updates, users, waf, websites
+from app.api import addons, api_tokens, auth, dashboard, databases, firewall, maintenance, mcp, panel_settings as panel_settings_api, plans, provisioning, services, sftp, terminal, updates, users, waf, websites
 from app.core.config import settings
 from app.core.database import get_db, run_migrations
 from app.core.version import APP_VERSION
@@ -115,6 +115,7 @@ app.include_router(plans.router, prefix="/api")
 app.include_router(addons.router, prefix="/api")
 app.include_router(mcp.router, prefix="/api")
 app.include_router(sftp.router, prefix="/api")
+app.include_router(dashboard.router, prefix="/api")
 
 
 @app.get("/api/health")

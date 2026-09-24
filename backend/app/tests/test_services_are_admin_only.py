@@ -43,13 +43,18 @@ def test_the_dashboard_numbers_stay_open_to_end_users():
 
 
 def test_the_page_is_hidden_from_end_users():
-    for fragment in (
-        "['services', tr(\"Services\"), Activity]",
-        "{ target: 'services', label: tr(\"Services\")",
-    ):
-        index = APP_JSX.index(fragment)
-        window = APP_JSX[max(0, index - 120):index]
-        assert "isAdmin ?" in window, f"not gated on isAdmin: {fragment}"
+    fragment = "['services', tr(\"Services\"), Activity]"
+    index = APP_JSX.index(fragment)
+    window = APP_JSX[max(0, index - 120):index]
+    assert "isAdmin ?" in window, f"not gated on isAdmin: {fragment}"
+
+
+def test_the_dashboard_services_card_is_admin_only():
+    # The card sits in the dashboard's `if (isAdmin) { ... } else { ... }`
+    # branch: the nearest branch opening before it must be the admin one.
+    index = APP_JSX.index("cards.push({ key: 'services'")
+    before = APP_JSX[:index]
+    assert before.rfind("if (isAdmin) {") > before.rfind("} else {"), "services card is not inside the isAdmin branch"
 
 
 def test_a_bookmarked_services_url_does_not_render_the_page():
