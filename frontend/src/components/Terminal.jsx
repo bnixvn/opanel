@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal as XTerminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { tr } from '../i18n';
 
 function normalizeOutput(value) {
   return String(value || '').replace(/\r?\n/g, '\r\n');
@@ -111,13 +112,13 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
       wsRef.current = null;
       if (event.code !== 1000) {
         const detail = event.reason ? `${event.code}: ${event.reason}` : `code ${event.code}`;
-        setError(`Disconnected (${detail})`);
+        setError(tr("Disconnected ({0})", detail));
         termRef.current?.write(`\r\n\x1b[31mDisconnected (${detail})\x1b[0m\r\n`);
       }
     };
 
     ws.onerror = () => {
-      setError('Connection failed');
+      setError(tr("Connection failed"));
       setConnected(false);
     };
   }, [apiBase, websiteId, writePrompt]);
@@ -319,12 +320,12 @@ export function Terminal({ websiteId, apiBase = '/api' }) {
     <div className="terminal-wrapper">
       <div className="terminal-toolbar">
         <span className="terminal-status">
-          {connected ? <span className="status-connected">Connected</span> : error ? <span className="status-error">{error}</span> : <span className="status-disconnected">Disconnected</span>}
+          {connected ? <span className="status-connected">{tr("Connected")}</span> : error ? <span className="status-error">{error}</span> : <span className="status-disconnected">{tr("Disconnected")}</span>}
         </span>
         {connected ? (
-          <button onClick={disconnect} className="terminal-btn disconnect">Disconnect</button>
+          <button onClick={disconnect} className="terminal-btn disconnect">{tr("Disconnect")}</button>
         ) : (
-          <button onClick={connect} className="terminal-btn connect">Connect</button>
+          <button onClick={connect} className="terminal-btn connect">{tr("Connect")}</button>
         )}
       </div>
       <div className="terminal-container">

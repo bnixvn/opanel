@@ -13,8 +13,9 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Bot, BrickWall, Languages, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
 import { Terminal } from './components/Terminal';
+import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
 import './style.css';
 import './brand.css';
 import './file-manager.css';
@@ -23,11 +24,11 @@ const API = import.meta.env.VITE_API_URL || '/api';
 const DEFAULT_SERVICE_NAMES = ['opanel-api', 'nginx', 'php8.3-fpm', 'php8.4-fpm', 'mariadb', 'redis-server'];
 const PHP_VERSION_ORDER = ['7.4', '8.1', '8.2', '8.3', '8.4', '8.5'];
 const NGINX_REWRITE_MODES = [
-  { value: 'none', label: 'None / static PHP' },
-  { value: 'front_controller', label: 'PHP front controller' },
-  { value: 'laravel', label: 'Laravel' },
-  { value: 'codeigniter', label: 'CodeIgniter' },
-  { value: 'seohburl', label: 'SEO HB URL' },
+  { value: 'none', label: tr("None / static PHP") },
+  { value: 'front_controller', label: tr("PHP front controller") },
+  { value: 'laravel', label: tr("Laravel") },
+  { value: 'codeigniter', label: tr("CodeIgniter") },
+  { value: 'seohburl', label: tr("SEO HB URL") },
 ];
 const SETTINGS_PAGE_KEYS = ['settings', 'security', 'malware', 'php', 'firewall', 'waf', 'wafLogs', 'updates', 'addons', 'mcp', 'services'];
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -168,9 +169,10 @@ function csvEscape(value) {
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-function formatApiError(detail, fallback = 'Request failed.') {
+function formatApiError(detail, fallback = tr('Request failed.')) {
   if (detail === null || detail === undefined || detail === '') return fallback;
-  if (typeof detail === 'string') return detail.replace(/^Value error,\s*/i, '') || fallback;
+  // Messages the backend sends are English; show the translation when there is one.
+  if (typeof detail === 'string') return tr(detail.replace(/^Value error,\s*/i, '')) || fallback;
   if (typeof detail === 'number' || typeof detail === 'boolean') return String(detail);
 
   if (Array.isArray(detail)) {
@@ -190,7 +192,7 @@ function formatApiError(detail, fallback = 'Request failed.') {
 
 function formatApiErrorItem(item) {
   if (!item || typeof item !== 'object') return formatApiError(item, '');
-  const message = formatApiError(item.msg ?? item.message ?? item.detail, 'Invalid value');
+  const message = formatApiError(item.msg ?? item.message ?? item.detail, tr("Invalid value"));
   const loc = Array.isArray(item.loc)
     ? item.loc.filter(part => part !== 'body' && part !== 'query' && part !== 'path').join('.')
     : '';
@@ -204,10 +206,10 @@ function NotificationToast({ type, message, onClose }) {
   return <div className={`app-toast ${isError ? 'app-toast-error' : 'app-toast-success'}`} role={isError ? 'alert' : 'status'} aria-live={isError ? 'assertive' : 'polite'}>
     <Icon className="app-toast-icon" size={18}/>
     <div className="app-toast-content">
-      <strong>{isError ? 'Action failed' : 'Completed'}</strong>
+      <strong>{isError ? tr("Action failed") : tr("Completed")}</strong>
       <span>{message}</span>
     </div>
-    <button className="app-toast-close" onClick={onClose} aria-label="Dismiss notification" title="Dismiss notification"><X size={16}/></button>
+    <button className="app-toast-close" onClick={onClose} aria-label={tr("Dismiss notification")} title={tr("Dismiss notification")}><X size={16}/></button>
   </div>;
 }
 
@@ -352,6 +354,15 @@ function App() {
     localStorage.setItem('opanel-theme', theme);
   }, [theme]);
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  // Shows the language in use; a click switches to the other one (and reloads).
+  function renderLanguageToggle(className, iconSize) {
+    const current = LANGUAGES.find(lang => lang.code === currentLanguage) || LANGUAGES[0];
+    const next = nextLanguage();
+    const label = tr('Switch to {0}', next.label);
+    return <button type="button" className={className} onClick={() => setLanguage(next.code)} aria-label={label} title={label}>
+      <Languages size={iconSize}/><span className="lang-code">{current.short}</span>
+    </button>;
+  }
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
@@ -603,7 +614,7 @@ function App() {
     };
   }
 
-  function clearSession(message = 'Your session expired. Please log in again.') {
+  function clearSession(message = tr("Your session expired. Please log in again.")) {
     // Old localStorage token from a previous deploy: nuke it for safety.
     try { localStorage.removeItem('token'); } catch {}
     clearReadableSessionCookies();
@@ -690,13 +701,13 @@ function App() {
       });
       const text = await res.text();
       let data;
-      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text || `HTTP ${res.status}` }; }
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text || tr("HTTP {0}", res.status) }; }
       if (!res.ok && handleAuthExpired(res.status, data.detail)) return null;
-      if (!res.ok && !silent) setError(formatApiError(data.detail, `Request failed with status ${res.status}`));
-      if (res.ok && data?.message && !silent) setNotice(data.message);
+      if (!res.ok && !silent) setError(formatApiError(data.detail, tr("Request failed with status {0}", res.status)));
+      if (res.ok && data?.message && !silent) setNotice(tr(data.message));
       return res.ok ? data : null;
     } catch (err) {
-      setError(`Cannot connect to the ${panelSettings.app_name || 'opanel'} API at ${API}. Check opanel-api and the panel port.`);
+      setError(tr("Cannot connect to the {0} API at {1}. Check opanel-api and the panel port.", panelSettings.app_name || tr("opanel"), API));
       return null;
     } finally {
       if (label) setLoading('');
@@ -706,7 +717,7 @@ function App() {
   async function login() {
     try {
       setError('');
-      setLoading('Logging in...');
+      setLoading(tr("Logging in..."));
       const body = new URLSearchParams({ username, password });
       if (needsTwoFactor || otpCode) body.set('otp', otpCode);
       const res = await fetch(`${API}/auth/login`, {
@@ -725,12 +736,12 @@ function App() {
         const fallbackToCode = (message) => {
           if (!codeAvailable) { setError(message); return false; }
           setNeedsTwoFactor(true);
-          setNotice('Enter your authentication code instead.');
+          setNotice(tr("Enter your authentication code instead."));
           return true;
         };
 
         if (!passkeysSupported()) {
-          fallbackToCode('This account uses a passkey, but this browser does not support them.');
+          fallbackToCode(tr("This account uses a passkey, but this browser does not support them."));
           return;
         }
         const options = data.passkey_options || {};
@@ -740,10 +751,10 @@ function App() {
         try {
           assertion = await navigator.credentials.get({ publicKey: options });
         } catch (err) {
-          fallbackToCode('Passkey sign-in was cancelled.');
+          fallbackToCode(tr("Passkey sign-in was cancelled."));
           return;
         }
-        if (!assertion) { fallbackToCode('No passkey was offered.'); return; }
+        if (!assertion) { fallbackToCode(tr("No passkey was offered.")); return; }
         const retry = new URLSearchParams({ username, password });
         retry.set('passkey', JSON.stringify({
           id: assertion.id,
@@ -763,58 +774,58 @@ function App() {
           // a code, but say what happened rather than silently switching.
           if (codeAvailable) {
             setNeedsTwoFactor(true);
-            setError(formatApiError(data.detail, 'That passkey could not be verified.'));
-            setNotice('Enter your authentication code instead.');
+            setError(formatApiError(data.detail, tr("That passkey could not be verified.")));
+            setNotice(tr("Enter your authentication code instead."));
           } else {
-            setError(formatApiError(data.detail, 'That passkey could not be verified.'));
+            setError(formatApiError(data.detail, tr("That passkey could not be verified.")));
           }
           return;
         }
       }
       if (res.ok && data.requires_2fa) {
         setNeedsTwoFactor(true);
-        setNotice('Enter your authentication code.');
+        setNotice(tr("Enter your authentication code."));
       } else if (data.access_token) {
         // Don't keep the token anywhere: the HttpOnly cookie just got set by
         // the response. JS code MUST NOT touch the JWT.
         setIsAuthenticated(true);
         setNeedsTwoFactor(false);
         setOtpCode('');
-        setNotice('Login successful.');
+        setNotice(tr("Login successful."));
         await loadCurrentUser();
       } else {
-        setError(formatApiError(data.detail, `Login failed with status ${res.status}`));
+        setError(formatApiError(data.detail, tr("Login failed with status {0}", res.status)));
       }
     } catch (err) {
-      setError(`Cannot connect to the ${panelSettings.app_name || 'opanel'} API at ${API}. Check opanel-api and the panel port.`);
+      setError(tr("Cannot connect to the {0} API at {1}. Check opanel-api and the panel port.", panelSettings.app_name || tr("opanel"), API));
     } finally {
       setLoading('');
     }
   }
 
   async function loadPasskeys() {
-    const data = await request('/auth/passkeys', {}, 'Loading passkeys...');
+    const data = await request('/auth/passkeys', {}, tr("Loading passkeys..."));
     if (data) setPasskeyStatus(data);
   }
 
   async function registerPasskey() {
     if (!passkeysSupported()) {
-      setError('This browser does not support passkeys.');
+      setError(tr("This browser does not support passkeys."));
       return;
     }
-    const currentPassword = prompt('Enter your current password to confirm:');
+    const currentPassword = prompt(tr("Enter your current password to confirm:"));
     if (!currentPassword) return;
     const body = { current_password: currentPassword };
     // Only asked for while an authenticator app is still the active factor.
     if (passkeyStatus?.totp_enabled) {
-      const code = prompt('Enter the 6-digit code from your authenticator:');
+      const code = prompt(tr("Enter the 6-digit code from your authenticator:"));
       if (!code) return;
       body.code = code;
     }
     const options = await request(
       '/auth/passkeys/register/begin',
       { method: 'POST', body: JSON.stringify(body) },
-      'Preparing passkey...',
+      tr("Preparing passkey..."),
     );
     if (!options) return;
 
@@ -826,10 +837,10 @@ function App() {
     try {
       credential = await navigator.credentials.create({ publicKey: options });
     } catch (err) {
-      setError('Passkey setup was cancelled, or this device could not create one.');
+      setError(tr("Passkey setup was cancelled, or this device could not create one."));
       return;
     }
-    if (!credential) { setError('No passkey was created.'); return; }
+    if (!credential) { setError(tr("No passkey was created.")); return; }
 
     const data = await request('/auth/passkeys/register/complete', {
       method: 'POST',
@@ -846,25 +857,25 @@ function App() {
           transports: credential.response.getTransports ? credential.response.getTransports() : [],
         },
       }),
-    }, 'Saving passkey...');
+    }, tr("Saving passkey..."));
     if (data) {
       setPasskeyStatus(data);
       setPasskeyName('');
-      setNotice('Passkey added. It is now required to sign in.');
+      setNotice(tr("Passkey added. It is now required to sign in."));
       await loadCurrentUser();
     }
   }
 
   async function removePasskey(item) {
-    if (!confirm(`Remove the passkey "${item.name}"?\n\nIf it is the last one, this account goes back to a password only.`)) return;
-    const currentPassword = prompt('Enter your current password to confirm:');
+    if (!confirm(tr("Remove the passkey \"{0}\"?\n\nIf it is the last one, this account goes back to a password only.", item.name))) return;
+    const currentPassword = prompt(tr("Enter your current password to confirm:"));
     if (!currentPassword) return;
     const data = await request(`/auth/passkeys/${item.id}/delete`, {
       method: 'POST', body: JSON.stringify({ current_password: currentPassword }),
-    }, 'Removing passkey...');
+    }, tr("Removing passkey..."));
     if (data) {
       setPasskeyStatus(data);
-      setNotice(`Removed ${item.name}.`);
+      setNotice(tr("Removed {0}.", item.name));
       await loadCurrentUser();
     }
   }
@@ -881,7 +892,7 @@ function App() {
         })(),
       });
     } catch {}
-    clearSession('Logged out.');
+    clearSession(tr("Logged out."));
   }
 
   async function loadCurrentUser({ clearOnUnauthorized = true } = {}) {
@@ -889,7 +900,7 @@ function App() {
       const res = await fetch(`${API}/auth/session`, { credentials: 'include' });
       if (!res.ok) {
         if (res.status === 401) {
-          if (clearOnUnauthorized) clearSession('Session expired.');
+          if (clearOnUnauthorized) clearSession(tr("Session expired."));
           else {
             clearReadableSessionCookies();
             setCurrentUser(null);
@@ -900,7 +911,7 @@ function App() {
       }
       const data = await res.json();
       if (!data.authenticated || !data.user) {
-        if (clearOnUnauthorized) clearSession('Session expired.');
+        if (clearOnUnauthorized) clearSession(tr("Session expired."));
         else {
           clearReadableSessionCookies();
           setCurrentUser(null);
@@ -952,16 +963,16 @@ function App() {
       const nameData = await request('/panel-settings', {
         method: 'PATCH',
         body: JSON.stringify({ app_name: panelSettingsForm.app_name }),
-      }, 'Saving panel settings...');
+      }, tr("Saving panel settings..."));
       if (!nameData) return;
       const sslData = await request('/panel-settings/ssl', {
         method: 'POST',
         body: JSON.stringify({ panel_hostname: hostname, panel_port: port, ...(sslEmail ? { email: sslEmail } : {}) }),
-      }, 'Installing panel SSL...');
+      }, tr("Installing panel SSL..."));
       if (sslData) {
         setPanelSettings(sslData);
         setPanelSettingsForm(formFromPanelSettings(sslData));
-        setNotice(sslData.message || 'Panel SSL installed. The panel may restart in a moment.');
+        setNotice(sslData.message || tr("Panel SSL installed. The panel may restart in a moment."));
       }
       return;
     }
@@ -972,11 +983,11 @@ function App() {
     const data = await request('/panel-settings', {
       method: 'PATCH',
       body: JSON.stringify(payload),
-    }, 'Saving panel settings...');
+    }, tr("Saving panel settings..."));
     if (data) {
       setPanelSettings(data);
       setPanelSettingsForm(formFromPanelSettings(data));
-      setNotice(hasSsl && !wantsSsl ? 'Panel SSL disabled. The panel remains reachable by IP and port over HTTP.' : 'Panel settings updated.');
+      setNotice(hasSsl && !wantsSsl ? tr("Panel SSL disabled. The panel remains reachable by IP and port over HTTP.") : tr("Panel settings updated."));
     }
   }
 
@@ -985,7 +996,7 @@ function App() {
     if (!file) return;
     const body = new FormData();
     body.append('file', file);
-    const data = await request(`/panel-settings/${kind}`, { method: 'POST', body }, `Uploading ${kind}...`);
+    const data = await request(`/panel-settings/${kind}`, { method: 'POST', body }, tr("Uploading {0}...", kind));
     if (data) {
       setPanelSettings(data);
       setPanelSettingsForm(formFromPanelSettings(data));
@@ -1085,9 +1096,9 @@ function App() {
   }
 
   async function createUser() {
-    const data = await request('/users', { method: 'POST', body: JSON.stringify({ ...newUser, website_limit: Number(newUser.website_limit), storage_limit_mb: Number(newUser.storage_limit_mb) }) }, 'Creating user...');
+    const data = await request('/users', { method: 'POST', body: JSON.stringify({ ...newUser, website_limit: Number(newUser.website_limit), storage_limit_mb: Number(newUser.storage_limit_mb) }) }, tr("Creating user..."));
     if (data) {
-      setNotice(`Created user ${data.username}`);
+      setNotice(tr("Created user {0}", data.username));
       setNewUser({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
       await loadUsers();
     }
@@ -1115,13 +1126,13 @@ function App() {
     if (!editingUser) return;
     const websiteLimit = Number(editingUserForm.website_limit);
     const storageLimitMb = Number(editingUserForm.storage_limit_mb);
-    if (!editingUserForm.email.trim()) { setError('Email is required.'); return; }
+    if (!editingUserForm.email.trim()) { setError(tr("Email is required.")); return; }
     if (!Number.isInteger(websiteLimit) || websiteLimit < 0 || websiteLimit > 1000) {
-      setError('Website limit must be between 0 and 1000.');
+      setError(tr("Website limit must be between 0 and 1000."));
       return;
     }
     if (!Number.isInteger(storageLimitMb) || storageLimitMb < 0 || storageLimitMb > 1024 * 1024) {
-      setError('Storage limit must be between 0 and 1048576 MB.');
+      setError(tr("Storage limit must be between 0 and 1048576 MB."));
       return;
     }
     const payload = {
@@ -1133,23 +1144,23 @@ function App() {
     const data = await request(`/users/${editingUser.id}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
-    }, `Updating ${editingUser.username}...`);
+    }, tr("Updating {0}...", editingUser.username));
     if (data) {
       // Change password if provided
       if (editingUserForm._password && editingUserForm._password.length >= 12) {
         const pwPayload = { password: editingUserForm._password };
         if (editingUser.id === currentUser?.id) {
-          const currentPassword = prompt('Enter your current password to confirm:');
-          if (!currentPassword) { setNotice('User updated but password was not changed.'); cancelEditingUser(); await loadUsers(); return; }
+          const currentPassword = prompt(tr("Enter your current password to confirm:"));
+          if (!currentPassword) { setNotice(tr("User updated but password was not changed.")); cancelEditingUser(); await loadUsers(); return; }
           pwPayload.current_password = currentPassword;
           if (currentUser?.totp_enabled) {
-            const code = prompt('Enter your 2FA code:');
+            const code = prompt(tr("Enter your 2FA code:"));
             if (code) pwPayload.code = code.trim();
           }
         }
-        await request(`/users/${editingUser.id}/password`, { method: 'POST', body: JSON.stringify(pwPayload) }, `Changing password for ${editingUser.username}...`);
+        await request(`/users/${editingUser.id}/password`, { method: 'POST', body: JSON.stringify(pwPayload) }, tr("Changing password for {0}...", editingUser.username));
       }
-      setNotice(`Updated user ${data.username}.`);
+      setNotice(tr("Updated user {0}.", data.username));
       if (data.id === currentUser?.id) setCurrentUser(prev => ({ ...prev, ...data }));
       cancelEditingUser();
       await loadUsers();
@@ -1157,31 +1168,31 @@ function App() {
   }
 
   async function changeUserPassword(user) {
-    const password = prompt(`Enter a new password for ${user.username} (minimum 12 characters):`);
+    const password = prompt(tr("Enter a new password for {0} (minimum 12 characters):", user.username));
     if (!password) return;
-    if (password.length < 12) { setError('Password must be at least 12 characters.'); return; }
+    if (password.length < 12) { setError(tr("Password must be at least 12 characters.")); return; }
     const payload = { password };
     if (user.id === currentUser?.id) {
-      const currentPassword = prompt('Enter your current password to confirm this change:');
+      const currentPassword = prompt(tr("Enter your current password to confirm this change:"));
       if (!currentPassword) return;
       payload.current_password = currentPassword;
       if (currentUser?.totp_enabled) {
-        const code = prompt('Enter the 6-digit code from your authenticator:');
+        const code = prompt(tr("Enter the 6-digit code from your authenticator:"));
         if (!code) return;
         payload.code = code.trim();
       }
     }
-    const data = await request(`/users/${user.id}/password`, { method: 'POST', body: JSON.stringify(payload) }, `Changing password for ${user.username}...`);
+    const data = await request(`/users/${user.id}/password`, { method: 'POST', body: JSON.stringify(payload) }, tr("Changing password for {0}...", user.username));
     if (data?.message) setNotice(data.message);
   }
 
   async function deletePanelUser(user) {
     if (!user || user.id === currentUser?.id) return;
-    if (!confirm(`Delete panel user ${user.username} and permanently delete all owned websites, files, databases, and Linux user data?`)) return;
-    const data = await request(`/users/${user.id}`, { method: 'DELETE' }, `Deleting user ${user.username}...`);
+    if (!confirm(tr("Delete panel user {0} and permanently delete all owned websites, files, databases, and Linux user data?", user.username))) return;
+    const data = await request(`/users/${user.id}`, { method: 'DELETE' }, tr("Deleting user {0}...", user.username));
     if (data) {
       const count = data.deleted_websites?.length || 0;
-      setNotice(`Deleted user ${user.username}${count ? ` and ${count} website(s)` : ''}`);
+      setNotice(tr("Deleted user {0}{1}", user.username, count ? tr(" and {0} website(s)", count) : ''));
       await loadUsers();
       await loadWebsites();
     }
@@ -1190,29 +1201,29 @@ function App() {
   async function toggleUserActive(user) {
     if (!user) return;
     const action = user.is_active ? 'suspend' : 'unsuspend';
-    if (!confirm(`${action === 'suspend' ? 'Suspend' : 'Unsuspend'} ${user.username}?`)) return;
+    if (!confirm(`${action === 'suspend' ? tr("Suspend") : tr("Unsuspend")} ${user.username}?`)) return;
     try {
       await request(`/users/${user.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_active: !user.is_active }),
-      }, `${action === 'suspend' ? 'Suspending' : 'Unsuspending'} ${user.username}...`);
-      setNotice(`${user.username} ${action === 'suspend' ? 'suspended' : 'unsuspended'}.`);
+      }, `${action === 'suspend' ? tr("Suspending") : tr("Unsuspending")} ${user.username}...`);
+      setNotice(`${user.username} ${action === 'suspend' ? tr("suspended") : tr("unsuspended")}.`);
       await loadUsers();
     } catch (err) {
-      setError(`Failed to ${action} ${user.username}: ${err?.message || err}`);
+      setError(tr("Failed to {0} {1}: {2}", action, user.username, err?.message || err));
     }
   }
 
   async function quickLoginUser(user) {
     if (!user) return;
-    if (!confirm(`Login as ${user.username}? New websites will belong to this user.`)) return;
+    if (!confirm(tr("Login as {0}? New websites will belong to this user.", user.username))) return;
     // Impersonation re-prompts TOTP when the calling admin has 2FA enabled.
     // Try without the code first; if the backend says one is required, ask
     // and resend. Sending the OTP via FormData keeps it out of the URL.
     let body;
     if (currentUser?.totp_enabled) {
-      const code = prompt(`Enter the 6-digit code from your authenticator to confirm impersonation of ${user.username}:`);
+      const code = prompt(tr("Enter the 6-digit code from your authenticator to confirm impersonation of {0}:", user.username));
       if (!code) return;
       body = new URLSearchParams({ otp: code.trim() });
     }
@@ -1221,20 +1232,20 @@ function App() {
       body
         ? { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
         : { method: 'POST' },
-      `Logging in as ${user.username}...`,
+      tr("Logging in as {0}...", user.username),
     );
     // Handle case where backend says 2FA is required (e.g., stale user object).
     if (data?.requires_2fa) {
-      const code = prompt(`Enter the 6-digit code from your authenticator to confirm impersonation of ${user.username}:`);
+      const code = prompt(tr("Enter the 6-digit code from your authenticator to confirm impersonation of {0}:", user.username));
       if (!code) return;
       const retryBody = new URLSearchParams({ otp: code.trim() });
       const retryData = await request(
         `/auth/impersonate/${user.id}`,
         { method: 'POST', body: retryBody, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
-        `Logging in as ${user.username}...`,
+        tr("Logging in as {0}...", user.username),
       );
       if (retryData?.access_token) {
-        setNotice(`Logged in as ${user.username}.`);
+        setNotice(tr("Logged in as {0}.", user.username));
         await loadCurrentUser();
         navigateToPage('websites');
         await refreshAll();
@@ -1242,7 +1253,7 @@ function App() {
       return;
     }
     if (data?.access_token) {
-      setNotice(`Logged in as ${user.username}.`);
+      setNotice(tr("Logged in as {0}.", user.username));
       await loadCurrentUser();
       navigateToPage('websites');
       await refreshAll();
@@ -1260,7 +1271,7 @@ function App() {
   async function createApiToken() {
     if (!apiTokenForm.name.trim()) return;
     setCreatedToken(null);
-    const data = await request('/api-tokens', { method: 'POST', body: JSON.stringify(apiTokenForm) }, 'Creating API token...');
+    const data = await request('/api-tokens', { method: 'POST', body: JSON.stringify(apiTokenForm) }, tr("Creating API token..."));
     if (data?.token) {
       setCreatedToken(data);
       setApiTokenForm({ name: '', scopes: ['provisioning:read', 'provisioning:write'], expires_days: 365, ip_allowlist: '' });
@@ -1269,9 +1280,9 @@ function App() {
   }
 
   async function deleteApiToken(token) {
-    if (!confirm(`Delete token "${token.name}"? This cannot be undone.`)) return;
-    const data = await request(`/api-tokens/${token.id}`, { method: 'DELETE' }, 'Deleting token...');
-    if (data?.ok) { setNotice('Token deleted.'); loadApiTokens(); }
+    if (!confirm(tr("Delete token \"{0}\"? This cannot be undone.", token.name))) return;
+    const data = await request(`/api-tokens/${token.id}`, { method: 'DELETE' }, tr("Deleting token..."));
+    if (data?.ok) { setNotice(tr("Token deleted.")); loadApiTokens(); }
   }
 
   // --- MCP ---
@@ -1305,7 +1316,7 @@ function App() {
       can_write: mcpForm.can_write,
       expires_days: Number(mcpForm.expires_days) || 90,
     };
-    const data = await request('/mcp/tokens', { method: 'POST', body: JSON.stringify(body) }, 'Creating MCP token...');
+    const data = await request('/mcp/tokens', { method: 'POST', body: JSON.stringify(body) }, tr("Creating MCP token..."));
     if (data?.token) {
       setMcpCreated(data);
       setMcpForm({ name: '', can_write: false, expires_days: 90 });
@@ -1315,10 +1326,10 @@ function App() {
 
   async function revokeMcpToken(token, fromAddonPanel = false) {
     const owner = token.username && token.username !== currentUser?.username ? ` (${token.username})` : '';
-    if (!confirm(`Revoke MCP token "${token.name}"${owner}? Anything using it stops working at once.`)) return;
-    const data = await request(`/mcp/tokens/${token.id}`, { method: 'DELETE' }, 'Revoking token...');
+    if (!confirm(tr("Revoke MCP token \"{0}\"{1}? Anything using it stops working at once.", token.name, owner))) return;
+    const data = await request(`/mcp/tokens/${token.id}`, { method: 'DELETE' }, tr("Revoking token..."));
     if (data?.ok) {
-      setNotice('MCP token revoked.');
+      setNotice(tr("MCP token revoked."));
       loadMcp();
       if (fromAddonPanel) loadMcpAllTokens();
     }
@@ -1327,20 +1338,20 @@ function App() {
   // --- Profile ---
   async function updateMyEmail() {
     if (!profileForm.email.trim()) return;
-    const data = await request('/users/me', { method: 'PATCH', body: JSON.stringify({ email: profileForm.email }) }, 'Updating email...');
+    const data = await request('/users/me', { method: 'PATCH', body: JSON.stringify({ email: profileForm.email }) }, tr("Updating email..."));
     if (data?.email) {
       setCurrentUser(data);
-      setNotice('Email updated.');
+      setNotice(tr("Email updated."));
       setProfileForm(prev => ({ ...prev, email: data.email }));
     }
   }
 
   async function changeMyPasswordFromProfile() {
-    if (!profileForm.password || profileForm.password.length < 12) { setError('Password must be at least 12 characters.'); return; }
+    if (!profileForm.password || profileForm.password.length < 12) { setError(tr("Password must be at least 12 characters.")); return; }
     const payload = { password: profileForm.password };
     if (profileForm.current_password) payload.current_password = profileForm.current_password;
     if (profileForm.code) payload.code = profileForm.code;
-    const data = await request(`/users/${currentUser.id}/password`, { method: 'POST', body: JSON.stringify(payload) }, 'Changing password...');
+    const data = await request(`/users/${currentUser.id}/password`, { method: 'POST', body: JSON.stringify(payload) }, tr("Changing password..."));
     if (data?.message) {
       setNotice(data.message);
       setProfileForm(prev => ({ ...prev, password: '', current_password: '', code: '' }));
@@ -1372,12 +1383,12 @@ function App() {
 
   async function installWpOnSite() {
     if (!wpManagerSite || wpManagerMode !== 'install') return;
-    if (!wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12) { setError('WP admin password must be at least 12 characters.'); return; }
+    if (!wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12) { setError(tr("WP admin password must be at least 12 characters.")); return; }
     const data = await request(`/maintenance/wordpress/${wpManagerSite.id}/install`, {
       method: 'POST', body: JSON.stringify(wpInstallForm),
-    }, `Installing WordPress on ${wpManagerSite.domain}...`);
+    }, tr("Installing WordPress on {0}...", wpManagerSite.domain));
     if (data?.message) {
-      setNotice(`${data.message}\nAdmin: ${data.admin_user} | Password: ${wpInstallForm.admin_password}`);
+      setNotice(tr("{0}\nAdmin: {1} | Password: {2}", data.message, data.admin_user, wpInstallForm.admin_password));
       setWpManagerSite(null);
       refreshAll();
     }
@@ -1387,7 +1398,7 @@ function App() {
     if (!wpManagerSite || wpManagerMode !== 'update') return;
     const data = await request(`/maintenance/wordpress/${wpManagerSite.id}/update-all`, {
       method: 'POST',
-    }, `Updating WordPress on ${wpManagerSite.domain}...`);
+    }, tr("Updating WordPress on {0}...", wpManagerSite.domain));
     if (data?.message) {
       setNotice(data.message);
       setWpManagerSite(null);
@@ -1396,9 +1407,9 @@ function App() {
 
   async function createPlan() {
     if (!newPlan.slug.trim() || !newPlan.name.trim()) return;
-    const data = await request('/plans', { method: 'POST', body: JSON.stringify(newPlan) }, 'Creating plan...');
+    const data = await request('/plans', { method: 'POST', body: JSON.stringify(newPlan) }, tr("Creating plan..."));
     if (data?.id) {
-      setNotice(`Plan "${data.name}" created.`);
+      setNotice(tr("Plan \"{0}\" created.", data.name));
       setNewPlan({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false });
       loadPlans();
     }
@@ -1411,14 +1422,14 @@ function App() {
 
   async function updatePlan() {
     if (!editingPlan) return;
-    const data = await request(`/plans/${editingPlan.id}`, { method: 'PATCH', body: JSON.stringify(editingPlanForm) }, 'Updating plan...');
-    if (data?.id) { setNotice('Plan updated.'); setEditingPlan(null); loadPlans(); }
+    const data = await request(`/plans/${editingPlan.id}`, { method: 'PATCH', body: JSON.stringify(editingPlanForm) }, tr("Updating plan..."));
+    if (data?.id) { setNotice(tr("Plan updated.")); setEditingPlan(null); loadPlans(); }
   }
 
   async function deletePlanItem(plan) {
-    if (!confirm(`Delete plan "${plan.name}"?`)) return;
-    const data = await request(`/plans/${plan.id}`, { method: 'DELETE' }, 'Deleting plan...');
-    if (data?.ok) { setNotice('Plan deleted.'); setEditingPlan(null); loadPlans(); }
+    if (!confirm(tr("Delete plan \"{0}\"?", plan.name))) return;
+    const data = await request(`/plans/${plan.id}`, { method: 'DELETE' }, tr("Deleting plan..."));
+    if (data?.ok) { setNotice(tr("Plan deleted.")); setEditingPlan(null); loadPlans(); }
   }
 
   async function loadTwoFactorStatus() {
@@ -1427,15 +1438,15 @@ function App() {
   }
 
   async function setupTwoFactorAuth() {
-    const currentPassword = prompt('Enter your current password to generate a new 2FA secret:');
+    const currentPassword = prompt(tr("Enter your current password to generate a new 2FA secret:"));
     if (!currentPassword) return;
     const payload = { current_password: currentPassword };
     if (currentUser?.totp_enabled) {
-      const code = prompt('Enter the 6-digit code from your authenticator:');
+      const code = prompt(tr("Enter the 6-digit code from your authenticator:"));
       if (!code) return;
       payload.code = code.trim();
     }
-    const data = await request('/auth/2fa/setup', { method: 'POST', body: JSON.stringify(payload) }, 'Preparing 2FA...');
+    const data = await request('/auth/2fa/setup', { method: 'POST', body: JSON.stringify(payload) }, tr("Preparing 2FA..."));
     if (data) {
       setTwoFactorSetup(data);
       setTwoFactorStatus({ enabled: false });
@@ -1443,35 +1454,35 @@ function App() {
   }
 
   async function enableTwoFactorAuth() {
-    const data = await request('/auth/2fa/enable', { method: 'POST', body: JSON.stringify({ code: twoFactorCode }) }, 'Enabling 2FA...');
+    const data = await request('/auth/2fa/enable', { method: 'POST', body: JSON.stringify({ code: twoFactorCode }) }, tr("Enabling 2FA..."));
     if (data) {
       setTwoFactorStatus(data);
       setTwoFactorSetup(null);
       setTwoFactorCode('');
       await loadCurrentUser();
-      setNotice('2FA enabled.');
+      setNotice(tr("2FA enabled."));
     }
   }
 
   async function disableTwoFactorAuth() {
-    const currentPassword = prompt('Enter your current password to disable 2FA:');
+    const currentPassword = prompt(tr("Enter your current password to disable 2FA:"));
     if (!currentPassword) return;
     const data = await request(
       '/auth/2fa/disable',
       { method: 'POST', body: JSON.stringify({ current_password: currentPassword, code: twoFactorCode }) },
-      'Disabling 2FA...',
+      tr("Disabling 2FA..."),
     );
     if (data) {
       setTwoFactorStatus(data);
       setTwoFactorCode('');
       await loadCurrentUser();
-      setNotice('2FA disabled.');
+      setNotice(tr("2FA disabled."));
     }
   }
 
   async function resetUserTwoFactor(user) {
-    if (!confirm(`Reset 2FA for ${user.username}?`)) return;
-    const data = await request(`/users/${user.id}/2fa/reset`, { method: 'POST' }, `Resetting 2FA for ${user.username}...`);
+    if (!confirm(tr("Reset 2FA for {0}?", user.username))) return;
+    const data = await request(`/users/${user.id}/2fa/reset`, { method: 'POST' }, tr("Resetting 2FA for {0}...", user.username));
     if (data?.message) { setNotice(data.message); await loadUsers(); }
   }
 
@@ -1485,55 +1496,55 @@ function App() {
     const data = await request('/panel-settings/network/ipv6', {
       method: 'POST',
       body: JSON.stringify({ enabled: enable }),
-    }, enable ? 'Enabling IPv6...' : 'Disabling IPv6...');
+    }, enable ? tr("Enabling IPv6...") : tr("Disabling IPv6..."));
     if (data) {
       setNetworkStatus(data);
-      setNotice(data.message || `IPv6 ${enable ? 'enabled' : 'disabled'}.`);
+      setNotice(data.message || tr("IPv6 {0}.", enable ? tr("enabled") : tr("disabled")));
     }
   }
 
   async function loadMalwareScanStatus() {
-    const data = await request('/panel-settings/malware-scan', {}, 'Loading malware scan status...');
+    const data = await request('/panel-settings/malware-scan', {}, tr("Loading malware scan status..."));
     if (data) setMalwareScanStatus(data);
   }
 
   async function toggleMalwareScan(enable) {
     if (enable && !malwareScanStatus?.installed) {
-      if (!confirm('ClamAV is not installed on this server. It will be installed now (may take 1-2 minutes). Continue?')) return;
+      if (!confirm(tr("ClamAV is not installed on this server. It will be installed now (may take 1-2 minutes). Continue?"))) return;
     }
     const data = await request('/panel-settings/malware-scan/toggle', {
       method: 'POST',
       body: JSON.stringify({ enabled: enable }),
-    }, enable ? 'Enabling malware scanning...' : 'Disabling malware scanning...');
+    }, enable ? tr("Enabling malware scanning...") : tr("Disabling malware scanning..."));
     if (data) {
       setPanelSettings(data);
-      setNotice(data.message || `Malware scanning ${enable ? 'enabled' : 'disabled'}.`);
+      setNotice(data.message || tr("Malware scanning {0}.", enable ? tr("enabled") : tr("disabled")));
       await loadMalwareScanStatus();
     }
   }
 
   async function toggleMalwareRealtime(enable) {
     if (enable && !confirm(
-      'Turn on real-time protection?\n\n'
-      + '• Linux Malware Detect watches every file under /home (inotify) and scans new or changed files within seconds.\n'
-      + '• It uses more RAM the more files it watches — heavy on a box with many WordPress sites.\n'
-      + '• Hits are NOT auto-quarantined — they are listed for you to act on.\n\n'
-      + 'Turning it off returns to scheduled scans only.'
+      tr("Turn on real-time protection?\n\n")
+      + tr("• Linux Malware Detect watches every file under /home (inotify) and scans new or changed files within seconds.\n")
+      + tr("• It uses more RAM the more files it watches — heavy on a box with many WordPress sites.\n")
+      + tr("• Hits are NOT auto-quarantined — they are listed for you to act on.\n\n")
+      + tr("Turning it off returns to scheduled scans only.")
     )) return;
     const data = await request('/panel-settings/malware-scan/realtime', {
       method: 'POST',
       body: JSON.stringify({ enabled: enable }),
-    }, enable ? 'Enabling real-time protection...' : 'Disabling real-time protection...');
+    }, enable ? tr("Enabling real-time protection...") : tr("Disabling real-time protection..."));
     if (data) {
       setPanelSettings(data);
-      setNotice(data.message || `Real-time protection ${enable ? 'enabled' : 'disabled'}.`);
+      setNotice(data.message || tr("Real-time protection {0}.", enable ? tr("enabled") : tr("disabled")));
       await loadMalwareScanStatus();
     }
   }
 
   async function updateMalwareSignatures() {
-    const data = await request('/panel-settings/malware-scan/update-signatures', { method: 'POST' }, 'Updating malware signatures...');
-    if (data) { setNotice(data.detail || 'Signatures updated.'); await loadMalwareScanStatus(); }
+    const data = await request('/panel-settings/malware-scan/update-signatures', { method: 'POST' }, tr("Updating malware signatures..."));
+    if (data) { setNotice(data.detail || tr("Signatures updated.")); await loadMalwareScanStatus(); }
   }
 
   async function toggleAutoQuarantine(enable) {
@@ -1550,36 +1561,36 @@ function App() {
   }
 
   async function quarantineThreat(path, signature) {
-    if (!confirm(`Move this file out of the site into quarantine?\n\n${path}\n\nIt stops being served immediately. You can restore it from the Quarantine list if it turns out to be a false positive.`)) return;
+    if (!confirm(tr("Move this file out of the site into quarantine?\n\n{0}\n\nIt stops being served immediately. You can restore it from the Quarantine list if it turns out to be a false positive.", path))) return;
     const data = await request('/panel-settings/malware-scan/quarantine', {
       method: 'POST',
       body: JSON.stringify({ path, signature: signature || '' }),
-    }, 'Quarantining file...');
-    if (data && Array.isArray(data.entries)) { setQuarantine(data.entries); setNotice('File moved to quarantine.'); }
+    }, tr("Quarantining file..."));
+    if (data && Array.isArray(data.entries)) { setQuarantine(data.entries); setNotice(tr("File moved to quarantine.")); }
   }
 
   async function restoreQuarantine(id, path) {
-    if (!confirm(`Restore this file to its original location?\n\n${path}\n\nOnly do this if you are sure it is a false positive — it will be served again.`)) return;
-    const data = await request(`/panel-settings/malware-scan/quarantine/${id}/restore`, { method: 'POST' }, 'Restoring file...');
-    if (data && Array.isArray(data.entries)) { setQuarantine(data.entries); setNotice('File restored to its original location.'); }
+    if (!confirm(tr("Restore this file to its original location?\n\n{0}\n\nOnly do this if you are sure it is a false positive — it will be served again.", path))) return;
+    const data = await request(`/panel-settings/malware-scan/quarantine/${id}/restore`, { method: 'POST' }, tr("Restoring file..."));
+    if (data && Array.isArray(data.entries)) { setQuarantine(data.entries); setNotice(tr("File restored to its original location.")); }
   }
 
   async function deleteQuarantine(id, path) {
-    if (!confirm(`Permanently delete this quarantined file?\n\n${path}\n\nThis cannot be undone.`)) return;
-    const data = await request(`/panel-settings/malware-scan/quarantine/${id}`, { method: 'DELETE' }, 'Deleting quarantined file...');
-    if (data && Array.isArray(data.entries)) { setQuarantine(data.entries); setNotice('Quarantined file deleted.'); }
+    if (!confirm(tr("Permanently delete this quarantined file?\n\n{0}\n\nThis cannot be undone.", path))) return;
+    const data = await request(`/panel-settings/malware-scan/quarantine/${id}`, { method: 'DELETE' }, tr("Deleting quarantined file..."));
+    if (data && Array.isArray(data.entries)) { setQuarantine(data.entries); setNotice(tr("Quarantined file deleted.")); }
   }
 
   async function installLmd() {
-    if (!confirm('Add Linux Malware Detect to this server?\n\nLMD layers its web-focused signatures on top of ClamAV (catches PHP shells ClamAV misses) and uses the running clamd as its engine. Install runs in the background.')) return;
-    const data = await request('/panel-settings/malware-scan/install-lmd', { method: 'POST' }, 'Installing Linux Malware Detect...');
-    if (data) { setPanelSettings(data); setNotice(data.message || 'Linux Malware Detect install started.'); await loadMalwareScanStatus(); }
+    if (!confirm(tr("Add Linux Malware Detect to this server?\n\nLMD layers its web-focused signatures on top of ClamAV (catches PHP shells ClamAV misses) and uses the running clamd as its engine. Install runs in the background."))) return;
+    const data = await request('/panel-settings/malware-scan/install-lmd', { method: 'POST' }, tr("Installing Linux Malware Detect..."));
+    if (data) { setPanelSettings(data); setNotice(data.message || tr("Linux Malware Detect install started.")); await loadMalwareScanStatus(); }
   }
 
   async function runMalwareScan() {
     if (!scanTargetWebsiteId) return;
     if (scanTargetWebsiteId === 'system'
-      && !confirm('Scan the whole server (/) now? The first full scan can run for a long time.')) return;
+      && !confirm(tr("Scan the whole server (/) now? The first full scan can run for a long time."))) return;
     setScanResults(null);
     setScanJob(null);
     setScanLoading(true);
@@ -1592,11 +1603,11 @@ function App() {
       const data = await request('/panel-settings/malware-scan/run', {
         method: 'POST',
         body: JSON.stringify(body),
-      }, 'Starting malware scan...');
+      }, tr("Starting malware scan..."));
       if (data) {
         setScanJob(data);
         await loadMalwareScanJobs();
-        setNotice('Malware scan started.');
+        setNotice(tr("Malware scan started."));
       }
     } finally {
       setScanLoading(false);
@@ -1623,10 +1634,10 @@ function App() {
           day: Number(s.day) || 1,
         },
       }),
-    }, 'Saving scan schedule...');
+    }, tr("Saving scan schedule..."));
     if (data && data.system && data.web) {
       setMalwareSchedules(data);
-      setNotice(data[scope]?.enabled ? 'Scheduled scan saved.' : 'Scheduled scan disabled.');
+      setNotice(data[scope]?.enabled ? tr("Scheduled scan saved.") : tr("Scheduled scan disabled."));
     }
   }
 
@@ -1638,11 +1649,11 @@ function App() {
       setScanJob(null);
       setScanResults(null);
       if (data.status === 'infected' || data.infected > 0) {
-        setNotice(`${data.infected} threat(s) found.`);
+        setNotice(tr("{0} threat(s) found.", data.infected));
       } else if (['error', 'interrupted'].includes(data.status)) {
-        setError(data.error || data.message || 'Malware scan failed.');
+        setError(data.error || data.message || tr("Malware scan failed."));
       } else {
-        setNotice(`Scan complete: ${data.scanned || 0} files scanned, no threats found.`);
+        setNotice(tr("Scan complete: {0} files scanned, no threats found.", data.scanned || 0));
       }
       await loadMalwareScanJobs();
     } else {
@@ -1677,21 +1688,21 @@ function App() {
   }
 
   async function startClamavDaemon() {
-    const data = await request('/panel-settings/malware-scan/start', { method: 'POST' }, 'Starting ClamAV daemon...');
+    const data = await request('/panel-settings/malware-scan/start', { method: 'POST' }, tr("Starting ClamAV daemon..."));
     if (data) {
-      setNotice(data.message || 'ClamAV daemon started.');
+      setNotice(data.message || tr("ClamAV daemon started."));
       await loadMalwareScanStatus();
     }
   }
 
   async function assignDomainToUser() {
     if (!assignWebsiteId || !assignUserId) return;
-    const data = await request(`/websites/${assignWebsiteId}`, { method: 'PATCH', body: JSON.stringify({ owner_id: Number(assignUserId) }) }, 'Assigning domain to user...');
+    const data = await request(`/websites/${assignWebsiteId}`, { method: 'PATCH', body: JSON.stringify({ owner_id: Number(assignUserId) }) }, tr("Assigning domain to user..."));
     if (data) {
       // Name the account, not its row id -- the operator picked a username from
       // the dropdown and has no idea which number that was.
       const owner = users.find(user => String(user.id) === String(assignUserId));
-      setNotice(`${data.domain} now belongs to ${owner?.username || `user #${assignUserId}`}.`);
+      setNotice(tr("{0} now belongs to {1}.", data.domain, owner?.username || tr("user #{0}", assignUserId)));
       await refreshAll();
     }
   }
@@ -1699,7 +1710,7 @@ function App() {
   async function createWordPress() {
     const cleanDomain = domain.trim().toLowerCase();
     const cleanAdminEmail = adminEmail.trim();
-    if (!cleanDomain) { setError('Please enter a domain name.'); return; }
+    if (!cleanDomain) { setError(tr("Please enter a domain name.")); return; }
     const installWp = siteType === 'wordpress' && installWordPress;
     const body = {
       domain: cleanDomain,
@@ -1714,12 +1725,12 @@ function App() {
       body.admin_password = wpAdminPassword || 'StrongPass123!';
     }
     const data = await request('/websites', { method: 'POST', body: JSON.stringify(body) },
-      installWp ? 'Creating WordPress website...' : 'Creating website...');
+      installWp ? tr("Creating WordPress website...") : tr("Creating website..."));
     if (data) {
       if (installWp) {
-        setNotice(`Created WordPress site: https://${cleanDomain}\nAdmin: ${wpAdminUser} | Password: ${wpAdminPassword || 'StrongPass123!'}`);
+        setNotice(tr("Created WordPress site: https://{0}\nAdmin: {1} | Password: {2}", cleanDomain, wpAdminUser, wpAdminPassword || tr("StrongPass123!")));
       } else {
-        setNotice(`Created site ${cleanDomain}. Upload your files to public_html/ folder.`);
+        setNotice(tr("Created site {0}. Upload your files to public_html/ folder.", cleanDomain));
       }
       if (installSslAfterCreate) await applySslForNewSite(data.id, cleanDomain);
       refreshAll();
@@ -1729,21 +1740,21 @@ function App() {
   async function applySslForNewSite(id, siteDomain) {
     if (createSslMode === 'wildcard') {
       const token = String(createSslForm.api_token || '').trim();
-      if (!token) { setError('Enter a Cloudflare API token for wildcard SSL.'); return; }
+      if (!token) { setError(tr("Enter a Cloudflare API token for wildcard SSL.")); return; }
       const b = { provider: 'cloudflare', api_token: token };
       const em = String(createSslForm.email || '').trim(); if (em) b.email = em;
-      await request(`/websites/${id}/ssl/wildcard`, { method: 'POST', body: JSON.stringify(b) }, 'Issuing wildcard certificate...');
+      await request(`/websites/${id}/ssl/wildcard`, { method: 'POST', body: JSON.stringify(b) }, tr("Issuing wildcard certificate..."));
     } else if (createSslMode === 'existing') {
-      if (!createSslForm.reuse_name) { setError('Pick a certificate to use.'); return; }
-      await request(`/websites/${id}/ssl/reuse`, { method: 'POST', body: JSON.stringify({ name: createSslForm.reuse_name }) }, 'Applying existing certificate...');
+      if (!createSslForm.reuse_name) { setError(tr("Pick a certificate to use.")); return; }
+      await request(`/websites/${id}/ssl/reuse`, { method: 'POST', body: JSON.stringify({ name: createSslForm.reuse_name }) }, tr("Applying existing certificate..."));
     } else if (createSslMode === 'manual') {
       const form = new FormData();
       form.append('certificate_text', createSslForm.certificate);
       form.append('private_key_text', createSslForm.private_key);
       if (createSslForm.ca_bundle.trim()) form.append('ca_bundle_text', createSslForm.ca_bundle);
-      await request(`/websites/${id}/ssl/manual`, { method: 'POST', body: form }, 'Installing manual SSL...');
+      await request(`/websites/${id}/ssl/manual`, { method: 'POST', body: form }, tr("Installing manual SSL..."));
     } else {
-      await request(`/websites/${id}/ssl`, { method: 'POST' }, "Installing Let's Encrypt SSL...");
+      await request(`/websites/${id}/ssl`, { method: 'POST' }, tr("Installing Let's Encrypt SSL..."));
     }
   }
 
@@ -1762,31 +1773,31 @@ function App() {
   }, [domain, createSslMode, installSslAfterCreate]);
 
   async function deleteWebsite(id) {
-    if (!confirm('Delete this website including files, vhost, and database?')) return;
-    const data = await request(`/websites/${id}?delete_files=true&delete_database=true`, { method: 'DELETE' }, 'Deleting website...');
+    if (!confirm(tr("Delete this website including files, vhost, and database?"))) return;
+    const data = await request(`/websites/${id}?delete_files=true&delete_database=true`, { method: 'DELETE' }, tr("Deleting website..."));
     if (data) refreshAll();
   }
 
   async function enableSsl(id) {
-    const data = await request(`/websites/${id}/ssl`, { method: 'POST' }, "Installing Let's Encrypt SSL...");
+    const data = await request(`/websites/${id}/ssl`, { method: 'POST' }, tr("Installing Let's Encrypt SSL..."));
     if (data) refreshAll();
   }
 
   async function issueWildcardSsl() {
     if (!selectedWebsiteId) return;
     const token = String(wildcardSslForm.api_token || '').trim();
-    if (!token && !currentSite?.ssl_wildcard) { setError('Enter a Cloudflare API token (Zone → DNS → Edit).'); return; }
+    if (!token && !currentSite?.ssl_wildcard) { setError(tr("Enter a Cloudflare API token (Zone → DNS → Edit).")); return; }
     const body = { provider: 'cloudflare' };
     if (token) body.api_token = token;
     const email = String(wildcardSslForm.email || '').trim();
     if (email) body.email = email;
-    const data = await request(`/websites/${selectedWebsiteId}/ssl/wildcard`, { method: 'POST', body: JSON.stringify(body) }, 'Issuing wildcard certificate via Cloudflare DNS...');
-    if (data) { setNotice(`Wildcard certificate issued for ${data.domain} and *.${data.domain}.`); setWildcardSslForm({ api_token: '', email: '' }); refreshAll(); }
+    const data = await request(`/websites/${selectedWebsiteId}/ssl/wildcard`, { method: 'POST', body: JSON.stringify(body) }, tr("Issuing wildcard certificate via Cloudflare DNS..."));
+    if (data) { setNotice(tr("Wildcard certificate issued for {0} and *.{1}.", data.domain, data.domain)); setWildcardSslForm({ api_token: '', email: '' }); refreshAll(); }
   }
 
   async function loadAvailableCerts() {
     if (!selectedWebsiteId) return;
-    const data = await request(`/websites/${selectedWebsiteId}/available-certificates`, {}, 'Loading certificates on this server...');
+    const data = await request(`/websites/${selectedWebsiteId}/available-certificates`, {}, tr("Loading certificates on this server..."));
     const list = Array.isArray(data) ? data : [];
     setAvailableCerts(list);
     const covering = list.find(c => c.covers_domain);
@@ -1794,23 +1805,23 @@ function App() {
   }
 
   async function reuseExistingSsl() {
-    if (!selectedWebsiteId || !reuseCertName) { setError('Pick a certificate to use.'); return; }
-    const data = await request(`/websites/${selectedWebsiteId}/ssl/reuse`, { method: 'POST', body: JSON.stringify({ name: reuseCertName }) }, 'Applying certificate...');
-    if (data) { setNotice(`${data.domain} now uses ${reuseCertName.split(':')[1]}.`); refreshAll(); }
+    if (!selectedWebsiteId || !reuseCertName) { setError(tr("Pick a certificate to use.")); return; }
+    const data = await request(`/websites/${selectedWebsiteId}/ssl/reuse`, { method: 'POST', body: JSON.stringify({ name: reuseCertName }) }, tr("Applying certificate..."));
+    if (data) { setNotice(tr("{0} now uses {1}.", data.domain, reuseCertName.split(':')[1])); refreshAll(); }
   }
 
   async function addWebsiteAlias(site) {
     const cleanAlias = String(aliasDrafts[site.id] || '').trim().toLowerCase();
     const aliasMode = aliasModes[site.id] || 'alias';
-    if (!cleanAlias) { setError('Enter a domain.'); return; }
+    if (!cleanAlias) { setError(tr("Enter a domain.")); return; }
     const data = await request(`/websites/${site.id}/aliases`, {
       method: 'POST',
       body: JSON.stringify({ domain: cleanAlias, mode: aliasMode }),
-    }, `Adding ${aliasMode === 'redirect' ? 'redirect' : 'alias'} ${cleanAlias}...`);
+    }, tr("Adding {0} {1}...", aliasMode === 'redirect' ? tr("redirect") : tr("alias"), cleanAlias));
     if (data) {
       setNotice(aliasMode === 'redirect'
-        ? `Added redirect ${cleanAlias} -> ${site.domain}.`
-        : `Added alias ${cleanAlias}. Re-run SSL after DNS points to this server.`);
+        ? tr("Added redirect {0} -> {1}.", cleanAlias, site.domain)
+        : tr("Added alias {0}. Re-run SSL after DNS points to this server.", cleanAlias));
       setAliasDrafts(prev => ({ ...prev, [site.id]: '' }));
       setNginxCustomEditing(prev => {
         if (!prev || prev.id !== site.id) return prev;
@@ -1823,10 +1834,10 @@ function App() {
 
   async function deleteWebsiteAlias(site, alias) {
     const label = alias.mode === 'redirect' ? 'redirect' : 'alias';
-    if (!confirm(`Remove ${label} ${alias.domain} from ${site.domain}?`)) return;
-    const data = await request(`/websites/${site.id}/aliases/${alias.id}`, { method: 'DELETE' }, `Removing ${label} ${alias.domain}...`);
+    if (!confirm(tr("Remove {0} {1} from {2}?", label, alias.domain, site.domain))) return;
+    const data = await request(`/websites/${site.id}/aliases/${alias.id}`, { method: 'DELETE' }, tr("Removing {0} {1}...", label, alias.domain));
     if (data) {
-      setNotice(`Removed ${label} ${alias.domain}.`);
+      setNotice(tr("Removed {0} {1}.", label, alias.domain));
       setNginxCustomEditing(prev => {
         if (!prev || prev.id !== site.id) return prev;
         const nextSite = prev.site || site;
@@ -1841,7 +1852,7 @@ function App() {
     const hasCert = manualSslFiles.certificate || manualSslForm.certificate.trim();
     const hasKey = manualSslFiles.private_key || manualSslForm.private_key.trim();
     if (!hasCert || !hasKey) {
-      setError('Certificate and private key are required.');
+      setError(tr("Certificate and private key are required."));
       return;
     }
     const form = new FormData();
@@ -1851,7 +1862,7 @@ function App() {
     else form.append('private_key_text', manualSslForm.private_key);
     if (manualSslFiles.ca_bundle) form.append('ca_bundle', manualSslFiles.ca_bundle);
     else if (manualSslForm.ca_bundle.trim()) form.append('ca_bundle_text', manualSslForm.ca_bundle);
-    const data = await request(`/websites/${selectedWebsiteId}/ssl/manual`, { method: 'POST', body: form }, 'Installing manual SSL...');
+    const data = await request(`/websites/${selectedWebsiteId}/ssl/manual`, { method: 'POST', body: form }, tr("Installing manual SSL..."));
     if (data) {
       setManualSslForm({ certificate: '', private_key: '', ca_bundle: '' });
       setManualSslFiles({ certificate: null, private_key: null, ca_bundle: null });
@@ -1874,7 +1885,7 @@ function App() {
 
   async function viewFullNginxConfig() {
     if (!nginxCustomEditing) return;
-    const data = await request(`/websites/${nginxCustomEditing.id}/nginx-config`, {}, 'Loading VHost Config...');
+    const data = await request(`/websites/${nginxCustomEditing.id}/nginx-config`, {}, tr("Loading VHost Config..."));
     if (data !== null) {
       setNginxCustomEditing(prev => ({ ...prev, mode: 'full', content: data?.nginx_config || '' }));
     }
@@ -1902,9 +1913,9 @@ function App() {
     const data = await request(`/websites/${nginxCustomEditing.id}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
-    }, `Saving ${nginxCustomEditing.domain} settings...`);
+    }, tr("Saving {0} settings...", nginxCustomEditing.domain));
     if (data) {
-      setNotice(`Updated settings for ${nginxCustomEditing.domain}.`);
+      setNotice(tr("Updated settings for {0}.", nginxCustomEditing.domain));
       setWebsiteSettingsForm(websiteConfigForm(data));
       setNginxCustomEditing(prev => prev ? ({ ...prev, site: data }) : prev);
       await refreshAll();
@@ -1915,7 +1926,7 @@ function App() {
     const websiteId = typeof siteOrId === 'object' ? siteOrId.id : siteOrId;
     const domainName = typeof siteOrId === 'object' ? siteOrId.domain : domainLabel;
     if (!websiteId) return;
-    const data = await request(`/websites/${websiteId}/logs?kind=${encodeURIComponent(kind)}&lines=${encodeURIComponent(lines)}`, {}, `Loading ${kind} log...`);
+    const data = await request(`/websites/${websiteId}/logs?kind=${encodeURIComponent(kind)}&lines=${encodeURIComponent(lines)}`, {}, tr("Loading {0} log...", kind));
     if (data) {
       setLogViewer({
         id: websiteId,
@@ -1947,21 +1958,21 @@ function App() {
     const data = await request(`/websites/${site.id}/waf`, {
       method: 'PATCH',
       body: JSON.stringify({ waf_enabled: next }),
-    }, `${next ? 'Enabling' : 'Disabling'} WAF for ${site.domain}...`);
+    }, tr("{0} WAF for {1}...", next ? tr("Enabling") : tr("Disabling"), site.domain));
     if (data) {
-      setNotice(`${next ? 'Enabled' : 'Disabled'} WAF for ${site.domain}.`);
+      setNotice(tr("{0} WAF for {1}.", next ? tr("Enabled") : tr("Disabled"), site.domain));
       await refreshAll();
       if (String(selectedWafWebsiteId) === String(site.id)) await loadWebsiteWafConfig(site.id, false);
     }
   }
 
   async function fixWordPressPermissions(id) {
-    const data = await request(`/maintenance/wordpress/${id}/fix-permissions`, { method: 'POST' }, 'Fixing permissions...');
+    const data = await request(`/maintenance/wordpress/${id}/fix-permissions`, { method: 'POST' }, tr("Fixing permissions..."));
     if (data?.message) setNotice(data.message);
   }
 
   async function fixNginxSecurity(id) {
-    const data = await request(`/websites/${id}/fix-nginx-security`, { method: 'POST' }, 'Rewriting webserver security template...');
+    const data = await request(`/websites/${id}/fix-nginx-security`, { method: 'POST' }, tr("Rewriting webserver security template..."));
     if (data?.message) setNotice(data.message);
   }
 
@@ -1980,7 +1991,7 @@ function App() {
 
   function openDbOwnerModal(item) {
     const choices = dbOwnerChoices(item);
-    if (choices.length === 0) { setError('No other account to move it to.'); return; }
+    if (choices.length === 0) { setError(tr("No other account to move it to.")); return; }
     setDbOwnerModal({ db: item, ownerId: String(choices[0].id) });
   }
 
@@ -1988,28 +1999,28 @@ function App() {
     if (!dbOwnerModal) return;
     const { db: item, ownerId } = dbOwnerModal;
     const choice = users.find(user => String(user.id) === String(ownerId));
-    if (!choice) { setError('Pick an account to move it to.'); return; }
+    if (!choice) { setError(tr("Pick an account to move it to.")); return; }
     const data = await request(`/databases/${item.id}/owner`, {
       method: 'POST', body: JSON.stringify({ owner_id: choice.id }),
-    }, 'Moving database...');
+    }, tr("Moving database..."));
     if (data) {
       setDbOwnerModal(null);
-      setNotice(`${item.db_name} now belongs to ${choice.username}.`);
+      setNotice(tr("{0} now belongs to {1}.", item.db_name, choice.username));
       await refreshAll();
     }
   }
 
   async function changeDbPassword(id) {
-    const newPass = prompt('Enter a new database password, minimum 12 characters:');
+    const newPass = prompt(tr("Enter a new database password, minimum 12 characters:"));
     if (!newPass) return;
-    await request(`/databases/${id}/password`, { method: 'POST', body: JSON.stringify({ password: newPass }) }, 'Changing database password...');
+    await request(`/databases/${id}/password`, { method: 'POST', body: JSON.stringify({ password: newPass }) }, tr("Changing database password..."));
   }
 
   async function deleteDatabase(id, dbName) {
-    if (!confirm(`Delete database "${dbName}"? This action cannot be undone.`)) return;
-    const data = await request(`/databases/${id}`, { method: 'DELETE' }, 'Deleting database...');
+    if (!confirm(tr("Delete database \"{0}\"? This action cannot be undone.", dbName))) return;
+    const data = await request(`/databases/${id}`, { method: 'DELETE' }, tr("Deleting database..."));
     if (data) {
-      setNotice(`Database "${dbName}" deleted successfully.`);
+      setNotice(tr("Database \"{0}\" deleted successfully.", dbName));
       await refreshAll();
     }
   }
@@ -2026,17 +2037,17 @@ function App() {
     const dbName = newDatabase.db_name.trim();
     const dbUser = newDatabase.db_user.trim();
     const dbPass = newDatabase.db_password.trim();
-    if (!dbName) { setError('Please enter a database name.'); return; }
-    if (!validDbName.test(dbName)) { setError('Database name can only contain letters, numbers and underscores (no spaces or special characters).'); return; }
-    if (dbUser && !validDbName.test(dbUser)) { setError('Database user can only contain letters, numbers and underscores (no spaces or special characters).'); return; }
-    if (dbPass && dbPass.length < 12) { setError('Password must be at least 12 characters.'); return; }
-    if (dbPass && /[^\x20-\x7E]/.test(dbPass)) { setError('Password contains invalid characters. Use only ASCII characters.'); return; }
+    if (!dbName) { setError(tr("Please enter a database name.")); return; }
+    if (!validDbName.test(dbName)) { setError(tr("Database name can only contain letters, numbers and underscores (no spaces or special characters).")); return; }
+    if (dbUser && !validDbName.test(dbUser)) { setError(tr("Database user can only contain letters, numbers and underscores (no spaces or special characters).")); return; }
+    if (dbPass && dbPass.length < 12) { setError(tr("Password must be at least 12 characters.")); return; }
+    if (dbPass && /[^\x20-\x7E]/.test(dbPass)) { setError(tr("Password contains invalid characters. Use only ASCII characters.")); return; }
     const body = {
       db_name: dbName,
       db_user: dbUser || null,
       db_password: dbPass || null,
     };
-    const data = await request('/databases', { method: 'POST', body: JSON.stringify(body) }, 'Creating database...');
+    const data = await request('/databases', { method: 'POST', body: JSON.stringify(body) }, tr("Creating database..."));
     if (data) {
       setCreatedDbInfo({ db_name: data.db_name, db_user: data.db_user, db_password: data.db_password });
       setNewDatabase({ db_name: '', db_user: '', db_password: '' });
@@ -2045,36 +2056,36 @@ function App() {
   }
 
   async function addCron() {
-    const data = await request('/maintenance/cron', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), schedule: cronSchedule, command: cronCommand }) }, 'Adding cron job...');
+    const data = await request('/maintenance/cron', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), schedule: cronSchedule, command: cronCommand }) }, tr("Adding cron job..."));
     if (data) {
       if (data.cron_user) setCronUser(data.cron_user);
-      setNotice(`Cron job added${data.cron_user ? ` as ${data.cron_user}` : ''}.`);
+      setNotice(tr("Cron job added{0}.", data.cron_user ? tr(" as {0}", data.cron_user) : ''));
       await listCron();
     }
   }
 
   async function listCron() {
     if (!selectedWebsiteId) return;
-    const data = await request(`/maintenance/cron/${selectedWebsiteId}`, {}, 'Loading cron jobs...');
+    const data = await request(`/maintenance/cron/${selectedWebsiteId}`, {}, tr("Loading cron jobs..."));
     if (data?.items) setCronItems(data.items);
     if (data?.cron_user) setCronUser(data.cron_user);
   }
 
   async function deleteCron(index) {
-    if (!confirm(`Delete cron #${index}?`)) return;
+    if (!confirm(tr("Delete cron #{0}?", index))) return;
     index = Number(index);
     if (Number.isNaN(index)) return;
-    const data = await request('/maintenance/cron', { method: 'DELETE', body: JSON.stringify({ website_id: Number(selectedWebsiteId), index }) }, 'Deleting cron job...');
+    const data = await request('/maintenance/cron', { method: 'DELETE', body: JSON.stringify({ website_id: Number(selectedWebsiteId), index }) }, tr("Deleting cron job..."));
     if (data) {
       if (data.cron_user) setCronUser(data.cron_user);
-      setNotice('Cron job deleted.');
+      setNotice(tr("Cron job deleted."));
       await listCron();
     }
   }
 
   async function listFiles(path = fileListPath, websiteId = selectedWebsiteId) {
     if (!websiteId) return;
-    const data = await request(`/maintenance/files/${websiteId}?path=${encodeURIComponent(path)}`, {}, 'Loading file list...');
+    const data = await request(`/maintenance/files/${websiteId}?path=${encodeURIComponent(path)}`, {}, tr("Loading file list..."));
     if (data?.items) { setFiles(data.items); setFileListPath(path); setFileUploadDir(path || ''); setSelectedFilePaths([]); }
   }
 
@@ -2082,7 +2093,7 @@ function App() {
     const targetPath = pathOverride || filePath;
     if (!websiteId || !targetPath) return;
     if (pathOverride) setFilePath(pathOverride);
-    const data = await request(`/maintenance/files/${websiteId}/read?path=${encodeURIComponent(targetPath)}`, {}, 'Reading file...');
+    const data = await request(`/maintenance/files/${websiteId}/read?path=${encodeURIComponent(targetPath)}`, {}, tr("Reading file..."));
     if (data?.content !== undefined) {
       setFileContent(data.content);
       setEditorCursor({ line: 1, column: 1 });
@@ -2090,23 +2101,23 @@ function App() {
   }
 
   async function writeFile() {
-    const data = await request('/maintenance/files/write', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: filePath, content: fileContent }) }, 'Saving file...');
+    const data = await request('/maintenance/files/write', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: filePath, content: fileContent }) }, tr("Saving file..."));
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
 
   async function downloadFile(path) {
     if (!selectedWebsiteId || !path) return;
     try {
-      setError(''); setLoading('Downloading file...');
+      setError(''); setLoading(tr("Downloading file..."));
       const res = await fetch(`${API}/maintenance/files/${selectedWebsiteId}/download?path=${encodeURIComponent(path)}`, { credentials: 'include' });
-      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Download failed.')); return; }
+      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Download failed."))); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url; link.download = path.split('/').pop() || 'download';
       document.body.appendChild(link); link.click(); link.remove();
       URL.revokeObjectURL(url);
-    } catch (err) { setError('File download failed.'); }
+    } catch (err) { setError(tr("File download failed.")); }
     finally { setLoading(''); }
   }
 
@@ -2128,17 +2139,17 @@ function App() {
 
   async function makeFileDirectory() {
     if (!selectedWebsiteId) return;
-    const name = prompt('Folder name:');
+    const name = prompt(tr("Folder name:"));
     if (!name) return;
-    const data = await request('/maintenance/files/mkdir', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: fileListPath || '', name }) }, 'Creating folder...');
+    const data = await request('/maintenance/files/mkdir', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: fileListPath || '', name }) }, tr("Creating folder..."));
     if (data) await listFiles(fileListPath);
   }
 
   async function makeFile() {
     if (!selectedWebsiteId) return;
-    const name = prompt('File name:', 'new-file.txt');
+    const name = prompt(tr("File name:"), 'new-file.txt');
     if (!name) return;
-    const data = await request('/maintenance/files/create', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: fileListPath || '', name }) }, 'Creating file...');
+    const data = await request('/maintenance/files/create', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: fileListPath || '', name }) }, tr("Creating file..."));
     if (data) {
       await listFiles(fileListPath);
       const newPath = [fileListPath, name].filter(Boolean).join('/');
@@ -2148,7 +2159,7 @@ function App() {
 
   async function renameFileItem(item) {
     if (!item) return;
-    const newName = prompt('New name:', item.name);
+    const newName = prompt(tr("New name:"), item.name);
     if (!newName || newName === item.name) return;
     const data = await request('/maintenance/files/rename', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: item.path, new_name: newName }) }, 'Renaming...');
     if (data) await listFiles(fileListPath);
@@ -2156,21 +2167,22 @@ function App() {
 
   async function deleteSelectedFiles() {
     if (selectedFilePaths.length === 0) return;
-    if (!confirm(`Delete ${selectedFilePaths.length} selected item(s)?`)) return;
-    const data = await request('/maintenance/files/delete', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), paths: selectedFilePaths }) }, 'Deleting selected files...');
+    if (!confirm(tr("Delete {0} selected item(s)?", selectedFilePaths.length))) return;
+    const data = await request('/maintenance/files/delete', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), paths: selectedFilePaths }) }, tr("Deleting selected files..."));
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
 
   async function transferFileItems(action, paths) {
     if (!selectedWebsiteId || !paths?.length) return;
-    const verb = action === 'copy' ? 'Copy' : 'Move';
-    const destination = prompt(`${verb} to folder:`, fileListPath || 'public_html');
+    // Whole phrases per action: "{0}ing" only works in English.
+    const copying = action === 'copy';
+    const destination = prompt(copying ? tr("Copy to folder:") : tr("Move to folder:"), fileListPath || 'public_html');
     if (destination === null) return;
     const targetPath = destination.trim() || fileListPath || 'public_html';
     const data = await request(`/maintenance/files/${action}`, {
       method: 'POST',
       body: JSON.stringify({ website_id: Number(selectedWebsiteId), paths, destination_path: targetPath }),
-    }, `${verb}ing files...`);
+    }, copying ? tr("Copying files...") : tr("Moving files..."));
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
 
@@ -2185,12 +2197,12 @@ function App() {
   async function archiveSelectedFiles() {
     if (selectedFilePaths.length === 0) return;
     const ext = archiveFormat === 'tar.gz' ? 'tar.gz' : 'zip';
-    const outputName = prompt('Archive file name:', `archive-${Date.now()}.${ext}`);
+    const outputName = prompt(tr("Archive file name:"), `archive-${Date.now()}.${ext}`);
     if (!outputName) return;
     const data = await request('/maintenance/files/archive', {
       method: 'POST',
       body: JSON.stringify({ website_id: Number(selectedWebsiteId), base_path: fileListPath || '', paths: selectedFilePaths, output_name: outputName, format: archiveFormat }),
-    }, 'Creating archive...');
+    }, tr("Creating archive..."));
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
 
@@ -2203,7 +2215,7 @@ function App() {
   async function extractArchive(item) {
     if (!isExtractableArchive(item) || !selectedWebsiteId) return;
     const defaultDestination = parentFilePath(item.path);
-    const destination = prompt('Extract to folder:', defaultDestination);
+    const destination = prompt(tr("Extract to folder:"), defaultDestination);
     if (destination === null) return;
     const destinationPath = destination.trim();
     const data = await request('/maintenance/files/extract', {
@@ -2213,7 +2225,7 @@ function App() {
         archive_path: item.path,
         destination_path: destinationPath,
       }),
-    }, 'Starting extraction...');
+    }, tr("Starting extraction..."));
     if (data?.job_id) {
       upsertFileJob(data);
       setSelectedFilePaths([]);
@@ -2236,7 +2248,7 @@ function App() {
       const res = await fetch(`${API}/maintenance/files/jobs/${jobId}`, { credentials: 'include' });
       const text = await res.text();
       let data;
-      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text || `HTTP ${res.status}` }; }
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text || tr("HTTP {0}", res.status) }; }
       if (!res.ok && handleAuthExpired(res.status, data.detail)) return null;
       if (!res.ok) return null;
       return data;
@@ -2266,11 +2278,11 @@ function App() {
         if (!data) continue;
         upsertFileJob(data);
         if (data.status === 'done') {
-          setNotice(data.message || 'Extraction completed');
+          setNotice(data.message || tr("Extraction completed"));
           await listFiles(data.destination_path || fileListPath);
           await loadCurrentUser();
         } else if (data.status === 'error') {
-          setError(formatApiError(data.error, 'Extraction failed'));
+          setError(formatApiError(data.error, tr("Extraction failed")));
         }
       }
     };
@@ -2296,13 +2308,13 @@ function App() {
 
   async function uploadSiteFile(file) {
     if (!file) return;
-    if (!selectedWebsiteId) { setError('Please select a website first.'); return; }
+    if (!selectedWebsiteId) { setError(tr("Please select a website first.")); return; }
     const uploadDir = fileUploadDir.trim();
     const form = new FormData();
     form.append('file', file);
     try {
       setError('');
-      setLoading('Uploading file...');
+      setLoading(tr("Uploading file..."));
       const csrfToken = readCookie('opanel_csrf');
       const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
       const res = await fetch(`${API}/maintenance/files/${selectedWebsiteId}/upload?path=${encodeURIComponent(uploadDir)}`, {
@@ -2313,19 +2325,19 @@ function App() {
       });
       const responseText = await res.text();
       let data;
-      try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { detail: responseText || `HTTP ${res.status}` }; }
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Upload failed.')); return; }
-      setNotice(`Uploaded ${file.name} to ${uploadDir || 'site root'}.`);
+      try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { detail: responseText || tr("HTTP {0}", res.status) }; }
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Upload failed."))); return; }
+      setNotice(tr("Uploaded {0} to {1}.", file.name, uploadDir || tr("site root")));
       if (String(fileListPath || '') === uploadDir) await listFiles(uploadDir);
       await loadCurrentUser();
-    } catch (err) { setError('File upload failed.'); }
+    } catch (err) { setError(tr("File upload failed.")); }
     finally { setLoading(''); }
   }
 
   async function createBackup() {
-    const data = await request('/maintenance/backup', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId) }) }, 'Queueing backup...');
-    if (data?.job_id) { setNotice('Backup queued. It will keep running on the server.'); await loadBackupJobs(); }
-    else if (data?.backup_file) { setNotice(`Created backup: ${data.backup_file}`); await listBackups(); }
+    const data = await request('/maintenance/backup', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId) }) }, tr("Queueing backup..."));
+    if (data?.job_id) { setNotice(tr("Backup queued. It will keep running on the server.")); await loadBackupJobs(); }
+    else if (data?.backup_file) { setNotice(tr("Created backup: {0}", data.backup_file)); await listBackups(); }
   }
 
   async function listBackups() {
@@ -2334,7 +2346,7 @@ function App() {
   }
 
   async function loadBackupJobs(showLoading = false) {
-    const data = await request('/maintenance/backup-jobs', {}, showLoading ? 'Loading backup logs...' : '');
+    const data = await request('/maintenance/backup-jobs', {}, showLoading ? tr("Loading backup logs...") : '');
     if (data?.jobs) {
       const hasActive = data.jobs.some(job => ['queued', 'running'].includes(job.status));
       setBackupJobs(prev => {
@@ -2382,10 +2394,10 @@ function App() {
       user_id: Number(selectedBackupUserId),
       target_id: selectedSftpTargetId ? Number(selectedSftpTargetId) : null,
     };
-    const data = await request('/maintenance/user-backup', { method: 'POST', body: JSON.stringify(body) }, 'Queueing full user backup...');
-    if (data?.job_id) { setNotice('Full user backup queued. It will keep running on the server.'); await loadBackupJobs(); }
+    const data = await request('/maintenance/user-backup', { method: 'POST', body: JSON.stringify(body) }, tr("Queueing full user backup..."));
+    if (data?.job_id) { setNotice(tr("Full user backup queued. It will keep running on the server.")); await loadBackupJobs(); }
     else if (data?.backup_file) {
-      setNotice(data.remote_file ? `Full user backup uploaded: ${data.remote_file}` : `Created full user backup: ${data.backup_file}`);
+      setNotice(data.remote_file ? tr("Full user backup uploaded: {0}", data.remote_file) : tr("Created full user backup: {0}", data.backup_file));
       await listUserBackups();
     }
   }
@@ -2400,19 +2412,15 @@ function App() {
     if (picked.length === 0) return;
     const names = picked.map(item => `  - ${item.account || item.username || '?'}: ${item.filename}${item.source === 's3' ? ` (from ${item.target})` : ''}`).join('\n');
     const warning = picked.length === 1
-      ? `This overwrites that account's sites and databases with what is in the archive.`
-      : `These run one after another. Each overwrites that account's sites and databases with what is in the archive.`;
-    if (!confirm(`Restore ${picked.length} backup(s)?
-
-${names}
-
-${warning}`)) return;
+      ? tr("This overwrites that account's sites and databases with what is in the archive.")
+      : tr("These run one after another. Each overwrites that account's sites and databases with what is in the archive.");
+    if (!confirm(tr("Restore {0} backup(s)?\n\n{1}\n\n{2}", picked.length, names, warning))) return;
     const data = await request('/maintenance/user-restore-batch', {
       method: 'POST', body: JSON.stringify(splitRestorePicks(picked.map(item => item.pick))),
-    }, 'Queueing restore...');
+    }, tr("Queueing restore..."));
     if (data) {
       setRestorePicks([]);
-      setNotice(`Restore of ${picked.length} backup(s) started. Watch Backup logs for progress.`);
+      setNotice(tr("Restore of {0} backup(s) started. Watch Backup logs for progress.", picked.length));
       loadBackupJobs();
     }
   }
@@ -2492,9 +2500,9 @@ ${warning}`)) return;
       retention: Number(newBackupSchedule.retention || 7),
       is_active: true,
     };
-    const data = await request('/maintenance/backup-schedules', { method: 'POST', body: JSON.stringify(body) }, 'Saving backup schedule...');
+    const data = await request('/maintenance/backup-schedules', { method: 'POST', body: JSON.stringify(body) }, tr("Saving backup schedule..."));
     if (data) {
-      setNotice('Backup schedule saved.');
+      setNotice(tr("Backup schedule saved."));
       await loadBackupSchedules();
     }
   }
@@ -2505,21 +2513,17 @@ ${warning}`)) return;
   async function runBackupScheduleNow(item, who) {
     // The same run the timer would do, just early: same rotation slot, same
     // retention. Worth saying so, because it overwrites today's slot.
-    if (!confirm(`Run this schedule now?
-
-${who} - ${item.schedule}
-
-It writes today's rotation slot, overwriting last week's copy for that day.`)) return;
-    const data = await request(`/maintenance/backup-schedules/${item.id}/run`, { method: 'POST' }, 'Starting schedule...');
+    if (!confirm(tr("Run this schedule now?\n\n{0} - {1}\n\nIt writes today's rotation slot, overwriting last week's copy for that day.", who, item.schedule))) return;
+    const data = await request(`/maintenance/backup-schedules/${item.id}/run`, { method: 'POST' }, tr("Starting schedule..."));
     if (data) {
-      setNotice('Schedule started. Watch Backup logs for progress.');
+      setNotice(tr("Schedule started. Watch Backup logs for progress."));
       loadBackupJobs();
     }
   }
 
   async function deleteBackupSchedule(id) {
-    if (!confirm('Delete this backup schedule?')) return;
-    const data = await request(`/maintenance/backup-schedules/${id}`, { method: 'DELETE' }, 'Deleting backup schedule...');
+    if (!confirm(tr("Delete this backup schedule?"))) return;
+    const data = await request(`/maintenance/backup-schedules/${id}`, { method: 'DELETE' }, tr("Deleting backup schedule..."));
     if (data) await loadBackupSchedules();
   }
 
@@ -2539,39 +2543,39 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
       private_key: newSftpTarget.private_key || null,
       s3_secret_key: newSftpTarget.s3_secret_key || null,
     };
-    const data = await request('/maintenance/backup-targets', { method: 'POST', body: JSON.stringify(body) }, 'Saving backup destination...');
+    const data = await request('/maintenance/backup-targets', { method: 'POST', body: JSON.stringify(body) }, tr("Saving backup destination..."));
     if (data) {
-      setNotice(`Saved ${data.kind === 's3' ? 'S3' : 'SFTP'} destination ${data.name}`);
+      setNotice(tr("Saved {0} destination {1}", data.kind === 's3' ? 'S3' : tr("SFTP"), data.name));
       setNewSftpTarget(BLANK_TARGET);
       await loadSftpTargets();
     }
   }
 
   async function deleteSftpTarget(id) {
-    if (!confirm('Delete this backup destination?')) return;
-    const data = await request(`/maintenance/backup-targets/${id}`, { method: 'DELETE' }, 'Deleting destination...');
+    if (!confirm(tr("Delete this backup destination?"))) return;
+    const data = await request(`/maintenance/backup-targets/${id}`, { method: 'DELETE' }, tr("Deleting destination..."));
     if (data) await loadSftpTargets();
   }
 
   async function loadTargetObjects(id) {
     if (targetObjects.id === id) { setTargetObjects({ id: null, bucket: '', items: [] }); return; }
-    const data = await request(`/maintenance/backup-targets/${id}/objects`, {}, 'Reading destination...');
+    const data = await request(`/maintenance/backup-targets/${id}/objects`, {}, tr("Reading destination..."));
     if (data) setTargetObjects({ id, bucket: data.bucket, items: data.items || [] });
   }
 
   async function deleteTargetObject(id, key) {
-    if (!confirm(`Delete this backup from the bucket?\n${key}`)) return;
+    if (!confirm(tr("Delete this backup from the bucket?\n{0}", key))) return;
     const data = await request(`/maintenance/backup-targets/${id}/objects?key=${encodeURIComponent(key)}`,
-      { method: 'DELETE' }, 'Deleting from bucket...');
+      { method: 'DELETE' }, tr("Deleting from bucket..."));
     if (data?.deleted) {
-      setNotice(`Deleted ${data.deleted}`);
+      setNotice(tr("Deleted {0}", data.deleted));
       setTargetObjects(prev => ({ ...prev, items: prev.items.filter(item => item.key !== data.deleted) }));
     }
   }
 
   async function testBackupTarget(id) {
-    const data = await request(`/maintenance/backup-targets/${id}/test`, { method: 'POST' }, 'Testing destination...');
-    if (data?.ok) setNotice(data.message || 'Destination works.');
+    const data = await request(`/maintenance/backup-targets/${id}/test`, { method: 'POST' }, tr("Testing destination..."));
+    if (data?.ok) setNotice(data.message || tr("Destination works."));
   }
 
   async function createSftpBackup() {
@@ -2579,60 +2583,60 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     const data = await request('/maintenance/backup-sftp', {
       method: 'POST',
       body: JSON.stringify({ website_id: Number(selectedWebsiteId), target_id: Number(selectedSftpTargetId) }),
-    }, 'Queueing SFTP backup...');
+    }, tr("Queueing SFTP backup..."));
     if (data?.job_id) {
-      setNotice('SFTP backup queued. It will keep running on the server.');
+      setNotice(tr("SFTP backup queued. It will keep running on the server."));
       await loadBackupJobs();
     } else if (data?.remote_file) {
-      setNotice(`SFTP backup uploaded: ${data.remote_file}`);
+      setNotice(tr("SFTP backup uploaded: {0}", data.remote_file));
       await listBackups();
     }
   }
 
   async function restoreBackup(file) {
-    if (!confirm(`Restore this backup to the current website?\n${file}`)) return;
-    await request('/maintenance/restore', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), backup_file: file }) }, 'Restoring backup...');
+    if (!confirm(tr("Restore this backup to the current website?\n{0}", file))) return;
+    await request('/maintenance/restore', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), backup_file: file }) }, tr("Restoring backup..."));
   }
 
   async function downloadBackup(file) {
     if (!selectedWebsiteId) return;
     try {
-      setError(''); setLoading('Downloading backup...');
+      setError(''); setLoading(tr("Downloading backup..."));
       const res = await fetch(`${API}/maintenance/backups/${selectedWebsiteId}/download?backup_file=${encodeURIComponent(file)}`, { credentials: 'include' });
-      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Download failed.')); return; }
+      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Download failed."))); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url; link.download = file.split('/').pop() || 'backup.tar.gz';
       document.body.appendChild(link); link.click(); link.remove();
       URL.revokeObjectURL(url);
-      setNotice('Backup downloaded.');
-    } catch (err) { setError('Backup download failed.'); }
+      setNotice(tr("Backup downloaded."));
+    } catch (err) { setError(tr("Backup download failed.")); }
     finally { setLoading(''); }
   }
 
   async function downloadUserBackup(file) {
     try {
-      setError(''); setLoading('Downloading full user backup...');
+      setError(''); setLoading(tr("Downloading full user backup..."));
       const res = await fetch(`${API}/maintenance/user-backups-download?backup_file=${encodeURIComponent(file)}`, { credentials: 'include' });
-      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Download failed.')); return; }
+      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Download failed."))); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url; link.download = file.split('/').pop() || 'user-backup.tar.gz';
       document.body.appendChild(link); link.click(); link.remove();
       URL.revokeObjectURL(url);
-      setNotice('Full user backup downloaded.');
-    } catch (err) { setError('Full user backup download failed.'); }
+      setNotice(tr("Full user backup downloaded."));
+    } catch (err) { setError(tr("Full user backup download failed.")); }
     finally { setLoading(''); }
   }
 
   async function restoreUserBackup(file) {
-    if (!confirm(`Restore this full user backup? Missing panel user and websites will be created.\n${file}`)) return;
-    const data = await request('/maintenance/user-restore', { method: 'POST', body: JSON.stringify({ backup_file: file }) }, 'Restoring full user backup...');
+    if (!confirm(tr("Restore this full user backup? Missing panel user and websites will be created.\n{0}", file))) return;
+    const data = await request('/maintenance/user-restore', { method: 'POST', body: JSON.stringify({ backup_file: file }) }, tr("Restoring full user backup..."));
     if (data) {
       const parts = [
-        `Restored user ${data.username}`,
+        tr("Restored user {0}", data.username),
         `${data.websites?.length || 0} website(s)`,
         `${data.databases?.length || 0} database(s)`,
       ];
@@ -2640,9 +2644,9 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
       if (certs.length) {
         const expired = certs.filter(item => item.expired);
         parts.push(`${certs.length} certificate(s) restored`);
-        if (expired.length) parts.push(`${expired.map(item => item.domain).join(', ')} need a new certificate (expired)`);
+        if (expired.length) parts.push(tr("{0} need a new certificate (expired)", expired.map(item => item.domain).join(', ')));
       }
-      if (data.ssl_warnings?.length) parts.push(`SSL not restored for ${data.ssl_warnings.length} site(s)`);
+      if (data.ssl_warnings?.length) parts.push(tr("SSL not restored for {0} site(s)", data.ssl_warnings.length));
       setNotice(parts.join('. ') + '.');
       await refreshAll();
       await loadUsers();
@@ -2662,11 +2666,11 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     const found = await request(`/maintenance/backup-remote-copies?backup_file=${encodeURIComponent(file)}`, {}, '');
     const copies = found?.items || [];
     if (copies.length === 0) {
-      return { ok: confirm(`Delete this backup?\n${name}`), alsoRemote: true };
+      return { ok: confirm(tr("Delete this backup?\n{0}", name)), alsoRemote: true };
     }
     const where = copies.map(item => `  - ${item.target} (${item.bucket}/${item.key})`).join('\n');
     return {
-      ok: confirm(`Delete this backup?\n${name}\n\nThis also removes the copy on:\n${where}`),
+      ok: confirm(tr("Delete this backup?\n{0}\n\nThis also removes the copy on:\n{1}", name, where)),
       alsoRemote: true,
     };
   }
@@ -2676,20 +2680,20 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     if (!choice.ok) return;
     const data = await request(
       `/maintenance/user-backups?backup_file=${encodeURIComponent(file)}&also_remote=${choice.alsoRemote}`,
-      { method: 'DELETE' }, 'Deleting full user backup...');
+      { method: 'DELETE' }, tr("Deleting full user backup..."));
     if (data) {
       const remote = data.removed_remote || [];
       setNotice(remote.length
-        ? `Deleted, including ${remote.length} copy on S3.`
-        : 'Deleted the local backup.');
+        ? tr("Deleted, including {0} copy on S3.", remote.length)
+        : tr("Deleted the local backup."));
       await listUserBackups();
       await loadRestoreBackups();
     }
   }
 
   async function deleteRestoreBackup(file) {
-    if (!confirm(`Delete this restore backup?\n${file}`)) return;
-    const data = await request(`/maintenance/user-restore-backups?backup_file=${encodeURIComponent(file)}`, { method: 'DELETE' }, 'Deleting restore backup...');
+    if (!confirm(tr("Delete this restore backup?\n{0}", file))) return;
+    const data = await request(`/maintenance/user-restore-backups?backup_file=${encodeURIComponent(file)}`, { method: 'DELETE' }, tr("Deleting restore backup..."));
     if (data) {
       await loadRestoreBackups();
       await listUserBackups();
@@ -2702,7 +2706,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
     const form = new FormData();
     selectedFiles.forEach(file => form.append('files', file));
     try {
-      setError(''); setLoading('Uploading full user backups...');
+      setError(''); setLoading(tr("Uploading full user backups..."));
       const csrfToken = readCookie('opanel_csrf');
       const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
       const res = await fetch(`${API}/maintenance/user-restore-backups/upload`, {
@@ -2713,12 +2717,12 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
       });
       const responseText = await res.text();
       let data;
-      try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { detail: responseText || `HTTP ${res.status}` }; }
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Upload failed.')); return; }
-      setNotice(`Uploaded ${data.items?.length || selectedFiles.length} full user backup file(s).`);
+      try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { detail: responseText || tr("HTTP {0}", res.status) }; }
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Upload failed."))); return; }
+      setNotice(tr("Uploaded {0} full user backup file(s).", data.items?.length || selectedFiles.length));
       await loadRestoreBackups();
       await listUserBackups();
-    } catch (err) { setError('Full user backup upload failed.'); }
+    } catch (err) { setError(tr("Full user backup upload failed.")); }
     finally { setLoading(''); }
   }
 
@@ -2727,11 +2731,11 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
       setError('');
       const res = await fetch(`${API}/maintenance/da-backups`, { credentials: 'include' });
       const data = await res.json();
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Failed to load DA backups.')); return; }
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Failed to load DA backups."))); return; }
       setDaBackups(data.items || []);
       setDaPicks(prev => prev.filter(name => (data.items || []).some(item => item.filename === name)));
       setDaBackupDir(data.directory || '');
-    } catch (err) { setError('Failed to load DA backups.'); }
+    } catch (err) { setError(tr("Failed to load DA backups.")); }
   }
 
   async function loadDaImportJobs() {
@@ -2747,7 +2751,7 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
   async function uploadDaBackups(selectedFiles) {
     if (!selectedFiles || !selectedFiles.length) return;
     try {
-      setError(''); setLoading('Uploading DA backups...');
+      setError(''); setLoading(tr("Uploading DA backups..."));
       const csrfToken = readCookie('opanel_csrf');
       const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
       const form = new FormData();
@@ -2756,15 +2760,15 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
         method: 'POST', credentials: 'include', headers, body: form,
       });
       const data = await res.json();
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Upload failed.')); return; }
-      setNotice(`Uploaded ${data.items?.length || selectedFiles.length} DA backup(s).`);
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Upload failed."))); return; }
+      setNotice(tr("Uploaded {0} DA backup(s).", data.items?.length || selectedFiles.length));
       await loadDaBackups();
-    } catch (err) { setError('DA backup upload failed.'); }
+    } catch (err) { setError(tr("DA backup upload failed.")); }
     finally { setLoading(''); }
   }
 
   async function deleteDaBackup(backupFile) {
-    if (!confirm('Delete this DA backup?')) return;
+    if (!confirm(tr("Delete this DA backup?"))) return;
     try {
       setError('');
       const csrfToken = readCookie('opanel_csrf');
@@ -2773,40 +2777,34 @@ It writes today's rotation slot, overwriting last week's copy for that day.`)) r
       url.searchParams.set('backup_file', backupFile);
       const res = await fetch(url, { method: 'DELETE', credentials: 'include', headers });
       const data = await res.json();
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Delete failed.')); return; }
-      setNotice(`Deleted DA backup: ${data.deleted}`);
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Delete failed."))); return; }
+      setNotice(tr("Deleted DA backup: {0}", data.deleted));
       await loadDaBackups();
-    } catch (err) { setError('Failed to delete DA backup.'); }
+    } catch (err) { setError(tr("Failed to delete DA backup.")); }
   }
 
   async function startDaImport(files) {
     if (!files.length) return;
     const names = files.map(name => `  - ${name}`).join('\n');
     const effect = daOverwrite
-      ? `Overwrite is on. A user or website already on this server is replaced by what the archive carries: its files are copied over the ones there, its databases are re-imported, and the panel user gets a new password. Websites the account has that the archive does not mention are kept.`
-      : `Overwrite is off. An archive whose user or domains are already on this server stops without touching them; the others still import.`;
-    const order = files.length > 1 ? `\n\nThey run one after another on the server, so you can leave this page.` : '';
-    if (!confirm(`Import ${files.length} DirectAdmin backup(s)?
-
-${names}
-
-This creates panel users, websites, databases and OLS vhosts.
-
-${effect}${order}`)) return;
+      ? tr("Overwrite is on. A user or website already on this server is replaced by what the archive carries: its files are copied over the ones there, its databases are re-imported, and the panel user gets a new password. Websites the account has that the archive does not mention are kept.")
+      : tr("Overwrite is off. An archive whose user or domains are already on this server stops without touching them; the others still import.");
+    const order = files.length > 1 ? tr("\n\nThey run one after another on the server, so you can leave this page.") : '';
+    if (!confirm(tr("Import {0} DirectAdmin backup(s)?\n\n{1}\n\nThis creates panel users, websites, databases and OLS vhosts.\n\n{2}{3}", files.length, names, effect, order))) return;
     const data = await request('/maintenance/da-import-batch', {
       method: 'POST', body: JSON.stringify({ backup_files: files, overwrite: daOverwrite }),
-    }, 'Queueing DA import...');
+    }, tr("Queueing DA import..."));
     if (!data) return;
     setDaPicks(prev => prev.filter(name => !files.includes(name)));
     const queued = data.jobs?.length || 0;
     const skipped = data.skipped || [];
-    setNotice(`Queued ${queued} DA import(s).${skipped.length ? ` Already queued, not added again: ${skipped.join(', ')}.` : ''}`);
+    setNotice(tr("Queued {0} DA import(s).{1}", queued, skipped.length ? tr(" Already queued, not added again: {0}.", skipped.join(', ')) : ''));
     await loadDaImportJobs();
   }
 
   async function openPhpMyAdmin(databaseId) {
     try {
-      setError(''); setLoading('Opening phpMyAdmin...');
+      setError(''); setLoading(tr("Opening phpMyAdmin..."));
       const csrfToken = readCookie('opanel_csrf');
       const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
       const res = await fetch(`${API}/databases/${databaseId}/phpmyadmin-sso`, {
@@ -2816,25 +2814,25 @@ ${effect}${order}`)) return;
       });
       const data = await res.json().catch(() => ({}));
       if (handleAuthExpired(res.status, data.detail)) return;
-      if (!res.ok || !data.url) { setError(formatApiError(data.detail, 'Cannot open phpMyAdmin.')); return; }
+      if (!res.ok || !data.url) { setError(formatApiError(data.detail, tr("Cannot open phpMyAdmin."))); return; }
       window.open(data.url, '_blank', 'noopener,noreferrer');
-    } catch (err) { setError('Cannot open phpMyAdmin.'); }
+    } catch (err) { setError(tr("Cannot open phpMyAdmin.")); }
     finally { setLoading(''); }
   }
 
   async function downloadDatabase(databaseId, databaseName) {
     try {
-      setError(''); setLoading('Downloading database...');
+      setError(''); setLoading(tr("Downloading database..."));
       const res = await fetch(`${API}/databases/${databaseId}/download`, { credentials: 'include' });
-      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Download failed.')); return; }
+      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Download failed."))); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url; link.download = `${databaseName || 'database'}.sql`;
       document.body.appendChild(link); link.click(); link.remove();
       URL.revokeObjectURL(url);
-      setNotice('Database SQL downloaded.');
-    } catch (err) { setError('Database download failed.'); }
+      setNotice(tr("Database SQL downloaded."));
+    } catch (err) { setError(tr("Database download failed.")); }
     finally { setLoading(''); }
   }
 
@@ -2843,12 +2841,12 @@ ${effect}${order}`)) return;
     if (!choice.ok) return;
     const data = await request(
       `/maintenance/backups/${selectedWebsiteId}?backup_file=${encodeURIComponent(file)}&also_remote=${choice.alsoRemote}`,
-      { method: 'DELETE' }, 'Deleting backup...');
+      { method: 'DELETE' }, tr("Deleting backup..."));
     if (data) {
       const remote = data.removed_remote || [];
       setNotice(remote.length
-        ? `Deleted, including ${remote.length} copy on S3.`
-        : 'Deleted the local backup.');
+        ? tr("Deleted, including {0} copy on S3.", remote.length)
+        : tr("Deleted the local backup."));
       await listBackups();
     }
   }
@@ -2858,7 +2856,7 @@ ${effect}${order}`)) return;
     const form = new FormData();
     form.append('file', file);
     try {
-      setError(''); setLoading('Uploading backup...');
+      setError(''); setLoading(tr("Uploading backup..."));
       const csrfToken = readCookie('opanel_csrf');
       const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
       const res = await fetch(`${API}/maintenance/backups/${selectedWebsiteId}/upload`, {
@@ -2869,16 +2867,16 @@ ${effect}${order}`)) return;
       });
       const responseText = await res.text();
       let data;
-      try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { detail: responseText || `HTTP ${res.status}` }; }
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, 'Upload failed.')); return; }
-      if (data.backup_file) { setNotice(`Uploaded backup: ${data.backup_file}`); await listBackups(); }
-    } catch (err) { setError('Upload backup failed.'); }
+      try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { detail: responseText || tr("HTTP {0}", res.status) }; }
+      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Upload failed."))); return; }
+      if (data.backup_file) { setNotice(tr("Uploaded backup: {0}", data.backup_file)); await listBackups(); }
+    } catch (err) { setError(tr("Upload backup failed.")); }
     finally { setLoading(''); }
   }
 
   async function checkService(name) {
     const data = await request('/services/action', { method: 'POST', body: JSON.stringify({ name, action: 'status' }) });
-    setServiceStates(prev => ({ ...prev, [name]: data || { stdout: '', stderr: error || 'Cannot check', returncode: 1 } }));
+    setServiceStates(prev => ({ ...prev, [name]: data || { stdout: '', stderr: error || tr("Cannot check"), returncode: 1 } }));
     return data;
   }
 
@@ -2890,7 +2888,7 @@ ${effect}${order}`)) return;
   }
 
   async function checkAllServices() {
-    setLoading('Checking services...');
+    setLoading(tr("Checking services..."));
     const names = await loadServiceNames();
     for (const name of names) { await checkService(name); }
     setLoading('');
@@ -2902,7 +2900,7 @@ ${effect}${order}`)) return;
   }
 
   async function loadPhpConfig(version = phpConfig.php_version) {
-    const data = await request(`/maintenance/php-config?php_version=${encodeURIComponent(version)}`, {}, 'Loading PHP config...');
+    const data = await request(`/maintenance/php-config?php_version=${encodeURIComponent(version)}`, {}, tr("Loading PHP config..."));
     if (data) setPhpConfig(prev => ({ ...prev, ...data, php_version: version }));
   }
 
@@ -2910,24 +2908,24 @@ ${effect}${order}`)) return;
     const data = await request('/maintenance/php-config', {
       method: 'POST',
       body: JSON.stringify({ ...phpConfig, max_execution_time: Number(phpConfig.max_execution_time), max_input_time: Number(phpConfig.max_input_time), max_input_vars: Number(phpConfig.max_input_vars), opcache_enable: !!phpConfig.opcache_enable }),
-    }, 'Updating PHP config...');
-    if (data?.target) { setNotice(`Updated PHP config: ${data.target}`); await loadPhpConfig(phpConfig.php_version); }
+    }, tr("Updating PHP config..."));
+    if (data?.target) { setNotice(tr("Updated PHP config: {0}", data.target)); await loadPhpConfig(phpConfig.php_version); }
   }
 
   async function restorePhpDefaults() {
-    if (!confirm(`Restore default PHP ${phpConfig.php_version} values?`)) return;
+    if (!confirm(tr("Restore default PHP {0} values?", phpConfig.php_version))) return;
     const data = await request('/maintenance/php-config/defaults', {
       method: 'POST',
       body: JSON.stringify({ php_version: phpConfig.php_version }),
-    }, 'Restoring PHP defaults...');
+    }, tr("Restoring PHP defaults..."));
     if (data?.values) {
       setPhpConfig(prev => ({ ...prev, ...data.values }));
-      setNotice(`Restored PHP ${phpConfig.php_version} defaults.`);
+      setNotice(tr("Restored PHP {0} defaults.", phpConfig.php_version));
     }
   }
 
   async function loadPhpVersions() {
-    const data = await request('/maintenance/php-versions', {}, 'Loading PHP versions...');
+    const data = await request('/maintenance/php-versions', {}, tr("Loading PHP versions..."));
     if (data) setPhpVersions({
       installed: sortPhpVersions(data.installed || []),
       supported: sortPhpVersions(data.supported || []),
@@ -2935,56 +2933,56 @@ ${effect}${order}`)) return;
   }
 
   async function installPhpVersion(version) {
-    if (!confirm(`Install PHP ${version}? This will install lsphp${version.replace('.','')} via apt.`)) return;
-    const data = await request(`/maintenance/php-versions/${version}/install`, { method: 'POST' }, `Installing PHP ${version}...`);
-    if (data) { setNotice(`PHP ${version} installed successfully.`); await loadPhpVersions(); await loadServiceNames(); }
+    if (!confirm(tr("Install PHP {0}? This will install lsphp{1} via apt.", version, version.replace('.','')))) return;
+    const data = await request(`/maintenance/php-versions/${version}/install`, { method: 'POST' }, tr("Installing PHP {0}...", version));
+    if (data) { setNotice(tr("PHP {0} installed successfully.", version)); await loadPhpVersions(); await loadServiceNames(); }
   }
 
   async function loadPhpTuning() {
-    const data = await request(`/maintenance/php/tuning?php_version=${encodeURIComponent(phpConfig.php_version)}`, {}, 'Loading PHP tuning...');
+    const data = await request(`/maintenance/php/tuning?php_version=${encodeURIComponent(phpConfig.php_version)}`, {}, tr("Loading PHP tuning..."));
     if (data) setPhpTuning(data);
   }
 
   async function applyPhpTuning() {
-    if (!confirm(`Auto-tune PHP ${phpConfig.php_version} for this server? This will overwrite the OPanel ini file and restart OpenLiteSpeed.`)) return;
-    const data = await request(`/maintenance/php/tuning?php_version=${encodeURIComponent(phpConfig.php_version)}`, { method: 'POST' }, 'Applying PHP tuning...');
+    if (!confirm(tr("Auto-tune PHP {0} for this server? This will overwrite the OPanel ini file and restart OpenLiteSpeed.", phpConfig.php_version))) return;
+    const data = await request(`/maintenance/php/tuning?php_version=${encodeURIComponent(phpConfig.php_version)}`, { method: 'POST' }, tr("Applying PHP tuning..."));
     if (data) {
-      setNotice(`PHP tuned: memory_limit=${data.memory_limit}, OPcache=${data.opcache_memory_consumption}MB, LSAPI workers=${data.lsapi_children}`);
+      setNotice(tr("PHP tuned: memory_limit={0}, OPcache={1}MB, LSAPI workers={2}", data.memory_limit, data.opcache_memory_consumption, data.lsapi_children));
       setPhpTuning(null);
       await loadPhpConfig(phpConfig.php_version);
     }
   }
 
   async function loadFirewall() {
-    const data = await request('/firewall/status', {}, 'Loading firewall...');
+    const data = await request('/firewall/status', {}, tr("Loading firewall..."));
     if (data) setFirewallStatus(data);
   }
 
-  async function runFirewallAction(path, options = {}, label = 'Updating firewall...') {
+  async function runFirewallAction(path, options = {}, label = tr("Updating firewall...")) {
     const data = await request(path, options, label);
-    if (data) { setNotice((data.stdout || data.stderr || 'Firewall updated.').trim()); await loadFirewall(); }
+    if (data) { setNotice((data.stdout || data.stderr || tr("Firewall updated.")).trim()); await loadFirewall(); }
   }
 
   async function enableFirewall() {
-    if (!confirm('Enable iptables firewall now? Make sure SSH and web ports are allowed.')) return;
-    await runFirewallAction('/firewall/enable', { method: 'POST' }, 'Enabling firewall...');
+    if (!confirm(tr("Enable iptables firewall now? Make sure SSH and web ports are allowed."))) return;
+    await runFirewallAction('/firewall/enable', { method: 'POST' }, tr("Enabling firewall..."));
   }
   async function disableFirewall() {
-    if (!confirm('Disable iptables firewall?')) return;
-    await runFirewallAction('/firewall/disable', { method: 'POST' }, 'Disabling firewall...');
+    if (!confirm(tr("Disable iptables firewall?"))) return;
+    await runFirewallAction('/firewall/disable', { method: 'POST' }, tr("Disabling firewall..."));
   }
-  async function reloadFirewall() { await runFirewallAction('/firewall/reload', { method: 'POST' }, 'Reloading firewall...'); }
-  async function openFirewallPort() { await runFirewallAction('/firewall/allow-port', { method: 'POST', body: JSON.stringify({ port: firewallPort, protocol: firewallProtocol }) }, 'Opening port...'); }
-  async function allowFirewallIp() { await runFirewallAction('/firewall/allow-ip', { method: 'POST', body: JSON.stringify({ ip: firewallAllowIp, port: firewallAllowPort || null, protocol: firewallAllowProtocol }) }, 'Allowing IP...'); }
+  async function reloadFirewall() { await runFirewallAction('/firewall/reload', { method: 'POST' }, tr("Reloading firewall...")); }
+  async function openFirewallPort() { await runFirewallAction('/firewall/allow-port', { method: 'POST', body: JSON.stringify({ port: firewallPort, protocol: firewallProtocol }) }, tr("Opening port...")); }
+  async function allowFirewallIp() { await runFirewallAction('/firewall/allow-ip', { method: 'POST', body: JSON.stringify({ ip: firewallAllowIp, port: firewallAllowPort || null, protocol: firewallAllowProtocol }) }, tr("Allowing IP...")); }
   async function blockFirewallIp() {
-    if (!confirm(`Block ${firewallBlockIp || 'this IP'}?`)) return;
-    await runFirewallAction('/firewall/block-ip', { method: 'POST', body: JSON.stringify({ ip: firewallBlockIp, port: firewallBlockPort || null, protocol: firewallBlockProtocol }) }, 'Blocking IP...');
+    if (!confirm(tr("Block {0}?", firewallBlockIp || tr("this IP")))) return;
+    await runFirewallAction('/firewall/block-ip', { method: 'POST', body: JSON.stringify({ ip: firewallBlockIp, port: firewallBlockPort || null, protocol: firewallBlockProtocol }) }, tr("Blocking IP..."));
   }
   async function deleteFirewallRule(numberOverride = firewallDeleteNumber) {
     const ruleNumber = String(numberOverride || '').trim();
     if (!ruleNumber) return;
-    if (!confirm(`Delete firewall rule #${ruleNumber}?`)) return;
-    await runFirewallAction(`/firewall/rules/${encodeURIComponent(ruleNumber)}`, { method: 'DELETE' }, 'Deleting rule...');
+    if (!confirm(tr("Delete firewall rule #{0}?", ruleNumber))) return;
+    await runFirewallAction(`/firewall/rules/${encodeURIComponent(ruleNumber)}`, { method: 'DELETE' }, tr("Deleting rule..."));
     setFirewallDeleteNumber('');
   }
 
@@ -3002,41 +3000,41 @@ ${effect}${order}`)) return;
   }
 
   async function loadFirewallBlocklists() {
-    const data = await request('/firewall/blocklists', {}, 'Loading blocklists...');
+    const data = await request('/firewall/blocklists', {}, tr("Loading blocklists..."));
     if (data) setFirewallBlocklists(data);
   }
 
   async function addFirewallBlocklistUrl() {
     const url = firewallBlocklistUrl.trim();
     if (!url) return;
-    const data = await request('/firewall/blocklists', { method: 'POST', body: JSON.stringify({ url }) }, 'Adding blocklist URL...');
+    const data = await request('/firewall/blocklists', { method: 'POST', body: JSON.stringify({ url }) }, tr("Adding blocklist URL..."));
     if (data) {
-      setNotice((data.stdout || data.stderr || 'Blocklist URL added.').trim());
+      setNotice((data.stdout || data.stderr || tr("Blocklist URL added.")).trim());
       setFirewallBlocklistUrl('');
       await loadFirewallBlocklists();
     }
   }
 
   async function deleteFirewallBlocklistUrl(url) {
-    if (!confirm(`Delete blocklist URL?\n${url}`)) return;
-    const data = await request('/firewall/blocklists/delete', { method: 'POST', body: JSON.stringify({ url }) }, 'Deleting blocklist URL...');
+    if (!confirm(tr("Delete blocklist URL?\n{0}", url))) return;
+    const data = await request('/firewall/blocklists/delete', { method: 'POST', body: JSON.stringify({ url }) }, tr("Deleting blocklist URL..."));
     if (data) {
-      setNotice((data.stdout || data.stderr || 'Blocklist URL removed.').trim());
+      setNotice((data.stdout || data.stderr || tr("Blocklist URL removed.")).trim());
       await loadFirewallBlocklists();
     }
   }
 
   async function updateFirewallBlocklistsNow() {
-    const data = await request('/firewall/blocklists/update', { method: 'POST' }, 'Refreshing blocklists...');
+    const data = await request('/firewall/blocklists/update', { method: 'POST' }, tr("Refreshing blocklists..."));
     if (data) {
-      setNotice((data.stdout || data.stderr || 'Blocklists refreshed.').trim());
+      setNotice((data.stdout || data.stderr || tr("Blocklists refreshed.")).trim());
       await loadFirewall();
       await loadFirewallBlocklists();
     }
   }
 
   async function loadWafRules() {
-    const data = await request('/waf/rules', {}, 'Loading WAF rules...');
+    const data = await request('/waf/rules', {}, tr("Loading WAF rules..."));
     if (data) setWafRules(data);
   }
 
@@ -3052,7 +3050,7 @@ ${effect}${order}`)) return;
       setWafSiteConfig(null);
       return;
     }
-    const data = await request(`/waf/websites/${websiteId}`, {}, showLoading ? 'Loading website WAF...' : '');
+    const data = await request(`/waf/websites/${websiteId}`, {}, showLoading ? tr("Loading website WAF...") : '');
     if (data) {
       setSelectedWafWebsiteId(String(websiteId));
       setWafSiteConfig(data);
@@ -3084,12 +3082,12 @@ ${effect}${order}`)) return;
         bot_blocking_enabled: !!wafSiteConfig.bot_blocking_enabled,
         bot_extra: wafBotExtra,
       }),
-    }, 'Saving website WAF rules...');
+    }, tr("Saving website WAF rules..."));
     if (data) {
       setWafSiteConfig(data);
       setWafCustomRules(data.custom_rules || '');
       setWafBotExtra((data.bot_extra || []).join('\n'));
-      setNotice(data.message || 'Website WAF rules saved.');
+      setNotice(data.message || tr("Website WAF rules saved."));
       await refreshAll();
     }
   }
@@ -3105,17 +3103,17 @@ ${effect}${order}`)) return;
   async function saveBadBots() {
     const count = badBotText.split(/[\r\n,]+/).map(s => s.trim()).filter(s => s && !s.startsWith('#')).length;
     if (!confirm(
-      `Apply this bad bot list to every website?\n\n${count} pattern(s).\n\n`
-      + 'Requests whose User-Agent contains one of them get 403 on every site that has bot blocking on.'
+      tr("Apply this bad bot list to every website?\n\n{0} pattern(s).\n\n", count)
+      + tr("Requests whose User-Agent contains one of them get 403 on every site that has bot blocking on.")
     )) return;
     const data = await request('/waf/bad-bots', {
       method: 'PUT',
       body: JSON.stringify({ patterns: badBotText }),
-    }, 'Applying bad bot list to all websites...');
+    }, tr("Applying bad bot list to all websites..."));
     if (data) {
       setBadBots({ ...data, patterns: data.patterns || [] });
       setBadBotText((data.patterns || []).join('\n'));
-      setNotice(data.message || 'Bad bot list saved.');
+      setNotice(data.message || tr("Bad bot list saved."));
       if (selectedWafWebsiteId) await loadWebsiteWafConfig(selectedWafWebsiteId, false);
     }
   }
@@ -3128,7 +3126,7 @@ ${effect}${order}`)) return;
     if (filters.q) params.set('q', filters.q);
     params.set('limit', String(filters.limit || 50));
     params.set('offset', String(filters.offset || 0));
-    const data = await request(`/waf/access-logs?${params.toString()}`, {}, showLoading ? 'Loading access logs...' : '');
+    const data = await request(`/waf/access-logs?${params.toString()}`, {}, showLoading ? tr("Loading access logs...") : '');
     if (data) {
       setWafAccessFilters(filters);
       setWafAccessLogs(data);
@@ -3154,25 +3152,25 @@ ${effect}${order}`)) return;
   }
 
   async function clearWafAccessLogs() {
-    const domainLabel = wafAccessFilters.domain || 'all domains';
-    if (!confirm(`Clear WAF access logs for ${domainLabel}?`)) return;
+    const domainLabel = wafAccessFilters.domain || tr("all domains");
+    if (!confirm(tr("Clear WAF access logs for {0}?", domainLabel))) return;
     const params = new URLSearchParams();
     if (wafAccessFilters.domain) params.set('domain', wafAccessFilters.domain);
     const suffix = params.toString() ? `?${params.toString()}` : '';
-    const data = await request(`/waf/access-logs${suffix}`, { method: 'DELETE' }, 'Clearing access logs...');
+    const data = await request(`/waf/access-logs${suffix}`, { method: 'DELETE' }, tr("Clearing access logs..."));
     if (data) await loadWafAccessLogs({ ...wafAccessFilters, offset: 0 }, false);
   }
 
   async function loadAddons(silent = false) {
-    const data = await request('/addons', { silent }, silent ? '' : 'Loading addons...');
+    const data = await request('/addons', { silent }, silent ? '' : tr("Loading addons..."));
     if (data) setAddonList(data.addons || []);
     return data?.addons || [];
   }
 
   async function installAddon(addon) {
-    const data = await request(`/addons/${addon.id}/install`, { method: 'POST' }, `Installing ${addon.name}...`);
+    const data = await request(`/addons/${addon.id}/install`, { method: 'POST' }, tr("Installing {0}...", addon.name));
     if (data) {
-      setNotice(`${addon.name} is installing in the background. This page follows along.`);
+      setNotice(tr("{0} is installing in the background. This page follows along.", addon.name));
       loadAddons(true);
     }
   }
@@ -3180,18 +3178,18 @@ ${effect}${order}`)) return;
   async function uninstallAddon(addon) {
     // Removing an addon takes its protection away, so make the admin say the
     // name rather than clicking through a generic confirm.
-    const typed = window.prompt(`Remove ${addon.name} and stop what it is doing?\n\nType the addon name to confirm:`);
+    const typed = window.prompt(tr("Remove {0} and stop what it is doing?\n\nType the addon name to confirm:", addon.name));
     if (typed === null) return;
-    if (typed.trim().toLowerCase() !== addon.id) { setError('Name did not match; nothing was removed.'); return; }
-    const data = await request(`/addons/${addon.id}/uninstall`, { method: 'POST' }, `Removing ${addon.name}...`);
+    if (typed.trim().toLowerCase() !== addon.id) { setError(tr("Name did not match; nothing was removed.")); return; }
+    const data = await request(`/addons/${addon.id}/uninstall`, { method: 'POST' }, tr("Removing {0}...", addon.name));
     if (data) loadAddons(true);
   }
 
   async function setAddonRunning(addon, running) {
     const data = await request(`/addons/${addon.id}/service`, {
       method: 'POST', body: JSON.stringify({ running }),
-    }, running ? `Starting ${addon.name}...` : `Stopping ${addon.name}...`);
-    if (data) { setNotice(`${addon.name} ${running ? 'started' : 'stopped'}.`); loadAddons(true); }
+    }, running ? tr("Starting {0}...", addon.name) : tr("Stopping {0}...", addon.name));
+    if (data) { setNotice(`${addon.name} ${running ? tr("started") : tr("stopped")}.`); loadAddons(true); }
   }
 
   async function loadFail2ban(silent = false) {
@@ -3209,11 +3207,11 @@ ${effect}${order}`)) return;
     if (!f2bDraft) return;
     const data = await request('/addons/fail2ban/settings', {
       method: 'POST', body: JSON.stringify(f2bDraft),
-    }, 'Applying Fail2ban settings...');
+    }, tr("Applying Fail2ban settings..."));
     if (data) {
       setF2bSettings(data);
       setF2bDraft(data);
-      setNotice('Fail2ban settings applied.');
+      setNotice(tr("Fail2ban settings applied."));
       loadFail2ban(true);
     }
   }
@@ -3221,12 +3219,12 @@ ${effect}${order}`)) return;
   async function unbanAddress(address) {
     const data = await request('/addons/fail2ban/unban', {
       method: 'POST', body: JSON.stringify({ address }),
-    }, `Unbanning ${address}...`);
+    }, tr("Unbanning {0}...", address));
     if (data) setF2bBanned(data.banned || []);
   }
 
   async function loadUpdates(force = false) {
-    const data = await request(`/updates/status${force ? '?refresh=true' : ''}`, {}, 'Loading update status...');
+    const data = await request(`/updates/status${force ? '?refresh=true' : ''}`, {}, tr("Loading update status..."));
     if (data) setUpdatesStatus(data);
   }
 
@@ -3236,24 +3234,24 @@ ${effect}${order}`)) return;
   }
 
   async function runOsUpdate() {
-    if (!confirm('Run apt-get update && apt-get upgrade now?')) return;
+    if (!confirm(tr("Run apt-get update && apt-get upgrade now?"))) return;
     setOsUpdating(true);
-    const data = await request('/updates/os/run', { method: 'POST' }, 'Updating OS packages...');
+    const data = await request('/updates/os/run', { method: 'POST' }, tr("Updating OS packages..."));
     setOsUpdating(false);
-    if (data) { setNotice((data.stdout || data.stderr || 'OS update completed.').trim()); if (showUpdateLog) await loadUpdates(); }
+    if (data) { setNotice((data.stdout || data.stderr || tr("OS update completed.")).trim()); if (showUpdateLog) await loadUpdates(); }
   }
 
   async function saveOsAutoUpdate() {
-    const data = await request('/updates/os/auto', { method: 'POST', body: JSON.stringify(osAutoUpdate) }, 'Saving OS auto update...');
-    if (data) { setNotice((data.stdout || data.stderr || 'OS auto update saved.').trim()); if (showUpdateLog) await loadUpdates(); }
+    const data = await request('/updates/os/auto', { method: 'POST', body: JSON.stringify(osAutoUpdate) }, tr("Saving OS auto update..."));
+    if (data) { setNotice((data.stdout || data.stderr || tr("OS auto update saved.")).trim()); if (showUpdateLog) await loadUpdates(); }
   }
 
   async function runPanelUpdate() {
-    if (!confirm('Update opanel from GitHub main now? The API may restart and this page will reload when done.')) return;
+    if (!confirm(tr("Update opanel from GitHub main now? The API may restart and this page will reload when done."))) return;
     setPanelUpdating(true);
     setShowUpdateLog(true);
     setPanelUpdateLog([]);
-    const data = await request('/updates/panel/run', { method: 'POST' }, 'Updating opanel...');
+    const data = await request('/updates/panel/run', { method: 'POST' }, tr("Updating opanel..."));
     if (!data) {
       setPanelUpdating(false);
       return;
@@ -3282,7 +3280,7 @@ ${effect}${order}`)) return;
         consecutiveFailures += 1;
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES || Date.now() - startedAt > DEADLINE_MS) {
           stopPolling();
-          setNotice('Lost contact with the panel while it was updating. It has most likely finished — reload the page (Ctrl+Shift+R) to see the result.');
+          setNotice(tr("Lost contact with the panel while it was updating. It has most likely finished — reload the page (Ctrl+Shift+R) to see the result."));
         }
         return;
       }
@@ -3298,16 +3296,16 @@ ${effect}${order}`)) return;
       if (done) {
         stopPolling();
         if (st.last_update_status === 'completed' && Number(st.progress_percent) === 100) {
-          setNotice('Panel update completed. Reloading to apply the new version...');
+          setNotice(tr("Panel update completed. Reloading to apply the new version..."));
           setTimeout(() => { window.location.reload(); }, 2000);
         } else if (st.last_update_status === 'failed') {
-          setNotice((st.progress_message || st.last_update_message || 'Panel update failed.').trim());
+          setNotice((st.progress_message || st.last_update_message || tr("Panel update failed.")).trim());
         }
         return;
       }
       if (Date.now() - startedAt > DEADLINE_MS) {
         stopPolling();
-        setNotice('The panel update is taking longer than expected. Reload the page (Ctrl+Shift+R) to check whether it finished.');
+        setNotice(tr("The panel update is taking longer than expected. Reload the page (Ctrl+Shift+R) to check whether it finished."));
       }
     };
     await pollOnce();
@@ -3316,8 +3314,8 @@ ${effect}${order}`)) return;
   }
 
   async function savePanelAutoUpdate() {
-    const data = await request('/updates/panel/auto', { method: 'POST', body: JSON.stringify(panelAutoUpdate) }, 'Saving panel auto update...');
-    if (data) { setNotice((data.stdout || data.stderr || 'Panel auto update saved.').trim()); if (showUpdateLog) await loadUpdates(); }
+    const data = await request('/updates/panel/auto', { method: 'POST', body: JSON.stringify(panelAutoUpdate) }, tr("Saving panel auto update..."));
+    if (data) { setNotice((data.stdout || data.stderr || tr("Panel auto update saved.")).trim()); if (showUpdateLog) await loadUpdates(); }
   }
 
   useEffect(() => {
@@ -3438,7 +3436,7 @@ ${effect}${order}`)) return;
   }, [isAuthenticated, page, daImportsRunning]);
 
   useEffect(() => {
-    if (daImportsWereRunning.current && !daImportsRunning) setNotice('DA import queue finished. See Import Jobs for each archive.');
+    if (daImportsWereRunning.current && !daImportsRunning) setNotice(tr("DA import queue finished. See Import Jobs for each archive."));
     daImportsWereRunning.current = daImportsRunning;
   }, [daImportsRunning]);
 
@@ -3528,33 +3526,33 @@ ${effect}${order}`)) return;
   }, [page]);
 
   function roleLabel(role) {
-    return role === 'admin' ? 'Admin' : 'End user';
+    return role === 'admin' ? tr("Admin") : tr("End user");
   }
 
   const mainNavItems = [
-    ['dashboard', 'Dashboard', Home],
-    ['websites', 'Websites', Globe],
-    ['ssl', 'SSL', Lock],
-    ['databases', 'Database', Database],
-    ['cron', 'Cron', Clock],
-    ['files', 'File manager', FolderOpen],
-    ['backups', 'Backups', Archive],
-    ...(isAdmin ? [['users', 'Panel users', Users]] : []),
+    ['dashboard', tr("Dashboard"), Home],
+    ['websites', tr("Websites"), Globe],
+    ['ssl', tr("SSL"), Lock],
+    ['databases', tr("Database"), Database],
+    ['cron', tr("Cron"), Clock],
+    ['files', tr("File manager"), FolderOpen],
+    ['backups', tr("Backups"), Archive],
+    ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
   ];
 
   const settingsNavItems = [
-    ...(isAdmin ? [['settings', 'Panel settings', SettingsIcon]] : []),
-    ['security', 'Security', Shield],
-    ...(isAdmin ? [['malware', 'Malware Scanner', Search]] : []),
-    ...(isAdmin ? [['php', 'PHP config', Code2]] : []),
-    ...(isAdmin ? [['firewall', 'Firewall', Shield]] : []),
-    ['waf', 'WAF', Shield],
-    ['wafLogs', 'Access Logs', FileText],
-    ...(isAdmin ? [['updates', 'Updates', RefreshCw]] : []),
-    ...(isAdmin ? [['addons', 'Addons', PackageOpen]] : []),
+    ...(isAdmin ? [['settings', tr("Panel settings"), SettingsIcon]] : []),
+    ['security', tr("Security"), Shield],
+    ...(isAdmin ? [['malware', tr("Malware Scanner"), Search]] : []),
+    ...(isAdmin ? [['php', tr("PHP config"), Code2]] : []),
+    ...(isAdmin ? [['firewall', tr("Firewall"), Shield]] : []),
+    ['waf', tr("WAF"), Shield],
+    ['wafLogs', tr("Access Logs"), FileText],
+    ...(isAdmin ? [['updates', tr("Updates"), RefreshCw]] : []),
+    ...(isAdmin ? [['addons', tr("Addons"), PackageOpen]] : []),
     // Offered to a customer only once an admin has turned MCP on.
-    ...((isAdmin || mcpInfo?.enabled) ? [['mcp', 'AI assistants (MCP)', Bot]] : []),
-    ...(isAdmin ? [['services', 'Services Status', Server]] : []),
+    ...((isAdmin || mcpInfo?.enabled) ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
+    ...(isAdmin ? [['services', tr("Services Status"), Server]] : []),
   ];
 
   const navItems = [...mainNavItems, ...settingsNavItems];
@@ -3565,7 +3563,7 @@ ${effect}${order}`)) return;
     const errorMessage = formatApiError(error, '').trim();
     const noticeMessage = formatApiError(notice, '').trim();
     if (!errorMessage && !noticeMessage) return null;
-    return <div className="app-toast-stack" aria-label="Notifications">
+    return <div className="app-toast-stack" aria-label={tr("Notifications")}>
       <NotificationToast type="error" message={errorMessage} onClose={() => setError('')} />
       <NotificationToast type="success" message={noticeMessage} onClose={() => setNotice('')} />
     </div>;
@@ -3621,12 +3619,12 @@ ${effect}${order}`)) return;
 
   function WebsiteSelect() {
     return <select value={selectedWebsiteId} onChange={e => setSelectedWebsiteId(e.target.value)}>
-      <option value="">-- Select website --</option>
+      <option value="">{tr("-- Select website --")}</option>
       {websites.map(site => <option key={site.id} value={site.id}>{site.domain}</option>)}
     </select>;
   }
 
-  function EmptyState({ icon: Icon = AlertCircle, message = 'No data yet', action }) {
+  function EmptyState({ icon: Icon = AlertCircle, message = tr('No data yet'), action }) {
     return <div className="empty-state">
       <Icon size={40} />
       <p>{message}</p>
@@ -3700,54 +3698,54 @@ ${effect}${order}`)) return;
     const disk = resourceUsage?.disk || {};
     const network = resourceUsage?.network || {};
     const networkTotal = (Number(network.rx_per_sec) || 0) + (Number(network.tx_per_sec) || 0);
-    const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+    const plural = (count, word) => tr(count === 1 ? `{0} ${word}` : `{0} ${word}s`, count);
     const sslActive = websites.filter(site => site.ssl_enabled).length;
     // The counts the stats row used to carry now sit on the feature they
     // describe, so the number and the way to act on it are the same tile.
     const featureGroups = [
       {
-        title: 'Hosting',
+        title: tr("Hosting"),
         icon: Layers,
         items: [
-          { target: 'websites', label: 'Websites', icon: Globe, hint: websites.length ? plural(websites.length, 'site') : 'No websites yet' },
-          { target: 'ssl', label: 'SSL', icon: Lock, hint: sslActive ? `${sslActive} of ${websites.length} secured` : 'Nothing secured yet' },
-          { target: 'databases', label: 'Databases', icon: Database, hint: plural(databases.length, 'database') },
-          { target: 'files', label: 'File manager', icon: FolderOpen, hint: currentUser && !isAdmin
-            ? `${formatBytes(currentUser.storage_used_bytes)} of ${formatBytes(storageLimitBytes(currentUser))}`
-            : 'Browse and edit files' },
-          { target: 'cron', label: 'Cron', icon: Clock, hint: 'Scheduled jobs' },
-          { target: 'backups', label: 'Backups', icon: Archive, hint: 'Create and restore' },
+          { target: 'websites', label: tr("Websites"), icon: Globe, hint: websites.length ? plural(websites.length, 'site') : tr("No websites yet") },
+          { target: 'ssl', label: tr("SSL"), icon: Lock, hint: sslActive ? tr("{0} of {1} secured", sslActive, websites.length) : tr("Nothing secured yet") },
+          { target: 'databases', label: tr("Databases"), icon: Database, hint: plural(databases.length, 'database') },
+          { target: 'files', label: tr("File manager"), icon: FolderOpen, hint: currentUser && !isAdmin
+            ? tr("{0} of {1}", formatBytes(currentUser.storage_used_bytes), formatBytes(storageLimitBytes(currentUser)))
+            : tr("Browse and edit files") },
+          { target: 'cron', label: tr("Cron"), icon: Clock, hint: tr("Scheduled jobs") },
+          { target: 'backups', label: tr("Backups"), icon: Archive, hint: tr("Create and restore") },
         ],
       },
       {
-        title: 'Protection',
+        title: tr("Protection"),
         icon: ShieldCheck,
         items: [
-          { target: 'security', label: 'Security', icon: LockKeyhole, hint: 'Login and access' },
-          { target: 'waf', label: 'WAF', icon: ShieldAlert, hint: 'Request filtering' },
-          ...(isAdmin ? [{ target: 'firewall', label: 'Firewall', icon: BrickWall, hint: 'Ports and IP rules' }] : []),
-          ...(isAdmin ? [{ target: 'malware', label: 'Malware scanner', icon: Bug, hint: 'Scan site files' }] : []),
-          { target: 'wafLogs', label: 'Access logs', icon: ScrollText, hint: 'Requests and blocks' },
+          { target: 'security', label: tr("Security"), icon: LockKeyhole, hint: tr("Login and access") },
+          { target: 'waf', label: tr("WAF"), icon: ShieldAlert, hint: tr("Request filtering") },
+          ...(isAdmin ? [{ target: 'firewall', label: tr("Firewall"), icon: BrickWall, hint: tr("Ports and IP rules") }] : []),
+          ...(isAdmin ? [{ target: 'malware', label: tr("Malware scanner"), icon: Bug, hint: tr("Scan site files") }] : []),
+          { target: 'wafLogs', label: tr("Access logs"), icon: ScrollText, hint: tr("Requests and blocks") },
         ],
       },
       {
-        title: 'Server',
+        title: tr("Server"),
         icon: Server,
         items: [
-          ...(isAdmin ? [{ target: 'services', label: 'Services', icon: Activity, hint: 'Start, stop, restart' }] : []),
-          ...(isAdmin ? [{ target: 'php', label: 'PHP config', icon: Code2, hint: 'Versions and limits' }] : []),
-          ...(isAdmin ? [{ target: 'users', label: 'Panel users', icon: Users, hint: 'Accounts and limits' }] : []),
-          ...(isAdmin ? [{ target: 'settings', label: 'Panel settings', icon: SettingsIcon, hint: 'Hostname and mail' }] : []),
-          ...(isAdmin ? [{ target: 'updates', label: 'Updates', icon: RefreshCw, hint: 'Panel version' }] : []),
+          ...(isAdmin ? [{ target: 'services', label: tr("Services"), icon: Activity, hint: tr("Start, stop, restart") }] : []),
+          ...(isAdmin ? [{ target: 'php', label: tr("PHP config"), icon: Code2, hint: tr("Versions and limits") }] : []),
+          ...(isAdmin ? [{ target: 'users', label: tr("Panel users"), icon: Users, hint: tr("Accounts and limits") }] : []),
+          ...(isAdmin ? [{ target: 'settings', label: tr("Panel settings"), icon: SettingsIcon, hint: tr("Hostname and mail") }] : []),
+          ...(isAdmin ? [{ target: 'updates', label: tr("Updates"), icon: RefreshCw, hint: tr("Panel version") }] : []),
         ],
       },
     ];
     return <>
       {isAdmin && <section className="resource-grid">
-        <ResourceCard icon={Cpu} label="CPU" value={formatPercent(cpu.percent)} percent={cpu.percent} detail={cpu.load?.length ? `Load ${cpu.load.join(' / ')}` : `${cpu.cores || '--'} cores`} />
-        <ResourceCard icon={MemoryStick} label="RAM" value={formatPercent(memory.percent)} percent={memory.percent} detail={`${formatBytes(memory.used)} / ${formatBytes(memory.total)}`} />
-        <ResourceCard icon={HardDrive} label="Disk" value={formatPercent(disk.percent)} percent={disk.percent} detail={`${formatBytes(disk.used)} / ${formatBytes(disk.total)}`} />
-        <ResourceCard icon={Network} label="Network" value={`${formatBytes(networkTotal)}/s`} detail={`Down ${formatBytes(network.rx_per_sec)}/s / Up ${formatBytes(network.tx_per_sec)}/s`} />
+        <ResourceCard icon={Cpu} label={tr("CPU")} value={formatPercent(cpu.percent)} percent={cpu.percent} detail={cpu.load?.length ? tr("Load {0}", cpu.load.join(' / ')) : tr("{0} cores", cpu.cores || '--')} />
+        <ResourceCard icon={MemoryStick} label={tr("RAM")} value={formatPercent(memory.percent)} percent={memory.percent} detail={`${formatBytes(memory.used)} / ${formatBytes(memory.total)}`} />
+        <ResourceCard icon={HardDrive} label={tr("Disk")} value={formatPercent(disk.percent)} percent={disk.percent} detail={`${formatBytes(disk.used)} / ${formatBytes(disk.total)}`} />
+        <ResourceCard icon={Network} label={tr("Network")} value={`${formatBytes(networkTotal)}/s`} detail={tr("Down {0}/s / Up {1}/s", formatBytes(network.rx_per_sec), formatBytes(network.tx_per_sec))} />
       </section>}
       {featureGroups.filter(group => group.items.length > 0).map(group => <section className="section feature-group" key={group.title}>
         <div className="feature-group-head">
@@ -3772,19 +3770,19 @@ ${effect}${order}`)) return;
     return <section className="section nginx-modal inline-nginx-editor">
       <div className="section-title">
         <div className="nginx-config-title">
-          <h2>{fullConfig ? 'VHost Config' : 'Website settings'} - {nginxCustomEditing.domain}</h2>
+          <h2>{fullConfig ? tr("VHost Config") : tr("Website settings")} - {nginxCustomEditing.domain}</h2>
           <p className="hint">{fullConfig
-            ? 'This is read-only. opanel manages the main vhost template.'
-            : 'Managed settings rewrite the main vhost safely.'}</p>
+            ? tr("This is read-only. opanel manages the main vhost template.")
+            : tr("Managed settings rewrite the main vhost safely.")}</p>
         </div>
         <div className="actions">
-          {!fullConfig && isAdmin && <button className="secondary-light" disabled={!!loading} onClick={viewFullNginxConfig}><FileText size={14}/> View all</button>}
-          {fullConfig && <button className="secondary-light" disabled={!!loading} onClick={() => setNginxCustomEditing(prev => ({ ...prev, mode: 'settings', content: '' }))}><SettingsIcon size={14}/> Settings</button>}
-          <button className="secondary-light" onClick={() => setNginxCustomEditing(null)}><X size={14}/> Close</button>
+          {!fullConfig && isAdmin && <button className="secondary-light" disabled={!!loading} onClick={viewFullNginxConfig}><FileText size={14}/> {tr("View all")}</button>}
+          {fullConfig && <button className="secondary-light" disabled={!!loading} onClick={() => setNginxCustomEditing(prev => ({ ...prev, mode: 'settings', content: '' }))}><SettingsIcon size={14}/> {tr("Settings")}</button>}
+          <button className="secondary-light" onClick={() => setNginxCustomEditing(null)}><X size={14}/> {tr("Close")}</button>
         </div>
       </div>
       {!fullConfig && <div className="website-settings-grid">
-        <label><span>Website mode</span><select
+        <label><span>{tr("Website mode")}</span><select
           value={websiteSettingsForm.app_type}
           onChange={e => setWebsiteSettingsForm(prev => ({
             ...prev,
@@ -3793,18 +3791,18 @@ ${effect}${order}`)) return;
           }))}
           disabled={!!loading}
         >
-          <option value="wordpress">WordPress</option>
-          <option value="php">PHP</option>
-          <option value="static">Static</option>
+          <option value="wordpress">{tr("WordPress")}</option>
+          <option value="php">{tr("PHP")}</option>
+          <option value="static">{tr("Static")}</option>
         </select></label>
-        {selectedAppType !== 'static' && <label><span>PHP version</span><select
+        {selectedAppType !== 'static' && <label><span>{tr("PHP version")}</span><select
           value={websiteSettingsForm.php_version}
           onChange={e => setWebsiteSettingsForm(prev => ({ ...prev, php_version: e.target.value }))}
           disabled={!!loading}
         >
-          {phpVersionOptions(phpVersions.installed, websiteSettingsForm.php_version).map(v => <option key={v} value={v}>PHP {v}</option>)}
+          {phpVersionOptions(phpVersions.installed, websiteSettingsForm.php_version).map(v => <option key={v} value={v}>{tr("PHP")} {v}</option>)}
         </select></label>}
-        <label><span>Webserver rewrite</span><select
+        <label><span>{tr("Webserver rewrite")}</span><select
           value={rewriteDisabled ? (selectedAppType === 'wordpress' ? 'front_controller' : 'none') : websiteSettingsForm.nginx_rewrite_mode}
           onChange={e => setWebsiteSettingsForm(prev => ({ ...prev, nginx_rewrite_mode: e.target.value }))}
           disabled={!!loading || rewriteDisabled}
@@ -3812,21 +3810,21 @@ ${effect}${order}`)) return;
           {NGINX_REWRITE_MODES.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
         </select></label>
         <div className="website-settings-actions">
-          <button disabled={!!loading} onClick={saveWebsiteSettings}><Save size={14}/> Save settings</button>
+          <button disabled={!!loading} onClick={saveWebsiteSettings}><Save size={14}/> {tr("Save settings")}</button>
         </div>
       </div>}
       {!fullConfig && <div className="site-aliases settings-domain-manager">
         <div className="domain-manager-head">
-          <h3>Domains</h3>
-          <p className="hint">Alias serves the same app. Redirect sends visitors to {nginxCustomEditing.domain}.</p>
+          <h3>{tr("Domains")}</h3>
+          <p className="hint">{tr("Alias serves the same app. Redirect sends visitors to")} {nginxCustomEditing.domain}.</p>
         </div>
         <div className="alias-list">
-          <span className="alias-chip primary-domain"><Globe size={12}/>{nginxCustomEditing.domain}<span>Main</span></span>
+          <span className="alias-chip primary-domain"><Globe size={12}/>{nginxCustomEditing.domain}<span>{tr("Main")}</span></span>
           {siteDomains.length === 0
-            ? <span className="alias-empty">No extra domains</span>
+            ? <span className="alias-empty">{tr("No extra domains")}</span>
             : siteDomains.map(alias => <span className="alias-chip" key={alias.id}>
-              <Globe size={12}/>{alias.domain}<span>{alias.mode === 'redirect' ? 'Redirect' : 'Alias'}</span>
-              <button type="button" disabled={!!loading} title={`Remove ${alias.domain}`} aria-label={`Remove ${alias.domain}`} onClick={() => deleteWebsiteAlias(settingsSite, alias)}><X size={12}/></button>
+              <Globe size={12}/>{alias.domain}<span>{alias.mode === 'redirect' ? tr("Redirect") : tr("Alias")}</span>
+              <button type="button" disabled={!!loading} title={tr("Remove {0}", alias.domain)} aria-label={tr("Remove {0}", alias.domain)} onClick={() => deleteWebsiteAlias(settingsSite, alias)}><X size={12}/></button>
             </span>)}
         </div>
         <div className="alias-form settings-domain-form">
@@ -3842,24 +3840,24 @@ ${effect}${order}`)) return;
             onChange={e => setAliasModes(prev => ({ ...prev, [nginxCustomEditing.id]: e.target.value }))}
             disabled={!!loading}
           >
-            <option value="alias">Alias</option>
-            <option value="redirect">Redirect</option>
+            <option value="alias">{tr("Alias")}</option>
+            <option value="redirect">{tr("Redirect")}</option>
           </select>
-          <button className="secondary-light" disabled={!!loading || !(aliasDrafts[nginxCustomEditing.id] || '').trim()} onClick={() => addWebsiteAlias(settingsSite)}><Plus size={14}/> Add domain</button>
+          <button className="secondary-light" disabled={!!loading || !(aliasDrafts[nginxCustomEditing.id] || '').trim()} onClick={() => addWebsiteAlias(settingsSite)}><Plus size={14}/> {tr("Add domain")}</button>
         </div>
       </div>}
       {fullConfig && <div className="custom-nginx-block">
         <textarea
           className="code-editor"
           value={nginxCustomEditing.content}
-          placeholder={`docRoot                   /home/site/${nginxCustomEditing.domain}/public_html`}
+          placeholder={tr("docRoot                   /home/site/{0}/public_html", nginxCustomEditing.domain)}
           spellCheck={false}
           rows={18}
           readOnly
         />
       </div>}
       <div className="actions">
-        <button className="secondary-light" disabled={!!loading} onClick={() => setNginxCustomEditing(null)}>{fullConfig ? 'Close' : 'Cancel'}</button>
+        <button className="secondary-light" disabled={!!loading} onClick={() => setNginxCustomEditing(null)}>{fullConfig ? tr("Close") : tr("Cancel")}</button>
       </div>
     </section>;
   }
@@ -3869,8 +3867,8 @@ ${effect}${order}`)) return;
     if (!terminalViewer) return null;
     return <section className="section nginx-modal terminal-modal">
       <div className="section-title">
-        <h2>Terminal - {terminalViewer.domain}</h2>
-        <button className="secondary-light" onClick={() => setTerminalViewer(null)}><X size={14}/> Close</button>
+        <h2>{tr("Terminal -")} {terminalViewer.domain}</h2>
+        <button className="secondary-light" onClick={() => setTerminalViewer(null)}><X size={14}/> {tr("Close")}</button>
       </div>
       <div style={{ height: '500px', marginTop: '8px' }}>
         <Terminal websiteId={terminalViewer.id} apiBase={API} />
@@ -3883,28 +3881,28 @@ ${effect}${order}`)) return;
     return <section className="section nginx-modal log-viewer">
       <div className="section-title">
         <div className="nginx-config-title">
-          <h2>Webserver logs - {logViewer.domain}</h2>
+          <h2>{tr("Webserver logs -")} {logViewer.domain}</h2>
           <p className="hint">{logViewer.path || `/var/log/nginx/${logViewer.domain}.${logViewer.kind}.log`}</p>
         </div>
-        <button className="secondary-light" onClick={() => setLogViewer(null)}><X size={14}/> Close</button>
+        <button className="secondary-light" onClick={() => setLogViewer(null)}><X size={14}/> {tr("Close")}</button>
       </div>
       <div className="log-toolbar">
         <div className="segmented-control">
-          <button className={logViewer.kind === 'access' ? 'active' : ''} disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, 'access', logViewer.lines, logViewer.domain)}>Access</button>
-          <button className={logViewer.kind === 'error' ? 'active' : ''} disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, 'error', logViewer.lines, logViewer.domain)}>Errors (PHP + server)</button>
+          <button className={logViewer.kind === 'access' ? 'active' : ''} disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, 'access', logViewer.lines, logViewer.domain)}>{tr("Access")}</button>
+          <button className={logViewer.kind === 'error' ? 'active' : ''} disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, 'error', logViewer.lines, logViewer.domain)}>{tr("Errors (PHP + server)")}</button>
         </div>
         <select value={logViewer.lines} onChange={e => loadWebsiteLog(logViewer.id, logViewer.kind, Number(e.target.value), logViewer.domain)} disabled={!!loading}>
-          <option value={100}>100 lines</option>
-          <option value={200}>200 lines</option>
-          <option value={500}>500 lines</option>
-          <option value={1000}>1000 lines</option>
-          <option value={2000}>2000 lines</option>
+          <option value={100}>{tr("100 lines")}</option>
+          <option value={200}>{tr("200 lines")}</option>
+          <option value={500}>{tr("500 lines")}</option>
+          <option value={1000}>{tr("1000 lines")}</option>
+          <option value={2000}>{tr("2000 lines")}</option>
         </select>
-        <button disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, logViewer.kind, logViewer.lines, logViewer.domain)}><RefreshCw size={14}/> Refresh</button>
+        <button disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, logViewer.kind, logViewer.lines, logViewer.domain)}><RefreshCw size={14}/> {tr("Refresh")}</button>
       </div>
       <pre className="log-output">{logViewer.exists
-        ? (logViewer.content || 'Log is empty.')
-        : (logViewer.kind === 'error' ? 'No errors logged yet.' : 'Log file has not been created yet.')}</pre>
+        ? (logViewer.content || tr("Log is empty."))
+        : (logViewer.kind === 'error' ? tr("No errors logged yet.") : tr("Log file has not been created yet."))}</pre>
     </section>;
   }
 
@@ -3917,79 +3915,79 @@ ${effect}${order}`)) return;
       : websites;
     return <>
       <section className="section">
-        <h2>Create website</h2>
+        <h2>{tr("Create website")}</h2>
         <div className="form-row create-site-row">
           <input id="create-website-domain" value={domain} onChange={e => setDomain(e.target.value)} placeholder="domain.com" />
           <select value={siteType} onChange={e => setSiteType(e.target.value)}>
-            <option value="wordpress">WordPress</option>
-            <option value="php">PHP</option>
+            <option value="wordpress">{tr("WordPress")}</option>
+            <option value="php">{tr("PHP")}</option>
           </select>
           <select value={phpVersion} onChange={e => setPhpVersion(e.target.value)}>
-            {phpVersionOptions(phpVersions.installed, phpVersion).map(v => <option key={v} value={v}>PHP {v}</option>)}
+            {phpVersionOptions(phpVersions.installed, phpVersion).map(v => <option key={v} value={v}>{tr("PHP")} {v}</option>)}
           </select>
           {wpFieldsEnabled && <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="admin@domain.com" />}
-          {wpFieldsEnabled && <input value={wpAdminUser} onChange={e => setWpAdminUser(e.target.value)} placeholder="WP admin user" />}
-          {wpFieldsEnabled && <input value={wpAdminPassword} onChange={e => setWpAdminPassword(e.target.value)} placeholder="WP admin password" type="password" />}
-          <button disabled={!!loading || !domain} onClick={createWordPress}><Plus size={15}/> Create</button>
+          {wpFieldsEnabled && <input value={wpAdminUser} onChange={e => setWpAdminUser(e.target.value)} placeholder={tr("WP admin user")} />}
+          {wpFieldsEnabled && <input value={wpAdminPassword} onChange={e => setWpAdminPassword(e.target.value)} placeholder={tr("WP admin password")} type="password" />}
+          <button disabled={!!loading || !domain} onClick={createWordPress}><Plus size={15}/> {tr("Create")}</button>
         </div>
         {siteType === 'wordpress' && <label className="check-line">
           <input type="checkbox" checked={installWordPress} onChange={e => setInstallWordPress(e.target.checked)} />
-          Install WordPress (creates database, downloads WP, configures vhost)
+          {tr("Install WordPress (creates database, downloads WP, configures vhost)")}
         </label>}
         <label className="check-line">
           <input type="checkbox" checked={installSslAfterCreate} onChange={e => setInstallSslAfterCreate(e.target.checked)} />
-          Set up SSL after creating
+          {tr("Set up SSL after creating")}
         </label>
         {installSslAfterCreate && <div className="create-ssl-box">
           <div className="segmented ssl-mode-tabs">
-            <button className={createSslMode === 'letsencrypt' ? 'active' : ''} onClick={() => setCreateSslMode('letsencrypt')}><Lock size={13}/> Let's Encrypt</button>
-            <button className={createSslMode === 'wildcard' ? 'active' : ''} onClick={() => setCreateSslMode('wildcard')}><Globe size={13}/> Wildcard (Cloudflare)</button>
-            <button className={createSslMode === 'existing' ? 'active' : ''} onClick={() => { setCreateSslMode('existing'); loadCreateSslCerts(); }}><RefreshCw size={13}/> Use existing</button>
-            <button className={createSslMode === 'manual' ? 'active' : ''} onClick={() => setCreateSslMode('manual')}><KeyRound size={13}/> Manual</button>
+            <button className={createSslMode === 'letsencrypt' ? 'active' : ''} onClick={() => setCreateSslMode('letsencrypt')}><Lock size={13}/> {tr("Let's Encrypt")}</button>
+            <button className={createSslMode === 'wildcard' ? 'active' : ''} onClick={() => setCreateSslMode('wildcard')}><Globe size={13}/> {tr("Wildcard (Cloudflare)")}</button>
+            <button className={createSslMode === 'existing' ? 'active' : ''} onClick={() => { setCreateSslMode('existing'); loadCreateSslCerts(); }}><RefreshCw size={13}/> {tr("Use existing")}</button>
+            <button className={createSslMode === 'manual' ? 'active' : ''} onClick={() => setCreateSslMode('manual')}><KeyRound size={13}/> {tr("Manual")}</button>
           </div>
-          {createSslMode === 'letsencrypt' && <p className="hint">certbot HTTP-01 — the domain must point to this server's IP first.</p>}
+          {createSslMode === 'letsencrypt' && <p className="hint">{tr("certbot HTTP-01 — the domain must point to this server's IP first.")}</p>}
           {createSslMode === 'wildcard' && <div className="create-ssl-fields">
-            <input type="password" autoComplete="off" placeholder="Cloudflare API Token" value={createSslForm.api_token} onChange={e => setCreateSslForm(p => ({ ...p, api_token: e.target.value }))} />
-            <input type="email" autoComplete="off" placeholder="Contact email (optional)" value={createSslForm.email} onChange={e => setCreateSslForm(p => ({ ...p, email: e.target.value }))} />
-            <p className="hint">A scoped <strong>API Token</strong> (My Profile → API Tokens → Create Token), <strong>not</strong> the Global API Key. Permission <code>Zone → DNS → Edit</code> for the zone(s) you issue certs for. Stored encrypted for renewal. Issues one cert for the domain and *.domain — no DNS record or port 80 needed.</p>
+            <input type="password" autoComplete="off" placeholder={tr("Cloudflare API Token")} value={createSslForm.api_token} onChange={e => setCreateSslForm(p => ({ ...p, api_token: e.target.value }))} />
+            <input type="email" autoComplete="off" placeholder={tr("Contact email (optional)")} value={createSslForm.email} onChange={e => setCreateSslForm(p => ({ ...p, email: e.target.value }))} />
+            <p className="hint">{tr("A scoped")} <strong>{tr("API Token")}</strong> {tr("(My Profile → API Tokens → Create Token),")} <strong>{tr("not")}</strong> {tr("the Global API Key. Permission")} <code>Zone → DNS → Edit</code> {tr("for the zone(s) you issue certs for. Stored encrypted for renewal. Issues one cert for the domain and *.domain — no DNS record or port 80 needed.")}</p>
           </div>}
           {createSslMode === 'existing' && <div className="create-ssl-fields">
             <div className="form-row">
               <select value={createSslForm.reuse_name} onChange={e => setCreateSslForm(p => ({ ...p, reuse_name: e.target.value }))}>
-                <option value="">— pick a certificate on this server —</option>
+                <option value="">{tr("— pick a certificate on this server —")}</option>
                 {createSslCerts.map(c => <option key={c.name} value={c.name}>{c.domains.join(', ')} ({c.source})</option>)}
               </select>
-              <button className="secondary-light" type="button" onClick={loadCreateSslCerts}><RefreshCw size={13}/> Refresh</button>
+              <button className="secondary-light" type="button" onClick={loadCreateSslCerts}><RefreshCw size={13}/> {tr("Refresh")}</button>
             </div>
             <p className="hint">{!domain.trim()
-              ? 'Type the domain above first — this list shows only certificates that cover it.'
+              ? tr("Type the domain above first — this list shows only certificates that cover it.")
               : createSslCerts.length === 0
-                ? `No certificate on this server covers ${domain.trim().toLowerCase()}. Note a *.example.com wildcard covers x.example.com but not example.com itself. Issue a Let's Encrypt or wildcard cert first.`
-                : 'A *.example.com wildcard issued earlier covers every x.example.com.'}</p>
+                ? tr("No certificate on this server covers {0}. Note a *.example.com wildcard covers x.example.com but not example.com itself. Issue a Let's Encrypt or wildcard cert first.", domain.trim().toLowerCase())
+                : tr("A *.example.com wildcard issued earlier covers every x.example.com.")}</p>
           </div>}
           {createSslMode === 'manual' && <div className="create-ssl-fields">
-            <textarea rows={4} placeholder="-----BEGIN CERTIFICATE-----" value={createSslForm.certificate} onChange={e => setCreateSslForm(p => ({ ...p, certificate: e.target.value }))} />
-            <textarea rows={4} placeholder="-----BEGIN PRIVATE KEY-----" value={createSslForm.private_key} onChange={e => setCreateSslForm(p => ({ ...p, private_key: e.target.value }))} />
-            <textarea rows={3} placeholder="CA bundle (optional)" value={createSslForm.ca_bundle} onChange={e => setCreateSslForm(p => ({ ...p, ca_bundle: e.target.value }))} />
+            <textarea rows={4} placeholder={tr("-----BEGIN CERTIFICATE-----")} value={createSslForm.certificate} onChange={e => setCreateSslForm(p => ({ ...p, certificate: e.target.value }))} />
+            <textarea rows={4} placeholder={tr("-----BEGIN PRIVATE KEY-----")} value={createSslForm.private_key} onChange={e => setCreateSslForm(p => ({ ...p, private_key: e.target.value }))} />
+            <textarea rows={3} placeholder={tr("CA bundle (optional)")} value={createSslForm.ca_bundle} onChange={e => setCreateSslForm(p => ({ ...p, ca_bundle: e.target.value }))} />
           </div>}
         </div>}
         <p className="hint">{wpFieldsEnabled
-          ? 'WordPress will be installed and the panel will show the URL, admin account, and password after creation.'
-          : 'A virtual host will be created with public_html/ folder. Upload your PHP, HTML, or static files via File Manager.'}</p>
+          ? tr("WordPress will be installed and the panel will show the URL, admin account, and password after creation.")
+          : tr("A virtual host will be created with public_html/ folder. Upload your PHP, HTML, or static files via File Manager.")}</p>
       </section>
       <section className="section">
         <div className="section-title">
-          <h2>Website list</h2>
-          <button disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> Refresh</button>
+          <h2>{tr("Website list")}</h2>
+          <button disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> {tr("Refresh")}</button>
         </div>
         {websites.length > 0 && <div className="website-search">
           <Search size={15}/>
-          <input value={websiteSearch} onChange={e => setWebsiteSearch(e.target.value)} placeholder="Filter domains…" />
+          <input value={websiteSearch} onChange={e => setWebsiteSearch(e.target.value)} placeholder={tr("Filter domains…")} />
           {websiteSearch && <button className="mini secondary-light" onClick={() => setWebsiteSearch('')}><X size={13}/></button>}
-          <span className="hint">{wsQuery ? `${filteredWebsites.length} of ${websites.length}` : `${websites.length} website${websites.length === 1 ? '' : 's'}`}</span>
+          <span className="hint">{wsQuery ? tr("{0} of {1}", filteredWebsites.length, websites.length) : (websites.length === 1 ? tr("{0} website", websites.length) : tr("{0} websites", websites.length))}</span>
         </div>}
-        {websites.length === 0 && <EmptyState icon={Globe} message="No websites yet." action={{ label: 'New website', icon: Plus, onClick: () => { const el = document.getElementById('create-website-domain'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
-        {websites.length > 0 && filteredWebsites.length === 0 && <EmptyState icon={Globe} message={`No domain matches “${websiteSearch}”.`} />}
+        {websites.length === 0 && <EmptyState icon={Globe} message={tr("No websites yet.")} action={{ label: tr("New website"), icon: Plus, onClick: () => { const el = document.getElementById('create-website-domain'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
+        {websites.length > 0 && filteredWebsites.length === 0 && <EmptyState icon={Globe} message={tr("No domain matches “{0}”.", websiteSearch)} />}
         <div className="site-grid">
           {filteredWebsites.map(site => <div className="site-stack" key={site.id}>
           <article className="site-card">
@@ -4000,22 +3998,22 @@ ${effect}${order}`)) return;
               </div>
             </div>
             <div className="site-meta">
-              <span className={`badge site-ssl-badge ${site.ssl_enabled ? 'ok' : ''}`}>{site.ssl_wildcard ? 'Wildcard' : site.ssl_mode === 'reuse' ? 'Shared cert' : site.ssl_enabled ? 'SSL OK' : 'No SSL'}</span>
-              <span>Type <strong>{site.app_type || 'wordpress'}</strong></span>
-              <span>PHP <strong>{site.php_version}</strong></span>
-              {site.app_type === 'php' && site.nginx_rewrite_mode && site.nginx_rewrite_mode !== 'none' && <span>Rewrite <strong>{site.nginx_rewrite_mode}</strong></span>}
-              {site.waf_enabled && <span className="badge ok">WAF</span>}
-              {(site.aliases || []).length > 0 && <span>Domains <strong>{(site.aliases || []).length + 1}</strong></span>}
+              <span className={`badge site-ssl-badge ${site.ssl_enabled ? 'ok' : ''}`}>{site.ssl_wildcard ? tr("Wildcard") : site.ssl_mode === 'reuse' ? tr("Shared cert") : site.ssl_enabled ? tr("SSL OK") : tr("No SSL")}</span>
+              <span>{tr("Type")} <strong>{site.app_type || tr("wordpress")}</strong></span>
+              <span>{tr("PHP")} <strong>{site.php_version}</strong></span>
+              {site.app_type === 'php' && site.nginx_rewrite_mode && site.nginx_rewrite_mode !== 'none' && <span>{tr("Rewrite")} <strong>{site.nginx_rewrite_mode}</strong></span>}
+              {site.waf_enabled && <span className="badge ok">{tr("WAF")}</span>}
+              {(site.aliases || []).length > 0 && <span>{tr("Domains")} <strong>{(site.aliases || []).length + 1}</strong></span>}
             </div>
-            <div className="site-actions" aria-label={`Website actions for ${site.domain}`}>
+            <div className="site-actions" aria-label={tr("Website actions for {0}", site.domain)}>
               <div className="site-feature-actions">
-                <button className="site-icon-button secondary-light" data-tooltip="Files" title="Files" aria-label={`Open file manager for ${site.domain}`} disabled={!!loading} onClick={() => openWebsiteFileManager(site)}><FolderOpen size={15}/></button>
-                <button className="site-icon-button secondary-light" data-tooltip="Logs" title="Logs" aria-label={`View logs for ${site.domain}`} disabled={!!loading} onClick={() => openWebsiteLogs(site)}><FileText size={15}/></button>
-                <button className="site-icon-button secondary-light" data-tooltip="Terminal" title="Terminal" aria-label={`Open terminal for ${site.domain}`} disabled={!!loading} onClick={() => openWebsiteTerminal(site)}><TerminalIcon size={15}/></button>
-                <button className="site-icon-button secondary-light" data-tooltip="Settings" title="Settings" aria-label={`Edit settings for ${site.domain}`} disabled={!!loading} onClick={() => openNginxCustom(site)}><SettingsIcon size={15}/></button>
-                {!site.wp_installed && <button className="site-icon-button secondary-light" data-tooltip="Install WP" title="Install WordPress" aria-label={`Install WordPress on ${site.domain}`} disabled={!!loading} onClick={() => openWpInstall(site)}><Download size={15}/></button>}
-                {site.wp_installed && <button className="site-icon-button secondary-light" data-tooltip="Update WP" title="Update WordPress" aria-label={`Update WordPress on ${site.domain}`} disabled={!!loading} onClick={() => openWpUpdate(site)}><RefreshCw size={15}/></button>}
-                <button className="site-icon-button danger" data-tooltip="Delete" title="Delete" aria-label={`Delete ${site.domain}`} disabled={!!loading} onClick={() => deleteWebsite(site.id)}><Trash2 size={15}/></button>
+                <button className="site-icon-button secondary-light" data-tooltip="Files" title={tr("Files")} aria-label={tr("Open file manager for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteFileManager(site)}><FolderOpen size={15}/></button>
+                <button className="site-icon-button secondary-light" data-tooltip="Logs" title={tr("Logs")} aria-label={tr("View logs for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteLogs(site)}><FileText size={15}/></button>
+                <button className="site-icon-button secondary-light" data-tooltip="Terminal" title={tr("Terminal")} aria-label={tr("Open terminal for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteTerminal(site)}><TerminalIcon size={15}/></button>
+                <button className="site-icon-button secondary-light" data-tooltip="Settings" title={tr("Settings")} aria-label={tr("Edit settings for {0}", site.domain)} disabled={!!loading} onClick={() => openNginxCustom(site)}><SettingsIcon size={15}/></button>
+                {!site.wp_installed && <button className="site-icon-button secondary-light" data-tooltip={tr("Install WP")} title={tr("Install WordPress")} aria-label={tr("Install WordPress on {0}", site.domain)} disabled={!!loading} onClick={() => openWpInstall(site)}><Download size={15}/></button>}
+                {site.wp_installed && <button className="site-icon-button secondary-light" data-tooltip={tr("Update WP")} title={tr("Update WordPress")} aria-label={tr("Update WordPress on {0}", site.domain)} disabled={!!loading} onClick={() => openWpUpdate(site)}><RefreshCw size={15}/></button>}
+                <button className="site-icon-button danger" data-tooltip="Delete" title={tr("Delete")} aria-label={tr("Delete {0}", site.domain)} disabled={!!loading} onClick={() => deleteWebsite(site.id)}><Trash2 size={15}/></button>
               </div>
             </div>
           </article>
@@ -4024,24 +4022,24 @@ ${effect}${order}`)) return;
           {terminalViewer?.id === site.id && renderWebsiteTerminal()}
           {wpManagerSite?.id === site.id && <div className="wp-manager-panel">
             <div className="user-edit-heading">
-              <strong>{wpManagerMode === 'install' ? `Install WordPress on ${site.domain}` : `Update WordPress on ${site.domain}`}</strong>
+              <strong>{wpManagerMode === 'install' ? tr("Install WordPress on {0}", site.domain) : tr("Update WordPress on {0}", site.domain)}</strong>
               <button className="user-edit-close secondary-light" onClick={() => setWpManagerSite(null)}><X size={16}/></button>
             </div>
             {wpManagerMode === 'install' ? <div className="user-edit-grid">
-              <p className="hint">Creates a database, downloads WordPress, configures vhost.</p>
-              <label><span>Site title</span><input value={wpInstallForm.title} onChange={e => setWpInstallForm(prev => ({ ...prev, title: e.target.value }))} /></label>
-              <label><span>Admin username</span><input value={wpInstallForm.admin_user} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_user: e.target.value }))} /></label>
-              <label><span>Admin email</span><input type="email" value={wpInstallForm.admin_email} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_email: e.target.value }))} /></label>
-              <label><span>Admin password</span><input type="password" value={wpInstallForm.admin_password} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_password: e.target.value }))} placeholder="Min 12 characters" /></label>
+              <p className="hint">{tr("Creates a database, downloads WordPress, configures vhost.")}</p>
+              <label><span>{tr("Site title")}</span><input value={wpInstallForm.title} onChange={e => setWpInstallForm(prev => ({ ...prev, title: e.target.value }))} /></label>
+              <label><span>{tr("Admin username")}</span><input value={wpInstallForm.admin_user} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_user: e.target.value }))} /></label>
+              <label><span>{tr("Admin email")}</span><input type="email" value={wpInstallForm.admin_email} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_email: e.target.value }))} /></label>
+              <label><span>{tr("Admin password")}</span><input type="password" value={wpInstallForm.admin_password} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_password: e.target.value }))} placeholder={tr("Min 12 characters")} /></label>
               <div className="user-edit-actions">
-                <button className="secondary-light" onClick={() => setWpManagerSite(null)}>Cancel</button>
-                <button disabled={!!loading || !wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12} onClick={installWpOnSite}><Download size={14}/> Install WordPress</button>
+                <button className="secondary-light" onClick={() => setWpManagerSite(null)}>{tr("Cancel")}</button>
+                <button disabled={!!loading || !wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12} onClick={installWpOnSite}><Download size={14}/> {tr("Install WordPress")}</button>
               </div>
             </div> : <div>
-              <p className="hint">Updates WordPress core, all plugins, and all themes to the latest version.</p>
+              <p className="hint">{tr("Updates WordPress core, all plugins, and all themes to the latest version.")}</p>
               <div className="user-edit-actions">
-                <button className="secondary-light" onClick={() => setWpManagerSite(null)}>Cancel</button>
-                <button disabled={!!loading} onClick={updateWpOnSite}><RefreshCw size={14}/> Update All</button>
+                <button className="secondary-light" onClick={() => setWpManagerSite(null)}>{tr("Cancel")}</button>
+                <button disabled={!!loading} onClick={updateWpOnSite}><RefreshCw size={14}/> {tr("Update All")}</button>
               </div>
             </div>}
           </div>}
@@ -4053,75 +4051,75 @@ ${effect}${order}`)) return;
 
   function renderSsl() {
     const sslLabel = currentSite?.ssl_mode === 'manual'
-      ? 'Manual SSL'
+      ? tr("Manual SSL")
       : currentSite?.ssl_mode === 'reuse'
-        ? 'Existing certificate'
+        ? tr("Existing certificate")
         : currentSite?.ssl_wildcard
-          ? 'Wildcard SSL'
+          ? tr("Wildcard SSL")
           : currentSite?.ssl_enabled
-            ? 'SSL Enabled'
-            : 'SSL Disabled';
+            ? tr("SSL Enabled")
+            : tr("SSL Disabled");
     const sslUpdated = currentSite?.ssl_updated_at ? new Date(currentSite.ssl_updated_at).toLocaleString() : '';
     return <section className="section">
-      <h2>SSL Certificate</h2>
+      <h2>{tr("SSL Certificate")}</h2>
       <WebsiteSelect />
       {currentSite && <div className="info-box" style={{marginTop:8}}>
         <strong>{currentSite.domain}</strong>
         <span className={currentSite.ssl_enabled ? 'badge ok' : 'badge'} style={{justifySelf:'start'}}>{sslLabel}</span>
         {currentSite.ssl_wildcard && <span className="badge ok" style={{justifySelf:'start'}}>*.{currentSite.domain}</span>}
         {currentSite.ssl_mode === 'reuse' && currentSite.ssl_reuse_name && <span className="hint">{currentSite.ssl_reuse_name.split(':')[1]}</span>}
-        {sslUpdated && <span className="hint">Updated {sslUpdated}</span>}
-        {currentSite.ssl_mode === 'manual' && currentSite.ssl_has_ca && <span className="badge ok" style={{justifySelf:'start'}}>CA Bundle</span>}
+        {sslUpdated && <span className="hint">{tr("Updated")} {sslUpdated}</span>}
+        {currentSite.ssl_mode === 'manual' && currentSite.ssl_has_ca && <span className="badge ok" style={{justifySelf:'start'}}>{tr("CA Bundle")}</span>}
       </div>}
       <div className="segmented ssl-mode-tabs">
-        <button className={sslMode === 'letsencrypt' ? 'active' : ''} onClick={() => setSslMode('letsencrypt')}><Lock size={14}/> Let's Encrypt</button>
-        <button className={sslMode === 'wildcard' ? 'active' : ''} onClick={() => setSslMode('wildcard')}><Globe size={14}/> Wildcard (Cloudflare)</button>
-        <button className={sslMode === 'existing' ? 'active' : ''} onClick={() => { setSslMode('existing'); loadAvailableCerts(); }}><RefreshCw size={14}/> Use existing</button>
-        <button className={sslMode === 'manual' ? 'active' : ''} onClick={() => setSslMode('manual')}><KeyRound size={14}/> Manual SSL</button>
+        <button className={sslMode === 'letsencrypt' ? 'active' : ''} onClick={() => setSslMode('letsencrypt')}><Lock size={14}/> {tr("Let's Encrypt")}</button>
+        <button className={sslMode === 'wildcard' ? 'active' : ''} onClick={() => setSslMode('wildcard')}><Globe size={14}/> {tr("Wildcard (Cloudflare)")}</button>
+        <button className={sslMode === 'existing' ? 'active' : ''} onClick={() => { setSslMode('existing'); loadAvailableCerts(); }}><RefreshCw size={14}/> {tr("Use existing")}</button>
+        <button className={sslMode === 'manual' ? 'active' : ''} onClick={() => setSslMode('manual')}><KeyRound size={14}/> {tr("Manual SSL")}</button>
       </div>
       {sslMode === 'letsencrypt' ? <>
-        <button disabled={!selectedWebsiteId || !!loading} onClick={() => enableSsl(selectedWebsiteId)} style={{marginTop:8}}><Lock size={15}/> Install / Renew SSL</button>
-        <p className="hint">certbot HTTP-01 — the domain must point to this server's IP before issuing.</p>
+        <button disabled={!selectedWebsiteId || !!loading} onClick={() => enableSsl(selectedWebsiteId)} style={{marginTop:8}}><Lock size={15}/> {tr("Install / Renew SSL")}</button>
+        <p className="hint">{tr("certbot HTTP-01 — the domain must point to this server's IP before issuing.")}</p>
       </> : sslMode === 'wildcard' ? <div className="manual-ssl-grid">
-        <label style={{gridColumn:'1 / -1'}}>Cloudflare API Token
-          <input type="password" autoComplete="off" value={wildcardSslForm.api_token} onChange={e => setWildcardSslForm(p => ({ ...p, api_token: e.target.value }))} placeholder={currentSite?.ssl_wildcard ? 'Stored — leave blank to reuse' : 'Scoped API Token (not the Global API Key)'} />
+        <label style={{gridColumn:'1 / -1'}}>{tr("Cloudflare API Token")}
+          <input type="password" autoComplete="off" value={wildcardSslForm.api_token} onChange={e => setWildcardSslForm(p => ({ ...p, api_token: e.target.value }))} placeholder={currentSite?.ssl_wildcard ? tr("Stored — leave blank to reuse") : tr("Scoped API Token (not the Global API Key)")} />
         </label>
-        <label style={{gridColumn:'1 / -1'}}>Contact email (optional)
+        <label style={{gridColumn:'1 / -1'}}>{tr("Contact email (optional)")}
           <input type="email" autoComplete="off" value={wildcardSslForm.email} onChange={e => setWildcardSslForm(p => ({ ...p, email: e.target.value }))} placeholder="admin@domain.com" />
         </label>
-        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={issueWildcardSsl}><Globe size={15}/> {currentSite?.ssl_wildcard ? 'Renew / re-issue wildcard' : 'Issue wildcard certificate'}</button>
-        <p className="hint" style={{gridColumn:'1 / -1'}}>Use a <strong>scoped API Token</strong> from Cloudflare (My Profile → API Tokens → Create Token → permission <code>Zone → DNS → Edit</code> for the zone), <strong>not</strong> the account Global API Key. It is stored encrypted and re-used for automatic renewal. Issues one cert for <strong>{currentSite?.domain || 'the domain'}</strong> and <strong>*.{currentSite?.domain || 'domain'}</strong> via a Cloudflare DNS challenge — no DNS record or port 80 needed. Other websites can then pick this cert under "Use existing".</p>
+        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={issueWildcardSsl}><Globe size={15}/> {currentSite?.ssl_wildcard ? tr("Renew / re-issue wildcard") : tr("Issue wildcard certificate")}</button>
+        <p className="hint" style={{gridColumn:'1 / -1'}}>{tr("Use a")} <strong>{tr("scoped API Token")}</strong> {tr("from Cloudflare (My Profile → API Tokens → Create Token → permission")} <code>Zone → DNS → Edit</code> {tr("for the zone),")} <strong>{tr("not")}</strong> {tr("the account Global API Key. It is stored encrypted and re-used for automatic renewal. Issues one cert for")} <strong>{currentSite?.domain || tr("the domain")}</strong> {tr("and")} <strong>*.{currentSite?.domain || tr("domain")}</strong> {tr("via a Cloudflare DNS challenge — no DNS record or port 80 needed. Other websites can then pick this cert under \"Use existing\".")}</p>
       </div> : sslMode === 'existing' ? <div className="manual-ssl-grid">
         <div className="form-row" style={{gridColumn:'1 / -1'}}>
           <select value={reuseCertName} onChange={e => setReuseCertName(e.target.value)}>
-            <option value="">— pick a certificate on this server —</option>
+            <option value="">{tr("— pick a certificate on this server —")}</option>
             {availableCerts.map(c => <option key={c.name} value={c.name} disabled={!c.covers_domain}>
-              {c.domains.join(', ')} · {c.source}{c.covers_domain ? '' : ' (does not cover this domain)'}
+              {c.domains.join(', ')} · {c.source}{c.covers_domain ? '' : tr(" (does not cover this domain)")}
             </option>)}
           </select>
-          <button className="secondary-light" type="button" disabled={!!loading} onClick={loadAvailableCerts}><RefreshCw size={13}/> Refresh</button>
+          <button className="secondary-light" type="button" disabled={!!loading} onClick={loadAvailableCerts}><RefreshCw size={13}/> {tr("Refresh")}</button>
         </div>
-        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !reuseCertName || !!loading} onClick={reuseExistingSsl}><Lock size={15}/> Use this certificate</button>
+        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !reuseCertName || !!loading} onClick={reuseExistingSsl}><Lock size={15}/> {tr("Use this certificate")}</button>
         <p className="hint" style={{gridColumn:'1 / -1'}}>{availableCerts.length === 0
-          ? 'No certificate on this server. Issue a Let’s Encrypt or wildcard cert first (here or on another domain).'
-          : 'A *.example.com wildcard covers every x.example.com — issue it once, reuse it everywhere.'}</p>
+          ? tr("No certificate on this server. Issue a Let’s Encrypt or wildcard cert first (here or on another domain).")
+          : tr("A *.example.com wildcard covers every x.example.com — issue it once, reuse it everywhere.")}</p>
       </div> : <div className="manual-ssl-grid">
         <label>
-          Certificate (.crt/.pem)
+          {tr("Certificate (.crt/.pem)")}
           <input type="file" accept=".crt,.pem" onChange={e => setManualSslFiles(prev => ({ ...prev, certificate: e.target.files?.[0] || null }))} />
         </label>
         <label>
-          Private key (.key/.pem)
+          {tr("Private key (.key/.pem)")}
           <input type="file" accept=".key,.pem" onChange={e => setManualSslFiles(prev => ({ ...prev, private_key: e.target.files?.[0] || null }))} />
         </label>
         <label>
-          CA bundle (.ca/.crt/.pem)
+          {tr("CA bundle (.ca/.crt/.pem)")}
           <input type="file" accept=".ca,.crt,.pem" onChange={e => setManualSslFiles(prev => ({ ...prev, ca_bundle: e.target.files?.[0] || null }))} />
         </label>
-        <textarea rows={7} disabled={!!manualSslFiles.certificate} value={manualSslForm.certificate} onChange={e => setManualSslForm(prev => ({ ...prev, certificate: e.target.value }))} placeholder="-----BEGIN CERTIFICATE-----" />
-        <textarea rows={7} disabled={!!manualSslFiles.private_key} value={manualSslForm.private_key} onChange={e => setManualSslForm(prev => ({ ...prev, private_key: e.target.value }))} placeholder="-----BEGIN PRIVATE KEY-----" />
-        <textarea rows={7} disabled={!!manualSslFiles.ca_bundle} value={manualSslForm.ca_bundle} onChange={e => setManualSslForm(prev => ({ ...prev, ca_bundle: e.target.value }))} placeholder="Optional CA bundle" />
-        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={installManualSsl}><Upload size={15}/> Install Manual SSL</button>
+        <textarea rows={7} disabled={!!manualSslFiles.certificate} value={manualSslForm.certificate} onChange={e => setManualSslForm(prev => ({ ...prev, certificate: e.target.value }))} placeholder={tr("-----BEGIN CERTIFICATE-----")} />
+        <textarea rows={7} disabled={!!manualSslFiles.private_key} value={manualSslForm.private_key} onChange={e => setManualSslForm(prev => ({ ...prev, private_key: e.target.value }))} placeholder={tr("-----BEGIN PRIVATE KEY-----")} />
+        <textarea rows={7} disabled={!!manualSslFiles.ca_bundle} value={manualSslForm.ca_bundle} onChange={e => setManualSslForm(prev => ({ ...prev, ca_bundle: e.target.value }))} placeholder={tr("Optional CA bundle")} />
+        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={installManualSsl}><Upload size={15}/> {tr("Install Manual SSL")}</button>
       </div>}
     </section>;
   }
@@ -4138,78 +4136,78 @@ ${effect}${order}`)) return;
       const doCopy = navigator.clipboard ? navigator.clipboard.writeText(text) : new Promise((resolve, reject) => {
         try { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); resolve(); } catch(e) { reject(e); }
       });
-      doCopy.then(() => { setCopiedField(field); setTimeout(() => setCopiedField(null), 2000); }).catch(() => setError('Copy failed.'));
+      doCopy.then(() => { setCopiedField(field); setTimeout(() => setCopiedField(null), 2000); }).catch(() => setError(tr("Copy failed.")));
     }
     return <section className="section">
       <div className="section-title">
-        <h2>Databases</h2>
-        <button disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> Refresh</button>
+        <h2>{tr("Databases")}</h2>
+        <button disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> {tr("Refresh")}</button>
       </div>
       <div className="form-row">
         <input id="create-database-name" value={newDatabase.db_name} onChange={e => setNewDatabase(prev => ({ ...prev, db_name: e.target.value }))} placeholder="database_name" />
-        <input value={newDatabase.db_user} onChange={e => setNewDatabase(prev => ({ ...prev, db_user: e.target.value }))} placeholder="db_user (default = db_name)" />
-        <input value={newDatabase.db_password} onChange={e => setNewDatabase(prev => ({ ...prev, db_password: e.target.value }))} placeholder="password (min 12 chars)" />
-        <button className="mini secondary-light" title="Generate random password" onClick={() => setNewDatabase(prev => ({ ...prev, db_password: generateRandomPassword() }))}><Dices size={13}/></button>
-        <button disabled={!!loading || !newDatabase.db_name.trim()} onClick={createDatabase}><Plus size={15}/> Create database</button>
+        <input value={newDatabase.db_user} onChange={e => setNewDatabase(prev => ({ ...prev, db_user: e.target.value }))} placeholder={tr("db_user (default = db_name)")} />
+        <input value={newDatabase.db_password} onChange={e => setNewDatabase(prev => ({ ...prev, db_password: e.target.value }))} placeholder={tr("password (min 12 chars)")} />
+        <button className="mini secondary-light" title={tr("Generate random password")} onClick={() => setNewDatabase(prev => ({ ...prev, db_password: generateRandomPassword() }))}><Dices size={13}/></button>
+        <button disabled={!!loading || !newDatabase.db_name.trim()} onClick={createDatabase}><Plus size={15}/> {tr("Create database")}</button>
       </div>
       {createdDbInfo && <div className="info-box db-created-box">
-        <div className="db-created-head"><strong>Database created successfully</strong><button className="mini secondary-light" onClick={() => setCreatedDbInfo(null)}><X size={13}/></button></div>
+        <div className="db-created-head"><strong>{tr("Database created successfully")}</strong><button className="mini secondary-light" onClick={() => setCreatedDbInfo(null)}><X size={13}/></button></div>
         <div className="db-created-grid">
-          <label>Database</label><span>{createdDbInfo.db_name} <button className="mini secondary-light" title={copiedField === 'db_name' ? 'Copied!' : 'Copy'} onClick={() => copyToClipboard(createdDbInfo.db_name, 'db_name')}>{copiedField === 'db_name' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
-          <label>User</label><span>{createdDbInfo.db_user} <button className="mini secondary-light" title={copiedField === 'db_user' ? 'Copied!' : 'Copy'} onClick={() => copyToClipboard(createdDbInfo.db_user, 'db_user')}>{copiedField === 'db_user' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
-          <label>Password</label><span><code>{createdDbInfo.db_password}</code> <button className="mini secondary-light" title={copiedField === 'db_password' ? 'Copied!' : 'Copy'} onClick={() => copyToClipboard(createdDbInfo.db_password, 'db_password')}>{copiedField === 'db_password' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
+          <label>{tr("Database")}</label><span>{createdDbInfo.db_name} <button className="mini secondary-light" title={copiedField === 'db_name' ? tr("Copied!") : tr("Copy")} onClick={() => copyToClipboard(createdDbInfo.db_name, 'db_name')}>{copiedField === 'db_name' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
+          <label>{tr("User")}</label><span>{createdDbInfo.db_user} <button className="mini secondary-light" title={copiedField === 'db_user' ? tr("Copied!") : tr("Copy")} onClick={() => copyToClipboard(createdDbInfo.db_user, 'db_user')}>{copiedField === 'db_user' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
+          <label>{tr("Password")}</label><span><code>{createdDbInfo.db_password}</code> <button className="mini secondary-light" title={copiedField === 'db_password' ? tr("Copied!") : tr("Copy")} onClick={() => copyToClipboard(createdDbInfo.db_password, 'db_password')}>{copiedField === 'db_password' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
         </div>
       </div>}
-      {databases.length === 0 && !createdDbInfo && <EmptyState icon={Database} message="No databases found." action={{ label: 'New database', icon: Plus, onClick: () => { const el = document.getElementById('create-database-name'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
+      {databases.length === 0 && !createdDbInfo && <EmptyState icon={Database} message={tr("No databases found.")} action={{ label: tr("New database"), icon: Plus, onClick: () => { const el = document.getElementById('create-database-name'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); } }} />}
       {databases.length > 0 && <div className="list-search">
         <Search size={15}/>
-        <input value={databaseSearch} onChange={e => setDatabaseSearch(e.target.value)} placeholder="Filter databases…" />
+        <input value={databaseSearch} onChange={e => setDatabaseSearch(e.target.value)} placeholder={tr("Filter databases…")} />
         {databaseSearch && <button className="mini secondary-light" onClick={() => setDatabaseSearch('')}><X size={13}/></button>}
-        <span className="hint">{dbQuery ? `${filteredDatabases.length} of ${databases.length}` : `${databases.length} database${databases.length === 1 ? '' : 's'}`}</span>
+        <span className="hint">{dbQuery ? tr("{0} of {1}", filteredDatabases.length, databases.length) : (databases.length === 1 ? tr("{0} database", databases.length) : tr("{0} databases", databases.length))}</span>
       </div>}
-      {databases.length > 0 && filteredDatabases.length === 0 && <EmptyState icon={Database} message={`No database matches “${databaseSearch}”.`} />}
+      {databases.length > 0 && filteredDatabases.length === 0 && <EmptyState icon={Database} message={tr("No database matches “{0}”.", databaseSearch)} />}
       <div className="table">
         {filteredDatabases.map(db => {
           return <div className="row db-row" key={db.id}>
           <span><strong>{db.db_name}</strong>{isAdmin && <small className="db-owner">{dbOwnerLabel(db)}</small>}</span>
           <span style={{color:'var(--text-muted)'}}>{db.db_user}</span>
           <span className="db-actions">
-            <button disabled={!!loading} onClick={() => openPhpMyAdmin(db.id)}>phpMyAdmin</button>
-            <button className="mini secondary-light" disabled={!!loading} title="Download SQL dump"
-                    aria-label={`Download SQL dump of ${db.db_name}`}
+            <button disabled={!!loading} onClick={() => openPhpMyAdmin(db.id)}>{tr("phpMyAdmin")}</button>
+            <button className="mini secondary-light" disabled={!!loading} title={tr("Download SQL dump")}
+                    aria-label={tr("Download SQL dump of {0}", db.db_name)}
                     onClick={() => downloadDatabase(db.id, db.db_name)}><Download size={14}/></button>
-            <button className="mini secondary-light" disabled={!!loading} title="Change database password"
-                    aria-label={`Change the password for ${db.db_name}`}
+            <button className="mini secondary-light" disabled={!!loading} title={tr("Change database password")}
+                    aria-label={tr("Change the password for {0}", db.db_name)}
                     onClick={() => changeDbPassword(db.id)}><KeyRound size={14}/></button>
             {isAdmin && !db.website_id && <button className="mini secondary-light" disabled={!!loading}
-                    title="Move to another account"
-                    aria-label={`Move ${db.db_name} to another account`}
+                    title={tr("Move to another account")}
+                    aria-label={tr("Move {0} to another account", db.db_name)}
                     onClick={() => openDbOwnerModal(db)}><MoveRight size={14}/></button>}
-            <button className="mini danger" disabled={!!loading} title="Delete database"
-                    aria-label={`Delete ${db.db_name}`}
+            <button className="mini danger" disabled={!!loading} title={tr("Delete database")}
+                    aria-label={tr("Delete {0}", db.db_name)}
                     onClick={() => deleteDatabase(db.id, db.db_name)}><Trash2 size={14}/></button>
           </span>
         </div>})}
       </div>
-      <p className="hint">Click phpMyAdmin to sign in directly. Token expires after 60s.</p>
+      <p className="hint">{tr("Click phpMyAdmin to sign in directly. Token expires after 60s.")}</p>
     </section>;
   }
 
   function renderCron() {
     return <section className="section">
       <div className="section-title">
-        <div><h2>Cron manager</h2></div>
-        <button disabled={!selectedWebsiteId || !!loading} onClick={listCron}><RefreshCw size={14}/> Refresh</button>
+        <div><h2>{tr("Cron manager")}</h2></div>
+        <button disabled={!selectedWebsiteId || !!loading} onClick={listCron}><RefreshCw size={14}/> {tr("Refresh")}</button>
       </div>
       <div className="cron-form">
         <WebsiteSelect />
         <input value={cronSchedule} onChange={e => setCronSchedule(e.target.value)} placeholder="*/15 * * * *" />
-        <input value={cronCommand} onChange={e => setCronCommand(e.target.value)} placeholder="wget -q -O - https://example.com/wp-cron.php" />
-        <button disabled={!selectedWebsiteId || !!loading} onClick={addCron}><Plus size={14}/> Add cron</button>
+        <input value={cronCommand} onChange={e => setCronCommand(e.target.value)} placeholder={tr("wget -q -O - https://example.com/wp-cron.php")} />
+        <button disabled={!selectedWebsiteId || !!loading} onClick={addCron}><Plus size={14}/> {tr("Add cron")}</button>
       </div>
-      {selectedWebsiteId && <p className="hint">Cron runs as <strong>{cronUser || currentSite?.linux_user || 'www-data'}</strong> for the selected website. Accepted commands: <code>wget</code>/<code>curl</code> to an http(s) URL, WP-CLI maintenance commands, or a <code>.php</code> file inside this website. Output is discarded automatically.</p>}
+      {selectedWebsiteId && <p className="hint">{tr("Cron runs as")} <strong>{cronUser || currentSite?.linux_user || tr("www-data")}</strong> {tr("for the selected website. Accepted commands:")} <code>wget</code>/<code>curl</code> {tr("to an http(s) URL, WP-CLI maintenance commands, or a")} <code>.php</code> {tr("file inside this website. Output is discarded automatically.")}</p>}
       <div className="cron-list">
-        {selectedWebsiteId && cronItems.length === 0 && <EmptyState icon={Clock} message="No cron jobs found for this website." />}
+        {selectedWebsiteId && cronItems.length === 0 && <EmptyState icon={Clock} message={tr("No cron jobs found for this website.")} />}
         {cronItems.map(item => <div className="cron-item" key={`${item.index}-${item.line}`}>
           <span className="badge">#{item.index}</span>
           <span><strong>{item.schedule}</strong><small>{item.command || item.line}</small></span>
@@ -4227,65 +4225,65 @@ ${effect}${order}`)) return;
       : null;
     return <section className="section">
       <div className="section-title">
-        <div><h2>File manager</h2></div>
-        <button disabled={!selectedWebsiteId || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14}/> Refresh</button>
+        <div><h2>{tr("File manager")}</h2></div>
+        <button disabled={!selectedWebsiteId || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14}/> {tr("Refresh")}</button>
       </div>
       <div className="file-manager">
         <div className="file-panel">
           <div className="file-controls">
             <WebsiteSelect />
             {currentSite && <div className="file-meta">
-              <span>Website: <strong>{currentSite.domain}</strong></span>
-              <span>Root: <strong>{currentSite.root_path}{fileListPath ? `/${fileListPath}` : ''}</strong></span>
-              {currentUser && !isAdmin && <span>Storage: <strong>{storageUsageText(currentUser)}</strong></span>}
+              <span>{tr("Website:")} <strong>{currentSite.domain}</strong></span>
+              <span>{tr("Root:")} <strong>{currentSite.root_path}{fileListPath ? `/${fileListPath}` : ''}</strong></span>
+              {currentUser && !isAdmin && <span>{tr("Storage:")} <strong>{storageUsageText(currentUser)}</strong></span>}
             </div>}
             <div className="path-pill breadcrumb-line">
-              <button className="crumb" disabled={!selectedWebsiteId || fileListPath === ''} onClick={() => listFiles('')}>root</button>
+              <button className="crumb" disabled={!selectedWebsiteId || fileListPath === ''} onClick={() => listFiles('')}>{tr("root")}</button>
               {fileBreadcrumbs(fileListPath).map(crumb => <button className="crumb" key={crumb.path} onClick={() => listFiles(crumb.path)}>{crumb.label}</button>)}
             </div>
             <div className="file-toolbar">
-              <button disabled={!selectedWebsiteId || fileListPath === '' || !!loading} onClick={() => listFiles(parentFilePath(fileListPath))}>Up</button>
-              <button disabled={!selectedWebsiteId || !!loading} onClick={makeFileDirectory}><Plus size={14}/> Folder</button>
-              <button disabled={!selectedWebsiteId || !!loading} onClick={makeFile}><FileText size={14}/> File</button>
+              <button disabled={!selectedWebsiteId || fileListPath === '' || !!loading} onClick={() => listFiles(parentFilePath(fileListPath))}>{tr("Up")}</button>
+              <button disabled={!selectedWebsiteId || !!loading} onClick={makeFileDirectory}><Plus size={14}/> {tr("Folder")}</button>
+              <button disabled={!selectedWebsiteId || !!loading} onClick={makeFile}><FileText size={14}/> {tr("File")}</button>
               <label className={`upload-button ${(!selectedWebsiteId || !!loading) ? 'disabled' : ''}`}>
-                <Upload size={14}/> Upload
+                <Upload size={14}/> {tr("Upload")}
                 <input type="file" disabled={!selectedWebsiteId || !!loading} onChange={e => { uploadSiteFile(e.target.files?.[0]); e.target.value = ''; }} />
               </label>
               <select value={archiveFormat} onChange={e => setArchiveFormat(e.target.value)} disabled={!selectedWebsiteId || !!loading}>
-                <option value="zip">zip</option>
+                <option value="zip">{tr("zip")}</option>
                 <option value="tar.gz">tar.gz</option>
               </select>
-              <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={copySelectedFiles}><Copy size={14}/> Copy</button>
-              <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={moveSelectedFiles}><MoveRight size={14}/> Move</button>
-              <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={archiveSelectedFiles}><Archive size={14}/> Archive</button>
-              <button disabled={!selectedArchive || !!loading} onClick={extractSelectedArchive}><PackageOpen size={14}/> Extract</button>
-              <button className="danger" disabled={selectedFilePaths.length === 0 || !!loading} onClick={deleteSelectedFiles}><Trash2 size={14}/> Delete</button>
+              <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={copySelectedFiles}><Copy size={14}/> {tr("Copy")}</button>
+              <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={moveSelectedFiles}><MoveRight size={14}/> {tr("Move")}</button>
+              <button disabled={selectedFilePaths.length === 0 || !!loading} onClick={archiveSelectedFiles}><Archive size={14}/> {tr("Archive")}</button>
+              <button disabled={!selectedArchive || !!loading} onClick={extractSelectedArchive}><PackageOpen size={14}/> {tr("Extract")}</button>
+              <button className="danger" disabled={selectedFilePaths.length === 0 || !!loading} onClick={deleteSelectedFiles}><Trash2 size={14}/> {tr("Delete")}</button>
             </div>
             {visibleFileJobs.length > 0 && <div className="file-job-list">
               {visibleFileJobs.map(job => <div className={`file-job ${job.status}`} key={job.job_id}>
                 <Clock size={14}/>
-                <span><strong>{job.archive_path?.split('/').pop() || 'Archive'}</strong> {job.status === 'done' ? 'completed' : job.status === 'error' ? 'failed' : job.status}</span>
+                <span><strong>{job.archive_path?.split('/').pop() || tr("Archive")}</strong> {job.status === 'done' ? tr("completed") : job.status === 'error' ? tr("failed") : job.status}</span>
                 {job.error && <small>{job.error}</small>}
               </div>)}
             </div>}
           </div>
           <div className="file-list-header">
-            <label><input type="checkbox" checked={allSelected} onChange={toggleAllFiles} disabled={files.length === 0} /> Select</label>
-            <span>{files.length} item(s)</span>
+            <label><input type="checkbox" checked={allSelected} onChange={toggleAllFiles} disabled={files.length === 0} /> {tr("Select")}</label>
+            <span>{files.length} {tr("item(s)")}</span>
           </div>
           <div className="file-list">
-            {files.length === 0 && <div className="empty-box">No files in this folder.</div>}
+            {files.length === 0 && <div className="empty-box">{tr("No files in this folder.")}</div>}
             {files.map(item => <div className={`file-item ${selectedFilePaths.includes(item.path) ? 'selected' : ''}`} key={item.path}>
               <input type="checkbox" checked={selectedFilePaths.includes(item.path)} onChange={() => toggleFileSelection(item.path)} />
               <button className="file-name" onClick={() => item.is_dir ? listFiles(item.path) : (isTextEditable(item) ? openFileEditorTab(item.path) : downloadFile(item.path))}>
                 {item.is_dir ? <FolderOpen size={16}/> : <FileText size={16}/>} <strong>{item.name}</strong>
               </button>
               <span className="file-mode">{item.mode || '---'}</span>
-              <span className="file-size">{item.is_dir ? 'Folder' : formatBytes(item.size)}</span>
+              <span className="file-size">{item.is_dir ? tr("Folder") : formatBytes(item.size)}</span>
               <div className="file-row-actions">
                 {!item.is_dir && <button className="mini secondary-light" disabled={!!loading} onClick={() => downloadFile(item.path)}><Download size={13}/></button>}
-                {isExtractableArchive(item) && <button className="mini secondary-light" disabled={!!loading} onClick={() => extractArchive(item)}><PackageOpen size={13}/> Extract</button>}
-                <button className="mini secondary-light" disabled={!!loading} onClick={() => renameFileItem(item)}>Rename</button>
+                {isExtractableArchive(item) && <button className="mini secondary-light" disabled={!!loading} onClick={() => extractArchive(item)}><PackageOpen size={13}/> {tr("Extract")}</button>}
+                <button className="mini secondary-light" disabled={!!loading} onClick={() => renameFileItem(item)}>{tr("Rename")}</button>
               </div>
             </div>)}
           </div>
@@ -4298,11 +4296,11 @@ ${effect}${order}`)) return;
     const selectedBackupUser = users.find(user => String(user.id) === String(selectedBackupUserId));
     const userNameById = id => users.find(user => String(user.id) === String(id))?.username || `User #${id}`;
     const scheduleUserLabel = item => {
-      if (item.all_users) return 'All users';
+      if (item.all_users) return tr("All users");
       const ids = (item.user_ids && item.user_ids.length > 0) ? item.user_ids : (item.user_id ? [item.user_id] : []);
       return ids.length ? ids.map(userNameById).join(', ') : 'No users';
     };
-    const jobTitle = job => ({ site_backup: 'Website backup', user_backup: 'Full user backup', sftp_backup: 'SFTP backup' }[job.kind] || 'Backup task');
+    const jobTitle = job => ({ site_backup: tr("Website backup"), user_backup: tr("Full user backup"), sftp_backup: tr("SFTP backup") }[job.kind] || tr("Backup task"));
     const jobDetail = job => job.error || job.remote_file || job.backup_file || job.message || job.status;
     const jobTimestamp = job => {
       const stamp = job.finished_at || job.started_at || job.created_at || '';
@@ -4321,23 +4319,23 @@ ${effect}${order}`)) return;
     };
     const backupTabs = isAdmin
       ? [
-        ['website', 'Backup website', Globe],
-        ['user', 'Backup user', Users],
-        ['restore', 'Restore', RotateCcw],
-        ['da-import', 'Import DA Backups', Download],
-        ['schedule', 'Scheduled backups', Clock],
-        ['destination', 'Backup Destination', Network],
-        ['logs', 'Backup logs', FileText],
+        ['website', tr("Backup website"), Globe],
+        ['user', tr("Backup user"), Users],
+        ['restore', tr("Restore"), RotateCcw],
+        ['da-import', tr("Import DA Backups"), Download],
+        ['schedule', tr("Scheduled backups"), Clock],
+        ['destination', tr("Backup Destination"), Network],
+        ['logs', tr("Backup logs"), FileText],
       ]
       : [
-        ['website', 'Backup website', Globe],
-        ['logs', 'Backup logs', FileText],
+        ['website', tr("Backup website"), Globe],
+        ['logs', tr("Backup logs"), FileText],
       ];
     const activeBackupTab = backupTabs.some(([id]) => id === backupTab) ? backupTab : 'website';
 
     return <section className="section backups-page">
-      <h2>Backups</h2>
-      <div className="segmented-control backup-tabs" role="tablist" aria-label="Backup sections">
+      <h2>{tr("Backups")}</h2>
+      <div className="segmented-control backup-tabs" role="tablist" aria-label={tr("Backup sections")}>
         {backupTabs.map(([id, label, Icon]) => <button
           key={id}
           type="button"
@@ -4350,10 +4348,10 @@ ${effect}${order}`)) return;
 
       {activeBackupTab === 'logs' && <div className="backup-tab-panel backup-logs-panel">
         <div className="backup-panel-title">
-          <div><h3>Backup logs</h3><p className="hint">Recent queued, running, completed, and failed backup tasks.</p></div>
-          <button disabled={!!loading} onClick={() => loadBackupJobs(true)}><RefreshCw size={14}/> Refresh</button>
+          <div><h3>{tr("Backup logs")}</h3><p className="hint">{tr("Recent queued, running, completed, and failed backup tasks.")}</p></div>
+          <button disabled={!!loading} onClick={() => loadBackupJobs(true)}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
-        {backupJobs.length === 0 && <EmptyState icon={FileText} message="No backup logs found." />}
+        {backupJobs.length === 0 && <EmptyState icon={FileText} message={tr("No backup logs found.")} />}
         {backupJobs.length > 0 && <div className="backup-job-list">
           {backupJobs.map(job => <div className={`backup-job ${job.status}`} key={job.job_id}>
             <Clock size={14}/>
@@ -4377,24 +4375,24 @@ ${effect}${order}`)) return;
 
       {activeBackupTab === 'website' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
-          <div><h3>Backup website</h3><p className="hint">Backups include website source files and a database SQL export.</p></div>
+          <div><h3>{tr("Backup website")}</h3><p className="hint">{tr("Backups include website source files and a database SQL export.")}</p></div>
         </div>
         <WebsiteSelect />
         <div className="actions backup-toolbar">
-          <button disabled={!selectedWebsiteId || !!loading} onClick={createBackup}><Plus size={14}/> Create backup</button>
-          <button disabled={!selectedWebsiteId || !!loading} onClick={refreshBackupArea}><RefreshCw size={14}/> Refresh</button>
+          <button disabled={!selectedWebsiteId || !!loading} onClick={createBackup}><Plus size={14}/> {tr("Create backup")}</button>
+          <button disabled={!selectedWebsiteId || !!loading} onClick={refreshBackupArea}><RefreshCw size={14}/> {tr("Refresh")}</button>
           <label className="upload-button">
-            <Upload size={14}/> Upload backup
+            <Upload size={14}/> {tr("Upload backup")}
             <input type="file" accept=".tar.gz,application/gzip" onChange={e => { uploadBackup(e.target.files?.[0]); e.target.value = ''; }} />
           </label>
         </div>
-        {backups.length === 0 && selectedWebsiteId && <EmptyState icon={Archive} message="No backups found for this website." action={{ label: 'Create backup', icon: Plus, onClick: () => { if (!loading) createBackup(); } }} />}
+        {backups.length === 0 && selectedWebsiteId && <EmptyState icon={Archive} message={tr("No backups found for this website.")} action={{ label: tr("Create backup"), icon: Plus, onClick: () => { if (!loading) createBackup(); } }} />}
         <div className="backup-list">
           {backups.map(file => <div className="backup-item" key={file}>
             <span>{file.split('/').pop()}</span>
             <div className="actions">
-              <button disabled={!!loading} onClick={() => downloadBackup(file)}><Download size={14}/> Download</button>
-              <button disabled={!!loading} onClick={() => restoreBackup(file)}><RotateCcw size={14}/> Restore</button>
+              <button disabled={!!loading} onClick={() => downloadBackup(file)}><Download size={14}/> {tr("Download")}</button>
+              <button disabled={!!loading} onClick={() => restoreBackup(file)}><RotateCcw size={14}/> {tr("Restore")}</button>
               <button className="danger" disabled={!!loading} onClick={() => deleteBackup(file)}><Trash2 size={14}/></button>
             </div>
           </div>)}
@@ -4403,31 +4401,31 @@ ${effect}${order}`)) return;
 
       {isAdmin && activeBackupTab === 'user' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
-          <div><h3>Backup user</h3><p className="hint">Includes the panel user, all owned websites, source files, database dumps, and restore metadata.</p></div>
-          <button disabled={!!loading} onClick={refreshUserBackupArea}><RefreshCw size={14}/> Reload</button>
+          <div><h3>{tr("Backup user")}</h3><p className="hint">{tr("Includes the panel user, all owned websites, source files, database dumps, and restore metadata.")}</p></div>
+          <button disabled={!!loading} onClick={refreshUserBackupArea}><RefreshCw size={14}/> {tr("Reload")}</button>
         </div>
         <div className="sftp-run-row user-backup-row backup-run-row">
           <select value={selectedBackupUserId} onChange={e => setSelectedBackupUserId(e.target.value)}>
-            <option value="">Select user</option>
+            <option value="">{tr("Select user")}</option>
             {users.map(user => <option key={user.id} value={user.id}>{user.username}</option>)}
           </select>
           <select value={selectedSftpTargetId} onChange={e => setSelectedSftpTargetId(e.target.value)}>
-            <option value="">Local only</option>
+            <option value="">{tr("Local only")}</option>
             {sftpTargets.map(target => <option key={target.id} value={target.id}>{target.name}</option>)}
           </select>
-          <button disabled={!selectedBackupUserId || !!loading} onClick={createUserBackup}><Archive size={14}/> Create backup</button>
+          <button disabled={!selectedBackupUserId || !!loading} onClick={createUserBackup}><Archive size={14}/> {tr("Create backup")}</button>
         </div>
-        {selectedBackupUser && <p className="hint">Current user: <strong>{selectedBackupUser.username}</strong></p>}
+        {selectedBackupUser && <p className="hint">{tr("Current user:")} <strong>{selectedBackupUser.username}</strong></p>}
         <div className="actions backup-subactions">
-          <button disabled={!selectedBackupUserId || !!loading} onClick={() => listUserBackups()}><RefreshCw size={14}/> Refresh list</button>
+          <button disabled={!selectedBackupUserId || !!loading} onClick={() => listUserBackups()}><RefreshCw size={14}/> {tr("Refresh list")}</button>
         </div>
-        {selectedBackupUserId && userBackups.length === 0 && <EmptyState icon={Archive} message="No user backups found." />}
+        {selectedBackupUserId && userBackups.length === 0 && <EmptyState icon={Archive} message={tr("No user backups found.")} />}
         <div className="backup-list">
           {userBackups.map(file => <div className="backup-item" key={file}>
             <span>{file.split('/').pop()}</span>
             <div className="actions">
-              <button disabled={!!loading} onClick={() => downloadUserBackup(file)}><Download size={14}/> Download</button>
-              <button disabled={!!loading} onClick={() => restoreUserBackup(file)}><RotateCcw size={14}/> Restore user</button>
+              <button disabled={!!loading} onClick={() => downloadUserBackup(file)}><Download size={14}/> {tr("Download")}</button>
+              <button disabled={!!loading} onClick={() => restoreUserBackup(file)}><RotateCcw size={14}/> {tr("Restore user")}</button>
               <button className="danger" disabled={!!loading} onClick={() => deleteUserBackup(file)}><Trash2 size={14}/></button>
             </div>
           </div>)}
@@ -4438,20 +4436,20 @@ ${effect}${order}`)) return;
       {isAdmin && activeBackupTab === 'restore' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
           <div>
-            <h3>Restore</h3>
-            <p className="hint">Every full-user backup on this server: the ones the panel made, and anything uploaded to {restoreBackupDir || '/var/backups/opanel/users/restore'}. Tick the ones to restore and run them in one go.</p>
+            <h3>{tr("Restore")}</h3>
+            <p className="hint">{tr("Every full-user backup on this server: the ones the panel made, and anything uploaded to")} {restoreBackupDir || '/var/backups/opanel/users/restore'}{tr(". Tick the ones to restore and run them in one go.")}</p>
           </div>
           <div className="actions">
-            <button disabled={!!loading} onClick={loadRestoreBackups}><RefreshCw size={14}/> Refresh</button>
+            <button disabled={!!loading} onClick={loadRestoreBackups}><RefreshCw size={14}/> {tr("Refresh")}</button>
             <label className="upload-button">
-              <Upload size={14}/> Upload backups
+              <Upload size={14}/> {tr("Upload backups")}
               <input type="file" multiple accept=".tar.gz,application/gzip" onChange={e => { uploadUserBackups(e.target.files); e.target.value = ''; }} />
             </label>
           </div>
         </div>
 
         {remoteBackupErrors.map(message => <div className="info-box" key={message}><AlertCircle size={14}/> {message}</div>)}
-        {restoreRows().length === 0 && <EmptyState icon={Archive} message="No backups found to restore." />}
+        {restoreRows().length === 0 && <EmptyState icon={Archive} message={tr("No backups found to restore.")} />}
 
         {restoreRows().length > 0 && <>
           <div className="restore-toolbar">
@@ -4462,11 +4460,11 @@ ${effect}${order}`)) return;
                 ref={box => { if (box) box.indeterminate = restorePicks.length > 0 && restorePicks.length < restoreRows().filter(item => item.valid !== false).length; }}
                 onChange={e => setRestorePicks(e.target.checked ? restoreRows().filter(item => item.valid !== false).map(item => item.pick) : [])}
               />
-              <span>Select all restorable</span>
+              <span>{tr("Select all restorable")}</span>
             </label>
-            <span className="hint">{restorePicks.length ? `${restorePicks.length} selected` : `${restoreRows().length} backup${restoreRows().length === 1 ? '' : 's'}`}</span>
+            <span className="hint">{restorePicks.length ? tr("{0} selected", restorePicks.length) : (restoreRows().length === 1 ? tr("{0} backup", restoreRows().length) : tr("{0} backups", restoreRows().length))}</span>
             <button disabled={!!loading || restorePicks.length === 0} onClick={restoreSelectedBackups}>
-              <RotateCcw size={14}/> Restore selected
+              <RotateCcw size={14}/> {tr("Restore selected")}
             </button>
           </div>
 
@@ -4486,18 +4484,18 @@ ${effect}${order}`)) return;
                   {item.filename || item.backup_file.split('/').pop()}
                   <small>
                     {item.valid === false
-                      ? (item.error || 'Invalid backup')
+                      ? (item.error || tr("Invalid backup"))
                       : item.source === 's3'
-                        ? `${item.account || 'unknown user'} - ${formatBytes(item.size)} - ${item.bucket}/${item.key}`
-                        : `${item.account || item.username || 'unknown user'} - ${item.websites == null ? 'reading...' : item.websites + ' website(s)'} - ${formatBytes(item.size)}${item.modified_at ? ' - ' + new Date(item.modified_at).toLocaleString() : ''}`}
+                        ? `${item.account || tr("unknown user")} - ${formatBytes(item.size)} - ${item.bucket}/${item.key}`
+                        : `${item.account || item.username || tr("unknown user")} - ${item.websites == null ? 'reading...' : item.websites + tr(" website(s)")} - ${formatBytes(item.size)}${item.modified_at ? ' - ' + new Date(item.modified_at).toLocaleString() : ''}`}
                   </small>
                 </span>
                 <span className={`badge${item.source === 'account' ? ' ok' : ''}`}>
-                  {item.source === 's3' ? item.target : item.source === 'uploaded' ? 'Uploaded' : 'On server'}
+                  {item.source === 's3' ? item.target : item.source === 'uploaded' ? tr("Uploaded") : tr("On server")}
                 </span>
                 <div className="actions">
                   {item.source !== 's3' && <>
-                    <button disabled={!!loading} onClick={() => downloadUserBackup(item.backup_file)}><Download size={14}/> Download</button>
+                    <button disabled={!!loading} onClick={() => downloadUserBackup(item.backup_file)}><Download size={14}/> {tr("Download")}</button>
                     <button className="danger" disabled={!!loading} onClick={() => deleteRestoreBackup(item.backup_file)}><Trash2 size={14}/></button>
                   </>}
                 </div>
@@ -4510,18 +4508,18 @@ ${effect}${order}`)) return;
 
       {isAdmin && activeBackupTab === 'da-import' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
-          <div><h3>Import DirectAdmin Backups</h3><p className="hint">Upload and import DirectAdmin user backups ({daBackupDir || '/home/admin/opanel-backups/da'}). Archives are extracted, users/websites/databases created, and OLS vhosts configured automatically.</p></div>
+          <div><h3>{tr("Import DirectAdmin Backups")}</h3><p className="hint">{tr("Upload and import DirectAdmin user backups (")}{daBackupDir || '/home/admin/opanel-backups/da'}{tr("). Archives are extracted, users/websites/databases created, and OLS vhosts configured automatically.")}</p></div>
           <div className="actions">
-            <button disabled={!!loading} onClick={() => { loadDaBackups(); loadDaImportJobs(); }}><RefreshCw size={14}/> Refresh</button>
+            <button disabled={!!loading} onClick={() => { loadDaBackups(); loadDaImportJobs(); }}><RefreshCw size={14}/> {tr("Refresh")}</button>
             <label className="upload-button">
-              <Upload size={14}/> Upload archive
+              <Upload size={14}/> {tr("Upload archive")}
               <input type="file" multiple accept=".tar.gz,.tar.bz2,.tar.xz,.tar.zst,.tar,.tgz,.tbz2,.txz" onChange={e => { uploadDaBackups(e.target.files); e.target.value = ''; }} />
             </label>
           </div>
         </div>
 
-        <h4 style={{margin: '1rem 0 0.5rem'}}>Archives</h4>
-        {daBackups.length === 0 && <EmptyState icon={Archive} message="No DA backup archives found. Upload a DirectAdmin backup to get started." />}
+        <h4 style={{margin: '1rem 0 0.5rem'}}>{tr("Archives")}</h4>
+        {daBackups.length === 0 && <EmptyState icon={Archive} message={tr("No DA backup archives found. Upload a DirectAdmin backup to get started.")} />}
         {daBackups.length > 0 && <div className="restore-toolbar">
           <label className="schedule-toggle">
             <input
@@ -4530,15 +4528,15 @@ ${effect}${order}`)) return;
               ref={box => { if (box) box.indeterminate = daPicks.length > 0 && daPicks.length < daBackups.length; }}
               onChange={e => setDaPicks(e.target.checked ? daBackups.map(item => item.filename) : [])}
             />
-            <span>Select all</span>
+            <span>{tr("Select all")}</span>
           </label>
-          <label className="schedule-toggle" title="Replace a panel user or website that is already on this server instead of stopping on it">
+          <label className="schedule-toggle" title={tr("Replace a panel user or website that is already on this server instead of stopping on it")}>
             <input type="checkbox" checked={daOverwrite} onChange={e => setDaOverwrite(e.target.checked)} />
-            <span>Overwrite existing</span>
+            <span>{tr("Overwrite existing")}</span>
           </label>
-          <span className="hint">{daPicks.length ? `${daPicks.length} selected` : `${daBackups.length} archive${daBackups.length === 1 ? '' : 's'}`}</span>
+          <span className="hint">{daPicks.length ? tr("{0} selected", daPicks.length) : (daBackups.length === 1 ? tr("{0} archive", daBackups.length) : tr("{0} archives", daBackups.length))}</span>
           <button disabled={!!loading || daPicks.length === 0} onClick={() => startDaImport(daPicks)}>
-            <RotateCcw size={14}/> Import selected
+            <RotateCcw size={14}/> {tr("Import selected")}
           </button>
         </div>}
         <div className="backup-list">
@@ -4553,9 +4551,9 @@ ${effect}${order}`)) return;
                 />
               </label>
               <span>{item.filename}<small>{formatBytes(item.size)}</small></span>
-              <span>{daQueued[item.filename] && <span className="badge">{daQueued[item.filename] === 'running' ? 'Running' : 'Queued'}</span>}</span>
+              <span>{daQueued[item.filename] && <span className="badge">{daQueued[item.filename] === 'running' ? tr("Running") : tr("Queued")}</span>}</span>
               <div className="actions">
-                <button disabled={!!loading} onClick={() => startDaImport([item.filename])}><RotateCcw size={14}/> Import</button>
+                <button disabled={!!loading} onClick={() => startDaImport([item.filename])}><RotateCcw size={14}/> {tr("Import")}</button>
                 <button className="danger" disabled={!!loading} onClick={() => deleteDaBackup(item.filename)}><Trash2 size={14}/></button>
               </div>
             </div>;
@@ -4563,16 +4561,16 @@ ${effect}${order}`)) return;
         </div>
 
         {daImportJobs.length > 0 && <>
-          <h4 style={{margin: '1.5rem 0 0.5rem'}}>Import Jobs</h4>
+          <h4 style={{margin: '1.5rem 0 0.5rem'}}>{tr("Import Jobs")}</h4>
           <div className="backup-list">
             {daImportJobs.map(job => <div className="backup-item" key={job.job_id}>
               <span>
                 {job.backup_file}
                 <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'} style={{marginLeft: '0.5rem'}}>{job.status}</span>
-                {job.overwrite && <span className="badge" style={{marginLeft: '0.5rem'}}>overwrite</span>}
+                {job.overwrite && <span className="badge" style={{marginLeft: '0.5rem'}}>{tr("overwrite")}</span>}
                 <small>{job.message || '...'}</small>
                 {job.summary && <small style={{whiteSpace: 'pre-wrap'}}>
-                  Domains: {job.summary.imported_domains?.join(', ') || 'none'}{job.summary.subdomains?.length ? ` | Subdomains: ${job.summary.subdomains.length}` : ''}{job.summary.databases?.length ? ` | DBs: ${job.summary.databases.length}` : ''}{job.summary.ssl_enabled_domains?.length ? ` | SSL: ${job.summary.ssl_enabled_domains.join(', ')}` : ''}
+                  {tr("Domains:")} {job.summary.imported_domains?.join(', ') || tr("none")}{job.summary.subdomains?.length ? tr(" | Subdomains: {0}", job.summary.subdomains.length) : ''}{job.summary.databases?.length ? tr(" | DBs: {0}", job.summary.databases.length) : ''}{job.summary.ssl_enabled_domains?.length ? tr(" | SSL: {0}", job.summary.ssl_enabled_domains.join(', ')) : ''}
                 </small>}
                 {job.summary?.warnings?.map((warning, i) => <small key={i}>{warning}</small>)}
                 {job.error && <small style={{color: 'var(--danger)'}}>{job.error}</small>}
@@ -4584,23 +4582,23 @@ ${effect}${order}`)) return;
 
       {isAdmin && activeBackupTab === 'schedule' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
-          <div><h3>Scheduled backups</h3><p className="hint">Runs a full user backup on a schedule, with an optional off-server destination. A daily schedule rotates through seven files named for the day &mdash; <code>username-monday.tar.gz</code> and so on &mdash; so you keep a week and the eighth day overwrites the first. With a destination, that week is kept there: each archive is removed from this server once it has uploaded, and stays here only if the upload fails.</p></div>
-          <button disabled={!!loading} onClick={refreshScheduledBackupArea}><RefreshCw size={14}/> Refresh</button>
+          <div><h3>{tr("Scheduled backups")}</h3><p className="hint">{tr("Runs a full user backup on a schedule, with an optional off-server destination. A daily schedule rotates through seven files named for the day —")} <code>username-monday.tar.gz</code> {tr("and so on — so you keep a week and the eighth day overwrites the first. With a destination, that week is kept there: each archive is removed from this server once it has uploaded, and stays here only if the upload fails.")}</p></div>
+          <button disabled={!!loading} onClick={refreshScheduledBackupArea}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="sftp-form schedule-form backup-schedule-form">
           <label className="schedule-toggle">
             <input type="checkbox" checked={!!newBackupSchedule.all_users} onChange={e => setNewBackupSchedule(prev => ({ ...prev, all_users: e.target.checked }))} />
-            <span>All users</span>
+            <span>{tr("All users")}</span>
           </label>
           <select multiple value={newBackupSchedule.user_ids || []} disabled={!!newBackupSchedule.all_users} onChange={e => setNewBackupSchedule(prev => ({ ...prev, user_ids: Array.from(e.target.selectedOptions, option => option.value) }))}>
             {users.map(user => <option key={user.id} value={String(user.id)}>{user.username}</option>)}
           </select>
           <input value={newBackupSchedule.schedule} onChange={e => setNewBackupSchedule(prev => ({ ...prev, schedule: e.target.value }))} placeholder="0 2 * * *" />
           <select value={newBackupSchedule.target_id} onChange={e => setNewBackupSchedule(prev => ({ ...prev, target_id: e.target.value }))}>
-            <option value="">Local only</option>
+            <option value="">{tr("Local only")}</option>
             {sftpTargets.map(target => <option key={target.id} value={target.id}>{target.name}</option>)}
           </select>
-          <button disabled={(!newBackupSchedule.all_users && (!newBackupSchedule.user_ids || newBackupSchedule.user_ids.length === 0)) || !!loading} onClick={createBackupSchedule}><Clock size={14}/> Schedule</button>
+          <button disabled={(!newBackupSchedule.all_users && (!newBackupSchedule.user_ids || newBackupSchedule.user_ids.length === 0)) || !!loading} onClick={createBackupSchedule}><Clock size={14}/> {tr("Schedule")}</button>
         </div>
         <div className="backup-list">
           {backupSchedules.map(item => {
@@ -4613,9 +4611,9 @@ ${effect}${order}`)) return;
                   // anything is how it reads as doing nothing.
                   const live = backupJobs.find(job => job.schedule_id === item.id
                     && (job.status === 'running' || job.status === 'queued'));
-                  if (!live) return <small>{item.last_status}: {item.last_message || 'not run yet'}</small>;
+                  if (!live) return <small>{item.last_status}: {item.last_message || tr("not run yet")}</small>;
                   return <>
-                    <small>{live.message || 'Running'}</small>
+                    <small>{live.message || tr("Running")}</small>
                     <span className="job-progress">
                       <span className={`progress-bar${live.progress_percent == null ? ' indeterminate' : ''}`}>
                         <span className="progress-bar-fill" style={live.progress_percent == null ? undefined : { width: `${live.progress_percent}%` }} />
@@ -4626,7 +4624,7 @@ ${effect}${order}`)) return;
                 })()}
               </span>
               <div className="actions">
-                <button disabled={!!loading} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14}/> Run now</button>
+                <button disabled={!!loading} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14}/> {tr("Run now")}</button>
                 <button className="danger" disabled={!!loading} onClick={() => deleteBackupSchedule(item.id)}><Trash2 size={14}/></button>
               </div>
             </div>;
@@ -4636,62 +4634,62 @@ ${effect}${order}`)) return;
 
       {isAdmin && activeBackupTab === 'destination' && <div className="backup-tab-panel">
         <div className="backup-panel-title">
-          <div><h3>Backup Destination</h3><p className="hint">Where off-server backup copies are sent. SFTP, or any S3-compatible object storage.</p></div>
-          <button disabled={!!loading} onClick={loadSftpTargets}><RefreshCw size={14}/> Refresh</button>
+          <div><h3>{tr("Backup Destination")}</h3><p className="hint">{tr("Where off-server backup copies are sent. SFTP, or any S3-compatible object storage.")}</p></div>
+          <button disabled={!!loading} onClick={loadSftpTargets}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="sftp-form sftp-target-form">
-          <input value={newSftpTarget.name} onChange={e => setNewSftpTarget(prev => ({ ...prev, name: e.target.value }))} placeholder="Destination name" />
+          <input value={newSftpTarget.name} onChange={e => setNewSftpTarget(prev => ({ ...prev, name: e.target.value }))} placeholder={tr("Destination name")} />
           <select value={newSftpTarget.kind} onChange={e => setNewSftpTarget(prev => ({ ...prev, kind: e.target.value }))}>
-            <option value="sftp">SFTP</option>
-            <option value="s3">S3 compatible</option>
+            <option value="sftp">{tr("SFTP")}</option>
+            <option value="s3">{tr("S3 compatible")}</option>
           </select>
 
           {newSftpTarget.kind === 'sftp' ? <>
-            <input value={newSftpTarget.host} onChange={e => setNewSftpTarget(prev => ({ ...prev, host: e.target.value }))} placeholder="Host" />
+            <input value={newSftpTarget.host} onChange={e => setNewSftpTarget(prev => ({ ...prev, host: e.target.value }))} placeholder={tr("Host")} />
             <input value={newSftpTarget.port} onChange={e => setNewSftpTarget(prev => ({ ...prev, port: e.target.value }))} placeholder="22" inputMode="numeric" />
-            <input value={newSftpTarget.username} onChange={e => setNewSftpTarget(prev => ({ ...prev, username: e.target.value }))} placeholder="Username" />
-            <input value={newSftpTarget.password} onChange={e => setNewSftpTarget(prev => ({ ...prev, password: e.target.value }))} placeholder="Password" type="password" />
+            <input value={newSftpTarget.username} onChange={e => setNewSftpTarget(prev => ({ ...prev, username: e.target.value }))} placeholder={tr("Username")} />
+            <input value={newSftpTarget.password} onChange={e => setNewSftpTarget(prev => ({ ...prev, password: e.target.value }))} placeholder={tr("Password")} type="password" />
             <input value={newSftpTarget.remote_path} onChange={e => setNewSftpTarget(prev => ({ ...prev, remote_path: e.target.value }))} placeholder="/backups/opanel" />
-            <textarea value={newSftpTarget.private_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, private_key: e.target.value }))} placeholder="Private key (optional)" rows={4} />
+            <textarea value={newSftpTarget.private_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, private_key: e.target.value }))} placeholder={tr("Private key (optional)")} rows={4} />
           </> : <>
-            <input value={newSftpTarget.s3_bucket} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_bucket: e.target.value }))} placeholder="Bucket" />
-            <input value={newSftpTarget.s3_endpoint} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_endpoint: e.target.value }))} placeholder="Endpoint - leave empty for AWS" />
-            <input value={newSftpTarget.s3_region} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_region: e.target.value }))} placeholder="us-east-1" />
-            <input value={newSftpTarget.s3_access_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_access_key: e.target.value }))} placeholder="Access key" />
-            <input value={newSftpTarget.s3_secret_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_secret_key: e.target.value }))} placeholder="Secret key" type="password" />
-            <input value={newSftpTarget.remote_path} onChange={e => setNewSftpTarget(prev => ({ ...prev, remote_path: e.target.value }))} placeholder="Key prefix, e.g. opanel/backups" />
+            <input value={newSftpTarget.s3_bucket} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_bucket: e.target.value }))} placeholder={tr("Bucket")} />
+            <input value={newSftpTarget.s3_endpoint} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_endpoint: e.target.value }))} placeholder={tr("Endpoint - leave empty for AWS")} />
+            <input value={newSftpTarget.s3_region} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_region: e.target.value }))} placeholder={tr("us-east-1")} />
+            <input value={newSftpTarget.s3_access_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_access_key: e.target.value }))} placeholder={tr("Access key")} />
+            <input value={newSftpTarget.s3_secret_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_secret_key: e.target.value }))} placeholder={tr("Secret key")} type="password" />
+            <input value={newSftpTarget.remote_path} onChange={e => setNewSftpTarget(prev => ({ ...prev, remote_path: e.target.value }))} placeholder={tr("Key prefix, e.g. opanel/backups")} />
             <label className="check-line">
               <input type="checkbox" checked={!!newSftpTarget.s3_use_path_style}
                 onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_use_path_style: e.target.checked }))} />
-              Path-style addressing (MinIO, Ceph)
+              {tr("Path-style addressing (MinIO, Ceph)")}
             </label>
           </>}
 
           <button disabled={!!loading || !newSftpTarget.name || (newSftpTarget.kind === 's3'
             ? (!newSftpTarget.s3_bucket || !newSftpTarget.s3_access_key || !newSftpTarget.s3_secret_key)
             : (!newSftpTarget.host || !newSftpTarget.username || (!newSftpTarget.password && !newSftpTarget.private_key)))}
-            onClick={createSftpTarget}><Plus size={14}/> Save destination</button>
+            onClick={createSftpTarget}><Plus size={14}/> {tr("Save destination")}</button>
         </div>
-        {sftpTargets.length === 0 && <EmptyState icon={Network} message="No backup destinations found." />}
+        {sftpTargets.length === 0 && <EmptyState icon={Network} message={tr("No backup destinations found.")} />}
         <div className="backup-list">
           {sftpTargets.map(target => <div className="backup-item" key={target.id}>
             <span>
-              <span className="badge">{target.kind === 's3' ? 'S3' : 'SFTP'}</span>{' '}
+              <span className="badge">{target.kind === 's3' ? 'S3' : tr("SFTP")}</span>{' '}
               {target.name} &mdash; {target.kind === 's3'
                 ? `${target.s3_bucket}/${target.remote_path.replace(/^\/+/, '')}${target.s3_endpoint ? ` @ ${target.s3_endpoint}` : ''}`
                 : `${target.username}@${target.host}:${target.remote_path}`}
             </span>
             <span className="backup-item-actions">
               {target.kind === 's3' && <button className="secondary" disabled={!!loading} onClick={() => loadTargetObjects(target.id)}>
-                {targetObjects.id === target.id ? 'Hide files' : 'Files'}
+                {targetObjects.id === target.id ? tr("Hide files") : tr("Files")}
               </button>}
-              {target.kind === 's3' && <button className="secondary" disabled={!!loading} onClick={() => testBackupTarget(target.id)}>Test</button>}
+              {target.kind === 's3' && <button className="secondary" disabled={!!loading} onClick={() => testBackupTarget(target.id)}>{tr("Test")}</button>}
               <button className="danger" disabled={!!loading} onClick={() => deleteSftpTarget(target.id)}><Trash2 size={14}/></button>
             </span>
           </div>)}
           {targetObjects.id && <div className="backup-list target-objects">
             {targetObjects.items.length === 0
-              ? <p className="hint">Nothing in {targetObjects.bucket} under this prefix yet.</p>
+              ? <p className="hint">{tr("Nothing in")} {targetObjects.bucket} {tr("under this prefix yet.")}</p>
               : targetObjects.items.map(item => <div className="backup-item" key={item.key}>
                   <span>{item.name} <small>{formatBytes(item.size)} &middot; {item.modified.slice(0, 19).replace('T', ' ')}</small></span>
                   <button className="danger" disabled={!!loading}
@@ -4710,70 +4708,69 @@ ${effect}${order}`)) return;
     return <>
       <div className="addon-panel">
         <div className="addon-panel-head">
-          <strong>Ban rules</strong>
-          <span className="hint">Applied to both jails.</span>
+          <strong>{tr("Ban rules")}</strong>
+          <span className="hint">{tr("Applied to both jails.")}</span>
         </div>
         <div className="firewall-form addon-form">
           <label>
-            <span>Failures before a ban</span>
+            <span>{tr("Failures before a ban")}</span>
             <input type="number" min="1" max="100" value={draft.maxretry ?? 5}
               onChange={e => setDraft({ maxretry: Number(e.target.value) })} />
           </label>
           <label>
-            <span>Counted within (seconds)</span>
+            <span>{tr("Counted within (seconds)")}</span>
             <input type="number" min="10" value={draft.findtime ?? 600}
               onChange={e => setDraft({ findtime: Number(e.target.value) })} />
           </label>
           <label>
-            <span>Ban lasts (seconds)</span>
+            <span>{tr("Ban lasts (seconds)")}</span>
             <input type="number" min="-1" value={draft.bantime ?? 3600}
               onChange={e => setDraft({ bantime: Number(e.target.value) })} />
           </label>
           <label>
-            <span>Watch SSH</span>
+            <span>{tr("Watch SSH")}</span>
             <select value={draft.jail_sshd ? 'on' : 'off'} onChange={e => setDraft({ jail_sshd: e.target.value === 'on' })}>
-              <option value="on">On</option><option value="off">Off</option>
+              <option value="on">{tr("On")}</option><option value="off">{tr("Off")}</option>
             </select>
           </label>
           <label>
-            <span>Watch panel logins</span>
+            <span>{tr("Watch panel logins")}</span>
             <select value={draft.jail_panel ? 'on' : 'off'} onChange={e => setDraft({ jail_panel: e.target.value === 'on' })}>
-              <option value="on">On</option><option value="off">Off</option>
+              <option value="on">{tr("On")}</option><option value="off">{tr("Off")}</option>
             </select>
           </label>
           <label className="addon-form-wide">
-            <span>Never ban</span>
+            <span>{tr("Never ban")}</span>
             <input type="text" placeholder="203.0.113.7 198.51.100.0/24" value={draft.ignoreip ?? ''}
               onChange={e => setDraft({ ignoreip: e.target.value })} />
           </label>
         </div>
-        <p className="hint">Ban lasts <code>-1</code> to ban permanently. Loopback is always exempt. Put your own
-          address in Never ban so a wrong rule cannot lock you out of the panel.</p>
+        <p className="hint">{tr("Ban lasts")} <code>-1</code> {tr("to ban permanently. Loopback is always exempt. Put your own address in Never ban so a wrong rule cannot lock you out of the panel.")}</p>
         <div className="actions">
-          <button disabled={!!loading || !dirty} onClick={saveFail2banSettings}><Save size={14}/> Apply settings</button>
+          <button disabled={!!loading || !dirty} onClick={saveFail2banSettings}><Save size={14}/> {tr("Apply settings")}</button>
           {dirty && <button className="secondary-light" disabled={!!loading}
-            onClick={() => setF2bDraft(f2bSettings)}><RotateCcw size={14}/> Discard changes</button>}
+            onClick={() => setF2bDraft(f2bSettings)}><RotateCcw size={14}/> {tr("Discard changes")}</button>}
         </div>
       </div>
 
       <div className="addon-panel">
         <div className="addon-panel-head">
-          <strong>Banned right now</strong>
-          <button className="secondary-light" disabled={!!loading} onClick={() => loadFail2ban()}><RefreshCw size={13}/> Refresh</button>
+          <strong>{tr("Banned right now")}</strong>
+          <button className="secondary-light" disabled={!!loading} onClick={() => loadFail2ban()}><RefreshCw size={13}/> {tr("Refresh")}</button>
         </div>
         {f2bBanned.length === 0
-          ? <p className="hint">Nothing is banned.</p>
-          : <table className="table addon-ban-table"><thead><tr><th>Address</th><th>Jail</th><th></th></tr></thead>
+          ? <p className="hint">{tr("Nothing is banned.")}</p>
+          : <table className="table addon-ban-table"><thead><tr><th>{tr("Address")}</th><th>{tr("Jail")}</th><th></th></tr></thead>
               <tbody>{f2bBanned.map(entry => <tr key={`${entry.jail}-${entry.address}`}>
                 <td><code>{entry.address}</code></td>
                 <td>{entry.jail}</td>
                 <td className="row-actions"><button className="secondary-light" disabled={!!loading}
-                  onClick={() => unbanAddress(entry.address)}><Check size={13}/> Unban</button></td>
+                  onClick={() => unbanAddress(entry.address)}><Check size={13}/> {tr("Unban")}</button></td>
               </tr>)}</tbody></table>}
       </div>
 
       {f2bLog && <div className="addon-panel">
-        <div className="addon-panel-head"><strong>Recent activity</strong></div>
+        <div className="addon-panel-head"><strong>{tr("Recent activity")}</strong></div>
         <pre className="addon-log">{f2bLog}</pre>
       </div>}
     </>;
@@ -4796,14 +4793,14 @@ ${effect}${order}`)) return;
         return <div className="row" key={t.id}>
           <div className="token-info">
             <strong>{t.name}{showOwner && t.username ? ` — ${t.username}` : ''}</strong>
-            <small>Prefix: {t.prefix}… | Created: {t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}
-              {' | '}Expires: {t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'never'}
-              {' | '}Last used: {t.last_used_at ? new Date(t.last_used_at).toLocaleString() : 'never'}</small>
+            <small>{tr("Prefix:")} {t.prefix}{tr("… | Created:")} {t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}
+              {' | '}{tr("Expires:")} {t.expires_at ? new Date(t.expires_at).toLocaleDateString() : tr("never")}
+              {' | '}{tr("Last used:")} {t.last_used_at ? new Date(t.last_used_at).toLocaleString() : tr("never")}</small>
           </div>
           {expired
-            ? <span className="badge warn">Expired</span>
-            : <span className={t.can_write ? 'badge warn' : 'badge ok'}>{t.can_write ? 'Read + actions' : 'Read-only'}</span>}
-          <button className="mini danger" disabled={!!loading} onClick={() => revokeMcpToken(t, fromAddonPanel)}><Trash2 size={14}/> Revoke</button>
+            ? <span className="badge warn">{tr("Expired")}</span>
+            : <span className={t.can_write ? 'badge warn' : 'badge ok'}>{t.can_write ? tr("Read + actions") : tr("Read-only")}</span>}
+          <button className="mini danger" disabled={!!loading} onClick={() => revokeMcpToken(t, fromAddonPanel)}><Trash2 size={14}/> {tr("Revoke")}</button>
         </div>;
       })}
     </div>;
@@ -4815,68 +4812,64 @@ ${effect}${order}`)) return;
       <section className="section">
         <div className="section-title">
           <div>
-            <h2>AI assistants (MCP)</h2>
-            <p className="hint">Connect Claude Code, Cursor, VS Code or another MCP client to this panel. A token acts as
-              your account: it sees your websites, databases and backups{isAdmin ? ' (as an administrator, every account’s)' : ''} and
-              nothing else. With actions allowed it can also edit your websites’ files, so an assistant can build and fix
-              your sites; deleting a file always asks you first in the client.</p>
+            <h2>{tr("AI assistants (MCP)")}</h2>
+            <p className="hint">{tr("Connect Claude Code, Cursor, VS Code or another MCP client to this panel. A token acts as your account: it sees your websites, databases and backups")}{isAdmin ? tr(" (as an administrator, every account’s)") : ''} {tr("and nothing else. With actions allowed it can also edit your websites’ files, so an assistant can build and fix your sites; deleting a file always asks you first in the client.")}</p>
           </div>
-          <button className="secondary-light" disabled={!!loading} onClick={loadMcp}><RefreshCw size={14}/> Refresh</button>
+          <button className="secondary-light" disabled={!!loading} onClick={loadMcp}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
 
-        {mcpInfo === null && <p className="hint">Loading…</p>}
+        {mcpInfo === null && <p className="hint">{tr("Loading…")}</p>}
         {mcpInfo !== null && !enabled && <div className="info-box"><AlertCircle size={14}/> {isAdmin
-          ? <>MCP is not running on this panel. Install or start the <strong>MCP server</strong> addon on the Addons page first.
-              {' '}<button className="mini" onClick={() => navigateToPage('addons')}><PackageOpen size={13}/> Open Addons</button></>
-          : 'MCP is not enabled on this panel. Ask your administrator to turn it on.'}</div>}
+          ? <>{tr("MCP is not running on this panel. Install or start the")} <strong>{tr("MCP server")}</strong> {tr("addon on the Addons page first.")}
+              {' '}<button className="mini" onClick={() => navigateToPage('addons')}><PackageOpen size={13}/> {tr("Open Addons")}</button></>
+          : tr("MCP is not enabled on this panel. Ask your administrator to turn it on.")}</div>}
 
         {enabled && <>
           <div className="token-copy-row" style={{marginBottom: 12}}>
-            <span className="hint">Endpoint</span>
+            <span className="hint">{tr("Endpoint")}</span>
             <code>{mcpEndpoint}</code>
-            <button className="mini" onClick={() => { copyToClipboard(mcpEndpoint); setNotice('Copied to clipboard.'); }}><Copy size={14}/> Copy</button>
+            <button className="mini" onClick={() => { copyToClipboard(mcpEndpoint); setNotice(tr("Copied to clipboard.")); }}><Copy size={14}/> {tr("Copy")}</button>
           </div>
 
           {mcpCreated && <div className="token-created-notice">
-            <p><strong>Token created.</strong> Copy it now — it is shown only once.</p>
+            <p><strong>{tr("Token created.")}</strong> {tr("Copy it now — it is shown only once.")}</p>
             <div className="token-copy-row">
               <code>{mcpCreated.token}</code>
-              <button className="mini" onClick={() => { copyToClipboard(mcpCreated.token); setNotice('Copied to clipboard.'); }}><Copy size={14}/> Copy</button>
+              <button className="mini" onClick={() => { copyToClipboard(mcpCreated.token); setNotice(tr("Copied to clipboard.")); }}><Copy size={14}/> {tr("Copy")}</button>
             </div>
             {mcpClientSnippets(mcpCreated.token).map(([label, text]) => <div key={label} style={{marginTop: 10}}>
               <div className="token-copy-row">
                 <strong>{label}</strong>
-                <button className="mini" onClick={() => { copyToClipboard(text); setNotice(`${label} setup copied.`); }}><Copy size={14}/> Copy</button>
+                <button className="mini" onClick={() => { copyToClipboard(text); setNotice(tr("{0} setup copied.", label)); }}><Copy size={14}/> {tr("Copy")}</button>
               </div>
               <pre className="addon-log mcp-snippet">{text}</pre>
             </div>)}
-            <button className="mini secondary-light" onClick={() => setMcpCreated(null)}>Dismiss</button>
+            <button className="mini secondary-light" onClick={() => setMcpCreated(null)}>{tr("Dismiss")}</button>
           </div>}
 
-          <h3>New token</h3>
+          <h3>{tr("New token")}</h3>
           <div className="token-create-form mcp-token-form">
-            <label><span>Name</span><input value={mcpForm.name} maxLength={64} placeholder="Claude Code on my laptop"
+            <label><span>{tr("Name")}</span><input value={mcpForm.name} maxLength={64} placeholder={tr("Claude Code on my laptop")}
               onChange={e => setMcpForm(prev => ({ ...prev, name: e.target.value }))} /></label>
-            <label><span>Expires</span><select value={mcpForm.expires_days}
+            <label><span>{tr("Expires")}</span><select value={mcpForm.expires_days}
               onChange={e => setMcpForm(prev => ({ ...prev, expires_days: Number(e.target.value) }))}>
-              {[30, 90, 180, 365].map(days => <option key={days} value={days}>{days} days</option>)}
+              {[30, 90, 180, 365].map(days => <option key={days} value={days}>{days} {tr("days")}</option>)}
             </select></label>
-            <button disabled={!!loading || !mcpForm.name.trim()} onClick={createMcpToken}><Plus size={14}/> Create token</button>
+            <button disabled={!!loading || !mcpForm.name.trim()} onClick={createMcpToken}><Plus size={14}/> {tr("Create token")}</button>
           </div>
           <label className="schedule-toggle mcp-write-toggle">
             <input type="checkbox" checked={mcpForm.can_write}
               onChange={e => setMcpForm(prev => ({ ...prev, can_write: e.target.checked }))} />
-            <span>Allow actions (write and delete files, run backups, issue certificates, switch the WAF{isAdmin ? ', restart services, block and unblock IPs, add WAF rules' : ''})</span>
+            <span>{tr("Allow actions (write and delete files, run backups, issue certificates, switch the WAF")}{isAdmin ? tr(", restart services, block and unblock IPs, add WAF rules") : ''})</span>
           </label>
-          <p className="hint">Without “Allow actions” the token can only read. Up to {mcpInfo?.max_tokens || 10} tokens per account.</p>
+          <p className="hint">{tr("Without “Allow actions” the token can only read. Up to")} {mcpInfo?.max_tokens || 10} {tr("tokens per account.")}</p>
 
-          <h3>Your tokens</h3>
-          {mcpTokens.length === 0 ? <p className="hint">No MCP tokens yet.</p> : renderMcpTokenRows(mcpTokens)}
+          <h3>{tr("Your tokens")}</h3>
+          {mcpTokens.length === 0 ? <p className="hint">{tr("No MCP tokens yet.")}</p> : renderMcpTokenRows(mcpTokens)}
 
           {!mcpCreated && <>
-            <h3>Connecting a client</h3>
-            <p className="hint">Replace &lt;your-token&gt; with a token from above. The client must trust this panel’s
-              HTTPS certificate; a self-signed one is refused.</p>
+            <h3>{tr("Connecting a client")}</h3>
+            <p className="hint">{tr("Replace <your-token> with a token from above. The client must trust this panel’s HTTPS certificate; a self-signed one is refused.")}</p>
             {mcpClientSnippets('').map(([label, text]) => <div key={label} style={{marginTop: 10}}>
               <strong>{label}</strong>
               <pre className="addon-log mcp-snippet">{text}</pre>
@@ -4891,43 +4884,42 @@ ${effect}${order}`)) return;
     if (!addon.installed) return null;
     return <div className="addon-panel">
       <div className="addon-panel-head">
-        <strong>Tokens on this panel</strong>
+        <strong>{tr("Tokens on this panel")}</strong>
         <div className="actions">
-          <button className="mini secondary-light" disabled={!!loading} onClick={loadMcpAllTokens}><RefreshCw size={13}/> Refresh</button>
-          <button className="mini" onClick={() => navigateToPage('mcp')}><Bot size={13}/> Create my token</button>
+          <button className="mini secondary-light" disabled={!!loading} onClick={loadMcpAllTokens}><RefreshCw size={13}/> {tr("Refresh")}</button>
+          <button className="mini" onClick={() => navigateToPage('mcp')}><Bot size={13}/> {tr("Create my token")}</button>
         </div>
       </div>
-      <p className="hint">Endpoint: <code>{mcpEndpoint}</code></p>
+      <p className="hint">{tr("Endpoint:")} <code>{mcpEndpoint}</code></p>
       {mcpAllTokens.length === 0
-        ? <p className="hint">No account has created an MCP token yet.</p>
+        ? <p className="hint">{tr("No account has created an MCP token yet.")}</p>
         : renderMcpTokenRows(mcpAllTokens, { showOwner: true, fromAddonPanel: true })}
     </div>;
   }
 
   function renderAddons() {
-    if (!isAdmin) return <section className="section"><h2>Addons</h2><p className="hint">No permission.</p></section>;
+    if (!isAdmin) return <section className="section"><h2>{tr("Addons")}</h2><p className="hint">{tr("No permission.")}</p></section>;
     return <section className="section">
       <div className="section-title">
         <div>
-          <h2>Addons</h2>
-          <p className="hint">Optional components this panel release can install for you. Each one ships with the
-            panel, so a new addon arrives with a panel update.</p>
+          <h2>{tr("Addons")}</h2>
+          <p className="hint">{tr("Optional components this panel release can install for you. Each one ships with the panel, so a new addon arrives with a panel update.")}</p>
         </div>
-        <button className="secondary-light" disabled={!!loading} onClick={() => loadAddons()}><RefreshCw size={14}/> Refresh</button>
+        <button className="secondary-light" disabled={!!loading} onClick={() => loadAddons()}><RefreshCw size={14}/> {tr("Refresh")}</button>
       </div>
 
-      {addonList.length === 0 && <p className="hint">No addons in this release.</p>}
+      {addonList.length === 0 && <p className="hint">{tr("No addons in this release.")}</p>}
 
       <div className="addon-grid">
         {addonList.map(addon => {
           const open = addonOpen === addon.id;
           const stateBadge = addon.busy
-            ? <span className="badge warn">{addon.busy_action === 'uninstall' ? 'Removing' : 'Installing'}</span>
+            ? <span className="badge warn">{addon.busy_action === 'uninstall' ? tr("Removing") : tr("Installing")}</span>
             : !addon.installed
-              ? <span className="badge">Not installed</span>
+              ? <span className="badge">{tr("Not installed")}</span>
               : addon.running
-                ? <span className="badge ok">Running</span>
-                : <span className="badge warn">Stopped</span>;
+                ? <span className="badge ok">{tr("Running")}</span>
+                : <span className="badge warn">{tr("Stopped")}</span>;
           return <div className="addon-card" key={addon.id}>
             <div className="addon-card-head">
               <div className="addon-card-title">
@@ -4937,31 +4929,31 @@ ${effect}${order}`)) return;
               </div>
               {stateBadge}
             </div>
-            <p className="addon-summary">{addon.summary}</p>
+            <p className="addon-summary">{tr(addon.summary)}</p>
             {addon.installed && addon.enabled === false &&
-              <p className="hint">Installed but not set to start on boot.</p>}
+              <p className="hint">{tr("Installed but not set to start on boot.")}</p>}
             {addon.last_error && <p className="hint addon-error"><AlertCircle size={13}/> {addon.last_error}</p>}
             {addon.detail && !addon.last_error && <p className="hint">{addon.detail}</p>}
-            {addon.installed_at && <p className="hint">Installed {addon.installed_at}{addon.installed_by ? ` by ${addon.installed_by}` : ''}</p>}
+            {addon.installed_at && <p className="hint">{tr("Installed")} {addon.installed_at}{addon.installed_by ? tr(" by {0}", addon.installed_by) : ''}</p>}
 
             <div className="actions addon-actions">
               {!addon.installed && <button disabled={!!loading || addon.busy} onClick={() => installAddon(addon)}>
-                <Download size={14}/> Install</button>}
+                <Download size={14}/> {tr("Install")}</button>}
               {addon.installed && !addon.running && <button disabled={!!loading || addon.busy}
-                onClick={() => setAddonRunning(addon, true)}><Play size={14}/> Start</button>}
+                onClick={() => setAddonRunning(addon, true)}><Play size={14}/> {tr("Start")}</button>}
               {addon.installed && addon.running && <button className="secondary-light" disabled={!!loading || addon.busy}
-                onClick={() => setAddonRunning(addon, false)}><Square size={14}/> Stop</button>}
+                onClick={() => setAddonRunning(addon, false)}><Square size={14}/> {tr("Stop")}</button>}
               {addon.installed && <button className="secondary-light" disabled={!!loading || addon.busy}
                 onClick={() => setAddonOpen(open ? '' : addon.id)}>
-                <SettingsIcon size={14}/> {open ? 'Hide' : 'Manage'}</button>}
+                <SettingsIcon size={14}/> {open ? tr("Hide") : tr("Manage")}</button>}
               {addon.installed && <button className="danger-light" disabled={!!loading || addon.busy}
-                onClick={() => uninstallAddon(addon)}><Trash2 size={14}/> Remove</button>}
+                onClick={() => uninstallAddon(addon)}><Trash2 size={14}/> {tr("Remove")}</button>}
             </div>
 
             {open && <div className="addon-detail">
-              <p className="addon-description">{addon.description}</p>
+              <p className="addon-description">{tr(addon.description)}</p>
               {(addon.notes || []).length > 0 && <ul className="addon-notes">
-                {addon.notes.map((note, idx) => <li key={idx}>{note}</li>)}
+                {addon.notes.map((note, idx) => <li key={idx}>{tr(note)}</li>)}
               </ul>}
               {addon.id === 'fail2ban' && renderAddonFail2ban(addon)}
               {addon.id === 'mcp' && renderAddonMcp(addon)}
@@ -4975,8 +4967,8 @@ ${effect}${order}`)) return;
   function renderServices() {
     return <section className="section">
       <div className="section-title">
-        <h2>Services Status</h2>
-        <button disabled={!!loading} onClick={checkAllServices}><RefreshCw size={15}/> Refresh</button>
+        <h2>{tr("Services Status")}</h2>
+        <button disabled={!!loading} onClick={checkAllServices}><RefreshCw size={15}/> {tr("Refresh")}</button>
       </div>
       <div className="service-grid">
         {serviceNames.map(name => {
@@ -4985,12 +4977,12 @@ ${effect}${order}`)) return;
           const active = text.includes('active (running)');
           const inactive = text.includes('inactive') || text.includes('failed');
           return <div className="service-card" key={name}>
-            <div><strong>{name}</strong><span className={active ? 'badge ok' : inactive ? 'badge bad' : 'badge'}>{active ? 'Running' : inactive ? 'Stopped' : '...'}</span></div>
-            <small>Auto-refreshes every 10s</small>
+            <div><strong>{name}</strong><span className={active ? 'badge ok' : inactive ? 'badge bad' : 'badge'}>{active ? tr("Running") : inactive ? tr("Stopped") : '...'}</span></div>
+            <small>{tr("Auto-refreshes every 10s")}</small>
             {isAdmin && <div className="service-actions">
-              <button onClick={() => runServiceAction(name, 'start')}><Play size={13}/> Start</button>
-              {!['opanel-api', 'redis-server'].includes(name) && <button onClick={() => runServiceAction(name, 'stop')}><Square size={13}/> Stop</button>}
-              <button onClick={() => runServiceAction(name, 'restart')}><RotateCcw size={13}/> Restart</button>
+              <button onClick={() => runServiceAction(name, 'start')}><Play size={13}/> {tr("Start")}</button>
+              {!['opanel-api', 'redis-server'].includes(name) && <button onClick={() => runServiceAction(name, 'stop')}><Square size={13}/> {tr("Stop")}</button>}
+              <button onClick={() => runServiceAction(name, 'restart')}><RotateCcw size={13}/> {tr("Restart")}</button>
             </div>}
           </div>;
         })}
@@ -4999,29 +4991,29 @@ ${effect}${order}`)) return;
   }
 
   function renderPhpConfig() {
-    if (!isAdmin) return <section className="section"><h2>PHP config</h2><p className="hint">You do not have permission to edit PHP config.</p></section>;
+    if (!isAdmin) return <section className="section"><h2>{tr("PHP config")}</h2><p className="hint">{tr("You do not have permission to edit PHP config.")}</p></section>;
     const notInstalled = sortPhpVersions(phpVersions.supported.filter(v => !phpVersions.installed.includes(v)));
     return <section className="section">
       <div className="section-title">
-        <div><h2>PHP Configuration</h2></div>
+        <div><h2>{tr("PHP Configuration")}</h2></div>
       </div>
       <div className="user-create-card">
-        <label><span>PHP version</span><select value={phpConfig.php_version} onChange={e => { const v = e.target.value; setPhpConfig(prev => ({ ...prev, php_version: v })); loadPhpConfig(v); }}>
-          {phpVersionOptions(phpVersions.installed, phpConfig.php_version).map(v => <option key={v} value={v}>PHP {v}</option>)}
+        <label><span>{tr("PHP version")}</span><select value={phpConfig.php_version} onChange={e => { const v = e.target.value; setPhpConfig(prev => ({ ...prev, php_version: v })); loadPhpConfig(v); }}>
+          {phpVersionOptions(phpVersions.installed, phpConfig.php_version).map(v => <option key={v} value={v}>{tr("PHP")} {v}</option>)}
         </select></label>
         <label><span>display_errors</span><select value={phpConfig.display_errors} onChange={e => setPhpConfig(prev => ({ ...prev, display_errors: e.target.value }))}>
-          <option value="Off">Off (production)</option><option value="On">On (debug)</option>
+          <option value="Off">{tr("Off (production)")}</option><option value="On">{tr("On (debug)")}</option>
         </select></label>
-        <label className="php-opcache-toggle"><span>OPcache</span>
+        <label className="php-opcache-toggle"><span>{tr("OPcache")}</span>
           <button
             type="button"
             className={phpConfig.opcache_enable ? '' : 'secondary'}
             aria-pressed={!!phpConfig.opcache_enable}
             disabled={!!loading}
             onClick={() => setPhpConfig(prev => ({ ...prev, opcache_enable: !prev.opcache_enable }))}
-            title={`OPcache is ${phpConfig.opcache_enable ? 'on' : 'off'} for PHP ${phpConfig.php_version}. Press Save to apply.`}
+            title={tr("OPcache is {0} for PHP {1}. Press Save to apply.", phpConfig.opcache_enable ? tr("on") : tr("off"), phpConfig.php_version)}
           >
-            <Zap size={14}/> {phpConfig.opcache_enable ? 'Enabled' : 'Disabled'}
+            <Zap size={14}/> {phpConfig.opcache_enable ? tr("Enabled") : tr("Disabled")}
           </button>
         </label>
         <label><span>max_execution_time</span><input type="number" value={phpConfig.max_execution_time} onChange={e => setPhpConfig(prev => ({ ...prev, max_execution_time: e.target.value }))} /></label>
@@ -5030,119 +5022,119 @@ ${effect}${order}`)) return;
         <label><span>memory_limit</span><input value={phpConfig.memory_limit} onChange={e => setPhpConfig(prev => ({ ...prev, memory_limit: e.target.value }))} placeholder="1024M" /></label>
         <label><span>post_max_size</span><input value={phpConfig.post_max_size} onChange={e => setPhpConfig(prev => ({ ...prev, post_max_size: e.target.value }))} placeholder="1024M" /></label>
         <label><span>upload_max_filesize</span><input value={phpConfig.upload_max_filesize} onChange={e => setPhpConfig(prev => ({ ...prev, upload_max_filesize: e.target.value }))} placeholder="1024M" /></label>
-        <button className="secondary-light" disabled={!!loading} onClick={restorePhpDefaults}><RotateCcw size={14}/> Restore defaults</button>
-        <button className="secondary-light" disabled={!!loading} onClick={loadPhpTuning}><Zap size={14}/> Auto-tune</button>
-        <button disabled={!!loading} onClick={updatePhpConfig}>Save</button>
+        <button className="secondary-light" disabled={!!loading} onClick={restorePhpDefaults}><RotateCcw size={14}/> {tr("Restore defaults")}</button>
+        <button className="secondary-light" disabled={!!loading} onClick={loadPhpTuning}><Zap size={14}/> {tr("Auto-tune")}</button>
+        <button disabled={!!loading} onClick={updatePhpConfig}>{tr("Save")}</button>
       </div>
       {phpTuning && phpTuning.recommendation && <div className="user-create-card" style={{ marginTop: 16, borderColor: 'var(--accent)' }}>
-        <h3>⚡ Auto-tune Recommendation</h3>
-        <p className="hint">Based on {phpTuning.recommendation.ram_mb} MB RAM, {phpTuning.recommendation.cores} CPU cores, {phpTuning.recommendation.is_ssd ? 'SSD' : 'HDD'} storage</p>
+        <h3>{tr("⚡ Auto-tune Recommendation")}</h3>
+        <p className="hint">{tr("Based on")} {phpTuning.recommendation.ram_mb} {tr("MB RAM,")} {phpTuning.recommendation.cores} {tr("CPU cores,")} {phpTuning.recommendation.is_ssd ? tr("SSD") : tr("HDD")} {tr("storage")}</p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px', margin: '12px 0', fontSize: '0.9em' }}>
           <div><strong>memory_limit:</strong> {phpTuning.recommendation.memory_limit}</div>
-          <div><strong>OPcache memory:</strong> {phpTuning.recommendation.opcache_memory_consumption} MB</div>
-          <div><strong>OPcache files:</strong> {phpTuning.recommendation.opcache_max_accelerated_files}</div>
-          <div><strong>OPcache JIT:</strong> {phpTuning.recommendation.opcache_jit} ({phpTuning.recommendation.opcache_jit_buffer_size}MB)</div>
-          <div><strong>LSAPI workers:</strong> {phpTuning.recommendation.lsapi_children}</div>
-          <div><strong>LSAPI idle:</strong> {phpTuning.recommendation.lsapi_max_idle}s, max idle children: {phpTuning.recommendation.lsapi_max_idle_children}</div>
+          <div><strong>{tr("OPcache memory:")}</strong> {phpTuning.recommendation.opcache_memory_consumption} {tr("MB")}</div>
+          <div><strong>{tr("OPcache files:")}</strong> {phpTuning.recommendation.opcache_max_accelerated_files}</div>
+          <div><strong>{tr("OPcache JIT:")}</strong> {phpTuning.recommendation.opcache_jit} ({phpTuning.recommendation.opcache_jit_buffer_size}{tr("MB)")}</div>
+          <div><strong>{tr("LSAPI workers:")}</strong> {phpTuning.recommendation.lsapi_children}</div>
+          <div><strong>{tr("LSAPI idle:")}</strong> {phpTuning.recommendation.lsapi_max_idle}{tr("s, max idle children:")} {phpTuning.recommendation.lsapi_max_idle_children}</div>
           <div><strong>upload_max:</strong> {phpTuning.recommendation.upload_max_filesize}</div>
           <div><strong>post_max:</strong> {phpTuning.recommendation.post_max_size}</div>
         </div>
-        <button disabled={!!loading} onClick={applyPhpTuning}><Zap size={14}/> Apply Auto-tune to PHP {phpConfig.php_version}</button>
-        <button className="secondary-light" style={{ marginLeft: 8 }} onClick={() => setPhpTuning(null)}>Dismiss</button>
+        <button disabled={!!loading} onClick={applyPhpTuning}><Zap size={14}/> {tr("Apply Auto-tune to PHP")} {phpConfig.php_version}</button>
+        <button className="secondary-light" style={{ marginLeft: 8 }} onClick={() => setPhpTuning(null)}>{tr("Dismiss")}</button>
       </div>}
       {notInstalled.length > 0 && <div className="user-create-card" style={{ marginTop: 16 }}>
-        <h3>Install PHP</h3>
+        <h3>{tr("Install PHP")}</h3>
         <div className="php-install-grid">
-          {notInstalled.map(v => <button key={v} disabled={!!loading} onClick={() => installPhpVersion(v)}>+ PHP {v}</button>)}
+          {notInstalled.map(v => <button key={v} disabled={!!loading} onClick={() => installPhpVersion(v)}>{tr("+ PHP")} {v}</button>)}
         </div>
       </div>}
     </section>;
   }
 
   function renderFirewall() {
-    if (!isAdmin) return <section className="section"><h2>Firewall</h2><p className="hint">No permission.</p></section>;
-    const firewallText = firewallStatus?.stdout || firewallStatus?.stderr || 'Click Refresh to load status.';
-    const blocklistText = firewallBlocklists?.stdout || firewallBlocklists?.stderr || 'No blocklist status loaded.';
+    if (!isAdmin) return <section className="section"><h2>{tr("Firewall")}</h2><p className="hint">{tr("No permission.")}</p></section>;
+    const firewallText = firewallStatus?.stdout || firewallStatus?.stderr || tr("Click Refresh to load status.");
+    const blocklistText = firewallBlocklists?.stdout || firewallBlocklists?.stderr || tr("No blocklist status loaded.");
     const blocklistUrls = parseFirewallBlocklistUrls(blocklistText);
     const openPorts = Array.isArray(firewallStatus?.open_ports) ? firewallStatus.open_ports : [];
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>Firewall (iptables)</h2><p className="hint">Keep SSH and web ports allowed before enabling.</p></div>
+          <div><h2>{tr("Firewall (iptables)")}</h2><p className="hint">{tr("Keep SSH and web ports allowed before enabling.")}</p></div>
         </div>
         <div className="actions">
-          <button disabled={!!loading} onClick={loadFirewall}><RefreshCw size={14}/> Refresh</button>
-          <button disabled={!!loading} onClick={enableFirewall}><Shield size={14}/> Enable</button>
-          <button disabled={!!loading} onClick={disableFirewall}>Disable</button>
-          <button disabled={!!loading} onClick={reloadFirewall}>Reload</button>
+          <button disabled={!!loading} onClick={loadFirewall}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button disabled={!!loading} onClick={enableFirewall}><Shield size={14}/> {tr("Enable")}</button>
+          <button disabled={!!loading} onClick={disableFirewall}>{tr("Disable")}</button>
+          <button disabled={!!loading} onClick={reloadFirewall}>{tr("Reload")}</button>
         </div>
         <div className="info-box firewall-open-ports">
-          <strong>Open ports</strong>
+          <strong>{tr("Open ports")}</strong>
           {openPorts.length > 0 ? <div className="firewall-port-list">
             {openPorts.map(item => <span className="firewall-port-chip" key={`${item.protocol}-${item.port}-${item.zone}-${item.rule || ''}`}>
               <code>{item.port}/{String(item.protocol || 'tcp').toUpperCase()}</code>
-              <small>{item.zone || 'UserZone'}{item.source && item.source !== 'Anywhere' ? ` from ${item.source}` : ''}</small>
+              <small>{item.zone || tr("UserZone")}{item.source && item.source !== 'Anywhere' ? tr(" from {0}", item.source) : ''}</small>
             </span>)}
-          </div> : <p className="hint">No open port rules found in OPANEL chains.</p>}
+          </div> : <p className="hint">{tr("No open port rules found in OPANEL chains.")}</p>}
         </div>
         <div className="info-box firewall-status">
-          <strong>iptables status</strong>
+          <strong>{tr("iptables status")}</strong>
           <pre>{firewallText}</pre>
           <div className="firewall-delete-inline">
-            <label><span>Delete UserZone #</span><input value={firewallDeleteNumber} onChange={e => setFirewallDeleteNumber(e.target.value)} placeholder="12" inputMode="numeric" /></label>
-            <button className="danger" disabled={!!loading || !firewallDeleteNumber} onClick={() => deleteFirewallRule()}>Delete</button>
+            <label><span>{tr("Delete UserZone #")}</span><input value={firewallDeleteNumber} onChange={e => setFirewallDeleteNumber(e.target.value)} placeholder="12" inputMode="numeric" /></label>
+            <button className="danger" disabled={!!loading || !firewallDeleteNumber} onClick={() => deleteFirewallRule()}>{tr("Delete")}</button>
           </div>
         </div>
       </section>
       <section className="section">
-        <h2>Open port</h2>
+        <h2>{tr("Open port")}</h2>
         <div className="firewall-form">
-          <label><span>Port</span><input value={firewallPort} onChange={e => setFirewallPort(e.target.value)} placeholder="80" inputMode="numeric" /></label>
-          <label><span>Protocol</span><select value={firewallProtocol} onChange={e => setFirewallProtocol(e.target.value)}><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
-          <button disabled={!!loading || !firewallPort} onClick={openFirewallPort}>Open port</button>
+          <label><span>{tr("Port")}</span><input value={firewallPort} onChange={e => setFirewallPort(e.target.value)} placeholder="80" inputMode="numeric" /></label>
+          <label><span>{tr("Protocol")}</span><select value={firewallProtocol} onChange={e => setFirewallProtocol(e.target.value)}><option value="tcp">{tr("TCP")}</option><option value="udp">{tr("UDP")}</option></select></label>
+          <button disabled={!!loading || !firewallPort} onClick={openFirewallPort}>{tr("Open port")}</button>
         </div>
       </section>
       <section className="section">
-        <h2>Allow IP</h2>
+        <h2>{tr("Allow IP")}</h2>
         <div className="firewall-form">
-          <label><span>IP / CIDR</span><input value={firewallAllowIp} onChange={e => setFirewallAllowIp(e.target.value)} placeholder="1.2.3.4" /></label>
-          <label><span>Port (optional)</span><input value={firewallAllowPort} onChange={e => setFirewallAllowPort(e.target.value)} placeholder="22" inputMode="numeric" /></label>
-          <label><span>Protocol</span><select value={firewallAllowProtocol} onChange={e => setFirewallAllowProtocol(e.target.value)}><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
-          <button disabled={!!loading || !firewallAllowIp} onClick={allowFirewallIp}>Allow</button>
+          <label><span>{tr("IP / CIDR")}</span><input value={firewallAllowIp} onChange={e => setFirewallAllowIp(e.target.value)} placeholder="1.2.3.4" /></label>
+          <label><span>{tr("Port (optional)")}</span><input value={firewallAllowPort} onChange={e => setFirewallAllowPort(e.target.value)} placeholder="22" inputMode="numeric" /></label>
+          <label><span>{tr("Protocol")}</span><select value={firewallAllowProtocol} onChange={e => setFirewallAllowProtocol(e.target.value)}><option value="tcp">{tr("TCP")}</option><option value="udp">{tr("UDP")}</option></select></label>
+          <button disabled={!!loading || !firewallAllowIp} onClick={allowFirewallIp}>{tr("Allow")}</button>
         </div>
       </section>
       <section className="section">
-        <h2>Block IP</h2>
+        <h2>{tr("Block IP")}</h2>
         <div className="firewall-form">
-          <label><span>IP / CIDR</span><input value={firewallBlockIp} onChange={e => setFirewallBlockIp(e.target.value)} placeholder="5.6.7.8" /></label>
-          <label><span>Port (optional)</span><input value={firewallBlockPort} onChange={e => setFirewallBlockPort(e.target.value)} placeholder="All ports" inputMode="numeric" /></label>
-          <label><span>Protocol</span><select value={firewallBlockProtocol} onChange={e => setFirewallBlockProtocol(e.target.value)}><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
-          <button className="danger" disabled={!!loading || !firewallBlockIp} onClick={blockFirewallIp}>Block</button>
+          <label><span>{tr("IP / CIDR")}</span><input value={firewallBlockIp} onChange={e => setFirewallBlockIp(e.target.value)} placeholder="5.6.7.8" /></label>
+          <label><span>{tr("Port (optional)")}</span><input value={firewallBlockPort} onChange={e => setFirewallBlockPort(e.target.value)} placeholder={tr("All ports")} inputMode="numeric" /></label>
+          <label><span>{tr("Protocol")}</span><select value={firewallBlockProtocol} onChange={e => setFirewallBlockProtocol(e.target.value)}><option value="tcp">{tr("TCP")}</option><option value="udp">{tr("UDP")}</option></select></label>
+          <button className="danger" disabled={!!loading || !firewallBlockIp} onClick={blockFirewallIp}>{tr("Block")}</button>
         </div>
       </section>
       <section className="section">
         <div className="section-title">
-          <div><h2>Blocklist URLs</h2><p className="hint">TXT files are fetched daily at 01:00 and enforced by ipset, so large lists do not create thousands of firewall rules.</p></div>
-          <button disabled={!!loading} onClick={loadFirewallBlocklists}><RefreshCw size={14}/> Refresh</button>
+          <div><h2>{tr("Blocklist URLs")}</h2><p className="hint">{tr("TXT files are fetched daily at 01:00 and enforced by ipset, so large lists do not create thousands of firewall rules.")}</p></div>
+          <button disabled={!!loading} onClick={loadFirewallBlocklists}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="firewall-form firewall-blocklist-form">
-          <label><span>TXT URL</span><input value={firewallBlocklistUrl} onChange={e => setFirewallBlocklistUrl(e.target.value)} placeholder="https://example.com/blocklist.txt" /></label>
-          <button disabled={!!loading || !firewallBlocklistUrl.trim()} onClick={addFirewallBlocklistUrl}><Plus size={14}/> Add URL</button>
-          <button className="secondary-light" disabled={!!loading} onClick={updateFirewallBlocklistsNow}><RefreshCw size={14}/> Update now</button>
+          <label><span>{tr("TXT URL")}</span><input value={firewallBlocklistUrl} onChange={e => setFirewallBlocklistUrl(e.target.value)} placeholder="https://example.com/blocklist.txt" /></label>
+          <button disabled={!!loading || !firewallBlocklistUrl.trim()} onClick={addFirewallBlocklistUrl}><Plus size={14}/> {tr("Add URL")}</button>
+          <button className="secondary-light" disabled={!!loading} onClick={updateFirewallBlocklistsNow}><RefreshCw size={14}/> {tr("Update now")}</button>
         </div>
         {blocklistUrls.length > 0 && <div className="table firewall-blocklist-table">
           {blocklistUrls.map(url => <div className="firewall-rule" key={url}>
             <span>{url}</span>
-            <div className="firewall-rule-actions"><button className="danger" disabled={!!loading} onClick={() => deleteFirewallBlocklistUrl(url)}><Trash2 size={14}/> Delete</button></div>
+            <div className="firewall-rule-actions"><button className="danger" disabled={!!loading} onClick={() => deleteFirewallBlocklistUrl(url)}><Trash2 size={14}/> {tr("Delete")}</button></div>
           </div>)}
         </div>}
-        <div className="info-box firewall-status"><strong>Blocklist status</strong><pre>{blocklistText}</pre></div>
+        <div className="info-box firewall-status"><strong>{tr("Blocklist status")}</strong><pre>{blocklistText}</pre></div>
       </section>
     </>;
   }
 
   function renderWaf() {
-    const statusText = wafRules.status?.stdout || wafRules.status?.stderr || 'Click Refresh to load WAF status.';
+    const statusText = wafRules.status?.stdout || wafRules.status?.stderr || tr("Click Refresh to load WAF status.");
     const selectedSite = websites.find(site => String(site.id) === String(selectedWafWebsiteId));
     const groupedRules = (wafSiteConfig?.default_rules || wafRules.default_rule_definitions || []).reduce((groups, rule) => {
       const category = rule.category || 'General';
@@ -5154,40 +5146,40 @@ ${effect}${order}`)) return;
       {!wafSiteConfig && <>
         {isAdmin && <section className="section">
           <div className="section-title">
-            <div><h2>WAF</h2><p className="hint">Engine status. Rules are configured per website below.</p></div>
-            <button disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> Refresh</button>
+            <div><h2>{tr("WAF")}</h2><p className="hint">{tr("Engine status. Rules are configured per website below.")}</p></div>
+            <button disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> {tr("Refresh")}</button>
           </div>
-          <div className="info-box firewall-status"><strong>Status</strong><pre>{statusText}</pre></div>
+          <div className="info-box firewall-status"><strong>{tr("Status")}</strong><pre>{statusText}</pre></div>
         </section>}
 
         {isAdmin && <section className="section">
           <div className="section-title">
             <div>
-              <h2>Global bad bot <span className="badge">{badBots.patterns.length}</span></h2>
-              <p className="hint">One bot per line, applied to every website. A request whose User-Agent contains the text gets 403 — plain text, no regex.</p>
+              <h2>{tr("Global bad bot")} <span className="badge">{badBots.patterns.length}</span></h2>
+              <p className="hint">{tr("One bot per line, applied to every website. A request whose User-Agent contains the text gets 403 — plain text, no regex.")}</p>
             </div>
-            <button className="secondary" disabled={!!loading} onClick={loadBadBots}><RefreshCw size={14}/> Refresh</button>
+            <button className="secondary" disabled={!!loading} onClick={loadBadBots}><RefreshCw size={14}/> {tr("Refresh")}</button>
           </div>
           <textarea className="code-editor badbot-input" value={badBotText} onChange={e => setBadBotText(e.target.value)}
             spellCheck={false}
-            placeholder={"AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider"} />
-          <div className="actions"><button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> Save and apply to all websites</button></div>
+            placeholder={tr("AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider")} />
+          <div className="actions"><button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> {tr("Save and apply to all websites")}</button></div>
         </section>}
 
         <section className="section">
           <div className="section-title">
-            <div><h2>{isAdmin ? 'Websites' : 'Your websites'}</h2><p className="hint">Open a website to configure its rules and bad bots.</p></div>
+            <div><h2>{isAdmin ? tr("Websites") : tr("Your websites")}</h2><p className="hint">{tr("Open a website to configure its rules and bad bots.")}</p></div>
           </div>
           {websites.length === 0
-            ? <EmptyState icon={Globe} message="No websites yet." />
+            ? <EmptyState icon={Globe} message={tr("No websites yet.")} />
             : <div className="waf-site-table">
                 {websites.map(site => <button key={site.id} type="button" className="waf-site-row"
                   disabled={!!loading} onClick={() => loadWebsiteWafConfig(site.id)}>
                   <span className="waf-site-domain">{site.domain}</span>
                   <span className="waf-site-badges">
-                    <span className={site.waf_enabled ? 'badge ok' : 'badge'}>{site.waf_enabled ? 'WAF on' : 'WAF off'}</span>
+                    <span className={site.waf_enabled ? 'badge ok' : 'badge'}>{site.waf_enabled ? tr("WAF on") : tr("WAF off")}</span>
                   </span>
-                  <span className="waf-site-open">Configure</span>
+                  <span className="waf-site-open">{tr("Configure")}</span>
                 </button>)}
               </div>}
         </section>
@@ -5197,13 +5189,13 @@ ${effect}${order}`)) return;
         <section className="section">
           <div className="section-title waf-detail-head">
             <div className="waf-detail-title">
-              <button className="secondary-light" onClick={closeWafSiteConfig}><ArrowLeft size={14}/> All websites</button>
-              <div><h2>{wafSiteConfig.domain}</h2><p className="hint">WAF configuration for this website.</p></div>
+              <button className="secondary-light" onClick={closeWafSiteConfig}><ArrowLeft size={14}/> {tr("All websites")}</button>
+              <div><h2>{wafSiteConfig.domain}</h2><p className="hint">{tr("WAF configuration for this website.")}</p></div>
             </div>
             <div className="waf-detail-actions">
-              <span className={selectedSite?.waf_enabled ? 'badge ok' : 'badge'}>{selectedSite?.waf_enabled ? 'WAF on' : 'WAF off'}</span>
+              <span className={selectedSite?.waf_enabled ? 'badge ok' : 'badge'}>{selectedSite?.waf_enabled ? tr("WAF on") : tr("WAF off")}</span>
               <button disabled={!!loading} onClick={() => selectedSite && toggleWebsiteWaf(selectedSite)}>
-                <Shield size={14}/> {selectedSite?.waf_enabled ? 'Disable WAF' : 'Enable WAF'}
+                <Shield size={14}/> {selectedSite?.waf_enabled ? tr("Disable WAF") : tr("Enable WAF")}
               </button>
             </div>
           </div>
@@ -5212,56 +5204,56 @@ ${effect}${order}`)) return;
         <section className="section">
           <div className="section-title">
             <div>
-              <h2>Bad bot</h2>
+              <h2>{tr("Bad bot")}</h2>
               <p className="hint">
                 {wafSiteConfig.bot_blocking_enabled
-                  ? `Global list (${(wafSiteConfig.global_bad_bots || []).length}) plus anything below.`
-                  : 'Off — the global list is ignored on this website.'}
+                  ? tr("Global list ({0}) plus anything below.", (wafSiteConfig.global_bad_bots || []).length)
+                  : tr("Off — the global list is ignored on this website.")}
               </p>
             </div>
             <span className={wafSiteConfig.bot_blocking_enabled ? 'badge ok' : 'badge'}>
-              {wafSiteConfig.bot_blocking_enabled ? 'On' : 'Off'}
+              {wafSiteConfig.bot_blocking_enabled ? tr("On") : tr("Off")}
             </span>
           </div>
           <label className="check-line">
             <input type="checkbox" checked={!!wafSiteConfig.bot_blocking_enabled}
               onChange={e => setWafSiteConfig(prev => ({ ...prev, bot_blocking_enabled: e.target.checked }))} />
-            Block bad bots on this website
+            {tr("Block bad bots on this website")}
           </label>
-          <label className="badbot-site-extra"><span>Extra bots, this website only</span>
+          <label className="badbot-site-extra"><span>{tr("Extra bots, this website only")}</span>
             <textarea className="code-editor badbot-input" value={wafBotExtra} onChange={e => setWafBotExtra(e.target.value)}
-              spellCheck={false} placeholder={"ScrapyBot\nSomeOtherBot"} />
+              spellCheck={false} placeholder={tr("ScrapyBot\nSomeOtherBot")} />
           </label>
-          <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}><Shield size={14}/> Save bad bot config</button></div>
+          <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}><Shield size={14}/> {tr("Save bad bot config")}</button></div>
         </section>
 
         <section className="section waf-rules-grid">
           <div className="waf-rule-panel">
-            <div className="section-title"><h2>Default rules</h2></div>
+            <div className="section-title"><h2>{tr("Default rules")}</h2></div>
             <div className="waf-default-groups">
               {Object.entries(groupedRules).map(([category, rules]) => <div className="waf-rule-group" key={category}>
-                <h3>{category}</h3>
+                <h3>{tr(category)}</h3>
                 {rules.map(rule => <label className="waf-rule-toggle" key={rule.id}>
                   <input type="checkbox" checked={!!rule.enabled} onChange={e => toggleWafDefaultRule(rule.id, e.target.checked)} />
-                  <span><strong>{rule.title}</strong><small>{rule.description}</small></span>
+                  <span><strong>{tr(rule.title)}</strong><small>{tr(rule.description)}</small></span>
                 </label>)}
               </div>)}
             </div>
           </div>
           <div className="waf-rule-panel">
-            <div className="section-title"><h2>Custom rules</h2></div>
+            <div className="section-title"><h2>{tr("Custom rules")}</h2></div>
             {isAdmin
               ? <>
-                  <textarea className="code-editor" value={wafCustomRules} onChange={e => setWafCustomRules(e.target.value)} rows={14} spellCheck={false} placeholder="SecRule ..." />
-                  <p className="hint">Saved into {wafSiteConfig.rules_file}</p>
+                  <textarea className="code-editor" value={wafCustomRules} onChange={e => setWafCustomRules(e.target.value)} rows={14} spellCheck={false} placeholder={tr("SecRule ...")} />
+                  <p className="hint">{tr("Saved into")} {wafSiteConfig.rules_file}</p>
                 </>
               : <>
                   {wafCustomRules
                     ? <pre className="code-editor waf-custom-readonly">{wafCustomRules}</pre>
-                    : <p className="hint">No custom rules on this website.</p>}
-                  <p className="hint">Custom rules are written by an administrator. Everything else on this page is yours to change.</p>
+                    : <p className="hint">{tr("No custom rules on this website.")}</p>}
+                  <p className="hint">{tr("Custom rules are written by an administrator. Everything else on this page is yours to change.")}</p>
                 </>}
-            <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}>Save website WAF rules</button></div>
+            <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}>{tr("Save website WAF rules")}</button></div>
           </div>
         </section>
       </>}
@@ -5281,41 +5273,41 @@ ${effect}${order}`)) return;
     return <>
       <section className="access-log-hero">
         <div>
-          <p className="eyebrow">Protected Traffic</p>
-          <h1>Access Logs</h1>
+          <p className="eyebrow">{tr("Protected Traffic")}</p>
+          <h1>{tr("Access Logs")}</h1>
         </div>
         <div className="access-log-hero-actions">
-          <button className="secondary-light icon-only" onClick={() => loadWafAccessLogs()} disabled={!!loading} aria-label="Refresh logs" title="Refresh logs"><RefreshCw size={16}/></button>
-          <button className="secondary-light icon-only" onClick={() => navigateToPage('waf')} aria-label="Open WAF settings" title="Open WAF settings"><ExternalLink size={16}/></button>
+          <button className="secondary-light icon-only" onClick={() => loadWafAccessLogs()} disabled={!!loading} aria-label={tr("Refresh logs")} title={tr("Refresh logs")}><RefreshCw size={16}/></button>
+          <button className="secondary-light icon-only" onClick={() => navigateToPage('waf')} aria-label={tr("Open WAF settings")} title={tr("Open WAF settings")}><ExternalLink size={16}/></button>
         </div>
       </section>
       <section className="section access-log-section">
         <div className="access-log-toolbar">
           <div className="access-log-title">
-            <strong>Access Logs</strong>
-            <span>{formatLogCount(total)} entries</span>
-            <button className="secondary-light" onClick={exportWafAccessLogs} disabled={!entries.length}><Download size={14}/> Export</button>
-            <button className="danger-light" onClick={clearWafAccessLogs} disabled={!!loading || total === 0}><Trash2 size={14}/> Clear</button>
+            <strong>{tr("Access Logs")}</strong>
+            <span>{formatLogCount(total)} {tr("entries")}</span>
+            <button className="secondary-light" onClick={exportWafAccessLogs} disabled={!entries.length}><Download size={14}/> {tr("Export")}</button>
+            <button className="danger-light" onClick={clearWafAccessLogs} disabled={!!loading || total === 0}><Trash2 size={14}/> {tr("Clear")}</button>
           </div>
           <div className="access-log-filters">
             <select value={wafAccessFilters.domain} onChange={e => setWafAccessFilter('domain', e.target.value)}>
-              <option value="">All websites</option>
+              <option value="">{tr("All websites")}</option>
               {domains.map(domain => <option key={domain} value={domain}>{domain}</option>)}
             </select>
             <select value={wafAccessFilters.verdict} onChange={e => setWafAccessFilter('verdict', e.target.value)}>
-              <option value="">All verdicts</option>
-              <option value="block">Block</option>
-              <option value="allow">Allow</option>
+              <option value="">{tr("All verdicts")}</option>
+              <option value="block">{tr("Block")}</option>
+              <option value="allow">{tr("Allow")}</option>
             </select>
-            <input value={wafAccessFilters.q} onChange={e => setWafAccessFilter('q', e.target.value)} placeholder="Filter logs" />
+            <input value={wafAccessFilters.q} onChange={e => setWafAccessFilter('q', e.target.value)} placeholder={tr("Filter logs")} />
             <select value={limit} onChange={e => setWafAccessFilter('limit', Number(e.target.value))}>
-              {[25, 50, 100, 250, 500].map(size => <option key={size} value={size}>{size} / page</option>)}
+              {[25, 50, 100, 250, 500].map(size => <option key={size} value={size}>{size} {tr("/ page")}</option>)}
             </select>
-            <select value={wafAccessAutoRefresh} onChange={e => setWafAccessAutoRefresh(Number(e.target.value))} title="Auto refresh">
-              <option value={0}>Auto refresh off</option>
-              <option value={5}>Refresh 5s</option>
-              <option value={10}>Refresh 10s</option>
-              <option value={30}>Refresh 30s</option>
+            <select value={wafAccessAutoRefresh} onChange={e => setWafAccessAutoRefresh(Number(e.target.value))} title={tr("Auto refresh")}>
+              <option value={0}>{tr("Auto refresh off")}</option>
+              <option value={5}>{tr("Refresh 5s")}</option>
+              <option value={10}>{tr("Refresh 10s")}</option>
+              <option value={30}>{tr("Refresh 30s")}</option>
             </select>
           </div>
         </div>
@@ -5323,36 +5315,36 @@ ${effect}${order}`)) return;
           <table className="access-log-table">
             <thead>
               <tr>
-                <th>Verdict</th>
-                <th>Time</th>
-                <th>Site</th>
-                <th>Method</th>
-                <th>Path</th>
-                <th>IP</th>
-                <th>Reason</th>
-                <th>Status</th>
+                <th>{tr("Verdict")}</th>
+                <th>{tr("Time")}</th>
+                <th>{tr("Site")}</th>
+                <th>{tr("Method")}</th>
+                <th>{tr("Path")}</th>
+                <th>{tr("IP")}</th>
+                <th>{tr("Reason")}</th>
+                <th>{tr("Status")}</th>
               </tr>
             </thead>
             <tbody>
               {entries.map((entry, index) => <tr key={`${entry.domain}-${entry.timestamp}-${entry.ip}-${entry.path}-${index}`}>
-                <td><span className={`verdict-pill ${entry.verdict === 'block' ? 'block' : 'allow'}`}>{entry.verdict === 'block' ? 'Block' : 'Allow'}</span></td>
+                <td><span className={`verdict-pill ${entry.verdict === 'block' ? 'block' : 'allow'}`}>{entry.verdict === 'block' ? tr("Block") : tr("Allow")}</span></td>
                 <td><span>{entry.time || entry.timestamp || '-'}</span><small>{formatLogDuration(entry.duration_ms)}</small></td>
                 <td><span>{entry.site || entry.domain}</span><small>{entry.domain}</small></td>
                 <td>{entry.method || '-'}</td>
                 <td><span className="access-log-path">{entry.path || '-'}</span></td>
                 <td><span>{entry.ip || '-'}</span><small>{entry.country || ''}</small></td>
-                <td>{entry.reason || (entry.verdict === 'block' ? 'Blocked' : 'Allowed')}</td>
+                <td>{entry.reason || (entry.verdict === 'block' ? tr("Blocked") : tr("Allowed"))}</td>
                 <td>{entry.status || '-'}</td>
               </tr>)}
             </tbody>
           </table>
-          {entries.length === 0 && <EmptyState icon={Shield} message="No access log entries match the current filters." />}
+          {entries.length === 0 && <EmptyState icon={Shield} message={tr("No access log entries match the current filters.")} />}
         </div>
         <div className="access-log-footer">
-          <span>Page {currentPage} of {pageCount}</span>
+          <span>{tr("Page")} {currentPage} {tr("of")} {pageCount}</span>
           <div className="actions">
-            <button className="secondary-light" disabled={offset <= 0 || !!loading} onClick={() => loadWafAccessLogs({ ...wafAccessFilters, offset: Math.max(0, offset - limit) })}>Previous</button>
-            <button className="secondary-light" disabled={offset + limit >= total || !!loading} onClick={() => loadWafAccessLogs({ ...wafAccessFilters, offset: offset + limit })}>Next</button>
+            <button className="secondary-light" disabled={offset <= 0 || !!loading} onClick={() => loadWafAccessLogs({ ...wafAccessFilters, offset: Math.max(0, offset - limit) })}>{tr("Previous")}</button>
+            <button className="secondary-light" disabled={offset + limit >= total || !!loading} onClick={() => loadWafAccessLogs({ ...wafAccessFilters, offset: offset + limit })}>{tr("Next")}</button>
           </div>
         </div>
       </section>
@@ -5360,17 +5352,17 @@ ${effect}${order}`)) return;
   }
 
   function renderUpdates() {
-    if (!isAdmin) return <section className="section"><h2>Updates</h2><p className="hint">No permission.</p></section>;
-    const statusText = updatesStatus?.stdout || updatesStatus?.stderr || 'Click View logs to load update logs.';
+    if (!isAdmin) return <section className="section"><h2>{tr("Updates")}</h2><p className="hint">{tr("No permission.")}</p></section>;
+    const statusText = updatesStatus?.stdout || updatesStatus?.stderr || tr("Click View logs to load update logs.");
     const panelUpdate = updatesStatus?.panel || {};
     // Three states, not two. `update_available` is null when the check could
     // not tell -- an unreadable VERSION on the branch, or a box that has not
     // yet recorded the commit it installed -- and "unknown" must not be
     // dressed up as "up to date".
     const hasUpdate = panelUpdate.update_available;
-    const panelBadge = hasUpdate === true ? 'Update available'
+    const panelBadge = hasUpdate === true ? tr("Update available")
       : hasUpdate === false ? 'Up to date'
-      : panelUpdate.latest_commit ? 'Tracking main' : 'Unknown';
+      : panelUpdate.latest_commit ? tr("Tracking main") : tr("Unknown");
     const panelBadgeClass = hasUpdate === true ? 'badge warn'
       : hasUpdate === false ? 'badge ok' : 'badge';
     const currentPanelVersion = panelUpdate.current_version || appVersion || 'unknown';
@@ -5380,38 +5372,38 @@ ${effect}${order}`)) return;
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>Updates</h2><p className="hint">OS packages use apt; panel updates pull from GitHub <code>main</code>.</p></div>
-          <button className="secondary-light" disabled={!!loading} onClick={toggleUpdateLog}>{showUpdateLog ? <X size={14}/> : <FileText size={14}/>} {showUpdateLog ? 'Hide logs' : 'View logs'}</button>
+          <div><h2>{tr("Updates")}</h2><p className="hint">{tr("OS packages use apt; panel updates pull from GitHub")} <code>main</code>.</p></div>
+          <button className="secondary-light" disabled={!!loading} onClick={toggleUpdateLog}>{showUpdateLog ? <X size={14}/> : <FileText size={14}/>} {showUpdateLog ? tr("Hide logs") : tr("View logs")}</button>
         </div>
         <div className="info-box update-version-box">
-          <div className="update-version-head"><strong>Panel source</strong><span className={panelBadgeClass}>{panelBadge}</span></div>
+          <div className="update-version-head"><strong>{tr("Panel source")}</strong><span className={panelBadgeClass}>{panelBadge}</span></div>
           <div className="update-version-grid">
-            <span>Current <strong>v{currentPanelVersion}</strong></span>
-            {newerVersion && <span>Available <strong>v{latestPanelVersion}</strong></span>}
-            <span>Branch <strong>{panelUpdate.update_branch || 'main'}</strong></span>
-            <span>Latest commit <strong>{latestPanelRef}</strong></span>
-            <span>Checked <strong>{panelUpdate.last_checked_at || 'never'}</strong></span>
-            <span>State file <strong>{panelUpdate.state_file || '/var/lib/opanel/update-status.json'}</strong></span>
+            <span>{tr("Current")} <strong>v{currentPanelVersion}</strong></span>
+            {newerVersion && <span>{tr("Available")} <strong>v{latestPanelVersion}</strong></span>}
+            <span>{tr("Branch")} <strong>{panelUpdate.update_branch || tr("main")}</strong></span>
+            <span>{tr("Latest commit")} <strong>{latestPanelRef}</strong></span>
+            <span>{tr("Checked")} <strong>{panelUpdate.last_checked_at || tr("never")}</strong></span>
+            <span>{tr("State file")} <strong>{panelUpdate.state_file || '/var/lib/opanel/update-status.json'}</strong></span>
           </div>
-          {panelUpdate.check_error && <p className="hint">Main branch check failed: {panelUpdate.check_error}</p>}
+          {panelUpdate.check_error && <p className="hint">{tr("Main branch check failed:")} {panelUpdate.check_error}</p>}
           {hasUpdate !== true && hasUpdate !== false && !panelUpdate.check_error &&
-            <p className="hint">Cannot tell yet whether a release is waiting. Run one panel update to record the installed commit, after which this compares exactly.</p>}
-          {panelUpdate.last_update_status && <p className="hint">Last update: {panelUpdate.last_update_status}{panelUpdate.last_update_ref ? ` (${panelUpdate.last_update_ref})` : ''}{panelUpdate.last_update_finished_at ? ` at ${panelUpdate.last_update_finished_at}` : ''}</p>}
+            <p className="hint">{tr("Cannot tell yet whether a release is waiting. Run one panel update to record the installed commit, after which this compares exactly.")}</p>}
+          {panelUpdate.last_update_status && <p className="hint">{tr("Last update:")} {panelUpdate.last_update_status}{panelUpdate.last_update_ref ? ` (${panelUpdate.last_update_ref})` : ''}{panelUpdate.last_update_finished_at ? tr(" at {0}", panelUpdate.last_update_finished_at) : ''}</p>}
         </div>
         <div className="actions">
-          <button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={14}/> Refresh status</button>
-          <button disabled={!!loading || osUpdating} onClick={runOsUpdate}><RefreshCw size={14} className={osUpdating ? 'spin' : ''}/> {osUpdating ? 'Updating OS...' : 'Update OS now'}</button>
-          <button disabled={!!loading || panelUpdating} onClick={runPanelUpdate}><RotateCcw size={14} className={panelUpdating ? 'spin' : ''}/> {panelUpdating ? 'Updating panel...' : 'Update panel now'}</button>
+          <button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={14}/> {tr("Refresh status")}</button>
+          <button disabled={!!loading || osUpdating} onClick={runOsUpdate}><RefreshCw size={14} className={osUpdating ? 'spin' : ''}/> {osUpdating ? tr("Updating OS...") : tr("Update OS now")}</button>
+          <button disabled={!!loading || panelUpdating} onClick={runPanelUpdate}><RotateCcw size={14} className={panelUpdating ? 'spin' : ''}/> {panelUpdating ? tr("Updating panel...") : tr("Update panel now")}</button>
         </div>
         {showUpdateLog && <div className="info-box firewall-status update-log-box">
-          <div className="update-log-head"><strong>Update logs</strong><button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={13}/> Refresh</button></div>
+          <div className="update-log-head"><strong>{tr("Update logs")}</strong><button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={13}/> {tr("Refresh")}</button></div>
           <pre>{statusText}</pre>
         </div>}
         {panelUpdate.last_update_status !== 'completed' && panelUpdate.last_update_status !== 'failed' && (panelUpdating || (Boolean(panelUpdate.progress_percent) && panelUpdate.last_update_status)) && (
           <div className="info-box firewall-status update-progress-box">
             <div className="update-progress-row">
               <span className={panelUpdate.last_update_status === 'failed' ? 'badge bad' : 'badge ok'}>
-                {panelUpdating ? 'Running' : (panelUpdate.last_update_status === 'failed' ? 'Failed' : (panelUpdate.last_update_status || 'Idle'))}
+                {panelUpdating ? tr("Running") : (panelUpdate.last_update_status === 'failed' ? tr("Failed") : (panelUpdate.last_update_status || tr("Idle")))}
               </span>
               <span className="update-progress-phase">{panelUpdate.progress_phase || ''}</span>
               <span className="update-progress-pct">{Number(panelUpdate.progress_percent) || 0}%</span>
@@ -5425,12 +5417,12 @@ ${effect}${order}`)) return;
         )}
       </section>
       <section className="section">
-        <h2>Auto Update OS</h2>
+        <h2>{tr("Auto Update OS")}</h2>
         <div className="firewall-form updates-os-form">
-          <label><span>Enabled</span><select value={osAutoUpdate.enabled ? 'on' : 'off'} onChange={e => setOsAutoUpdate(prev => ({ ...prev, enabled: e.target.value === 'on' }))}><option value="on">On</option><option value="off">Off</option></select></label>
-          <label><span>Mode</span><select value={osAutoUpdate.mode} onChange={e => setOsAutoUpdate(prev => ({ ...prev, mode: e.target.value }))}><option value="security">Security</option><option value="all">All packages</option></select></label>
-          <label><span>Auto reboot</span><select value={osAutoUpdate.auto_reboot ? 'on' : 'off'} onChange={e => setOsAutoUpdate(prev => ({ ...prev, auto_reboot: e.target.value === 'on' }))}><option value="off">Off</option><option value="on">On</option></select></label>
-          <button disabled={!!loading} onClick={saveOsAutoUpdate}>Save OS auto update</button>
+          <label><span>{tr("Enabled")}</span><select value={osAutoUpdate.enabled ? 'on' : 'off'} onChange={e => setOsAutoUpdate(prev => ({ ...prev, enabled: e.target.value === 'on' }))}><option value="on">{tr("On")}</option><option value="off">{tr("Off")}</option></select></label>
+          <label><span>{tr("Mode")}</span><select value={osAutoUpdate.mode} onChange={e => setOsAutoUpdate(prev => ({ ...prev, mode: e.target.value }))}><option value="security">{tr("Security")}</option><option value="all">{tr("All packages")}</option></select></label>
+          <label><span>{tr("Auto reboot")}</span><select value={osAutoUpdate.auto_reboot ? 'on' : 'off'} onChange={e => setOsAutoUpdate(prev => ({ ...prev, auto_reboot: e.target.value === 'on' }))}><option value="off">{tr("Off")}</option><option value="on">{tr("On")}</option></select></label>
+          <button disabled={!!loading} onClick={saveOsAutoUpdate}>{tr("Save OS auto update")}</button>
         </div>
       </section>
     </>;
@@ -5447,15 +5439,15 @@ ${effect}${order}`)) return;
       <section className="section">
         <div className="section-title">
           <div>
-            <h2>Passkey</h2>
+            <h2>{tr("Passkey")}</h2>
             <p className="hint">
               {keys.length
-                ? <>Tried first when you sign in. <strong>{keys.length}</strong> registered
-                    {enabled ? ', with your authenticator code as the fallback.' : '.'}</>
-                : 'Sign in with a fingerprint, face, screen lock, or security key.'}
+                ? <>{tr("Tried first when you sign in.")} <strong>{keys.length}</strong> {tr("registered")}
+                    {enabled ? tr(", with your authenticator code as the fallback.") : '.'}</>
+                : tr("Sign in with a fingerprint, face, screen lock, or security key.")}
             </p>
           </div>
-          <button disabled={!!loading} onClick={loadPasskeys}><RefreshCw size={14}/> Refresh</button>
+          <button disabled={!!loading} onClick={loadPasskeys}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         {pk.available === false && <p className="hint">{pk.unavailable_reason}</p>}
         {keys.length > 0 && <div className="table">
@@ -5463,49 +5455,49 @@ ${effect}${order}`)) return;
             <span>
               <strong>{item.name}</strong>
               <small className="db-owner">
-                Added {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'recently'}
-                {item.last_used_at ? ` · last used ${new Date(item.last_used_at).toLocaleDateString()}` : ' · not used yet'}
+                {tr("Added")} {item.created_at ? new Date(item.created_at).toLocaleDateString() : tr("recently")}
+                {item.last_used_at ? tr(" · last used {0}", new Date(item.last_used_at).toLocaleDateString()) : tr(" · not used yet")}
               </small>
             </span>
             <button className="mini danger" disabled={!!loading}
-                    title="Remove this passkey" aria-label={`Remove the passkey ${item.name}`}
+                    title={tr("Remove this passkey")} aria-label={tr("Remove the passkey {0}", item.name)}
                     onClick={() => removePasskey(item)}><Trash2 size={14}/></button>
           </div>)}
         </div>}
         {pk.available !== false && (pk.can_add_passkey !== false) && <div className="passkey-add">
           <input value={passkeyName} onChange={e => setPasskeyName(e.target.value)}
-                 placeholder="Name this passkey (e.g. Work laptop)" maxLength={64} />
-          <button disabled={!!loading} onClick={registerPasskey}><Shield size={14}/> Add passkey</button>
+                 placeholder={tr("Name this passkey (e.g. Work laptop)")} maxLength={64} />
+          <button disabled={!!loading} onClick={registerPasskey}><Shield size={14}/> {tr("Add passkey")}</button>
         </div>}
         {keys.length > 0 && !enabled &&
-          <p className="hint">Add an authenticator app below as a fallback, in case you cannot use this passkey.</p>}
+          <p className="hint">{tr("Add an authenticator app below as a fallback, in case you cannot use this passkey.")}</p>}
       </section>
       <section className="section">
         <div className="section-title">
-          <div><h2>Google Authenticator 2FA</h2><p className="hint">Current status: <strong>{enabled ? 'Enabled' : 'Disabled'}</strong></p></div>
-          <button disabled={!!loading} onClick={loadTwoFactorStatus}><RefreshCw size={14}/> Refresh</button>
+          <div><h2>{tr("Google Authenticator 2FA")}</h2><p className="hint">{tr("Current status:")} <strong>{enabled ? tr("Enabled") : tr("Disabled")}</strong></p></div>
+          <button disabled={!!loading} onClick={loadTwoFactorStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
-        {!enabled && keys.length > 0 && <p className="hint">Used when a passkey is not available on the device you are signing in from.</p>}
+        {!enabled && keys.length > 0 && <p className="hint">{tr("Used when a passkey is not available on the device you are signing in from.")}</p>}
         {!enabled && canEnableTotp && <div className="security-grid">
           <div className="info-box">
-            <strong>Setup</strong>
-            {twoFactorSetup?.qr_data_url ? <img className="qr-code" src={twoFactorSetup.qr_data_url} alt="2FA QR code" /> : <p className="hint">No setup code generated.</p>}
+            <strong>{tr("Setup")}</strong>
+            {twoFactorSetup?.qr_data_url ? <img className="qr-code" src={twoFactorSetup.qr_data_url} alt={tr("2FA QR code")} /> : <p className="hint">{tr("No setup code generated.")}</p>}
             {twoFactorSetup?.secret && <code className="secret-text">{twoFactorSetup.secret}</code>}
             <div className="actions">
-              <button disabled={!!loading} onClick={setupTwoFactorAuth}><Shield size={14}/> Generate QR</button>
+              <button disabled={!!loading} onClick={setupTwoFactorAuth}><Shield size={14}/> {tr("Generate QR")}</button>
             </div>
           </div>
           <div className="info-box">
-            <strong>Verify</strong>
+            <strong>{tr("Verify")}</strong>
             <input value={twoFactorCode} onChange={e => setTwoFactorCode(e.target.value)} placeholder="123456" inputMode="numeric" />
-            <button disabled={!!loading || !twoFactorSetup || !twoFactorCode} onClick={enableTwoFactorAuth}><Lock size={14}/> Enable 2FA</button>
+            <button disabled={!!loading || !twoFactorSetup || !twoFactorCode} onClick={enableTwoFactorAuth}><Lock size={14}/> {tr("Enable 2FA")}</button>
           </div>
         </div>}
         {enabled && <div className="security-grid one">
           <div className="info-box">
-            <strong>Disable 2FA</strong>
+            <strong>{tr("Disable 2FA")}</strong>
             <input value={twoFactorCode} onChange={e => setTwoFactorCode(e.target.value)} placeholder="123456" inputMode="numeric" />
-            <button className="danger" disabled={!!loading || !twoFactorCode} onClick={disableTwoFactorAuth}>Disable 2FA</button>
+            <button className="danger" disabled={!!loading || !twoFactorCode} onClick={disableTwoFactorAuth}>{tr("Disable 2FA")}</button>
           </div>
         </div>}
       </section>
@@ -5513,7 +5505,7 @@ ${effect}${order}`)) return;
   }
 
   function renderMalwareScanner() {
-    if (!isAdmin) return <section className="section"><h2>Malware Scanner</h2><p className="hint">No permission.</p></section>;
+    if (!isAdmin) return <section className="section"><h2>{tr("Malware Scanner")}</h2><p className="hint">{tr("No permission.")}</p></section>;
     const mw = malwareScanStatus || {};
     const mwActive = Boolean(mw.active);
     const mwInstalled = Boolean(mw.installed);
@@ -5522,9 +5514,9 @@ ${effect}${order}`)) return;
     const scanRunning = ['queued', 'running'].includes(scanJob?.status);
     const scanJobTitle = job => (job.domains && job.domains.length > 0)
       ? (job.domains.length === 1 ? job.domains[0] : `${job.domains.length} websites`)
-      : (job.scope === 'all' ? 'All websites'
-        : job.scope === 'system' ? `Full server (${job.scan_root || '/'})`
-        : 'Scan job');
+      : (job.scope === 'all' ? tr("All websites")
+        : job.scope === 'system' ? tr("Full server ({0})", job.scan_root || '/')
+        : tr("Scan job"));
     const scanJobStamp = job => {
       const stamp = job.finished_at || job.updated_at || job.started_at || job.created_at || '';
       if (!stamp) return 'No timestamp';
@@ -5552,89 +5544,88 @@ ${effect}${order}`)) return;
       {isAdmin && <section className="section">
         <div className="section-title">
           <div>
-            <h2>Malware Scanner</h2>
+            <h2>{tr("Malware Scanner")}</h2>
             <p className="hint">
-              {mwActive ? <span className="badge ok">Active</span>
-                : mwEnabled && mwInstalled ? <span className="badge warn">Enabled — clamd not running</span>
-                : mwEnabled && !mwInstalled ? <span className="badge warn">Installing ClamAV...</span>
-                : mwInstalled && !mwEnabled ? <span className="badge">Installed — scanning disabled</span>
-                : <span className="badge">Not installed</span>}
-              {mwInstalled && <span className="badge" style={{marginLeft:6}}>Engine: {mw.engine || 'ClamAV'}{mw.lmd_version ? ` (LMD ${mw.lmd_version})` : ''}</span>}
-              {mw.realtime_active && <span className="badge ok" style={{marginLeft:6}}>Real-time on</span>}
+              {mwActive ? <span className="badge ok">{tr("Active")}</span>
+                : mwEnabled && mwInstalled ? <span className="badge warn">{tr("Enabled — clamd not running")}</span>
+                : mwEnabled && !mwInstalled ? <span className="badge warn">{tr("Installing ClamAV...")}</span>
+                : mwInstalled && !mwEnabled ? <span className="badge">{tr("Installed — scanning disabled")}</span>
+                : <span className="badge">{tr("Not installed")}</span>}
+              {mwInstalled && <span className="badge" style={{marginLeft:6}}>{tr("Engine:")} {mw.engine || tr("ClamAV")}{mw.lmd_version ? tr(" (LMD {0})", mw.lmd_version) : ''}</span>}
+              {mw.realtime_active && <span className="badge ok" style={{marginLeft:6}}>{tr("Real-time on")}</span>}
             </p>
           </div>
-          <button disabled={!!loading} onClick={loadMalwareScanStatus}><RefreshCw size={14}/> Refresh</button>
+          <button disabled={!!loading} onClick={loadMalwareScanStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="info-box">
-          <p className="hint">{mw.detail || 'Checking status...'}</p>
-          {!mwInstalled && <p className="hint" style={{marginTop:8}}>When enabled, ClamAV is installed on this server, and Linux Malware Detect is layered on top of it (its web-focused signatures catch the PHP shells ClamAV misses). Uploaded files are scanned in real-time.</p>}
-          {mwInstalled && mwActive && <p className="hint" style={{marginTop:8}}>Uploaded files are scanned automatically. Scheduled scans default to incremental (files changed recently) once a full baseline scan has run, with a full scan at least weekly.</p>}
+          <p className="hint">{mw.detail || tr("Checking status...")}</p>
+          {!mwInstalled && <p className="hint" style={{marginTop:8}}>{tr("When enabled, ClamAV is installed on this server, and Linux Malware Detect is layered on top of it (its web-focused signatures catch the PHP shells ClamAV misses). Uploaded files are scanned in real-time.")}</p>}
+          {mwInstalled && mwActive && <p className="hint" style={{marginTop:8}}>{tr("Uploaded files are scanned automatically. Scheduled scans default to incremental (files changed recently) once a full baseline scan has run, with a full scan at least weekly.")}</p>}
           <div className="actions" style={{marginTop:12}}>
             {!mwEnabled
-              ? <button disabled={!!loading} onClick={() => toggleMalwareScan(true)}><Shield size={14}/> Enable Malware Scanner</button>
-              : <button className="danger" disabled={!!loading} onClick={() => toggleMalwareScan(false)}>Disable Malware Scanner</button>
+              ? <button disabled={!!loading} onClick={() => toggleMalwareScan(true)}><Shield size={14}/> {tr("Enable Malware Scanner")}</button>
+              : <button className="danger" disabled={!!loading} onClick={() => toggleMalwareScan(false)}>{tr("Disable Malware Scanner")}</button>
             }
-            {mwActive && <button className="secondary" disabled={!!loading} onClick={updateMalwareSignatures}><RefreshCw size={14}/> Update signatures</button>}
+            {mwActive && <button className="secondary" disabled={!!loading} onClick={updateMalwareSignatures}><RefreshCw size={14}/> {tr("Update signatures")}</button>}
           </div>
         </div>
 
         {mwActive && !mw.lmd_installed && <div className="info-box">
           <div className="malware-scan-head">
             <div>
-              <strong>Linux Malware Detect <span className="badge">Not installed</span></strong>
-              <p className="hint">This box runs ClamAV only. Add LMD for its web-focused signatures (PHP shells, injected malware ClamAV misses) and the incremental <code>/home</code> scan. It reuses the running clamd, so no extra daemon. Fresh installs get it automatically.</p>
+              <strong>{tr("Linux Malware Detect")} <span className="badge">{tr("Not installed")}</span></strong>
+              <p className="hint">{tr("This box runs ClamAV only. Add LMD for its web-focused signatures (PHP shells, injected malware ClamAV misses) and the incremental")} <code>/home</code> {tr("scan. It reuses the running clamd, so no extra daemon. Fresh installs get it automatically.")}</p>
             </div>
-            <button disabled={!!loading} onClick={installLmd}><Shield size={14}/> Add Linux Malware Detect</button>
+            <button disabled={!!loading} onClick={installLmd}><Shield size={14}/> {tr("Add Linux Malware Detect")}</button>
           </div>
         </div>}
 
         {mwActive && mw.lmd_installed && <div className="info-box">
           <div className="malware-scan-head">
             <div>
-              <strong>Real-time protection {mw.realtime_enabled && !mw.realtime_active
-                ? <span className="badge danger">Not running</span>
-                : <span className={mw.realtime_enabled ? 'badge ok' : 'badge'}>{mw.realtime_enabled ? 'On' : 'Off'}</span>}</strong>
-              <p className="hint">Watches every file under <code>/home</code> and scans new/changed files within seconds — instead of only on schedule. Costs RAM per watched file; hits are surfaced, not auto-quarantined.</p>
+              <strong>{tr("Real-time protection")} {mw.realtime_enabled && !mw.realtime_active
+                ? <span className="badge danger">{tr("Not running")}</span>
+                : <span className={mw.realtime_enabled ? 'badge ok' : 'badge'}>{mw.realtime_enabled ? tr("On") : tr("Off")}</span>}</strong>
+              <p className="hint">{tr("Watches every file under")} <code>/home</code> {tr("and scans new/changed files within seconds — instead of only on schedule. Costs RAM per watched file; hits are surfaced, not auto-quarantined.")}</p>
               {mw.realtime_enabled && !mw.realtime_active && <p className="hint" style={{color:'var(--danger)'}}>
-                Turned on here, but the monitor service is not running — nothing is being watched right now.
-                Turn it off and on again to restart it.
+                {tr("Turned on here, but the monitor service is not running — nothing is being watched right now. Turn it off and on again to restart it.")}
               </p>}
             </div>
             {mw.realtime_enabled
-              ? <button className="danger" disabled={!!loading} onClick={() => toggleMalwareRealtime(false)}>Turn off</button>
-              : <button disabled={!!loading} onClick={() => toggleMalwareRealtime(true)}><Shield size={14}/> Turn on</button>}
+              ? <button className="danger" disabled={!!loading} onClick={() => toggleMalwareRealtime(false)}>{tr("Turn off")}</button>
+              : <button disabled={!!loading} onClick={() => toggleMalwareRealtime(true)}><Shield size={14}/> {tr("Turn on")}</button>}
           </div>
         </div>}
 
         {mwInstalled && <div className="info-box malware-scan-panel">
           {!mw.clamd_running && <div className="malware-daemon-warning">
-            <p className="hint">ClamAV daemon is not running. Start it to enable scanning.</p>
-            <button disabled={!!loading} onClick={startClamavDaemon}><Shield size={14}/> Start ClamAV</button>
+            <p className="hint">{tr("ClamAV daemon is not running. Start it to enable scanning.")}</p>
+            <button disabled={!!loading} onClick={startClamavDaemon}><Shield size={14}/> {tr("Start ClamAV")}</button>
           </div>}
           {mw.clamd_running && <div className="malware-scan-runner">
             <div className="malware-scan-head">
               <div>
-                <strong>Run a scan now</strong>
-                <p className="hint">One website, every website (<code>/home</code>), or the whole server (<code>/</code>). Scheduled scans are set up further down.</p>
+                <strong>{tr("Run a scan now")}</strong>
+                <p className="hint">{tr("One website, every website (")}<code>/home</code>{tr("), or the whole server (")}<code>/</code>{tr("). Scheduled scans are set up further down.")}</p>
               </div>
-              <button className="secondary" disabled={!!loading} onClick={loadMalwareScanJobs}><RefreshCw size={14}/> History</button>
+              <button className="secondary" disabled={!!loading} onClick={loadMalwareScanJobs}><RefreshCw size={14}/> {tr("History")}</button>
             </div>
             <div className="malware-scan-controls">
               <select value={scanTargetWebsiteId} onChange={e => { setScanTargetWebsiteId(e.target.value); setScanResults(null); setScanJob(null); }}>
-                <option value="">-- Select target --</option>
-                <option value="all">All websites (/home)</option>
-                <option value="system">Full server (/)</option>
+                <option value="">{tr("-- Select target --")}</option>
+                <option value="all">{tr("All websites (/home)")}</option>
+                <option value="system">{tr("Full server (/)")}</option>
                 {websites.map(w => <option key={w.id} value={w.id}>{w.domain}</option>)}
               </select>
               <button disabled={!!loading || scanRunning || !scanTargetWebsiteId} onClick={runMalwareScan}>
-                {scanRunning || scanLoading ? <><RefreshCw size={14} className="spin"/> Scanning...</> : <><Search size={14}/> Scan Now</>}
+                {scanRunning || scanLoading ? <><RefreshCw size={14} className="spin"/> Scanning...</> : <><Search size={14}/> {tr("Scan Now")}</>}
               </button>
             </div>
           </div>}
           {scanJobs.length > 0 && <div className="scan-history-wrap">
             <div className="scan-history-head">
-              <strong>Scan history</strong>
-              <span>{scanJobs.length} saved</span>
+              <strong>{tr("Scan history")}</strong>
+              <span>{scanJobs.length} {tr("saved")}</span>
             </div>
             <div className="scan-history-list">
               {scanJobs.slice(0, 8).map(job => <button
@@ -5658,13 +5649,13 @@ ${effect}${order}`)) return;
               <div className="progress-bar-fill" style={{width: `${Number(activeScanJob.progress_percent) || 0}%`}} />
             </div>
             <div className="scan-status-summary">
-              <span><strong>Progress</strong>{Number(activeScanJob.progress_percent) || 0}%</span>
-              <span><strong>Files scanned</strong>{activeScanJob.scanned || 0}/{activeScanJob.total_files || activeScanJob.scanned || 0}</span>
-              <span><strong>Threats found</strong>{activeScanJob.infected > 0
+              <span><strong>{tr("Progress")}</strong>{Number(activeScanJob.progress_percent) || 0}%</span>
+              <span><strong>{tr("Files scanned")}</strong>{activeScanJob.scanned || 0}/{activeScanJob.total_files || activeScanJob.scanned || 0}</span>
+              <span><strong>{tr("Threats found")}</strong>{activeScanJob.infected > 0
                 ? <span className="badge danger">{activeScanJob.infected}</span>
                 : <span className="badge ok">0</span>}
               </span>
-              <span><strong>Errors</strong>{activeScanJob.errors || 0}</span>
+              <span><strong>{tr("Errors")}</strong>{activeScanJob.errors || 0}</span>
             </div>
             {activeScanJob.message && <p className="hint">{activeScanJob.message}</p>}
             {activeScanJob.threats && activeScanJob.threats.length > 0 && <div className="scan-threat-list">
@@ -5672,8 +5663,8 @@ ${effect}${order}`)) return;
                 <strong>{t.signature}</strong>
                 <span>{t.domain ? `${t.domain}: ` : ''}{t.path}</span>
                 {(t.quarantined || quarantine.some(q => q.original_path === t.path))
-                  ? <span className="badge ok">Quarantined</span>
-                  : <button className="secondary-light" disabled={!!loading} onClick={() => quarantineThreat(t.path, t.signature)}>Quarantine</button>}
+                  ? <span className="badge ok">{tr("Quarantined")}</span>
+                  : <button className="secondary-light" disabled={!!loading} onClick={() => quarantineThreat(t.path, t.signature)}>{tr("Quarantine")}</button>}
               </div>)}
             </div>}
             {activeScanJob.log && activeScanJob.log.length > 0 && <pre className="malware-scan-log">{activeScanJob.log.join('\n')}</pre>}
@@ -5683,37 +5674,37 @@ ${effect}${order}`)) return;
         {mwActive && <div className="info-box">
           <div className="malware-scan-head">
             <div>
-              <strong>Quarantine{quarantine.length > 0 && <span className="badge" style={{marginLeft:6}}>{quarantine.length}</span>}</strong>
+              <strong>{tr("Quarantine")}{quarantine.length > 0 && <span className="badge" style={{marginLeft:6}}>{quarantine.length}</span>}</strong>
               <p className="hint">
                 {mw.auto_quarantine
-                  ? 'A file a scan flags as malware is moved here automatically and stops being served at once. Restore anything that was a false positive.'
-                  : 'Auto-quarantine is off — scans only report threats. Turn it on below, or use “Quarantine” on a scan result to move a file here manually.'}
+                  ? tr("A file a scan flags as malware is moved here automatically and stops being served at once. Restore anything that was a false positive.")
+                  : tr("Auto-quarantine is off — scans only report threats. Turn it on below, or use “Quarantine” on a scan result to move a file here manually.")}
               </p>
             </div>
-            <button className="secondary" disabled={!!loading} onClick={loadQuarantine}><RefreshCw size={14}/> Refresh</button>
+            <button className="secondary" disabled={!!loading} onClick={loadQuarantine}><RefreshCw size={14}/> {tr("Refresh")}</button>
           </div>
           <label className="check-line" style={{marginBottom: 12}}>
             <input type="checkbox" checked={!!mw.auto_quarantine} disabled={!!loading}
               onChange={e => toggleAutoQuarantine(e.target.checked)} />
-            Automatically quarantine detected malware
+            {tr("Automatically quarantine detected malware")}
           </label>
           {quarantine.length === 0
-            ? <div className="quarantine-empty"><CheckCircle size={16}/> Nothing in quarantine{mw.auto_quarantine ? ' — flagged files will show up here for review.' : '.'}</div>
+            ? <div className="quarantine-empty"><CheckCircle size={16}/> {tr("Nothing in quarantine")}{mw.auto_quarantine ? tr(" — flagged files will show up here for review.") : '.'}</div>
             : <div className="quarantine-list">
                 {quarantine.map(q => {
                   const m = /^\/home\/[^/]+\/([^/]+)\/(.+)$/.exec(q.original_path || '');
                   return <div key={q.id} className="quarantine-item">
                     <div className="quarantine-info">
                       <div className="quarantine-line">
-                        <span className="badge danger">{q.signature || 'flagged file'}</span>
+                        <span className="badge danger">{q.signature || tr("flagged file")}</span>
                         {m && <span className="quarantine-site">{m[1]}</span>}
                         <span className="quarantine-meta">{scanJobStamp({ finished_at: q.quarantined_at })} · {formatBytes(q.size || 0)}</span>
                       </div>
                       <code className="quarantine-path" title={q.original_path}>{q.original_path}</code>
                     </div>
                     <div className="quarantine-actions">
-                      <button className="secondary-light" disabled={!!loading} onClick={() => restoreQuarantine(q.id, q.original_path)}><RotateCcw size={13}/> Restore</button>
-                      <button className="danger-light" disabled={!!loading} onClick={() => deleteQuarantine(q.id, q.original_path)}><Trash2 size={13}/> Delete</button>
+                      <button className="secondary-light" disabled={!!loading} onClick={() => restoreQuarantine(q.id, q.original_path)}><RotateCcw size={13}/> {tr("Restore")}</button>
+                      <button className="danger-light" disabled={!!loading} onClick={() => deleteQuarantine(q.id, q.original_path)}><Trash2 size={13}/> {tr("Delete")}</button>
                     </div>
                   </div>;
                 })}
@@ -5724,15 +5715,15 @@ ${effect}${order}`)) return;
       {isAdmin && [
         {
           scope: 'system',
-          title: 'Full server scan',
+          title: tr("Full server scan"),
           root: '/',
-          intro: 'Walks the whole VPS as root, so malware parked in /tmp, /root or a home folder outside public_html is found too. Skips /proc, /sys, /dev, /run, /snap, the ClamAV signature database and panel backup archives. The first run can take hours; best run weekly or monthly.',
+          intro: tr("Walks the whole VPS as root, so malware parked in /tmp, /root or a home folder outside public_html is found too. Skips /proc, /sys, /dev, /run, /snap, the ClamAV signature database and panel backup archives. The first run can take hours; best run weekly or monthly."),
         },
         {
           scope: 'web',
-          title: 'Website scan (/home)',
+          title: tr("Website scan (/home)"),
           root: '/home',
-          intro: 'Scans every website’s files under /home. With Linux Malware Detect installed this runs incrementally (only files changed in the last few days) between full runs, so a daily schedule stays cheap.',
+          intro: tr("Scans every website’s files under /home. With Linux Malware Detect installed this runs incrementally (only files changed in the last few days) between full runs, so a daily schedule stays cheap."),
         },
       ].map(({ scope, title, root, intro }) => {
         const sched = malwareSchedules[scope] || {};
@@ -5743,44 +5734,44 @@ ${effect}${order}`)) return;
               <h2>{title}</h2>
               <p className="hint">{intro}</p>
             </div>
-            <button className="secondary" disabled={!!loading} onClick={loadMalwareSchedule}><RefreshCw size={14}/> Refresh</button>
+            <button className="secondary" disabled={!!loading} onClick={loadMalwareSchedule}><RefreshCw size={14}/> {tr("Refresh")}</button>
           </div>
           <div className="info-box">
-            <strong>Scheduled scan <code>{root}</code></strong>
-            <p className="hint">Runs automatically on the server clock, even when nobody is logged in to the panel. Use “Run a scan now” above for an on-demand scan.</p>
+            <strong>{tr("Scheduled scan")} <code>{root}</code></strong>
+            <p className="hint">{tr("Runs automatically on the server clock, even when nobody is logged in to the panel. Use “Run a scan now” above for an on-demand scan.")}</p>
             <div className="firewall-form">
-              <label><span>Enabled</span>
+              <label><span>{tr("Enabled")}</span>
                 <select value={sched.enabled ? 'on' : 'off'} onChange={e => setField({ enabled: e.target.value === 'on' })}>
-                  <option value="off">Off</option>
-                  <option value="on">On</option>
+                  <option value="off">{tr("Off")}</option>
+                  <option value="on">{tr("On")}</option>
                 </select>
               </label>
-              <label><span>Frequency</span>
+              <label><span>{tr("Frequency")}</span>
                 <select value={sched.frequency || 'weekly'} onChange={e => setField({ frequency: e.target.value })}>
-                  <option value="hourly">Hourly</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
+                  <option value="hourly">{tr("Hourly")}</option>
+                  <option value="daily">{tr("Daily")}</option>
+                  <option value="weekly">{tr("Weekly")}</option>
+                  <option value="monthly">{tr("Monthly")}</option>
                 </select>
               </label>
-              {sched.frequency === 'weekly' && <label><span>Day of week</span>
+              {sched.frequency === 'weekly' && <label><span>{tr("Day of week")}</span>
                 <select value={Number(sched.weekday) || 0} onChange={e => setField({ weekday: Number(e.target.value) })}>
                   {WEEKDAY_LABELS.map((label, index) => <option key={label} value={index}>{label}</option>)}
                 </select>
               </label>}
-              {sched.frequency === 'monthly' && <label><span>Day of month</span>
+              {sched.frequency === 'monthly' && <label><span>{tr("Day of month")}</span>
                 <input type="number" min="1" max="28" value={Number(sched.day) || 1} onChange={e => setField({ day: Number(e.target.value) })} />
               </label>}
-              {sched.frequency !== 'hourly' && <label><span>Hour</span>
+              {sched.frequency !== 'hourly' && <label><span>{tr("Hour")}</span>
                 <input type="number" min="0" max="23" value={Number(sched.hour) || 0} onChange={e => setField({ hour: Number(e.target.value) })} />
               </label>}
-              <label><span>Minute</span>
+              <label><span>{tr("Minute")}</span>
                 <input type="number" min="0" max="59" value={Number(sched.minute) || 0} onChange={e => setField({ minute: Number(e.target.value) })} />
               </label>
-              <button disabled={!!loading} onClick={() => saveMalwareSchedule(scope)}><Clock size={14}/> Save schedule</button>
+              <button disabled={!!loading} onClick={() => saveMalwareSchedule(scope)}><Clock size={14}/> {tr("Save schedule")}</button>
             </div>
             {sched.last_run_at && <p className="hint" style={{marginTop:8}}>
-              Last scheduled run: {sched.last_run_at} — <span className={sched.last_status === 'infected' ? 'badge danger' : sched.last_status === 'error' ? 'badge bad' : 'badge ok'}>{sched.last_status || 'unknown'}</span> {sched.last_message || ''}
+              {tr("Last scheduled run:")} {sched.last_run_at} — <span className={sched.last_status === 'infected' ? 'badge danger' : sched.last_status === 'error' ? 'badge bad' : 'badge ok'}>{sched.last_status || tr("unknown")}</span> {sched.last_message || ''}
             </p>}
           </div>
         </section>;
@@ -5789,102 +5780,102 @@ ${effect}${order}`)) return;
   }
 
   function renderPanelSettings() {
-    if (!isAdmin) return <section className="section"><h2>Settings</h2><p className="hint">No permission.</p></section>;
+    if (!isAdmin) return <section className="section"><h2>{tr("Settings")}</h2><p className="hint">{tr("No permission.")}</p></section>;
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>Panel settings</h2><p className="hint">Branding and hostname.</p></div>
-          <button disabled={!!loading} onClick={loadPanelSettings}><RefreshCw size={14}/> Refresh</button>
+          <div><h2>{tr("Panel settings")}</h2><p className="hint">{tr("Branding and hostname.")}</p></div>
+          <button disabled={!!loading} onClick={loadPanelSettings}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="panel-settings-grid panel-settings-compact">
-          <label><span>Panel name</span><input value={panelSettingsForm.app_name} onChange={e => setPanelSettingsForm(prev => ({ ...prev, app_name: e.target.value }))} placeholder="OPanel" /></label>
-          <label><span>Panel hostname</span><input value={panelSettingsForm.panel_hostname} onChange={e => setPanelSettingsForm(prev => ({ ...prev, panel_hostname: e.target.value }))} placeholder="panel.domain.com" /></label>
-          <label className="check-line panel-ssl-status"><input type="checkbox" checked={!!panelSettingsForm.ssl_enabled} onChange={e => setPanelSettingsForm(prev => ({ ...prev, ssl_enabled: e.target.checked }))} /> Panel SSL</label>
-          <button disabled={!!loading || !panelSettingsForm.app_name || !panelSettingsForm.panel_hostname} onClick={savePanelSettings}><SettingsIcon size={14}/> Save settings</button>
+          <label><span>{tr("Panel name")}</span><input value={panelSettingsForm.app_name} onChange={e => setPanelSettingsForm(prev => ({ ...prev, app_name: e.target.value }))} placeholder={tr("OPanel")} /></label>
+          <label><span>{tr("Panel hostname")}</span><input value={panelSettingsForm.panel_hostname} onChange={e => setPanelSettingsForm(prev => ({ ...prev, panel_hostname: e.target.value }))} placeholder="panel.domain.com" /></label>
+          <label className="check-line panel-ssl-status"><input type="checkbox" checked={!!panelSettingsForm.ssl_enabled} onChange={e => setPanelSettingsForm(prev => ({ ...prev, ssl_enabled: e.target.checked }))} /> {tr("Panel SSL")}</label>
+          <button disabled={!!loading || !panelSettingsForm.app_name || !panelSettingsForm.panel_hostname} onClick={savePanelSettings}><SettingsIcon size={14}/> {tr("Save settings")}</button>
         </div>
       </section>
       <section className="section">
         <div className="section-title">
           <div>
-            <h2>Server network</h2>
-            <p className="hint">Addresses this server answers on. Detected live, so an IPv6 block added later shows up here.</p>
+            <h2>{tr("Server network")}</h2>
+            <p className="hint">{tr("Addresses this server answers on. Detected live, so an IPv6 block added later shows up here.")}</p>
           </div>
-          <button disabled={!!loading} onClick={loadNetworkStatus}><RefreshCw size={14}/> Refresh</button>
+          <button disabled={!!loading} onClick={loadNetworkStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="info-box">
           <div className="network-address-row">
-            <strong>IPv4</strong>
+            <strong>{tr("IPv4")}</strong>
             {(networkStatus.ipv4 || []).length > 0
               ? (networkStatus.ipv4 || []).map(address => <code key={address}>{address}</code>)
-              : <span className="hint">None detected</span>}
+              : <span className="hint">{tr("None detected")}</span>}
           </div>
           <div className="network-address-row">
-            <strong>IPv6</strong>
+            <strong>{tr("IPv6")}</strong>
             {(networkStatus.ipv6 || []).length > 0
               ? (networkStatus.ipv6 || []).map(address => <code key={address}>{address}</code>)
-              : <span className="hint">None detected</span>}
+              : <span className="hint">{tr("None detected")}</span>}
             {networkStatus.ipv6_available
-              ? (networkStatus.ipv6_enabled ? <span className="badge ok">Enabled</span> : <span className="badge">Disabled</span>)
-              : <span className="badge warn">Not available</span>}
+              ? (networkStatus.ipv6_enabled ? <span className="badge ok">{tr("Enabled")}</span> : <span className="badge">{tr("Disabled")}</span>)
+              : <span className="badge warn">{tr("Not available")}</span>}
           </div>
           <div className="actions" style={{marginTop:12}}>
             {networkStatus.ipv6_enabled
-              ? <button className="danger" disabled={!!loading} onClick={() => toggleIpv6(false)}>Disable IPv6</button>
-              : <button disabled={!!loading || !networkStatus.ipv6_available} onClick={() => toggleIpv6(true)}><Network size={14}/> Enable IPv6</button>}
+              ? <button className="danger" disabled={!!loading} onClick={() => toggleIpv6(false)}>{tr("Disable IPv6")}</button>
+              : <button disabled={!!loading || !networkStatus.ipv6_available} onClick={() => toggleIpv6(true)}><Network size={14}/> {tr("Enable IPv6")}</button>}
           </div>
           <p className="hint" style={{marginTop:8}}>
             {networkStatus.ipv6_available
-              ? 'Websites and the panel listen on both protocols while this is on. Point an AAAA record at the address above.'
-              : 'No global IPv6 address is configured on this server yet. Add one at your provider, then refresh.'}
+              ? tr("Websites and the panel listen on both protocols while this is on. Point an AAAA record at the address above.")
+              : tr("No global IPv6 address is configured on this server yet. Add one at your provider, then refresh.")}
           </p>
         </div>
       </section>
       <section className="section">
         <div className="section-title">
-          <div><h2>Brand assets</h2><p className="hint">Upload PNG, JPG, WEBP, or ICO files up to 1 MB.</p></div>
+          <div><h2>{tr("Brand assets")}</h2><p className="hint">{tr("Upload PNG, JPG, WEBP, or ICO files up to 1 MB.")}</p></div>
         </div>
         <div className="brand-asset-grid">
           <div className="brand-asset-card">
             <div className="brand-preview">{renderBrandMark('settings-brand-mark')}</div>
-            <label><span>Logo</span><input type="file" accept="image/png,image/jpeg,image/webp,image/x-icon" onChange={e => setPanelLogoFile(e.target.files?.[0] || null)} /></label>
-            <button disabled={!!loading || !panelLogoFile} onClick={() => uploadPanelAsset('logo')}><Upload size={14}/> Upload logo</button>
+            <label><span>{tr("Logo")}</span><input type="file" accept="image/png,image/jpeg,image/webp,image/x-icon" onChange={e => setPanelLogoFile(e.target.files?.[0] || null)} /></label>
+            <button disabled={!!loading || !panelLogoFile} onClick={() => uploadPanelAsset('logo')}><Upload size={14}/> {tr("Upload logo")}</button>
           </div>
           <div className="brand-asset-card">
             <div className="brand-preview favicon-preview">{panelSettings.favicon_url ? <img src={panelSettings.favicon_url} alt="" /> : <Image size={28}/>}</div>
-            <label><span>Favicon</span><input type="file" accept="image/png,image/jpeg,image/webp,image/x-icon" onChange={e => setPanelFaviconFile(e.target.files?.[0] || null)} /></label>
-            <button disabled={!!loading || !panelFaviconFile} onClick={() => uploadPanelAsset('favicon')}><Upload size={14}/> Upload favicon</button>
+            <label><span>{tr("Favicon")}</span><input type="file" accept="image/png,image/jpeg,image/webp,image/x-icon" onChange={e => setPanelFaviconFile(e.target.files?.[0] || null)} /></label>
+            <button disabled={!!loading || !panelFaviconFile} onClick={() => uploadPanelAsset('favicon')}><Upload size={14}/> {tr("Upload favicon")}</button>
           </div>
         </div>
       </section>
       <section className="section">
         <div className="section-title">
-          <div><h2>API Tokens</h2><p className="hint">Provisioning tokens for WHMCS or external billing systems.</p></div>
-          <button disabled={!!loading} onClick={loadApiTokens}><RefreshCw size={14}/> Refresh</button>
+          <div><h2>{tr("API Tokens")}</h2><p className="hint">{tr("Provisioning tokens for WHMCS or external billing systems.")}</p></div>
+          <button disabled={!!loading} onClick={loadApiTokens}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         {createdToken && <div className="token-created-notice">
-          <p><strong>Token created!</strong> Copy it now — it will not be shown again.</p>
+          <p><strong>{tr("Token created!")}</strong> {tr("Copy it now — it will not be shown again.")}</p>
           <div className="token-copy-row">
             <code>{createdToken.token}</code>
-            <button className="mini" onClick={() => { copyToClipboard(createdToken.token); setNotice('Copied to clipboard.'); }}><Copy size={14}/> Copy</button>
+            <button className="mini" onClick={() => { copyToClipboard(createdToken.token); setNotice(tr("Copied to clipboard.")); }}><Copy size={14}/> {tr("Copy")}</button>
           </div>
-          <button className="mini secondary-light" onClick={() => setCreatedToken(null)}>Dismiss</button>
+          <button className="mini secondary-light" onClick={() => setCreatedToken(null)}>{tr("Dismiss")}</button>
         </div>}
         <div className="token-create-form">
-          <label><span>Name</span><input value={apiTokenForm.name} onChange={e => setApiTokenForm(prev => ({ ...prev, name: e.target.value }))} placeholder="WHMCS Production" /></label>
-          <label><span>Expires (days)</span><input type="number" min="1" max="3650" value={apiTokenForm.expires_days} onChange={e => setApiTokenForm(prev => ({ ...prev, expires_days: parseInt(e.target.value) || 365 }))} /></label>
-          <label><span>IP allowlist</span><input value={apiTokenForm.ip_allowlist} onChange={e => setApiTokenForm(prev => ({ ...prev, ip_allowlist: e.target.value }))} placeholder="Optional, comma-separated" /></label>
-          <button disabled={!!loading || !apiTokenForm.name.trim()} onClick={createApiToken}><Plus size={14}/> Create token</button>
+          <label><span>{tr("Name")}</span><input value={apiTokenForm.name} onChange={e => setApiTokenForm(prev => ({ ...prev, name: e.target.value }))} placeholder={tr("WHMCS Production")} /></label>
+          <label><span>{tr("Expires (days)")}</span><input type="number" min="1" max="3650" value={apiTokenForm.expires_days} onChange={e => setApiTokenForm(prev => ({ ...prev, expires_days: parseInt(e.target.value) || 365 }))} /></label>
+          <label><span>{tr("IP allowlist")}</span><input value={apiTokenForm.ip_allowlist} onChange={e => setApiTokenForm(prev => ({ ...prev, ip_allowlist: e.target.value }))} placeholder={tr("Optional, comma-separated")} /></label>
+          <button disabled={!!loading || !apiTokenForm.name.trim()} onClick={createApiToken}><Plus size={14}/> {tr("Create token")}</button>
         </div>
-        {apiTokens.length === 0 && <p className="hint">No API tokens yet.</p>}
+        {apiTokens.length === 0 && <p className="hint">{tr("No API tokens yet.")}</p>}
         {apiTokens.length > 0 && <div className="table">
           {apiTokens.map(t => <div className="row" key={t.id}>
             <div className="token-info">
               <strong>{t.name}</strong>
               <small>{t.scopes.join(', ')}</small>
-              <small>Prefix: {t.prefix}... | Created: {t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}{t.last_used_at ? ` | Last used: ${new Date(t.last_used_at).toLocaleDateString()}` : ''}</small>
+              <small>{tr("Prefix:")} {t.prefix}{tr("... | Created:")} {t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}{t.last_used_at ? tr(" | Last used: {0}", new Date(t.last_used_at).toLocaleDateString()) : ''}</small>
             </div>
-            <span className="badge ok">Active</span>
-            <button className="mini danger" disabled={!!loading} onClick={() => deleteApiToken(t)}><Trash2 size={14}/> Delete</button>
+            <span className="badge ok">{tr("Active")}</span>
+            <button className="mini danger" disabled={!!loading} onClick={() => deleteApiToken(t)}><Trash2 size={14}/> {tr("Delete")}</button>
           </div>)}
         </div>}
       </section>
@@ -5892,17 +5883,17 @@ ${effect}${order}`)) return;
   }
 
   function renderUsers() {
-    if (!isAdmin) return <section className="section"><h2>Users</h2><p className="hint">No permission.</p></section>;
+    if (!isAdmin) return <section className="section"><h2>{tr("Users")}</h2><p className="hint">{tr("No permission.")}</p></section>;
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>Panel Users</h2><p className="hint">Manage panel accounts, hosting packages, and create new users.</p></div>
-          <button disabled={!!loading} onClick={loadUsers}><RefreshCw size={14}/> Refresh</button>
+          <div><h2>{tr("Panel Users")}</h2><p className="hint">{tr("Manage panel accounts, hosting packages, and create new users.")}</p></div>
+          <button disabled={!!loading} onClick={loadUsers}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="tab-bar">
-          <button className={usersTab === 'list' ? 'tab active' : 'tab'} onClick={() => setUsersTab('list')}><Users size={14}/> List Users</button>
-          <button className={usersTab === 'packages' ? 'tab active' : 'tab'} onClick={() => setUsersTab('packages')}><PackageOpen size={14}/> Packages</button>
-          <button className={usersTab === 'add' ? 'tab active' : 'tab'} onClick={() => setUsersTab('add')}><Plus size={14}/> Add User</button>
+          <button className={usersTab === 'list' ? 'tab active' : 'tab'} onClick={() => setUsersTab('list')}><Users size={14}/> {tr("List Users")}</button>
+          <button className={usersTab === 'packages' ? 'tab active' : 'tab'} onClick={() => setUsersTab('packages')}><PackageOpen size={14}/> {tr("Packages")}</button>
+          <button className={usersTab === 'add' ? 'tab active' : 'tab'} onClick={() => setUsersTab('add')}><Plus size={14}/> {tr("Add User")}</button>
         </div>
       </section>
       {usersTab === 'list' && renderUsersListTab()}
@@ -5913,65 +5904,65 @@ ${effect}${order}`)) return;
 
   function renderUsersListTab() {
     return <section className="section">
-      {users.length === 0 && <EmptyState icon={Users} message="No users found." />}
+      {users.length === 0 && <EmptyState icon={Users} message={tr("No users found.")} />}
       <div className="table">
         {users.map(user => <div className="row user-row" key={user.id}>
           <div className="user-main"><strong>{user.username}</strong><small>{user.email}</small></div>
           <span className="badge">{roleLabel(user.role)}</span>
-          <span className={`badge ${user.is_active ? 'ok' : 'warn'}`}>{user.is_active ? 'Active' : 'Suspended'}</span>
+          <span className={`badge ${user.is_active ? 'ok' : 'warn'}`}>{user.is_active ? tr("Active") : tr("Suspended")}</span>
           <span className={`user-metric${user.storage_used_bytes == null ? ' pending' : ''}`}><HardDrive size={13}/>{storageUsageText(user)}</span>
           <div className="row-actions">
-            <button className="mini secondary-light" disabled={!!loading} onClick={() => startEditingUser(user)}><Pencil size={14}/> Edit</button>
-            <button className="mini secondary-light" disabled={!!loading} onClick={() => quickLoginUser(user)}><LogIn size={14}/> Login as</button>
-            {user.id !== currentUser?.id && <button className={`mini ${user.is_active ? 'danger' : 'secondary-light'}`} disabled={!!loading} onClick={() => toggleUserActive(user)}>{user.is_active ? <><Ban size={14}/> Suspend</> : <><CheckCircle size={14}/> Unsuspend</>}</button>}
-            {user.totp_enabled && user.id !== currentUser?.id && <button className="mini secondary-light" disabled={!!loading} onClick={() => resetUserTwoFactor(user)}>Reset 2FA</button>}
+            <button className="mini secondary-light" disabled={!!loading} onClick={() => startEditingUser(user)}><Pencil size={14}/> {tr("Edit")}</button>
+            <button className="mini secondary-light" disabled={!!loading} onClick={() => quickLoginUser(user)}><LogIn size={14}/> {tr("Login as")}</button>
+            {user.id !== currentUser?.id && <button className={`mini ${user.is_active ? 'danger' : 'secondary-light'}`} disabled={!!loading} onClick={() => toggleUserActive(user)}>{user.is_active ? <><Ban size={14}/> {tr("Suspend")}</> : <><CheckCircle size={14}/> {tr("Unsuspend")}</>}</button>}
+            {user.totp_enabled && user.id !== currentUser?.id && <button className="mini secondary-light" disabled={!!loading} onClick={() => resetUserTwoFactor(user)}>{tr("Reset 2FA")}</button>}
             {user.id !== currentUser?.id && <button className="mini danger" disabled={!!loading} onClick={() => deletePanelUser(user)}><Trash2 size={14}/></button>}
           </div>
           {editingUser?.id === user.id && <div className="user-edit-panel">
             <div className="user-edit-heading">
-              <div><strong>Edit {user.username}</strong><small>
-                {user.id === currentUser?.id ? 'Role is locked for the active admin session.' : 'Role changes sign the user out of existing sessions.'}
-                {editingUserForm.role === 'admin' ? ' Admin accounts bypass website and storage limits.' : ''}
+              <div><strong>{tr("Edit")} {user.username}</strong><small>
+                {user.id === currentUser?.id ? tr("Role is locked for the active admin session.") : tr("Role changes sign the user out of existing sessions.")}
+                {editingUserForm.role === 'admin' ? tr(" Admin accounts bypass website and storage limits.") : ''}
               </small></div>
-              <button className="user-edit-close secondary-light" onClick={cancelEditingUser} aria-label="Close user editor" title="Close user editor"><X size={16}/></button>
+              <button className="user-edit-close secondary-light" onClick={cancelEditingUser} aria-label={tr("Close user editor")} title={tr("Close user editor")}><X size={16}/></button>
             </div>
             <div className="user-edit-grid">
-              <label><span>Email</span><input type="email" value={editingUserForm.email} onChange={e => setEditingUserForm(prev => ({ ...prev, email: e.target.value }))} /></label>
-              <label><span>Role</span><select value={editingUserForm.role} disabled={user.id === currentUser?.id} onChange={e => setEditingUserForm(prev => ({ ...prev, role: e.target.value }))}>
-                <option value="end_user">End user</option><option value="admin">Admin</option>
+              <label><span>{tr("Email")}</span><input type="email" value={editingUserForm.email} onChange={e => setEditingUserForm(prev => ({ ...prev, email: e.target.value }))} /></label>
+              <label><span>{tr("Role")}</span><select value={editingUserForm.role} disabled={user.id === currentUser?.id} onChange={e => setEditingUserForm(prev => ({ ...prev, role: e.target.value }))}>
+                <option value="end_user">{tr("End user")}</option><option value="admin">{tr("Admin")}</option>
               </select></label>
-              <label><span>Package</span><select value={editingUserForm._planId || ''} onChange={e => {
+              <label><span>{tr("Package")}</span><select value={editingUserForm._planId || ''} onChange={e => {
                 const planId = e.target.value;
                 const plan = plans.find(p => String(p.id) === planId);
                 if (plan) setEditingUserForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb }));
                 else setEditingUserForm(prev => ({ ...prev, _planId: '' }));
               }}>
-                <option value="">Custom</option>
-                {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} sites, {p.storage_limit_mb > 0 ? `${p.storage_limit_mb} MB` : 'unlimited'})</option>)}
+                <option value="">{tr("Custom")}</option>
+                {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} {tr("sites,")} {p.storage_limit_mb > 0 ? tr("{0} MB", p.storage_limit_mb) : tr("unlimited")})</option>)}
               </select></label>
-              <label><span>Site limit</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
-              <label><span>Disk limit (MB) <em>0 = unlimited</em></span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
-              <label><span>New password <small>(leave empty to keep)</small></span><input type="password" value={editingUserForm._password || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, _password: e.target.value }))} placeholder="Min 12 characters" /></label>
+              <label><span>{tr("Site limit")}</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
+              <label><span>{tr("Disk limit (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
+              <label><span>{tr("New password")} <small>{tr("(leave empty to keep)")}</small></span><input type="password" value={editingUserForm._password || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, _password: e.target.value }))} placeholder={tr("Min 12 characters")} /></label>
             </div>
             <div className="user-edit-actions">
-              <button className="secondary-light" onClick={cancelEditingUser}>Cancel</button>
-              <button disabled={!!loading || !editingUserForm.email.trim()} onClick={updatePanelUser}><Save size={14}/> Save changes</button>
+              <button className="secondary-light" onClick={cancelEditingUser}>{tr("Cancel")}</button>
+              <button disabled={!!loading || !editingUserForm.email.trim()} onClick={updatePanelUser}><Save size={14}/> {tr("Save changes")}</button>
             </div>
           </div>}
         </div>)}
       </div>
       <div className="section" style={{marginTop:16}}>
-        <h2>Assign domain to user</h2>
+        <h2>{tr("Assign domain to user")}</h2>
         <div className="assign-row">
           <select value={assignWebsiteId} onChange={e => setAssignWebsiteId(e.target.value)}>
-            <option value="">Select domain</option>
+            <option value="">{tr("Select domain")}</option>
             {websites.map(site => <option key={site.id} value={site.id}>{site.domain}</option>)}
           </select>
           <select value={assignUserId} onChange={e => setAssignUserId(e.target.value)}>
-            <option value="">Select user</option>
+            <option value="">{tr("Select user")}</option>
             {users.map(user => <option key={user.id} value={user.id}>{user.username} ({roleLabel(user.role)})</option>)}
           </select>
-          <button disabled={!assignWebsiteId || !assignUserId || !!loading} onClick={assignDomainToUser}>Assign</button>
+          <button disabled={!assignWebsiteId || !assignUserId || !!loading} onClick={assignDomainToUser}>{tr("Assign")}</button>
         </div>
       </div>
     </section>;
@@ -5981,41 +5972,41 @@ ${effect}${order}`)) return;
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>Hosting Packages</h2><p className="hint">Manage provisioning plans for WHMCS and billing systems.</p></div>
-          <button disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> Refresh</button>
+          <div><h2>{tr("Hosting Packages")}</h2><p className="hint">{tr("Manage provisioning plans for WHMCS and billing systems.")}</p></div>
+          <button disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="token-create-form">
-          <label><span>Name</span><input value={newPlan.name} onChange={e => { const name = e.target.value; setNewPlan(prev => ({ ...prev, name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') })); }} placeholder="Starter" /></label>
-          <label><span>Sites</span><input type="number" min="0" value={newPlan.website_limit} onChange={e => setNewPlan(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
-          <label><span>Disk (MB) <em>0 = unlimited</em></span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
-          <button disabled={!!loading || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> Add</button>
+          <label><span>{tr("Name")}</span><input value={newPlan.name} onChange={e => { const name = e.target.value; setNewPlan(prev => ({ ...prev, name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') })); }} placeholder={tr("Starter")} /></label>
+          <label><span>{tr("Sites")}</span><input type="number" min="0" value={newPlan.website_limit} onChange={e => setNewPlan(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
+          <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
+          <button disabled={!!loading || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> {tr("Add")}</button>
         </div>
-        {plans.length === 0 && <p className="hint">No packages yet. Create one above.</p>}
+        {plans.length === 0 && <p className="hint">{tr("No packages yet. Create one above.")}</p>}
         {plans.length > 0 && <div className="table">
           {plans.map(plan => <div className="row" key={plan.id}>
             <div className="token-info">
               <strong>{plan.name}</strong>
-              <small>{plan.website_limit} site{plan.website_limit !== 1 ? 's' : ''} | {plan.storage_limit_mb > 0 ? (plan.storage_limit_mb >= 1024 ? `${(plan.storage_limit_mb/1024).toFixed(plan.storage_limit_mb % 1024 ? 1 : 0)} GB` : `${plan.storage_limit_mb} MB`) : 'Unlimited disk'}</small>
+              <small>{plan.website_limit} {tr("site")}{plan.website_limit !== 1 ? 's' : ''} | {plan.storage_limit_mb > 0 ? (plan.storage_limit_mb >= 1024 ? tr("{0} GB", (plan.storage_limit_mb/1024).toFixed(plan.storage_limit_mb % 1024 ? 1 : 0)) : tr("{0} MB", plan.storage_limit_mb)) : tr("Unlimited disk")}</small>
             </div>
-            <span className={plan.active ? 'badge ok' : 'badge'}>{plan.active ? 'Active' : 'Inactive'}</span>
+            <span className={plan.active ? 'badge ok' : 'badge'}>{plan.active ? tr("Active") : tr("Inactive")}</span>
             <div className="row-actions">
-              <button className="mini secondary-light" onClick={() => startEditingPlan(plan)}><Pencil size={14}/> Edit</button>
+              <button className="mini secondary-light" onClick={() => startEditingPlan(plan)}><Pencil size={14}/> {tr("Edit")}</button>
               <button className="mini danger" onClick={() => deletePlanItem(plan)}><Trash2 size={14}/></button>
             </div>
             {editingPlan?.id === plan.id && <div className="user-edit-panel">
               <div className="user-edit-heading">
-                <strong>Edit {plan.name}</strong>
+                <strong>{tr("Edit")} {plan.name}</strong>
                 <button className="user-edit-close secondary-light" onClick={() => setEditingPlan(null)}><X size={16}/></button>
               </div>
               <div className="user-edit-grid">
-                <label><span>Name</span><input value={editingPlanForm.name} onChange={e => setEditingPlanForm(prev => ({ ...prev, name: e.target.value }))} /></label>
-                <label><span>Sites</span><input type="number" min="0" value={editingPlanForm.website_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
-                <label><span>Disk (MB) <em>0 = unlimited</em></span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
-                <label className="check-line"><input type="checkbox" checked={editingPlanForm.active} onChange={e => setEditingPlanForm(prev => ({ ...prev, active: e.target.checked }))} /> Active</label>
+                <label><span>{tr("Name")}</span><input value={editingPlanForm.name} onChange={e => setEditingPlanForm(prev => ({ ...prev, name: e.target.value }))} /></label>
+                <label><span>{tr("Sites")}</span><input type="number" min="0" value={editingPlanForm.website_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
+                <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
+                <label className="check-line"><input type="checkbox" checked={editingPlanForm.active} onChange={e => setEditingPlanForm(prev => ({ ...prev, active: e.target.checked }))} /> {tr("Active")}</label>
               </div>
               <div className="user-edit-actions">
-                <button className="secondary-light" onClick={() => setEditingPlan(null)}>Cancel</button>
-                <button disabled={!!loading} onClick={updatePlan}><Save size={14}/> Save</button>
+                <button className="secondary-light" onClick={() => setEditingPlan(null)}>{tr("Cancel")}</button>
+                <button disabled={!!loading} onClick={updatePlan}><Save size={14}/> {tr("Save")}</button>
               </div>
             </div>}
           </div>)}
@@ -6028,16 +6019,16 @@ ${effect}${order}`)) return;
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>Add panel user</h2><p className="hint">Panel username is also the Linux user. Select a package to auto-fill limits.</p></div>
+          <div><h2>{tr("Add panel user")}</h2><p className="hint">{tr("Panel username is also the Linux user. Select a package to auto-fill limits.")}</p></div>
         </div>
         <div className="user-create-card">
-          <label><span>Username</span><input value={newUser.username} onChange={e => setNewUser(prev => ({ ...prev, username: e.target.value.toLowerCase() }))} placeholder="johndoe" /></label>
-          <label><span>Email</span><input value={newUser.email} onChange={e => setNewUser(prev => ({ ...prev, email: e.target.value }))} placeholder="user@domain.com" /></label>
-          <label><span>Password</span><input value={newUser.password} onChange={e => setNewUser(prev => ({ ...prev, password: e.target.value }))} placeholder="Min 12 characters" type="password" /></label>
-          <label><span>Role</span><select value={newUser.role} onChange={e => setNewUser(prev => ({ ...prev, role: e.target.value }))}>
-            <option value="end_user">End user</option><option value="admin">Admin</option>
+          <label><span>{tr("Username")}</span><input value={newUser.username} onChange={e => setNewUser(prev => ({ ...prev, username: e.target.value.toLowerCase() }))} placeholder={tr("johndoe")} /></label>
+          <label><span>{tr("Email")}</span><input value={newUser.email} onChange={e => setNewUser(prev => ({ ...prev, email: e.target.value }))} placeholder="user@domain.com" /></label>
+          <label><span>{tr("Password")}</span><input value={newUser.password} onChange={e => setNewUser(prev => ({ ...prev, password: e.target.value }))} placeholder={tr("Min 12 characters")} type="password" /></label>
+          <label><span>{tr("Role")}</span><select value={newUser.role} onChange={e => setNewUser(prev => ({ ...prev, role: e.target.value }))}>
+            <option value="end_user">{tr("End user")}</option><option value="admin">{tr("Admin")}</option>
           </select></label>
-          <label><span>Package</span><select value={newUser._planId || ''} onChange={e => {
+          <label><span>{tr("Package")}</span><select value={newUser._planId || ''} onChange={e => {
             const planId = e.target.value;
             const plan = plans.find(p => String(p.id) === planId);
             if (plan) {
@@ -6046,12 +6037,12 @@ ${effect}${order}`)) return;
               setNewUser(prev => ({ ...prev, _planId: '' }));
             }
           }}>
-            <option value="">Custom</option>
-            {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} sites, {p.storage_limit_mb > 0 ? `${p.storage_limit_mb} MB` : 'unlimited'})</option>)}
+            <option value="">{tr("Custom")}</option>
+            {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} {tr("sites,")} {p.storage_limit_mb > 0 ? tr("{0} MB", p.storage_limit_mb) : tr("unlimited")})</option>)}
           </select></label>
-          <label><span>Site limit</span><input type="number" value={newUser.website_limit} onChange={e => setNewUser(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
-          <label><span>Disk (MB) <em>0 = unlimited</em></span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
-          <button disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> Create user</button>
+          <label><span>{tr("Site limit")}</span><input type="number" value={newUser.website_limit} onChange={e => setNewUser(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
+          <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
+          <button disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> {tr("Create user")}</button>
         </div>
       </section>
     </>;
@@ -6064,17 +6055,17 @@ ${effect}${order}`)) return;
     return <main className="standalone-editor-page">
       <header className="standalone-editor-top">
         <div className="standalone-editor-title">
-          <strong>{filePath || 'No file selected'}</strong>
+          <strong>{filePath || tr("No file selected")}</strong>
           <span>{siteLabel}</span>
         </div>
         <div className="standalone-editor-actions">
           <span className="editor-chip">{editorMode}</span>
-          <span className="editor-chip">{editorLineCount} line(s)</span>
-          <span className="editor-chip">Ln {editorCursor.line}, Col {editorCursor.column}</span>
-          <button disabled={!selectedWebsiteId || !!loading} onClick={() => readFile(filePath)}><RefreshCw size={14}/> Reload</button>
-          <button disabled={!selectedWebsiteId || !!loading} onClick={writeFile}>Save</button>
+          <span className="editor-chip">{editorLineCount} {tr("line(s)")}</span>
+          <span className="editor-chip">{tr("Ln")} {editorCursor.line}{tr(", Col")} {editorCursor.column}</span>
+          <button disabled={!selectedWebsiteId || !!loading} onClick={() => readFile(filePath)}><RefreshCw size={14}/> {tr("Reload")}</button>
+          <button disabled={!selectedWebsiteId || !!loading} onClick={writeFile}>{tr("Save")}</button>
           <button disabled={!selectedWebsiteId || !filePath || !!loading} onClick={() => downloadFile(filePath)}><Download size={14}/></button>
-          <button className="secondary-light" onClick={() => window.close()}><X size={14}/> Close</button>
+          <button className="secondary-light" onClick={() => window.close()}><X size={14}/> {tr("Close")}</button>
         </div>
       </header>
       {loading && <div className="loading">{loading}</div>}
@@ -6119,30 +6110,32 @@ ${effect}${order}`)) return;
   // Login screen
   if (bootstrapping) {
     return <main className="login-page">
-      <button type="button" className="theme-toggle-btn" onClick={toggleTheme} aria-label="Toggle dark mode" title="Toggle dark mode">{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button>
+      <button type="button" className="theme-toggle-btn" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button>
+      {renderLanguageToggle('lang-toggle-btn', 15)}
       <section className="login-card">
-        <div className="login-brand">{renderBrandMark('login-brand-mark')}<div><p className="eyebrow">{panelSettings.app_name || 'opanel'}</p><h1>Loading…</h1></div></div>
+        <div className="login-brand">{renderBrandMark('login-brand-mark')}<div><p className="eyebrow">{panelSettings.app_name || tr("opanel")}</p><h1>{tr("Loading…")}</h1></div></div>
       </section>
     </main>;
   }
 
   if (!isAuthenticated) {
     return <main className="login-page">
-      <button type="button" className="theme-toggle-btn" onClick={toggleTheme} aria-label="Toggle dark mode" title="Toggle dark mode">{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button>
+      <button type="button" className="theme-toggle-btn" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button>
+      {renderLanguageToggle('lang-toggle-btn', 15)}
       <section className="login-card">
         <div className="login-brand">
           {renderBrandMark('login-brand-mark')}
           <div>
-            <p className="eyebrow">Server Management Panel</p>
-            <h1>{panelSettings.app_name || 'opanel'}</h1>
-            <p className="hint">Manage websites, databases, backups, SSL, and services.</p>
+            <p className="eyebrow">{tr("Server Management Panel")}</p>
+            <h1>{panelSettings.app_name || tr("opanel")}</h1>
+            <p className="hint">{tr("Manage websites, databases, backups, SSL, and services.")}</p>
           </div>
         </div>
         <div className="login-form">
-          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" autoComplete="username" />
-          <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type="password" autoComplete="current-password" onKeyDown={e => { if (e.key === 'Enter') login(); }} />
-          {needsTwoFactor && <input value={otpCode} onChange={e => setOtpCode(e.target.value)} placeholder="Authentication code" inputMode="numeric" autoComplete="one-time-code" onKeyDown={e => { if (e.key === 'Enter') login(); }} />}
-          <button disabled={!!loading || !username || !password} onClick={login}>{loading ? 'Logging in...' : 'Login'}</button>
+          <input value={username} onChange={e => setUsername(e.target.value)} placeholder={tr("Username")} autoComplete="username" />
+          <input value={password} onChange={e => setPassword(e.target.value)} placeholder={tr("Password")} type="password" autoComplete="current-password" onKeyDown={e => { if (e.key === 'Enter') login(); }} />
+          {needsTwoFactor && <input value={otpCode} onChange={e => setOtpCode(e.target.value)} placeholder={tr("Authentication code")} inputMode="numeric" autoComplete="one-time-code" onKeyDown={e => { if (e.key === 'Enter') login(); }} />}
+          <button disabled={!!loading || !username || !password} onClick={login}>{loading ? tr("Logging in...") : tr("Login")}</button>
         </div>
       </section>
       {renderNotifications()}
@@ -6156,16 +6149,16 @@ ${effect}${order}`)) return;
   return <main className="app-shell">
     <section className="layout">
       {mobileMenuOpen && <div className="mobile-nav-backdrop" onClick={() => setMobileMenuOpen(false)} aria-hidden="true"></div>}
-      <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`} role="navigation" aria-label="Main navigation">
+      <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`} role="navigation" aria-label={tr("Main navigation")}>
         <div className="sidebar-head">
           <div className="sidebar-brand">
             {renderBrandMark()}
             <div>
-              <strong>{panelSettings.app_name || 'opanel'}</strong>
-              <small>Server Panel</small>
+              <strong>{panelSettings.app_name || tr("opanel")}</strong>
+              <small>{tr("Server Panel")}</small>
             </div>
           </div>
-          <button className="sidebar-close" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu"><X size={18}/></button>
+          <button className="sidebar-close" onClick={() => setMobileMenuOpen(false)} aria-label={tr("Close menu")}><X size={18}/></button>
         </div>
         <nav className="sidebar-nav">
           {mainNavItems.map(([key, label, Icon]) => <button key={key} type="button" className={page === key ? 'active' : ''} onClick={() => navigateToPage(key)} aria-current={page === key ? 'page' : undefined}>
@@ -6173,7 +6166,7 @@ ${effect}${order}`)) return;
           </button>)}
           <div className={`sidebar-nav-group ${settingsMenuOpen ? 'open' : ''}`}>
             <button className={`sidebar-group-toggle ${settingsIsActive ? 'active' : ''}`} onClick={() => setSettingsMenuOpen(open => !open)} aria-expanded={settingsMenuOpen} aria-controls="settings-submenu">
-              <SettingsIcon size={17}/><span>Settings</span><ChevronDown className="sidebar-group-chevron" size={16}/>
+              <SettingsIcon size={17}/><span>{tr("Settings")}</span><ChevronDown className="sidebar-group-chevron" size={16}/>
             </button>
             {settingsMenuOpen && <div className="sidebar-subnav" id="settings-submenu">
               {settingsNavItems.map(([key, label, Icon]) => <button key={key} type="button" className={page === key ? 'active' : ''} onClick={() => navigateToPage(key)} aria-current={page === key ? 'page' : undefined}>
@@ -6182,23 +6175,25 @@ ${effect}${order}`)) return;
             </div>}
           </div>
         </nav>
+        {renderLanguageToggle('secondary compact-btn sidebar-lang', 15)}
         {appVersion && <div className="sidebar-version">v{appVersion}</div>}
       </aside>
       <div className="content">
         <section className="topbar">
-          <button className="mobile-nav-toggle" onClick={() => setMobileMenuOpen(o => !o)} aria-expanded={mobileMenuOpen} aria-label="Toggle navigation">
-            <Menu size={20}/><span><ActiveIcon size={17}/>{activeNavItem?.[1] || 'Menu'}</span>
+          <button className="mobile-nav-toggle" onClick={() => setMobileMenuOpen(o => !o)} aria-expanded={mobileMenuOpen} aria-label={tr("Toggle navigation")}>
+            <Menu size={20}/><span><ActiveIcon size={17}/>{activeNavItem?.[1] || tr("Menu")}</span>
           </button>
           <div className="page-title">
-            <p className="eyebrow">Server Management Panel</p>
-            <h1>{activeNavItem?.[1] || panelSettings.app_name || 'opanel'}</h1>
+            <p className="eyebrow">{tr("Server Management Panel")}</p>
+            <h1>{activeNavItem?.[1] || panelSettings.app_name || tr("opanel")}</h1>
           </div>
           <div className="login logged-in">
-            <div className="account-pill"><span>Logged in as</span><strong>{currentUser?.username || username}</strong></div>
+            <div className="account-pill"><span>{tr("Logged in as")}</span><strong>{currentUser?.username || username}</strong></div>
             <div className="top-actions">
-              <button className="secondary compact-btn icon-only" onClick={toggleTheme} aria-label="Toggle dark mode" title="Toggle dark mode">{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
-              <button className="secondary compact-btn" onClick={openProfileModal} aria-label="Profile settings" title="Profile settings"><KeyRound size={15}/><span className="btn-label">Profile</span></button>
-              <button className="secondary compact-btn" onClick={logout} aria-label="Logout" title="Logout"><LogOut size={15}/><span className="btn-label">Logout</span></button>
+              {renderLanguageToggle('secondary compact-btn top-lang', 15)}
+              <button className="secondary compact-btn icon-only" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
+              <button className="secondary compact-btn" onClick={openProfileModal} aria-label={tr("Profile settings")} title={tr("Profile settings")}><KeyRound size={15}/><span className="btn-label">{tr("Profile")}</span></button>
+              <button className="secondary compact-btn" onClick={logout} aria-label={tr("Logout")} title={tr("Logout")}><LogOut size={15}/><span className="btn-label">{tr("Logout")}</span></button>
             </div>
           </div>
         </section>
@@ -6211,24 +6206,24 @@ ${effect}${order}`)) return;
     {showProfileModal && <div className="modal-overlay" onClick={() => setShowProfileModal(false)}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>Profile Settings</h3>
+          <h3>{tr("Profile Settings")}</h3>
           <button className="secondary-light" onClick={() => setShowProfileModal(false)}><X size={16}/></button>
         </div>
         <div className="modal-body">
           <div className="modal-section">
-            <h4>Email</h4>
+            <h4>{tr("Email")}</h4>
             <div className="profile-email-row">
               <input type="email" value={profileForm.email} onChange={e => setProfileForm(prev => ({ ...prev, email: e.target.value }))} placeholder="admin@domain.com" />
-              <button disabled={!!loading || !profileForm.email.trim() || profileForm.email === currentUser?.email} onClick={updateMyEmail}><Save size={14}/> Save</button>
+              <button disabled={!!loading || !profileForm.email.trim() || profileForm.email === currentUser?.email} onClick={updateMyEmail}><Save size={14}/> {tr("Save")}</button>
             </div>
-            <p className="hint">Used for Let's Encrypt SSL notifications and panel communication.</p>
+            <p className="hint">{tr("Used for Let's Encrypt SSL notifications and panel communication.")}</p>
           </div>
           <div className="modal-section">
-            <h4>Change Password</h4>
-            <label><span>New password</span><input type="password" value={profileForm.password} onChange={e => setProfileForm(prev => ({ ...prev, password: e.target.value }))} placeholder="Min 12 characters" /></label>
-            <label><span>Current password</span><input type="password" value={profileForm.current_password} onChange={e => setProfileForm(prev => ({ ...prev, current_password: e.target.value }))} placeholder="Required to confirm" /></label>
-            {currentUser?.totp_enabled && <label><span>2FA code</span><input value={profileForm.code} onChange={e => setProfileForm(prev => ({ ...prev, code: e.target.value }))} placeholder="6-digit code" maxLength={6} /></label>}
-            <button disabled={!!loading || !profileForm.password || profileForm.password.length < 12} onClick={changeMyPasswordFromProfile}><KeyRound size={14}/> Change password</button>
+            <h4>{tr("Change Password")}</h4>
+            <label><span>{tr("New password")}</span><input type="password" value={profileForm.password} onChange={e => setProfileForm(prev => ({ ...prev, password: e.target.value }))} placeholder={tr("Min 12 characters")} /></label>
+            <label><span>{tr("Current password")}</span><input type="password" value={profileForm.current_password} onChange={e => setProfileForm(prev => ({ ...prev, current_password: e.target.value }))} placeholder={tr("Required to confirm")} /></label>
+            {currentUser?.totp_enabled && <label><span>{tr("2FA code")}</span><input value={profileForm.code} onChange={e => setProfileForm(prev => ({ ...prev, code: e.target.value }))} placeholder={tr("6-digit code")} maxLength={6} /></label>}
+            <button disabled={!!loading || !profileForm.password || profileForm.password.length < 12} onClick={changeMyPasswordFromProfile}><KeyRound size={14}/> {tr("Change password")}</button>
           </div>
         </div>
       </div>
@@ -6236,18 +6231,18 @@ ${effect}${order}`)) return;
     {dbOwnerModal && <div className="modal-overlay" onClick={() => setDbOwnerModal(null)}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>Move database</h3>
-          <button className="secondary-light" onClick={() => setDbOwnerModal(null)} aria-label="Close"><X size={16}/></button>
+          <h3>{tr("Move database")}</h3>
+          <button className="secondary-light" onClick={() => setDbOwnerModal(null)} aria-label={tr("Close")}><X size={16}/></button>
         </div>
         <div className="modal-body">
           <div className="modal-section">
             <div className="move-db-summary">
-              <label>Database</label><strong>{dbOwnerModal.db.db_name}</strong>
-              <label>Currently</label>
-              <span>{users.find(u => u.id === dbOwnerModal.db.owner_id)?.username || `user #${dbOwnerModal.db.owner_id}`}</span>
+              <label>{tr("Database")}</label><strong>{dbOwnerModal.db.db_name}</strong>
+              <label>{tr("Currently")}</label>
+              <span>{users.find(u => u.id === dbOwnerModal.db.owner_id)?.username || tr("user #{0}", dbOwnerModal.db.owner_id)}</span>
             </div>
             <label>
-              <span>Move to</span>
+              <span>{tr("Move to")}</span>
               <select value={dbOwnerModal.ownerId}
                       onChange={e => setDbOwnerModal(prev => ({ ...prev, ownerId: e.target.value }))}>
                 {dbOwnerChoices(dbOwnerModal.db).map(user => (
@@ -6255,11 +6250,11 @@ ${effect}${order}`)) return;
                 ))}
               </select>
             </label>
-            <p className="hint">The database, its MySQL user and its password do not change, so anything already connected keeps working.</p>
+            <p className="hint">{tr("The database, its MySQL user and its password do not change, so anything already connected keeps working.")}</p>
           </div>
           <div className="modal-actions">
-            <button className="secondary-light" onClick={() => setDbOwnerModal(null)}>Cancel</button>
-            <button disabled={!!loading || !dbOwnerModal.ownerId} onClick={submitDbOwnerChange}><MoveRight size={14}/> Move database</button>
+            <button className="secondary-light" onClick={() => setDbOwnerModal(null)}>{tr("Cancel")}</button>
+            <button disabled={!!loading || !dbOwnerModal.ownerId} onClick={submitDbOwnerChange}><MoveRight size={14}/> {tr("Move database")}</button>
           </div>
         </div>
       </div>
