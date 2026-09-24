@@ -4161,24 +4161,24 @@ sftp_sub_delete() {
   pkill -f "^sshd(-session)?: ${sub}(@| \[)" 2>/dev/null || true
   # The folder must be detached before anything is removed: the jail holds a
   # live mount of the website.
+  # find, not a glob: "$jail"/* skips a folder whose name starts with a dot.
   local m
-  for m in "$mp" "$jail"/*; do
+  while IFS= read -r m; do
     [[ -n "$m" && -d "$m" ]] || continue
     if mountpoint -q "$m"; then
       umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
       mountpoint -q "$m" && deny "could not detach $m; $sub was left in place"
     fi
-  done
+  done < <(printf '%s\n' "$mp"; [[ -d "$jail" ]] && find "$jail" -mindepth 1 -maxdepth 1 -type d)
   if id -u "$sub" >/dev/null 2>&1; then
     # -f: the shared uid is always "in use" by the owner's processes. Never -r.
     userdel -f "$sub" 2>/dev/null || deny "could not remove the Linux user $sub"
   fi
   if [[ -d "$jail" ]]; then
-    for m in "$jail"/*; do
-      [[ -d "$m" ]] || continue
+    while IFS= read -r m; do
       mountpoint -q "$m" && deny "a folder is still attached under $jail"
       rmdir "$m" 2>/dev/null || true
-    done
+    done < <(find "$jail" -mindepth 1 -maxdepth 1 -type d)
     rmdir "$jail" 2>/dev/null || true
   fi
   if [[ -f "$SFTP_SUB_STATE" ]]; then
