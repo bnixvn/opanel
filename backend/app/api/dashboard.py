@@ -19,7 +19,7 @@ from app.core.permissions import is_admin_role
 from app.models.entities import BackupSchedule, DatabaseAccount, User, Website
 from app.services import firewall, malware_scan, panel_settings, updates, waf
 from app.services.shell import shell
-from app.services.system import list_services
+from app.services.system import BASE_SERVICES
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 logger = logging.getLogger(__name__)
@@ -35,7 +35,9 @@ def _safe(read: Callable[[], Any], default: Any = None) -> Any:
 
 
 def _services() -> dict:
-    names = list_services()
+    # The daemons that must always run. lsphpNN units are started by
+    # OpenLiteSpeed on demand and sit "inactive" by design.
+    names = list(BASE_SERVICES)
     stopped = []
     for name in names:
         result = shell.run(["systemctl", "is-active", name], check=False)

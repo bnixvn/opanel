@@ -94,3 +94,22 @@ def test_a_failing_probe_is_left_out_not_fatal(env, monkeypatch):
     body = env.as_user("root_admin")
     assert body["firewall"] == {"enabled": None}
     assert body["websites"]["total"] == 3
+
+
+def test_a_check_older_than_the_last_update_does_not_claim_an_update(monkeypatch):
+    from app.services import updates
+    monkeypatch.setattr(updates, "_read_update_state", lambda: {
+        "installed_commit": "new", "latest_commit": "old", "remote_version": updates.APP_VERSION,
+        "last_checked_at": "2026-09-24T21:04:43Z", "last_update_finished_at": "2026-09-24T22:15:01Z"})
+    assert updates.cached_release_summary()["update_available"] is False
+    monkeypatch.setattr(updates, "_read_update_state", lambda: {
+        "installed_commit": "new", "latest_commit": "newer",
+        "last_checked_at": "2026-09-24T23:00:00Z", "last_update_finished_at": "2026-09-24T22:15:01Z"})
+    assert updates.cached_release_summary()["update_available"] is True
+
+
+def test_only_the_always_on_daemons_are_checked(monkeypatch):
+    checked = []
+    monkeypatch.setattr(dashboard.shell, "run", lambda args, check=False: checked.append(args[-1]) or SimpleNamespace(stdout="active"))
+    result = dashboard._services()
+    assert result["stopped"] == [] and not any(name.startswith("lsphp") for name in checked)

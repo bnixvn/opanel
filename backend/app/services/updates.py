@@ -270,16 +270,22 @@ def cached_release_summary() -> dict:
     """
     state = _read_update_state()
     latest_version = state.get("latest_version") or APP_VERSION
+    checked = state.get("last_checked_at") or ""
+    finished = state.get("last_update_finished_at") or ""
+    # A check older than the last update compares the new install against a
+    # branch tip recorded before it, so its commit answer is stale; fall back
+    # to the version numbers, which the update itself moved forward.
+    stale = bool(checked and finished and finished > checked)
     return {
         "current_version": APP_VERSION,
         "latest_version": latest_version,
         "update_available": _update_available(
-            state.get("installed_commit") or "",
-            state.get("latest_commit") or "",
+            "" if stale else state.get("installed_commit") or "",
+            "" if stale else state.get("latest_commit") or "",
             APP_VERSION,
             state.get("remote_version") or "",
         ),
-        "last_checked_at": state.get("last_checked_at") or "",
+        "last_checked_at": checked,
     }
 
 
