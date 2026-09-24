@@ -15,7 +15,7 @@ from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCreate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
-from app.services import file_manager, mariadb, openlitespeed, site_users, ssl, storage_quota, waf, wordpress
+from app.services import file_manager, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress
 from app.services.audit import log_action
 
 _PLACEHOLDER_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "openlitespeed"
@@ -770,6 +770,10 @@ def delete_website(website_id: int, request: Request, delete_files: bool = True,
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"Cannot delete webserver config: {exc}") from exc
     ssl.release_site_certificates(db, website)
+    try:
+        sftp_accounts.delete_for_website(db, website)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot remove SFTP logins for this website: {exc}") from exc
     if delete_files:
         if website.linux_user:
             site_users.delete_site_runtime(website.root_path, website.linux_user)

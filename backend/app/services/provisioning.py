@@ -541,7 +541,10 @@ def terminate_account(db: Session, external_id: str) -> bool:
                 )
             db.delete(db_acc)
 
-        # Remove the Linux/SFTP user and its home directory entirely.
+        # Remove the Linux/SFTP user and its home directory entirely -- and
+        # before it, any extra SFTP logins that share its uid.
+        from app.services import sftp_accounts
+        sftp_accounts.delete_for_owner(db, user)
         site_users.delete_panel_user(user.username)
         db.delete(user)
         db.commit()

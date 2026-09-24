@@ -19,7 +19,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import mariadb, openlitespeed, site_users, ssl, storage_quota, wordpress
+from app.services import mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, wordpress
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -223,6 +223,7 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
         for website in websites:
             if website.linux_user and website.linux_user != panel_linux_user:
                 raise ValueError(f"Website {website.domain} is not owned by Linux user {panel_linux_user}")
+        sftp_accounts.delete_for_owner(db, user)
         for website in websites:
             _delete_owned_website(db, website, also_deleting=[w.id for w in websites])
             deleted_domains.append(website.domain)

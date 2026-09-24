@@ -352,6 +352,23 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .crumb:hover:not(:disabled){color:var(--text)}
 .waf-site-row:hover:not(:disabled) .waf-site-open{color:var(--primary-ink)}
 
+/* SFTP */
+.sftp-connect-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.sftp-connect-grid .copy-block + .copy-block{margin-top:0}
+.sftp-primary{display:grid;gap:6px}
+.sftp-create-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px 14px;align-items:end}
+.sftp-create-submit{justify-self:start}
+.prefixed-input{display:flex;align-items:stretch;min-width:0}
+.prefixed-input span{display:flex;align-items:center;padding:0 10px;background:var(--surface-alt);border:1px solid var(--border);border-right:0;border-radius:var(--radius-sm) 0 0 var(--radius-sm);font-family:var(--font-mono);font-size:13px;color:var(--text-secondary);white-space:nowrap}
+.prefixed-input input{border-top-left-radius:0;border-bottom-left-radius:0;min-width:0}
+.password-with-generate{display:flex;gap:6px;min-width:0}
+.password-with-generate input{flex:1;min-width:0;font-family:var(--font-mono)}
+.password-with-generate .icon-only{width:38px;min-width:38px;padding:0;flex:none}
+.sftp-row{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) auto}
+.sftp-row-name,.sftp-row-folder{display:grid;gap:2px;min-width:0}
+.sftp-row-name small,.sftp-row-folder small{font-size:12px;color:var(--text-muted)}
+.sftp-row-folder code{font-family:var(--font-mono);font-size:12.5px;overflow-wrap:anywhere}
+
 /* ---------- Responsive ---------- */
 @media(max-width:950px){
   .topbar{padding:0 12px}
@@ -414,6 +431,9 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .passkey-add button{width:100%}
 
   .copy-block-code{font-size:12px}
+  .sftp-row{grid-template-columns:1fr;gap:8px}
+  .sftp-row .row-actions{justify-content:flex-start}
+  .sftp-create-submit{justify-self:stretch}
   .user-row .row-actions button{white-space:normal;height:auto;min-height:40px;line-height:1.25;padding-block:6px}
   .token-create-form.mcp-token-form{grid-template-columns:1fr}
 }

@@ -270,6 +270,30 @@ class McpToken(Base):
     user: Mapped["User"] = relationship()
 
 
+
+class SftpAccount(Base):
+    """An extra SFTP login for one folder of a hosting account.
+
+    The hosting account's own SFTP login is its Linux user and is not stored
+    here. Each row is a second Linux user, ``<owner>_<suffix>``, that shares
+    the owner's uid and group and is jailed by sshd to ``directory`` (see
+    sftp_sub_create in opanel-helper). The password lives only in /etc/shadow.
+    """
+
+    __tablename__ = "sftp_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    username: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    # The website the folder belongs to, or None for the whole account.
+    website_id: Mapped[Optional[int]] = mapped_column(ForeignKey("websites.id"), nullable=True, index=True)
+    # Absolute path on the server, inside /home/<owner>.
+    directory: Mapped[str] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    owner: Mapped["User"] = relationship()
+
+
 class HostingPlan(Base):
     __tablename__ = "hosting_plans"
 

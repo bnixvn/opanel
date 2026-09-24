@@ -3048,6 +3048,9 @@ delete_panel_user_runtime() {
     rm -f -- "$sock"
   done
   crontab -r -u "$user" 2>/dev/null || true
+  # Extra SFTP logins share this uid and group; they go first, or groupdel
+  # below refuses (their primary group) and their jails keep a live mount.
+  sftp_sub_delete_all_for_owner "$user"
   pkill -u "$user" 2>/dev/null || true
   userdel "$user" 2>/dev/null || true
   groupdel "$user" 2>/dev/null || true
@@ -3955,6 +3958,244 @@ iptables_restore_addon_precedence() {
       read -ra parts <<<"${keep[$chain]}"
       "$binary" -I INPUT "$target" "${parts[@]:2}" 2>/dev/null || true
     done
+  done
+}
+
+
+# ---------------------------------------------------------------------------
+# Extra SFTP accounts ("SFTP sub-accounts")
+#
+# A hosting account's own SFTP login is its Linux user, jailed in /home/<user>
+# (see setup_sftp_access in install.sh). A sub-account is a second login for
+# one folder of that account, with its own password:
+#
+#   * a Linux user <owner>_<suffix> sharing the owner's uid and primary group
+#     (useradd -o), so what it uploads is owned exactly like the owner's own
+#     files -- the site's PHP can read and write them, and they count against
+#     the owner's quota;
+#   * jailed by sshd in /var/lib/opanel-sftp/<sub> (root:<owner group> 0750,
+#     which is what ChrootDirectory requires and what keeps other tenants from
+#     walking in), holding one bind mount of the chosen folder;
+#   * internal-sftp only: no shell, no forwarding.
+#
+# The mounts are listed in a root-only state file and put back at boot by a
+# small standalone script (the helper refuses anything not invoked through
+# sudo by opanel, so a boot unit cannot call it).
+# ---------------------------------------------------------------------------
+opanel_SFTP_SUB_GROUP="opanel-sftp-sub"
+SFTP_JAIL_ROOT="/var/lib/opanel-sftp"
+SFTP_SUB_STATE="${SFTP_JAIL_ROOT}/.accounts"
+SFTP_MOUNT_SCRIPT="/usr/local/sbin/opanel-sftp-mounts"
+SFTP_MOUNT_UNIT="/etc/systemd/system/opanel-sftp-mounts.service"
+
+require_sftp_sub_name() {
+  local owner="$1" sub="$2"
+  require_linux_user "$owner"
+  [[ "$sub" =~ ^[a-z_][a-z0-9_-]{2,31}$ ]] || deny "invalid SFTP account name: $sub"
+  [[ "$sub" == "${owner}_"?* ]] || deny "SFTP account name must start with ${owner}_"
+  [[ "$sub" != "$owner" ]] || deny "SFTP account name must differ from the account"
+}
+
+sftp_sub_owner_of() {
+  # Prints the owner recorded for <sub>, or nothing.
+  [[ -f "$SFTP_SUB_STATE" ]] || return 0
+  awk -v s="$1" '$1 == s { print $2; exit }' "$SFTP_SUB_STATE"
+}
+
+sftp_sub_mountpoint_of() {
+  [[ -f "$SFTP_SUB_STATE" ]] || return 0
+  awk -v s="$1" '$1 == s { print $4; exit }' "$SFTP_SUB_STATE"
+}
+
+reload_sshd_service() {
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+}
+
+ensure_sftp_sub_runtime() {
+  command -v sshd >/dev/null 2>&1 || deny "OpenSSH server is not installed"
+  getent group "$opanel_SFTP_SUB_GROUP" >/dev/null || groupadd --system "$opanel_SFTP_SUB_GROUP"
+  install -d -o root -g root -m 0711 "$SFTP_JAIL_ROOT"
+  [[ -f "$SFTP_SUB_STATE" ]] || install -o root -g root -m 0600 /dev/null "$SFTP_SUB_STATE"
+
+  local cfg="/etc/ssh/sshd_config" backup
+  if ! grep -q '^# BEGIN opanel SFTP SUBACCOUNTS$' "$cfg"; then
+    backup="$(mktemp)"
+    cp -p "$cfg" "$backup"
+    cat >>"$cfg" <<'SSHD'
+# BEGIN opanel SFTP SUBACCOUNTS
+# Extra SFTP logins for one folder of a hosting account. Each is jailed in
+# /var/lib/opanel-sftp/<name>, which holds a bind mount of that folder.
+Match Group opanel-sftp-sub
+    PasswordAuthentication yes
+    ChrootDirectory /var/lib/opanel-sftp/%u
+    ForceCommand internal-sftp -d /
+    PermitTTY no
+    X11Forwarding no
+    AllowTcpForwarding no
+    PermitTunnel no
+# END opanel SFTP SUBACCOUNTS
+SSHD
+    if sshd -t >/dev/null 2>&1; then
+      reload_sshd_service
+      rm -f "$backup"
+    else
+      cp -p "$backup" "$cfg"
+      rm -f "$backup"
+      deny "sshd rejected the SFTP account block; sshd_config was left as it was"
+    fi
+  fi
+
+  cat >"$SFTP_MOUNT_SCRIPT" <<'MOUNTS'
+#!/usr/bin/env bash
+# Written by opanel-helper. Restores the bind mounts behind OPanel's extra SFTP
+# accounts after a reboot; every line of the state file is re-checked first.
+set -u
+STATE=/var/lib/opanel-sftp/.accounts
+[[ -f "$STATE" ]] || exit 0
+while read -r sub owner src mp; do
+  [[ "$sub" =~ ^[a-z_][a-z0-9_-]{2,31}$ && "$owner" =~ ^[a-z_][a-z0-9_-]{2,31}$ ]] || continue
+  [[ "$src" == "/home/$owner" || "$src" == "/home/$owner/"* ]] || continue
+  [[ "$mp" == "/var/lib/opanel-sftp/$sub/"* ]] || continue
+  [[ -d "$src" && -d "$mp" ]] || continue
+  [[ "$(readlink -e -- "$src")" == "$src" ]] || continue
+  mountpoint -q "$mp" && continue
+  mount --bind "$src" "$mp" && mount -o remount,bind,nosuid,nodev "$mp"
+done < "$STATE"
+exit 0
+MOUNTS
+  chown root:root "$SFTP_MOUNT_SCRIPT"
+  chmod 0755 "$SFTP_MOUNT_SCRIPT"
+  cat >"$SFTP_MOUNT_UNIT" <<UNIT
+[Unit]
+Description=OPanel extra SFTP account folders
+After=local-fs.target
+Before=ssh.service sshd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${SFTP_MOUNT_SCRIPT}
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable opanel-sftp-mounts.service >/dev/null 2>&1 || true
+}
+
+sftp_sub_create() {
+  local owner="$1" sub="$2" target="$3" password resolved uid gid jail name mp
+  require_sftp_sub_name "$owner" "$sub"
+  id -u "$owner" >/dev/null 2>&1 || deny "hosting account does not exist: $owner"
+  [[ " $(id -nG "$owner") " == *" $opanel_SFTP_GROUP "* ]] || deny "$owner is not a hosting account"
+  if id -u "$sub" >/dev/null 2>&1 || getent group "$sub" >/dev/null 2>&1; then
+    deny "the name $sub is already taken on this server"
+  fi
+  [[ "$target" == /* ]] || deny "folder must be an absolute path"
+  [[ "$target" =~ ^[A-Za-z0-9._/-]+$ ]] || deny "folder may only contain letters, digits and . _ / -"
+  resolved="$(readlink -e -- "$target")" || deny "folder does not exist: $target"
+  [[ "$resolved" == "$target" ]] || deny "folder must not go through a symlink"
+  [[ -d "$resolved" ]] || deny "not a folder: $target"
+  [[ "$resolved" == "$HOME_ROOT/$owner" || "$resolved" == "$HOME_ROOT/$owner/"* ]] \
+    || deny "folder must be inside $HOME_ROOT/$owner"
+
+  password="$(cat)"
+  password="${password%$'\n'}"
+  [[ ${#password} -ge 12 && ${#password} -le 72 ]] || deny "password must be 12-72 characters"
+  case "$password" in
+    *:*|*$'\r'*|*$'\n'*) deny "password cannot contain ':', carriage returns or newlines" ;;
+  esac
+
+  ensure_sftp_sub_runtime
+  uid="$(id -u "$owner")"
+  gid="$(id -g "$owner")"
+  jail="$SFTP_JAIL_ROOT/$sub"
+  [[ ! -e "$jail" ]] || deny "a jail for $sub already exists"
+  if [[ "$resolved" == "$HOME_ROOT/$owner" ]]; then name="home"; else name="$(basename -- "$resolved")"; fi
+  mp="$jail/$name"
+
+  install -d -o root -g "$gid" -m 0750 "$jail"
+  install -d -o root -g "$gid" -m 0750 "$mp"
+  if ! useradd -o -u "$uid" -g "$gid" -G "$opanel_SFTP_SUB_GROUP" -d "$jail" -M -s /usr/sbin/nologin "$sub"; then
+    rmdir "$mp" "$jail" 2>/dev/null || true
+    deny "could not create the Linux user $sub"
+  fi
+  printf '%s:%s\n' "$sub" "$password" | chpasswd
+  if ! mount --bind "$resolved" "$mp" || ! mount -o remount,bind,nosuid,nodev "$mp"; then
+    mountpoint -q "$mp" && umount "$mp" 2>/dev/null
+    if ! mountpoint -q "$mp"; then
+      userdel -f "$sub" 2>/dev/null || true
+      rmdir "$mp" "$jail" 2>/dev/null || true
+    fi
+    deny "could not attach $target to the SFTP jail"
+  fi
+  printf '%s %s %s %s\n' "$sub" "$owner" "$resolved" "$mp" >>"$SFTP_SUB_STATE"
+  chmod 0600 "$SFTP_SUB_STATE"
+  echo "$sub"
+}
+
+sftp_sub_password() {
+  local owner="$1" sub="$2" password
+  require_sftp_sub_name "$owner" "$sub"
+  [[ "$(sftp_sub_owner_of "$sub")" == "$owner" ]] || deny "$sub is not an SFTP account of $owner"
+  id -u "$sub" >/dev/null 2>&1 || deny "Linux user $sub does not exist"
+  password="$(cat)"
+  password="${password%$'\n'}"
+  [[ ${#password} -ge 12 && ${#password} -le 72 ]] || deny "password must be 12-72 characters"
+  case "$password" in
+    *:*|*$'\r'*|*$'\n'*) deny "password cannot contain ':', carriage returns or newlines" ;;
+  esac
+  printf '%s:%s\n' "$sub" "$password" | chpasswd
+}
+
+sftp_sub_delete() {
+  local owner="$1" sub="$2" mp jail
+  require_sftp_sub_name "$owner" "$sub"
+  local recorded
+  recorded="$(sftp_sub_owner_of "$sub")"
+  [[ -z "$recorded" || "$recorded" == "$owner" ]] || deny "$sub is not an SFTP account of $owner"
+  jail="$SFTP_JAIL_ROOT/$sub"
+  mp="$(sftp_sub_mountpoint_of "$sub")"
+  # End this login's sessions only. They run under the owner's uid, so
+  # pkill -u would take the owner's PHP down with them.
+  pkill -f "^sshd(-session)?: ${sub}(@| \[)" 2>/dev/null || true
+  # The folder must be detached before anything is removed: the jail holds a
+  # live mount of the website.
+  local m
+  for m in "$mp" "$jail"/*; do
+    [[ -n "$m" && -d "$m" ]] || continue
+    if mountpoint -q "$m"; then
+      umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
+      mountpoint -q "$m" && deny "could not detach $m; $sub was left in place"
+    fi
+  done
+  if id -u "$sub" >/dev/null 2>&1; then
+    # -f: the shared uid is always "in use" by the owner's processes. Never -r.
+    userdel -f "$sub" 2>/dev/null || deny "could not remove the Linux user $sub"
+  fi
+  if [[ -d "$jail" ]]; then
+    for m in "$jail"/*; do
+      [[ -d "$m" ]] || continue
+      mountpoint -q "$m" && deny "a folder is still attached under $jail"
+      rmdir "$m" 2>/dev/null || true
+    done
+    rmdir "$jail" 2>/dev/null || true
+  fi
+  if [[ -f "$SFTP_SUB_STATE" ]]; then
+    local tmp
+    tmp="$(mktemp "${SFTP_JAIL_ROOT}/.accounts.XXXXXX")"
+    awk -v s="$sub" '$1 != s' "$SFTP_SUB_STATE" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$SFTP_SUB_STATE"
+  fi
+}
+
+sftp_sub_delete_all_for_owner() {
+  local owner="$1" sub
+  require_linux_user "$owner"
+  [[ -f "$SFTP_SUB_STATE" ]] || return 0
+  for sub in $(awk -v o="$owner" '$2 == o { print $1 }' "$SFTP_SUB_STATE"); do
+    sftp_sub_delete "$owner" "$sub"
   done
 }
 
@@ -5224,6 +5465,21 @@ PY
   panel-user-delete)
     [[ $# -eq 1 ]] || deny "usage: panel-user-delete <panel-user>"
     delete_panel_user_runtime "$1"
+    ;;
+
+  sftp-sub-create)
+    [[ $# -eq 3 ]] || deny "usage: sftp-sub-create <owner> <name> <folder>  (password on stdin)"
+    sftp_sub_create "$1" "$2" "$3"
+    ;;
+
+  sftp-sub-password)
+    [[ $# -eq 2 ]] || deny "usage: sftp-sub-password <owner> <name>  (password on stdin)"
+    sftp_sub_password "$1" "$2"
+    ;;
+
+  sftp-sub-delete)
+    [[ $# -eq 2 ]] || deny "usage: sftp-sub-delete <owner> <name>"
+    sftp_sub_delete "$1" "$2"
     ;;
 
   # provisioning.suspend_account and unsuspend_account have called these two
