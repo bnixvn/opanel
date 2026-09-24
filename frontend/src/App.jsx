@@ -13,7 +13,7 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Activity, Archive, ArrowLeft, Bot, BrickWall, Languages, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
 import './style.css';
@@ -355,12 +355,12 @@ function App() {
   }, [theme]);
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   // Shows the language in use; a click switches to the other one (and reloads).
-  function renderLanguageToggle(className, iconSize) {
+  function renderLanguageToggle(className) {
     const current = LANGUAGES.find(lang => lang.code === currentLanguage) || LANGUAGES[0];
     const next = nextLanguage();
     const label = tr('Switch to {0}', next.label);
     return <button type="button" className={className} onClick={() => setLanguage(next.code)} aria-label={label} title={label}>
-      <Languages size={iconSize}/><span className="lang-code">{current.short}</span>
+      <span className="lang-code">{current.short}</span>
     </button>;
   }
   const [username, setUsername] = useState('admin');
@@ -6111,7 +6111,7 @@ function App() {
   if (bootstrapping) {
     return <main className="login-page">
       <button type="button" className="theme-toggle-btn" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button>
-      {renderLanguageToggle('lang-toggle-btn', 15)}
+      {renderLanguageToggle('lang-toggle-btn')}
       <section className="login-card">
         <div className="login-brand">{renderBrandMark('login-brand-mark')}<div><p className="eyebrow">{panelSettings.app_name || tr("opanel")}</p><h1>{tr("Loading…")}</h1></div></div>
       </section>
@@ -6121,7 +6121,7 @@ function App() {
   if (!isAuthenticated) {
     return <main className="login-page">
       <button type="button" className="theme-toggle-btn" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button>
-      {renderLanguageToggle('lang-toggle-btn', 15)}
+      {renderLanguageToggle('lang-toggle-btn')}
       <section className="login-card">
         <div className="login-brand">
           {renderBrandMark('login-brand-mark')}
@@ -6175,7 +6175,7 @@ function App() {
             </div>}
           </div>
         </nav>
-        {renderLanguageToggle('secondary compact-btn sidebar-lang', 15)}
+        {renderLanguageToggle('secondary compact-btn sidebar-lang')}
         {appVersion && <div className="sidebar-version">v{appVersion}</div>}
       </aside>
       <div className="content">
@@ -6190,7 +6190,7 @@ function App() {
           <div className="login logged-in">
             <div className="account-pill"><span>{tr("Logged in as")}</span><strong>{currentUser?.username || username}</strong></div>
             <div className="top-actions">
-              {renderLanguageToggle('secondary compact-btn top-lang', 15)}
+              {renderLanguageToggle('secondary compact-btn top-lang')}
               <button className="secondary compact-btn icon-only" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
               <button className="secondary compact-btn" onClick={openProfileModal} aria-label={tr("Profile settings")} title={tr("Profile settings")}><KeyRound size={15}/><span className="btn-label">{tr("Profile")}</span></button>
               <button className="secondary compact-btn" onClick={logout} aria-label={tr("Logout")} title={tr("Logout")}><LogOut size={15}/><span className="btn-label">{tr("Logout")}</span></button>
