@@ -8,7 +8,6 @@
    ========================================================================== */
 
 body{font-size:14px;line-height:1.55;letter-spacing:0}
-/* Monospace: no tightened tracking anywhere. */
 /* Form controls take the browser's own UI font unless told otherwise. */
 button,input,select,textarea,optgroup{font-family:inherit}
 h1,h2,h3,h4{letter-spacing:0}
@@ -237,10 +236,12 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 /* Panel users: fixed columns so role, status, disk and actions line up from
    one account to the next (the admin row has fewer buttons). */
 @media(min-width:951px){
-  .user-row{grid-template-columns:minmax(150px,1fr) 132px 132px 160px minmax(0,1.7fr)}
+  .user-row{grid-template-columns:minmax(150px,1fr) 124px 124px 160px minmax(0,1.7fr)}
   .user-row>.badge{justify-self:start}
   .user-row .row-actions{justify-content:flex-end}
 }
+/* Wide screens: the action column is sized for its four buttons, so they stay on one line. */
+@media(min-width:1280px){.user-row{grid-template-columns:minmax(150px,1fr) 124px 124px 150px 440px}.user-row .row-actions{flex-wrap:nowrap}}
 .segmented-control.backup-tabs{overflow-y:hidden}
 
 /* SSL: every site on one list, unsecured first, each a click from the form. */
