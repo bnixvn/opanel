@@ -151,3 +151,44 @@ def test_pasting_the_displayed_command_back_is_idempotent(tmp_path):
     twice = cron._validate_command(once, root)
     assert once == twice
     assert once.count(">/dev/null") == 1
+
+
+def _add(monkeypatch, tmp_path, command, php_version="8.3", app_type="wordpress"):
+    from types import SimpleNamespace
+
+    root = tmp_path / "home" / "taplooks" / "taplooks.com"
+    (root / "public_html").mkdir(parents=True)
+    written = {}
+    monkeypatch.setattr(cron, "list_cron_all", lambda cron_user: "")
+    monkeypatch.setattr(cron, "cron_user_for_website", lambda website: "taplooks")
+    monkeypatch.setattr(cron.site_users, "ensure_site_runtime", lambda *a, **kw: "taplooks")
+    monkeypatch.setattr(
+        cron.shell, "privileged",
+        lambda *a, **kw: written.update(content=kw.get("input")) or SimpleNamespace(stdout=""),
+    )
+    site = SimpleNamespace(domain="taplooks.com", root_path=str(root), php_version=php_version, app_type=app_type)
+    line = cron.add_cron(site, "*/5 * * * *", command)
+    return line, written["content"]
+
+
+def test_wp_cli_jobs_find_wp_and_the_sites_php(monkeypatch, tmp_path):
+    """cron's PATH is /usr/bin:/bin: `wp` lives in /usr/local/bin and was never
+    found, and `php` was Ubuntu's php-cli instead of the site's lsphp."""
+    line, content = _add(monkeypatch, tmp_path, "wp cron event run --due-now")
+    assert " && env PATH=/usr/local/lsws/lsphp83/bin:/usr/local/bin:/usr/bin:/bin wp cron event run" in line
+    assert content == line + "\n"
+
+
+def test_the_listing_hides_the_path_prefix(monkeypatch, tmp_path):
+    line, _ = _add(monkeypatch, tmp_path, "wp cron event run --due-now")
+    assert cron._parse_cron_line(0, line)["command"] == "wp cron event run --due-now"
+
+
+def test_a_site_without_php_still_gets_usr_local_bin(monkeypatch, tmp_path):
+    line, _ = _add(monkeypatch, tmp_path, "curl -s https://taplooks.com/", php_version=None, app_type="static")
+    assert "env PATH=/usr/local/bin:/usr/bin:/bin curl" in line
+    assert "lsphp" not in line
+
+
+def test_a_malformed_php_version_is_not_put_in_the_path():
+    assert cron.cron_path("8.3; rm -rf /") == "/usr/local/bin:/usr/bin:/bin"

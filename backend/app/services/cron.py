@@ -36,6 +36,8 @@ FETCH_REDIRECT = ">/dev/null 2>&1"
 # A trailing `>/dev/null 2>&1` (or any mix of redirects) pasted from a tutorial.
 # shlex would turn these into literal argv entries, so they are stripped before
 # validation and re-attached afterwards as a real shell redirect.
+# add_cron's own PATH prefix (see cron_path), hidden again when listing.
+CRON_PATH_PREFIX_RE = re.compile(r"^env PATH=[\w/.:-]+\s+")
 TRAILING_REDIRECT_RE = re.compile(r"\s*(?:[12]?>>?\s*\S+|[12]>&[12])(?:\s*(?:[12]?>>?\s*\S+|[12]>&[12]))*\s*$")
 
 
@@ -148,10 +150,23 @@ def _parse_cron_line(index: int, line: str) -> dict:
     command = re.sub(r"\s+#\s*opanel:[^\s]+\s*$", "", command, flags=re.IGNORECASE).strip()
     if command.startswith("cd ") and " && " in command:
         command = command.split(" && ", 1)[1].strip()
+    command = CRON_PATH_PREFIX_RE.sub("", command)
     # The command is shown back verbatim. Rewriting it for display made users
     # think their input had been swallowed, so they re-added the same job.
     command = command.replace(" --allow-root", "").strip()
     return {"index": index, "schedule": schedule, "command": command, "line": line}
+
+
+def cron_path(php_version: str | None) -> str:
+    """cron runs user jobs with PATH=/usr/bin:/bin, where `wp` (in
+    /usr/local/bin) is not found and `php` is Ubuntu's php-cli rather than the
+    site's lsphp. Every WP-CLI job the panel offered failed with "wp: not
+    found". The site's lsphp goes first so `php` and wp's `#!/usr/bin/env php`
+    both run on the version the site is set to."""
+    path = "/usr/local/bin:/usr/bin:/bin"
+    if php_version and re.fullmatch(r"\d\.\d", php_version):
+        path = f"/usr/local/lsws/lsphp{php_version.replace('.', '')}/bin:{path}"
+    return path
 
 
 def add_cron(website: Website, schedule: str, command: str) -> str:
@@ -160,9 +175,14 @@ def add_cron(website: Website, schedule: str, command: str) -> str:
     safe_command = _validate_command(command, document_root)
     safe_domain = _validate_domain(website.domain)
     marker = f"# OPanel:{safe_domain}"
-    line = f"{safe_schedule} cd {shlex.quote(str(document_root))} && {safe_command} {marker}"
-    cron_user = cron_user_for_website(website)
     runtime_php_version = website.php_version if (website.app_type or "wordpress") in {"wordpress", "php"} else None
+    # env, not a bare PATH= assignment: whether sh looks the command up in an
+    # assignment's PATH differs between shells; env execs with it every time.
+    line = (
+        f"{safe_schedule} cd {shlex.quote(str(document_root))} && "
+        f"env PATH={cron_path(runtime_php_version)} {safe_command} {marker}"
+    )
+    cron_user = cron_user_for_website(website)
     site_users.ensure_site_runtime(website.domain, website.root_path, runtime_php_version, cron_user)
     existing = list_cron_all(cron_user)
     new_content = existing.rstrip() + ("\n" if existing.strip() else "") + line + "\n"
