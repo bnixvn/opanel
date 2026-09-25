@@ -135,7 +135,7 @@ def test_wordpress_vhost_includes_security_headers_when_ssl_is_enabled():
     assert "X-Frame-Options" not in rendered
     assert "X-Content-Type-Options: nosniff" in rendered
     assert "Referrer-Policy: strict-origin-when-cross-origin" in rendered
-    assert "Permissions-Policy: accelerometer=(), autoplay=(), camera=()" in rendered
+    assert "Permissions-Policy" not in rendered
     assert "Content-Security-Policy:" in rendered
 
 
@@ -151,7 +151,7 @@ def test_static_vhost_does_not_emit_hsts_without_ssl():
     assert "X-Frame-Options" not in rendered
     assert "X-Content-Type-Options: nosniff" in rendered
     assert "Referrer-Policy: strict-origin-when-cross-origin" in rendered
-    assert "Permissions-Policy: accelerometer=(), autoplay=(), camera=()" in rendered
+    assert "Permissions-Policy" not in rendered
 
 
 def test_vhost_uses_waf_site_rules_path():

@@ -61,12 +61,13 @@ WORDPRESS_CSP = (
     "upgrade-insecure-requests"
 )
 
+# No Permissions-Policy. The old one denied fullscreen, autoplay, payment and
+# more to every site and every frame it embeds (an embedded video player could
+# not go fullscreen). Which features a site needs is the site's call: one that
+# wants the header sets it in its own .htaccess.
 SECURITY_HEADERS = (
     "X-Content-Type-Options: nosniff\n"
-    "Referrer-Policy: strict-origin-when-cross-origin\n"
-    "Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), "
-    "encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), "
-    "microphone=(), midi=(), payment=(), usb=()"
+    "Referrer-Policy: strict-origin-when-cross-origin"
 )
 HSTS_HEADER = "Strict-Transport-Security: max-age=31536000; includeSubDomains"
 

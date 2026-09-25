@@ -677,7 +677,6 @@ def apply_manual_ssl_config(new_content: str, cert_path: str, key_path: str, ca_
 def _ensure_hsts_header(content: str) -> str:
     security_headers = [
         ('Strict-Transport-Security', '    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;'),
-        ('Permissions-Policy', '    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=(), magnetometer=(), gyroscope=(), accelerometer=()" always;'),
         ('Content-Security-Policy', WORDPRESS_CSP_HEADER),
     ]
     headers_to_add = [header for name, header in security_headers if name not in content]
