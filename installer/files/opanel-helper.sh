@@ -2828,6 +2828,22 @@ ensure_ols_server_log_level() {
   echo "OpenLiteSpeed server logLevel: DEBUG -> WARN"
 }
 
+# OpenLiteSpeed's stock expiresByType names application/javascript and
+# application/x-javascript, but its own mime.properties serves .js as
+# text/javascript. So CSS and images got a week of browser cache and no
+# JavaScript file on any site got any: every page view revalidated every
+# script. Rides on log-hygiene because that runs on every update.
+ensure_ols_js_expires() {
+  local conf=/usr/local/lsws/conf/httpd_config.conf
+  [[ -f "$conf" ]] || return 0
+  grep -qE '^[[:space:]]*expiresByType[[:space:]]' "$conf" || return 0
+  grep -qE '^[[:space:]]*expiresByType[[:space:]].*text/javascript=' "$conf" && return 0
+  cp -a "$conf" "${conf}.bak.jsexpires"
+  sed -i -E '/^[[:space:]]*expiresByType[[:space:]]/{/text\/javascript=/!s/[[:space:]]*$/,text\/javascript=A604800/}' "$conf"
+  restart_openlitespeed 2>/dev/null || true
+  echo "OpenLiteSpeed: .js files now get the same browser cache lifetime as CSS"
+}
+
 # 99-opanel.ini is only written when a PHP version is installed, so an existing
 # box never receives a change to it. The panel's own PHP tuning also writes
 # opcache.jit into this file, which is where the value being fixed came from.
@@ -4750,6 +4766,7 @@ case "$cmd" in
     [[ $# -eq 0 ]] || deny "usage: log-hygiene"
     ensure_site_log_rotation
     ensure_ols_server_log_level
+    ensure_ols_js_expires
     ensure_php_jit_disabled
     ensure_journal_cap
     echo "Log hygiene applied"

@@ -123,6 +123,21 @@ def test_server_log_level_is_brought_down_from_openlitespeed_default():
     assert ".bak" in block             # keeps a copy before editing
 
 
+def test_javascript_gets_a_browser_cache_lifetime():
+    """OLS serves .js as text/javascript; its stock expiresByType only named
+    application/javascript, so scripts were never cached by the browser."""
+    start = HELPER.index("ensure_ols_js_expires() {")
+    block = HELPER[start:HELPER.index("\n}", start)]
+
+    # Appends to the existing list instead of replacing an admin's values,
+    # and does nothing once the type is there.
+    assert "text\\/javascript=/!s/[[:space:]]*$/,text\\/javascript=A604800/" in block
+    assert "text/javascript=' \"$conf\" && return 0" in block
+    assert ".bak" in block
+    assert "restart_openlitespeed" in block
+    assert "ensure_ols_js_expires" in HELPER[HELPER.index("  log-hygiene)"):][:400]
+
+
 def test_journal_is_capped():
     start = HELPER.index("ensure_journal_cap() {")
     block = HELPER[start:HELPER.index("\n}", start)]
