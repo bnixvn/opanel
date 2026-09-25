@@ -21,9 +21,14 @@ ALLOWED_REWRITE_MODES = {"none", "front_controller", "laravel", "codeigniter", "
 ALLOWED_LOG_KINDS = {"access", "error"}
 DOMAIN_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+")
 MAX_FULL_CONFIG_BYTES = 128 * 1024
+# script-src takes data: and blob: too. Optimisation plugins (LiteSpeed Cache,
+# Autoptimize, WP Rocket) rewrite inline scripts into data: URIs, and a
+# WooCommerce storefront then loaded with its scripts blocked. The policy
+# already allowed 'unsafe-inline' and any https: script, so this widens it
+# by nothing an attacker could not already do.
 WORDPRESS_CSP = (
     "default-src 'self' https: data: blob:; "
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; "
     "style-src 'self' 'unsafe-inline' https:; "
     "img-src 'self' data: https: blob:; "
     "font-src 'self' data: https:; "
