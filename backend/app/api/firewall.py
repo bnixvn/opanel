@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_current_user
 from app.core.permissions import Role, ensure_role
@@ -24,10 +24,9 @@ def _status_result(result):
     rules = firewall.parse_numbered_rules(result.stdout)
     data["rules"] = rules
     data["open_ports"] = firewall.open_ports_from_rules(rules)
-    # The panel's own address rules (Block IP / Allow IP here, block_ip over
-    # MCP), by the id DELETE /rules/{id} takes. The iptables listing numbers
-    # lines, which drift from these ids once a rule has been deleted.
-    data["ip_rules"] = [rule for rule in firewall.list_rules() if rule.get("type") == "ip"]
+    # Only the counts: a box can hold thousands of address rules, which the
+    # page fetches a page at a time from /ip-rules when the list is opened.
+    data["ip_rule_counts"] = firewall.ip_rule_counts()
     data["enabled"] = firewall.is_enabled()
     return data
 
@@ -36,6 +35,20 @@ def _status_result(result):
 def get_status(current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
     return _status_result(firewall.status())
+
+
+@router.get("/ip-rules")
+def list_ip_rules(q: str = Query("", max_length=100), action: str = "", page: int = Query(1, ge=1),
+                  size: int = Query(50, ge=1, le=firewall.IP_RULE_PAGE_MAX),
+                  current_user: User = Depends(get_current_user)):
+    """The panel's address rules (Block IP / Allow IP here, block_ip over MCP),
+    newest first, with the id DELETE /rules/{id} takes. The raw iptables listing
+    numbers lines instead, and those drift from the ids after a deletion."""
+    _require_admin(current_user)
+    try:
+        return firewall.search_ip_rules(q, action, page, size)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/enable")

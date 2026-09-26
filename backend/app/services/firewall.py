@@ -693,6 +693,58 @@ def list_rules() -> list[dict]:
     return _read_rules()
 
 
+IP_RULE_ACTIONS = {"", "deny", "allow"}
+IP_RULE_PAGE_MAX = 200
+
+
+def ip_rule_counts(rules: Optional[list[dict]] = None) -> dict:
+    address_rules = [r for r in (_read_rules() if rules is None else rules) if r.get("type") == "ip"]
+    return {
+        "blocked": sum(1 for r in address_rules if r.get("action") == "deny"),
+        "allowed": sum(1 for r in address_rules if r.get("action") == "allow"),
+    }
+
+
+def _ip_rule_matches(rule: dict, needle: str, address) -> bool:
+    if needle in str(rule.get("network", "")).lower() or needle in str(rule.get("note", "")).lower():
+        return True
+    if address is None:
+        return False
+    try:
+        return address in ipaddress.ip_network(str(rule.get("network", "")), strict=False)
+    except ValueError:
+        return False
+
+
+def search_ip_rules(query: str = "", action: str = "", page: int = 1, size: int = 50) -> dict:
+    """One page of the panel's address rules, newest first.
+
+    A box can hold thousands of blocks, so the Firewall page asks for a page at
+    a time instead of receiving every rule with the status. The query matches
+    the network or the reason, and a plain address also finds the network
+    that contains it -- "is 216.73.217.42 blocked?" hits 216.73.217.0/24.
+    """
+    if action not in IP_RULE_ACTIONS:
+        raise ValueError("action must be deny or allow")
+    size = max(1, min(int(size), IP_RULE_PAGE_MAX))
+    page = max(1, int(page))
+    needle = (query or "").strip().lower()[:100]
+    try:
+        address = ipaddress.ip_address(needle) if needle else None
+    except ValueError:
+        address = None
+    rules = [r for r in _read_rules() if r.get("type") == "ip"]
+    counts = ip_rule_counts(rules)
+    if action:
+        rules = [r for r in rules if r.get("action") == action]
+    if needle:
+        rules = [r for r in rules if _ip_rule_matches(r, needle, address)]
+    rules.sort(key=lambda r: int(r.get("id") or 0), reverse=True)
+    start = (page - 1) * size
+    return {"total": len(rules), "page": page, "size": size, "counts": counts,
+            "items": rules[start:start + size]}
+
+
 # ---------------------------------------------------------------------------
 # Blocklist (ipset + iptables)
 # ---------------------------------------------------------------------------

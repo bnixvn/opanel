@@ -233,20 +233,55 @@ def test_a_note_cannot_smuggle_control_characters_or_run_long(monkeypatch, tmp_p
     assert rule["source"] == "panel"
 
 
-def test_the_status_lists_the_panels_address_rules_by_id(monkeypatch):
-    """The page could only show the raw iptables text, whose line numbers drift
-    from the rule ids DELETE /rules/{id} takes once a rule has been deleted."""
+def test_the_status_carries_counts_not_every_address(monkeypatch):
+    """A box can hold thousands of blocks; the status only says how many."""
     monkeypatch.setattr(firewall, "is_enabled", lambda: True)
-    monkeypatch.setattr(firewall, "list_rules", lambda: [
+    monkeypatch.setattr(firewall, "_read_rules", lambda: [
         {"id": 1, "action": "allow", "type": "port", "port": "8080", "protocol": "tcp"},
+        {"id": 2, "action": "allow", "type": "ip", "network": "203.0.113.5/32"},
         {"id": 4, "action": "deny", "type": "ip", "network": "20.194.96.176/32", "source": "mcp"},
     ])
     data = firewall_api._status_result(CommandResult(command="status", returncode=0, stdout="", stderr=""))
-    assert data["ip_rules"] == [{"id": 4, "action": "deny", "type": "ip", "network": "20.194.96.176/32", "source": "mcp"}]
+    assert data["ip_rule_counts"] == {"blocked": 1, "allowed": 1}
+    assert "ip_rules" not in data
+
+
+def _many_blocks(monkeypatch, count=1200):
+    rules = [{"id": i, "action": "deny", "type": "ip", "network": f"198.{i // 250}.{i % 250}.7/32",
+              "note": "scanner" if i % 2 else "brute force wp-login"} for i in range(1, count + 1)]
+    rules.append({"id": count + 1, "action": "deny", "type": "ip", "network": "216.73.217.0/24", "note": "ClaudeBot subnet"})
+    rules.append({"id": count + 2, "action": "allow", "type": "ip", "network": "203.0.113.5/32"})
+    rules.append({"id": count + 3, "action": "allow", "type": "port", "port": "8080"})
+    monkeypatch.setattr(firewall, "_read_rules", lambda: [dict(r) for r in rules])
+    return count
+
+
+def test_the_list_comes_a_page_at_a_time_newest_first(monkeypatch):
+    count = _many_blocks(monkeypatch)
+    page = firewall.search_ip_rules(page=1, size=50)
+    assert page["total"] == count + 2 and len(page["items"]) == 50
+    assert page["counts"] == {"blocked": count + 1, "allowed": 1}
+    assert page["items"][0]["id"] == count + 2
+    last = firewall.search_ip_rules(page=25, size=50)
+    assert len(last["items"]) == (count + 2) - 24 * 50
+    assert firewall.search_ip_rules(size=10_000)["size"] == firewall.IP_RULE_PAGE_MAX
+
+
+def test_the_list_filters_by_action_reason_and_containing_network(monkeypatch):
+    _many_blocks(monkeypatch)
+    assert [r["network"] for r in firewall.search_ip_rules(action="allow")["items"]] == ["203.0.113.5/32"]
+    assert firewall.search_ip_rules(query="WP-LOGIN")["total"] == 600
+    # A plain address finds the network that holds it.
+    assert [r["network"] for r in firewall.search_ip_rules(query="216.73.217.42")["items"]] == ["216.73.217.0/24"]
+    with pytest.raises(ValueError):
+        firewall.search_ip_rules(action="drop")
 
 
 def test_the_firewall_page_lists_blocked_addresses():
     app = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    assert "firewallStatus?.ip_rules" in app
+    # Behind a button, a page at a time, never the whole list with the status.
+    assert "firewallStatus?.ip_rule_counts" in app
+    assert "`/firewall/ip-rules?${params}`" in app
+    assert "setShowFirewallIpList(true)" in app
     assert "deleteFirewallRule(rule.id, rule.network)" in app
     assert "note: firewallBlockNote.trim() || null" in app

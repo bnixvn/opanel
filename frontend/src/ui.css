@@ -243,13 +243,29 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 .firewall-rule-forms .firewall-form button{grid-column:1 / -1}
 .firewall-status pre{max-height:320px}
 .firewall-rule-forms .firewall-form .firewall-note-field{grid-column:1 / -1}
-.firewall-ip-rules{display:grid;gap:8px;margin-top:14px}
-.firewall-ip-row{grid-template-columns:minmax(140px,1fr) minmax(120px,max-content) minmax(0,2fr) minmax(0,max-content) auto}
-.firewall-ip-row code{font-weight:800;color:var(--text);background:transparent;padding:0}
-.firewall-ip-row>span:nth-child(2){display:flex;align-items:center;gap:8px}
-.firewall-ip-row small{color:var(--text-muted);font-weight:600}
-.firewall-ip-note{overflow-wrap:anywhere}
-@media(max-width:950px){.firewall-ip-row{grid-template-columns:1fr;gap:6px}}
+.firewall-ip-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
+.firewall-ip-summary strong{margin-right:6px}
+/* The search and the pager stay put; only the rows scroll. */
+.modal-card.firewall-ip-modal{width:760px;display:flex;flex-direction:column;overflow:hidden}
+.firewall-ip-modal .modal-body{display:flex;flex-direction:column;min-height:0;padding:14px 20px 16px}
+.firewall-ip-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 170px;gap:8px;margin-bottom:10px}
+.firewall-ip-list{list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow-y:auto;min-height:0}
+.firewall-ip-list li{display:grid;grid-template-columns:78px minmax(130px,max-content) minmax(0,1fr) max-content max-content;align-items:center;gap:10px;padding:4px 10px;border-top:1px solid var(--border);min-height:34px}
+.firewall-ip-list li:first-child{border-top:0}
+.firewall-ip-list .badge{justify-self:start;padding:2px 8px}
+.firewall-ip-list code{font-size:12.5px;font-weight:700;color:var(--text);background:transparent;padding:0;white-space:nowrap}
+.firewall-ip-note{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary)}
+.firewall-ip-list small{color:var(--text-muted);font-weight:600;white-space:nowrap}
+.firewall-ip-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px}
+@media(max-width:720px){
+  .firewall-ip-toolbar{grid-template-columns:1fr}
+  /* Two lines per address: badge, address, button; then reason and source/date. */
+  .firewall-ip-list li{grid-template-columns:auto minmax(0,1fr) auto;row-gap:2px;column-gap:8px;padding:6px 10px}
+  .firewall-ip-list code{white-space:normal;overflow-wrap:anywhere}
+  .firewall-ip-note{grid-column:1 / 3;grid-row:2;font-size:12.5px}
+  .firewall-ip-list small{grid-column:3;grid-row:2;justify-self:end}
+  .firewall-ip-list li button{grid-column:3;grid-row:1}
+}
 
 /* Services: a stopped service's Start and a running one's Stop are the only
    live buttons, so the obvious next step is the enabled one. */
