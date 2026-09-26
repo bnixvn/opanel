@@ -1196,6 +1196,9 @@ install_lmd_engine() {
   configure_lmd
   # LMD ships its own daily cron; opanel drives the schedule instead.
   rm -f /etc/cron.d/maldet /etc/cron.daily/maldet 2>/dev/null || true
+  # ...and its own monitor unit; opanel's real-time toggle is the only one.
+  mask_stock_lmd_unit
+  lmd_ignore_inotify_add_missing || true
   ( maldet -u >/dev/null 2>&1; maldet -d >/dev/null 2>&1 ) &
   echo "Linux Malware Detect ${LMD_GIT_TAG} installed (engine: clamd)."
 }
@@ -1229,14 +1232,76 @@ configure_lmd() {
 }
 
 LMD_MONITOR_UNIT="/etc/systemd/system/opanel-maldet-monitor.service"
+LMD_MONITOR_PID="${LMD_DIR}/tmp/monitor.pid"
+LMD_IGNORE_INOTIFY="${LMD_DIR}/ignore_inotify"
+# Never a threat, and together ~80% of the monitor's events on a live box:
+# OpenLiteSpeed rewrites its real-time report under /dev/shm every second, and
+# clamd's HTML normaliser leaves a temp dir in /tmp for every page it scans,
+# which the monitor queued and then failed on ("Can't access file") because it
+# was already gone. Raw ERE, matched by inotifywait against the full path.
+LMD_IGNORE_INOTIFY_ENTRIES=(
+  '^/dev/shm/ols/status/'
+  '^/tmp/html-tmp\.[0-9a-f]+(/|$)'
+)
 
-enable_lmd_monitor() {
-  lmd_installed || deny "Linux Malware Detect is not installed"
-  # inotify watches for every file under /home -- a busy shared host has a lot.
-  local wf=/etc/sysctl.d/60-opanel-inotify.conf
-  printf 'fs.inotify.max_user_watches=1048576\nfs.inotify.max_user_instances=1024\n' >"$wf"
-  sysctl -p "$wf" >/dev/null 2>&1 || true
-  cat >"$LMD_MONITOR_UNIT" <<'UNIT'
+# LMD's installer ships and enables its own maldet.service (--monitor users).
+# Beside opanel's unit that is a second supervisor on the same inotify log,
+# read cursor and monitor.pid: the two split one event queue, both got past
+# maldet's one-monitor check by starting in the same second at boot, and
+# `maldet -k` stops that unit instead of opanel's. Its "users" mode looks for
+# ~/public_html, which opanel's layout never has, so all it ever watched were
+# the temp dirs -- now in opanel's own unit. Masked, not just disabled: LMD's
+# self-update re-runs install.sh, which re-enables the unit and restarts it.
+mask_stock_lmd_unit() {
+  [[ -f /usr/lib/systemd/system/maldet.service || -f /lib/systemd/system/maldet.service ]] || return 0
+  [[ "$(systemctl is-enabled maldet.service 2>/dev/null || true)" == "masked" ]] && return 0
+  systemctl disable --now maldet.service >/dev/null 2>&1 || true
+  systemctl mask maldet.service >/dev/null 2>&1 || true
+}
+
+# Returns 0 when an entry was added (a running monitor needs a restart to pick
+# it up: the exclude list is built once, when inotifywait starts).
+lmd_ignore_inotify_add_missing() {
+  local entry added=1
+  [[ -d "$LMD_DIR" ]] || return 1
+  touch "$LMD_IGNORE_INOTIFY"
+  # LMD rewrites this file itself; make sure an entry never lands on the end
+  # of a last line that has no newline.
+  if [[ -s "$LMD_IGNORE_INOTIFY" && -n "$(tail -c1 "$LMD_IGNORE_INOTIFY")" ]]; then
+    echo >>"$LMD_IGNORE_INOTIFY"
+  fi
+  for entry in "${LMD_IGNORE_INOTIFY_ENTRIES[@]}"; do
+    grep -qxF -- "$entry" "$LMD_IGNORE_INOTIFY" && continue
+    printf '%s\n' "$entry" >>"$LMD_IGNORE_INOTIFY"
+    added=0
+  done
+  return "$added"
+}
+
+# Stops a monitor that runs outside opanel's unit (a hand-started one, or the
+# stock unit's), and drops a monitor.pid that names no monitor. maldet refuses
+# to start while that file names a live process, and the file outlives the
+# process: after a reboot it can name whatever unrelated process got the old
+# pid, and every start would then exit 1 -- or `maldet -k` would kill it.
+lmd_stop_stray_monitor() {
+  local pid=""
+  if systemctl is-active --quiet maldet.service 2>/dev/null; then
+    systemctl stop maldet.service >/dev/null 2>&1 || true
+  fi
+  [[ -f "$LMD_MONITOR_PID" ]] || return 0
+  pid="$(tr -dc '0-9' <"$LMD_MONITOR_PID" 2>/dev/null || true)"
+  if [[ -n "$pid" && -r "/proc/${pid}/cmdline" ]] \
+      && tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null | grep -q 'maldet --monitor'; then
+    maldet -k >/dev/null 2>&1 || true
+  fi
+  rm -f "$LMD_MONITOR_PID"
+}
+
+# Returns 0 when the unit file changed.
+write_lmd_monitor_unit() {
+  local tmp
+  tmp="$(mktemp)"
+  cat >"$tmp" <<'UNIT'
 [Unit]
 Description=OPanel Linux Malware Detect real-time monitor
 After=clamav-daemon.service
@@ -1250,28 +1315,70 @@ Wants=clamav-daemon.service
 # forever, which is_active reports as not running. Either way the panel's
 # real-time status was wrong while the watcher itself was fine.
 Type=simple
-# maldet refuses to start when another monitor is already running, and one
-# outlives the unit easily -- a killed or crashed start leaves the watcher
-# behind, after which every restart exits 1 with "existing monitor process
-# detected". Clear any stale one first; the leading - keeps a clean start from
-# failing when there is nothing to stop.
-ExecStartPre=-/usr/local/sbin/maldet --monitor stop
-ExecStart=/usr/local/sbin/maldet --monitor /home
-ExecStop=/usr/local/sbin/maldet --monitor stop
+# maldet refuses to start while its monitor.pid names a live process; clear a
+# stray monitor or a stale pid file first (lmd_stop_stray_monitor). The leading
+# - keeps a start from failing on it.
+ExecStartPre=-/usr/bin/env SUDO_USER=opanel /usr/local/sbin/opanel-helper maldet-monitor prestart
+# The sites, and the temp dirs that droppers and miners are written to.
+ExecStart=/usr/local/sbin/maldet --monitor /home,/tmp,/var/tmp,/dev/shm
+# No ExecStop: systemd sends the supervisor SIGTERM, and its handler stops
+# inotifywait and cleans up. LMD 2.x has no "--monitor stop" -- it took "stop"
+# for a path, logged "no valid option" and did nothing.
 Restart=on-failure
 RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
 UNIT
+  if [[ -f "$LMD_MONITOR_UNIT" ]] && cmp -s "$tmp" "$LMD_MONITOR_UNIT"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  install -m 0644 "$tmp" "$LMD_MONITOR_UNIT"
+  rm -f "$tmp"
+  return 0
+}
+
+enable_lmd_monitor() {
+  lmd_installed || deny "Linux Malware Detect is not installed"
+  # inotify watches for every file under /home -- a busy shared host has a lot.
+  local wf=/etc/sysctl.d/60-opanel-inotify.conf
+  printf 'fs.inotify.max_user_watches=1048576\nfs.inotify.max_user_instances=1024\n' >"$wf"
+  sysctl -p "$wf" >/dev/null 2>&1 || true
+  mask_stock_lmd_unit
+  lmd_ignore_inotify_add_missing || true
+  write_lmd_monitor_unit || true
   systemctl daemon-reload
-  systemctl enable --now opanel-maldet-monitor.service
-  echo "LMD real-time monitor enabled for /home"
+  systemctl enable opanel-maldet-monitor.service >/dev/null 2>&1
+  # restart, not enable --now: a running monitor keeps its old paths and
+  # exclude list until it starts again.
+  systemctl restart opanel-maldet-monitor.service
+  echo "LMD real-time monitor enabled for /home, /tmp, /var/tmp and /dev/shm"
+}
+
+# The monitor unit is only written when someone turns real-time protection on,
+# so this brings an existing box to the current layout on every update (called
+# from log-hygiene). A box without the monitor still gets the stock unit masked,
+# so a reboot cannot start a monitor the panel shows as off.
+ensure_lmd_monitor_layout() {
+  lmd_installed || return 0
+  local restart=0
+  mask_stock_lmd_unit
+  if lmd_ignore_inotify_add_missing; then restart=1; fi
+  [[ -f "$LMD_MONITOR_UNIT" ]] || return 0
+  if write_lmd_monitor_unit; then
+    systemctl daemon-reload
+    restart=1
+  fi
+  if (( restart )) && systemctl is-enabled --quiet opanel-maldet-monitor.service 2>/dev/null; then
+    systemctl restart opanel-maldet-monitor.service >/dev/null 2>&1 || true
+  fi
+  return 0
 }
 
 disable_lmd_monitor() {
   systemctl disable --now opanel-maldet-monitor.service >/dev/null 2>&1 || true
-  maldet --monitor stop >/dev/null 2>&1 || true
+  lmd_stop_stray_monitor
   rm -f "$LMD_MONITOR_UNIT"
   systemctl daemon-reload
   echo "LMD real-time monitor disabled"
@@ -4794,6 +4901,8 @@ case "$cmd" in
     case "$1" in
       enable) enable_lmd_monitor ;;
       disable) disable_lmd_monitor ;;
+      # ExecStartPre of opanel-maldet-monitor.service.
+      prestart) lmd_stop_stray_monitor ;;
       *) deny "usage: maldet-monitor <enable|disable>" ;;
     esac
     ;;
@@ -4975,6 +5084,7 @@ case "$cmd" in
     ensure_ols_js_expires
     ensure_php_jit_disabled
     ensure_journal_cap
+    ensure_lmd_monitor_layout
     echo "Log hygiene applied"
     ;;
 

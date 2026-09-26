@@ -1694,7 +1694,7 @@ function App() {
   async function toggleMalwareRealtime(enable) {
     if (enable && !confirm(
       tr("Turn on real-time protection?\n\n")
-      + tr("• Linux Malware Detect watches every file under /home (inotify) and scans new or changed files within seconds.\n")
+      + tr("• Linux Malware Detect watches every file under /home and the temp directories (/tmp, /var/tmp, /dev/shm) with inotify, and scans new or changed files within seconds.\n")
       + tr("• It uses more RAM the more files it watches — heavy on a box with many WordPress sites.\n")
       + tr("• Hits are NOT auto-quarantined — they are listed for you to act on.\n\n")
       + tr("Turning it off returns to scheduled scans only.")
@@ -6524,7 +6524,7 @@ function App() {
               <strong>{tr("Real-time protection")} {mw.realtime_enabled && !mw.realtime_active
                 ? <span className="badge danger">{tr("Not running")}</span>
                 : <span className={mw.realtime_enabled ? 'badge ok' : 'badge'}>{mw.realtime_enabled ? tr("On") : tr("Off")}</span>}</strong>
-              <p className="hint">{tr("Watches every file under")} <code>/home</code> {tr("and scans new/changed files within seconds — instead of only on schedule. Costs RAM per watched file; hits are surfaced, not auto-quarantined.")}</p>
+              <p className="hint">{tr("Watches every file under")} <code>/home</code> {tr("plus the temp directories")} <code>/tmp</code>, <code>/var/tmp</code>, <code>/dev/shm</code>, {tr("and scans new/changed files within seconds — instead of only on schedule. Costs RAM per watched file; hits are surfaced, not auto-quarantined.")}</p>
               {mw.realtime_enabled && !mw.realtime_active && <p className="hint" style={{color:'var(--danger)'}}>
                 {tr("Turned on here, but the monitor service is not running — nothing is being watched right now. Turn it off and on again to restart it.")}
               </p>}

@@ -1558,6 +1558,7 @@ export default {
   "Watch SSH": "Giám sát SSH",
   "Watch panel logins": "Giám sát đăng nhập panel",
   "Watches every file under": "Theo dõi mọi tệp trong",
+  "plus the temp directories": "cùng các thư mục tạm",
   "Watches the SSH and panel login logs and drops an address at the firewall once it has failed too many times. The panel already rate-limits and locks out a login; Fail2ban stops the traffic one layer earlier, before it reaches the application at all.": "Theo dõi nhật ký đăng nhập SSH và panel, rồi chặn một địa chỉ tại tường lửa khi địa chỉ đó thất bại quá nhiều lần. Panel vốn đã giới hạn tần suất và khóa đăng nhập; Fail2ban chặn lưu lượng sớm hơn một tầng, trước khi nó chạm tới ứng dụng.",
   "Web application firewall for each website": "Tường lửa ứng dụng web cho từng website",
   "Webserver logs -": "Nhật ký máy chủ web -",
@@ -1767,7 +1768,7 @@ export default {
   "— pick a certificate on this server —": "— chọn một chứng chỉ trên máy chủ này —",
   "• Hits are NOT auto-quarantined — they are listed for you to act on.\n\n": "• Các phát hiện KHÔNG tự động bị cách ly — chúng được liệt kê để bạn xử lý.\n\n",
   "• It uses more RAM the more files it watches — heavy on a box with many WordPress sites.\n": "• Càng theo dõi nhiều tệp thì càng tốn RAM — nặng trên máy chủ có nhiều website WordPress.\n",
-  "• Linux Malware Detect watches every file under /home (inotify) and scans new or changed files within seconds.\n": "• Linux Malware Detect theo dõi mọi tệp trong /home (inotify) và quét các tệp mới hoặc thay đổi trong vài giây.\n",
+  "• Linux Malware Detect watches every file under /home and the temp directories (/tmp, /var/tmp, /dev/shm) with inotify, and scans new or changed files within seconds.\n": "• Linux Malware Detect theo dõi (inotify) mọi tệp trong /home và các thư mục tạm (/tmp, /var/tmp, /dev/shm), rồi quét các tệp mới hoặc thay đổi trong vài giây.\n",
   "… | Created:": "… | Ngày tạo:",
   "⚡ Auto-tune Recommendation": "⚡ Đề xuất tự động tinh chỉnh",
 };
