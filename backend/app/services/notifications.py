@@ -1,15 +1,15 @@
 """The Notifications addon: email (SMTP) and Telegram alerts.
 
-Two audiences:
+For administrators only -- hosting customers get nothing from it.
 
 * **Admin** events describe the server -- a failed scheduled backup, a daemon
-  that stopped, a disk filling up, a certificate that did not renew. They go to
-  the admin recipients set on the addon (email addresses and Telegram chats,
-  e.g. an ops group), and the admin chooses which of them are sent.
-* **User** events describe one account -- a sign-in from a new address, a
-  password or 2FA change, a certificate or malware finding on one of its
-  websites, its storage filling up. They go to that user through the channels
-  they turned on for themselves (their account email, their linked Telegram).
+  that stopped, a disk filling up, a certificate that did not renew, an account
+  out of storage. They go to the admin recipients set on the addon (email
+  addresses and Telegram chats, e.g. an ops group), and the admin chooses which
+  of them are sent.
+* **Own-account** events describe one administrator's own account -- a sign-in
+  from a new address, a password or 2FA change, a backup they started. They go
+  to that administrator through the channels they turned on for themselves.
 
 Every message is a row in ``notification_messages`` first and is sent from
 there, right away in a background thread and again by ``tick()`` (run every
@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from app.core.config import settings as app_settings
+from app.core.permissions import is_admin_role
 from app.core.database import SessionLocal
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import NotificationMessage, NotificationPreference, User
@@ -54,18 +55,18 @@ TELEGRAM_API = "https://api.telegram.org"
 LINK_CODE_MINUTES = 15
 
 # ---------------------------------------------------------------------------
-# The events. "admin" events are switched on and off by the admin for the
-# admin recipients; "user" events by each user for themselves. An event with
-# both goes to the admin recipients (a server-wide view) and to the user it is
-# about.
+# The events. "admin" events go to the admin recipients and are switched on and
+# off on the addon; "user" events describe one administrator's own account and
+# go to that administrator, who mutes what they do not want. Accounts that are
+# not administrators never receive anything.
 # ---------------------------------------------------------------------------
 EVENTS: dict[str, dict] = {
     "backup_failed": {"admin": True, "user": False},
-    "malware_found": {"admin": True, "user": True},
-    "ssl_expiring": {"admin": True, "user": True},
+    "malware_found": {"admin": True, "user": False},
+    "ssl_expiring": {"admin": True, "user": False},
     "service_status": {"admin": True, "user": False},
     "disk_low": {"admin": True, "user": False},
-    "storage_quota": {"admin": True, "user": True},
+    "storage_quota": {"admin": True, "user": False},
     "update_available": {"admin": True, "user": False},
     "update_result": {"admin": True, "user": False},
     "login_lockout": {"admin": True, "user": False},
@@ -73,12 +74,10 @@ EVENTS: dict[str, dict] = {
     "login_new_ip": {"admin": False, "user": True},
     "account_security": {"admin": False, "user": True},
     "backup_job": {"admin": False, "user": True},
-    "account_status": {"admin": False, "user": True},
 }
 ADMIN_EVENTS = [key for key, value in EVENTS.items() if value["admin"]]
 USER_EVENTS = [key for key, value in EVENTS.items() if value["user"]]
-# Always delivered: a suspended account cannot sign in to read why.
-UNMUTABLE_USER_EVENTS = {"account_status"}
+UNMUTABLE_USER_EVENTS: set[str] = set()
 
 DEFAULTS = {
     "language": "vi",
@@ -352,12 +351,9 @@ def render(event: str, ctx: dict, lang: str = "vi") -> tuple[str, str]:
                       "uploads fail.\n\nRemove old backups and logs, or add disk."))
     elif event == "storage_quota":
         full = c["percent"] >= 100 if isinstance(c.get("percent"), (int, float)) else False
-        if c.get("username") and ctx.get("_admin_copy"):
-            subject = (f"Tài khoản {c['username']} đã dùng {c['percent']}% dung lượng" if vi
-                       else f"Account {c['username']} is at {c['percent']}% of its storage")
-        else:
-            subject = (("Tài khoản đã hết dung lượng" if full else f"Tài khoản đã dùng {c['percent']}% dung lượng") if vi
-                       else ("Your account is out of storage" if full else f"Your account is at {c['percent']}% of its storage"))
+        subject = ((f"Tài khoản {c['username']} đã hết dung lượng" if full else f"Tài khoản {c['username']} đã dùng {c['percent']}% dung lượng")
+                   if vi else
+                   (f"Account {c['username']} is out of storage" if full else f"Account {c['username']} is at {c['percent']}% of its storage"))
         body = ((f"Tài khoản {c['username']} đang dùng {c['used']} trên {c['limit']} ({c['percent']}%)."
                  + (" Upload file, backup và cập nhật website sẽ bị từ chối." if full else "")) if vi
                 else (f"Account {c['username']} uses {c['used']} of {c['limit']} ({c['percent']}%)."
@@ -400,16 +396,6 @@ def render(event: str, ctx: dict, lang: str = "vi") -> tuple[str, str]:
         subject = ((f"{c['title']} hoàn tất" if ok else f"{c['title']} thất bại") if vi
                    else (f"{c['title']} completed" if ok else f"{c['title']} failed"))
         body = "\n".join(part for part in (c.get("message"), c.get("error"), c.get("file")) if part)
-    elif event == "account_status":
-        suspended = c["state"] == "suspended"
-        subject = (("Tài khoản đã bị tạm ngưng" if suspended else "Tài khoản đã được mở lại") if vi
-                   else ("Your account has been suspended" if suspended else "Your account has been reactivated"))
-        body = ((f"Tài khoản {c['username']} đã bị tạm ngưng. Website và đăng nhập tạm thời không hoạt động."
-                 + (f"\nLý do: {c['reason']}" if c.get("reason") else "")) if suspended else
-                f"Tài khoản {c['username']} đã hoạt động trở lại.") if vi else \
-               ((f"Account {c['username']} has been suspended; its websites and sign-in are unavailable."
-                 + (f"\nReason: {c['reason']}" if c.get("reason") else "")) if suspended else
-                f"Account {c['username']} is active again.")
     elif event == "test":
         subject = ("Thông báo thử từ OPanel" if vi else "OPanel test notification")
         body = ("Kênh này đã được cấu hình đúng." if vi else "This channel is set up correctly.")
@@ -503,7 +489,7 @@ def notify_admin(event: str, ctx: dict, *, deliver: bool = True) -> int:
             recipients = admin_recipients(db, cfg)
             if not recipients:
                 return 0
-            subject, body = render(event, {**ctx, "_admin_copy": True}, cfg["language"])
+            subject, body = render(event, ctx, cfg["language"])
             ids = _enqueue(db, event, "admin", recipients, subject, body)
         finally:
             db.close()
@@ -524,7 +510,7 @@ def notify_user(event: str, user_id: Optional[int], ctx: dict, *, deliver: bool 
         db = SessionLocal()
         try:
             user = db.get(User, int(user_id))
-            if not user:
+            if not user or not is_admin_role(user.role):
                 return 0
             recipients = user_recipients(db, user, event, cfg)
             if not recipients:
@@ -810,7 +796,7 @@ def record_login(user: User, ip: str) -> None:
     """After a successful sign-in: tell the user when it came from an address
     this account has not used recently. The first sign-in only records."""
     try:
-        if not enabled() or not ip:
+        if not enabled() or not ip or not is_admin_role(getattr(user, "role", "")):
             return
         db = SessionLocal()
         try:
@@ -866,8 +852,7 @@ def backup_job_finished(job: dict) -> None:
 
 
 def malware_scan_finished(job: dict) -> None:
-    """A scan found threats: each affected website's owner hears about their
-    own files, the admin recipients get the whole list."""
+    """A scan found threats: the admin recipients get the whole list."""
     try:
         threats = job.get("threats") or []
         if not threats:
@@ -878,24 +863,6 @@ def malware_scan_finished(job: dict) -> None:
         website_scan = job.get("scope") in {"all", "website"}
         scope = ("website" if website_scan else ("toàn máy chủ" if lang == "vi" else "server-wide"))
         notify_admin("malware_found", {"count": len(threats), "files": files, "scope": scope, "when": when})
-        by_domain: dict[str, list[str]] = {}
-        for threat in threats:
-            domain = threat.get("domain") or ""
-            if domain:
-                by_domain.setdefault(domain, []).append(f"{threat.get('path', '')} ({threat.get('signature', '')})")
-        if not by_domain:
-            return
-        from app.models.entities import Website
-
-        db = SessionLocal()
-        try:
-            owners = {w.domain: w.owner_id for w in db.query(Website).filter(Website.domain.in_(list(by_domain))).all()}
-        finally:
-            db.close()
-        for domain, domain_files in by_domain.items():
-            if owners.get(domain):
-                notify_user("malware_found", owners[domain],
-                            {"domain": domain, "count": len(domain_files), "files": domain_files, "when": when})
     except Exception:  # noqa: BLE001
         log.exception("malware notification failed")
 
@@ -999,7 +966,6 @@ def check_ssl_expiry(state: dict) -> None:
 
     thresholds = (1, 3, 7, 14)
     notified = state.setdefault("ssl", {})
-    lang = _stored()["language"]
     expiring = []
     db = SessionLocal()
     try:
@@ -1023,8 +989,6 @@ def check_ssl_expiry(state: dict) -> None:
                 continue
             notified[site.domain] = level
             expiring.append({"domain": site.domain, "days": max(days, 0)})
-            notify_user("ssl_expiring", site.owner_id, {"domain": site.domain, "days": max(days, 0),
-                                                        "expires": _when(lang, expires.replace(tzinfo=None))}, deliver=False)
     finally:
         db.close()
     if expiring:
@@ -1053,7 +1017,6 @@ def check_storage(state: dict) -> None:
             if level > previous:
                 ctx = {"percent": round(percent), "used": _size(summary.get("storage_used_bytes")),
                        "limit": _size(summary.get("storage_limit_bytes"))}
-                notify_user("storage_quota", user.id, ctx, deliver=False)
                 notify_admin("storage_quota", {**ctx, "username": user.username}, deliver=False)
             if level > previous or percent < 85:
                 levels[str(user.id)] = level

@@ -99,16 +99,14 @@ ADDONS: dict[str, dict] = {
     "notifications": {
         "id": "notifications",
         "name": "Notifications",
-        "summary": "Sends email and Telegram alerts to administrators and to each account.",
+        "summary": "Email and Telegram alerts for administrators.",
         "description": (
             "Emails through your SMTP server and messages through your Telegram "
-            "bot. Administrators hear about the server: failed scheduled "
-            "backups, stopped services, a filling disk, certificates that did "
-            "not renew, malware, panel updates and sign-in lockouts. Each "
-            "account hears about itself: sign-ins from a new address, password "
-            "and 2FA changes, its websites' certificates and malware findings, "
-            "its storage and the backups it ran. Users choose their own "
-            "channels and events on the Notifications page."
+            "bot, for administrators only: failed scheduled backups, stopped "
+            "services, a filling disk, certificates that did not renew, "
+            "malware, accounts out of storage, panel updates and sign-in "
+            "lockouts, plus each administrator's own sign-ins and security "
+            "changes. Hosting customers are not notified."
         ),
         "category": "integration",
         "version": "1",
@@ -120,9 +118,9 @@ ADDONS: dict[str, dict] = {
         "notes": [
             "Email needs an SMTP server; many VPS providers block outbound port "
             "25, so use 587 (STARTTLS) or 465 (SSL).",
-            "Telegram needs a bot from @BotFather. Users link their own chat "
-            "from the Notifications page; admin alerts go to the chat IDs you "
-            "enter, which can be a group.",
+            "Telegram needs a bot from @BotFather. Server alerts go to the chat "
+            "IDs you enter, which can be a group; each administrator can also "
+            "link their own chat from the Notifications page.",
             "Messages that cannot be sent are retried for about an hour and "
             "kept in the send log for 30 days.",
         ],

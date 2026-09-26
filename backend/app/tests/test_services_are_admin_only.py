@@ -43,7 +43,7 @@ def test_the_dashboard_numbers_stay_open_to_end_users():
 
 
 def test_the_page_is_hidden_from_end_users():
-    fragment = "['services', tr(\"Services\"), Activity]"
+    fragment = "['services', tr(\"Services\"), Activity,"
     index = APP_JSX.index(fragment)
     window = APP_JSX[max(0, index - 120):index]
     assert "isAdmin ?" in window, f"not gated on isAdmin: {fragment}"

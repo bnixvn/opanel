@@ -1,5 +1,5 @@
-"""The Notifications addon's page: admin channel settings, each user's own
-choices, their Telegram link, and the send log."""
+"""The Notifications addon's page -- administrators only: channel settings,
+each administrator's own choices and Telegram link, and the send log."""
 from __future__ import annotations
 
 from typing import Optional
@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.permissions import Role, ensure_role
+from app.core.permissions import Role, ensure_role, is_admin_role
 from app.models.entities import NotificationMessage, User
 from app.services import notifications
 from app.services.audit import log_action
@@ -22,6 +22,11 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 def _require_enabled() -> None:
     if not notifications.enabled():
         raise HTTPException(status_code=409, detail="Notifications are not enabled on this panel")
+
+
+def _require_admin_enabled(user: User) -> None:
+    ensure_role(user.role, Role.admin)
+    _require_enabled()
 
 
 class NotificationSettingsUpdate(BaseModel):
@@ -56,8 +61,9 @@ class NotificationPreferencesUpdate(BaseModel):
 
 @router.get("/info")
 def notifications_info(current_user: User = Depends(get_current_user)):
-    """Whether to show the page at all; every account needs this."""
-    return {"enabled": notifications.enabled()}
+    """Whether to offer the page. Only administrators ever have it: hosting
+    customers are not notified."""
+    return {"enabled": notifications.enabled() and is_admin_role(current_user.role)}
 
 
 # ---------------------------------------------------------------------------
@@ -117,24 +123,24 @@ def send_log(page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=200), st
 
 
 # ---------------------------------------------------------------------------
-# Every account: its own channels and events
+# An administrator's own account: channels and events
 # ---------------------------------------------------------------------------
 @router.get("/me")
 def my_preferences(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    _require_enabled()
+    _require_admin_enabled(current_user)
     return notifications.preferences(db, current_user)
 
 
 @router.put("/me")
 def save_my_preferences(payload: NotificationPreferencesUpdate, db: Session = Depends(get_db),
                         current_user: User = Depends(get_current_user)):
-    _require_enabled()
+    _require_admin_enabled(current_user)
     return notifications.save_preferences(db, current_user, payload.model_dump(exclude_none=True))
 
 
 @router.post("/me/telegram/link")
 def start_telegram_link(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    _require_enabled()
+    _require_admin_enabled(current_user)
     try:
         return notifications.telegram_link_start(db, current_user)
     except ValueError as exc:
@@ -143,7 +149,7 @@ def start_telegram_link(db: Session = Depends(get_db), current_user: User = Depe
 
 @router.post("/me/telegram/verify")
 async def verify_telegram_link(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    _require_enabled()
+    _require_admin_enabled(current_user)
     try:
         linked = await run_in_threadpool(notifications.telegram_link_verify, db, current_user)
     except (ValueError, RuntimeError) as exc:
@@ -155,14 +161,14 @@ async def verify_telegram_link(db: Session = Depends(get_db), current_user: User
 
 @router.delete("/me/telegram")
 def unlink_telegram(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    _require_enabled()
+    _require_admin_enabled(current_user)
     notifications.telegram_unlink(db, current_user)
     return notifications.preferences(db, current_user)
 
 
 @router.post("/me/test")
 async def send_my_test(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    _require_enabled()
+    _require_admin_enabled(current_user)
     try:
         count = await run_in_threadpool(notifications.send_user_test, db, current_user)
     except ValueError as exc:

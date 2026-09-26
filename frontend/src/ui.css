@@ -243,6 +243,22 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 .firewall-rule-forms .firewall-form button{grid-column:1 / -1}
 .firewall-status pre{max-height:320px}
 .firewall-rule-forms .firewall-form .firewall-note-field{grid-column:1 / -1}
+/* Settings hub: everything that is not in the sidebar, as tiles. */
+.settings-hub-group{display:grid;gap:10px;margin-top:6px}
+.settings-hub-group h3{margin:6px 0 0;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}
+.settings-hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.settings-hub .settings-tile{display:flex;align-items:flex-start;justify-content:flex-start;gap:12px;height:auto;min-height:0;padding:14px;text-align:left;
+  background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-md);font-weight:400}
+.settings-hub .settings-tile:hover:not(:disabled){background:var(--surface-hover);border-color:var(--primary-soft);color:var(--text)}
+.settings-tile-icon{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:var(--radius-sm);background:var(--primary-light);color:var(--primary-ink)}
+.settings-tile-text{display:grid;gap:3px;min-width:0}
+.settings-tile-text strong{font-size:14px;font-weight:600}
+.settings-tile-text small{font-size:12.5px;color:var(--text-muted);line-height:1.4;white-space:normal}
+/* Top bar breadcrumb for a page opened from Settings. */
+.page-crumbs{display:flex;align-items:center;gap:8px;min-width:0}
+.topbar .page-crumbs button{height:auto;min-height:0;padding:0;background:none;border:0;color:var(--text-muted);font:inherit;font-weight:500;cursor:pointer}
+.topbar .page-crumbs button:hover:not(:disabled){background:none;color:var(--primary);text-decoration:underline}
+.page-crumbs span{color:var(--text-muted);font-weight:400}
 /* Notifications page: channel cards, the admin form, event checklists, send log. */
 .notify-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
 .notify-card{background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px 16px;display:grid;gap:10px;align-content:start;min-width:0}

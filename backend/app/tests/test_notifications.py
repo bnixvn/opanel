@@ -154,33 +154,29 @@ def test_explicit_admin_emails_replace_the_admin_accounts(env):
     assert sorted(r.recipient for r in _rows(env)) == ["boss@company.vn", "noc@company.vn"]
 
 
-def test_user_events_follow_the_users_own_choices(env):
+def test_own_account_events_follow_the_admins_choices_and_skip_customers(env):
     _configure(env)
-    alice, bob = env.users["alice"], env.users["bob"]
-    # A placeholder address from an import is never mailed.
-    assert notifications.notify_user("login_new_ip", bob.id, {"ip": "1.2.3.4"}) == 0
-    assert notifications.notify_user("login_new_ip", alice.id, {"ip": "1.2.3.4"}) == 1
-    env.db.add(NotificationPreference(user_id=alice.id, email_enabled=True, telegram_enabled=True,
+    root, alice, bob = env.users["root"], env.users["alice"], env.users["bob"]
+    # Hosting customers are never notified, whatever their address.
+    assert notifications.notify_user("login_new_ip", alice.id, {"ip": "1.2.3.4"}) == 0
+    assert notifications.notify_user("account_security", bob.id, {"change": "password_changed"}) == 0
+    assert notifications.notify_user("login_new_ip", root.id, {"ip": "1.2.3.4"}) == 1
+    env.db.add(NotificationPreference(user_id=root.id, email_enabled=True, telegram_enabled=True,
                                       telegram_chat_id="555123", muted_events="login_new_ip", known_ips=""))
     env.db.commit()
-    assert notifications.notify_user("login_new_ip", alice.id, {"ip": "1.2.3.5"}) == 0
-    assert notifications.notify_user("account_security", alice.id, {"change": "password_changed"}) == 2
-    # A suspension reaches the user whatever they muted.
-    pref = env.db.get(NotificationPreference, alice.id)
-    pref.muted_events = "account_status,account_security"
-    env.db.commit()
-    assert notifications.notify_user("account_status", alice.id, {"state": "suspended"}) == 2
-    # Admin-only events never go to a user.
-    assert notifications.notify_user("disk_low", alice.id, {"percent": 99}) == 0
+    assert notifications.notify_user("login_new_ip", root.id, {"ip": "1.2.3.5"}) == 0
+    assert notifications.notify_user("account_security", root.id, {"change": "password_changed"}) == 2
+    # Server events are never sent as a personal copy.
+    assert notifications.notify_user("disk_low", root.id, {"percent": 99}) == 0
+    assert notifications.notify_user("malware_found", root.id, {"domain": "a.vn"}) == 0
 
 
-def test_saving_preferences_cannot_mute_a_suspension(env):
+def test_saving_preferences_mutes_only_own_account_events(env):
     _configure(env)
-    alice = env.users["alice"]
-    out = notifications.save_preferences(env.db, alice, {"email_enabled": False,
-                                                         "events": {"login_new_ip": False, "account_status": False}})
-    assert out["email_enabled"] is False and out["events"]["login_new_ip"] is False
-    assert out["events"]["account_status"] is True
+    out = notifications.save_preferences(env.db, env.users["root"], {"email_enabled": False,
+                                                                     "events": {"login_new_ip": False, "disk_low": False}})
+    assert out["email_enabled"] is False and out["events"] == {"login_new_ip": False, "account_security": True, "backup_job": True}
+    assert out["unmutable"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -222,17 +218,22 @@ def test_a_claimed_message_is_not_sent_twice(env):
 # ---------------------------------------------------------------------------
 def test_a_new_sign_in_address_is_reported_but_the_first_only_recorded(env):
     _configure(env)
-    alice = env.users["alice"]
-    notifications.record_login(alice, "198.51.100.4")
+    root, alice = env.users["root"], env.users["alice"]
+    notifications.record_login(root, "198.51.100.4")
     assert _rows(env) == []
-    notifications.record_login(alice, "198.51.100.4")
+    notifications.record_login(root, "198.51.100.4")
     assert _rows(env) == []
-    notifications.record_login(alice, "203.0.113.50")
+    notifications.record_login(root, "203.0.113.50")
     rows = _rows(env)
     assert rows and rows[0].event == "login_new_ip" and "203.0.113.50" in rows[0].body
+    # A customer's sign-ins are not even recorded.
+    notifications.record_login(alice, "198.51.100.9")
+    notifications.record_login(alice, "203.0.113.99")
+    env.db.expire_all()
+    assert env.db.get(NotificationPreference, alice.id) is None
 
 
-def test_malware_reaches_each_owner_with_their_own_files(env):
+def test_malware_goes_to_the_admins_not_to_the_site_owner(env):
     from app.models.entities import Website
 
     _configure(env)
@@ -244,11 +245,10 @@ def test_malware_reaches_each_owner_with_their_own_files(env):
         {"path": "/home/alice/shop.vn/public_html/x.php", "signature": "Php.Webshell", "domain": "shop.vn"},
         {"path": "/home/other/y.php", "signature": "Js.Miner", "domain": "gone.vn"},
     ]})
-    user_rows = [r for r in _rows(env) if r.audience == "user"]
-    assert {r.recipient for r in user_rows} == {"alice@shop.vn"}
-    assert "x.php" in user_rows[0].body and "y.php" not in user_rows[0].body
-    admin_rows = [r for r in _rows(env) if r.audience == "admin"]
-    assert admin_rows and all("y.php" in r.body for r in admin_rows)
+    rows = _rows(env)
+    assert rows and {r.audience for r in rows} == {"admin"}
+    assert all("x.php" in r.body and "y.php" in r.body for r in rows)
+    assert "alice@shop.vn" not in {r.recipient for r in rows}
 
 
 def test_the_login_lockout_trips_once(monkeypatch):
@@ -308,12 +308,12 @@ def test_ssl_warnings_fire_once_per_threshold(env, monkeypatch):
     monkeypatch.setattr(ssl_service, "certificate_expiry", lambda cert: expiry["at"])
     state = {}
     notifications.check_ssl_expiry(state)
-    assert {r.audience for r in _rows(env)} == {"user", "admin"}
+    assert [r.audience for r in _rows(env)] == ["admin"]
     notifications.check_ssl_expiry(state)
-    assert len(_rows(env)) == 2
+    assert len(_rows(env)) == 1
     expiry["at"] = datetime.utcnow() + timedelta(days=6, hours=12)
     notifications.check_ssl_expiry(state)
-    assert len(_rows(env)) == 4
+    assert len(_rows(env)) == 2
     # Renewed: forget it, so the next run-up warns again.
     expiry["at"] = datetime.utcnow() + timedelta(days=89)
     notifications.check_ssl_expiry(state)
@@ -397,8 +397,9 @@ def test_the_addon_is_a_panel_addon_the_helper_never_sees():
 def test_the_page_is_offered_once_the_addon_is_on():
     app = (ROOT / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     assert "  notifications: '/notifications'," in app
-    assert "...((isAdmin || notifyInfo?.enabled) ? [['notifications', tr(\"Notifications\"), Bell]] : [])" in app
-    assert "if (page === 'notifications') return renderNotificationCenter();" in app
+    # Administrators only, and only while the addon is on.
+    assert "...(isAdmin && notifyInfo?.enabled ? [['notifications', tr(\"Notifications\"), Bell]] : [])" in app
+    assert "if (page === 'notifications') return isAdmin ? renderNotificationCenter() : renderDashboard();" in app
     # The send log is a sub-page with a way back, not a dialog.
     assert "if (showNotifyLog && isAdmin) return renderNotifyLog();" in app
     # Secrets are never echoed back into the form.

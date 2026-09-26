@@ -405,9 +405,6 @@ def suspend_account(db: Session, external_id: str, reason: str = "Suspended by W
     user.is_active = False
     user.token_version = (user.token_version or 0) + 1
     db.commit()
-    from app.services import notifications
-
-    notifications.notify_user("account_status", user.id, {"state": "suspended", "reason": reason})
 
     # Lock the Linux user. This is what removes SFTP; a failure here means the
     # account is not actually suspended, so it fails the job instead of being
@@ -470,9 +467,6 @@ def unsuspend_account(db: Session, external_id: str) -> HostingAccount:
     # already moved it forward, so every pre-suspension JWT stays rejected.
     user.is_active = True
     db.commit()
-    from app.services import notifications
-
-    notifications.notify_user("account_status", user.id, {"state": "active"})
 
     # Restore every vhost suspend took down. Same rule as suspend: one domain
     # must not keep the rest of the account offline.

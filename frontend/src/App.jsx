@@ -56,7 +56,8 @@ const PAGE_ROUTES = {
   sftp: '/sftp',
   backups: '/backups',
   users: '/users',
-  settings: '/settings',
+  settings: '/panel-settings',
+  config: '/settings',
   security: '/security',
   malware: '/malware',
   php: '/php',
@@ -3778,6 +3779,32 @@ function App() {
 
   // The sidebar in three labelled groups -- what a site needs, what guards it,
   // and the server itself -- so nothing hides behind a collapsed "Settings".
+  // Everything that is not day-to-day hosting work lives on the Settings page
+  // rather than in the sidebar. Each entry: key, label, icon, one-line summary.
+  const settingsGroups = [
+    { key: 'security', title: tr("Security"), items: [
+      ...(isAdmin ? [['firewall', tr("Firewall"), BrickWall, tr("Open ports, blocked addresses and blocklists")]] : []),
+      ['waf', tr("WAF"), ShieldAlert, tr("Web application firewall for each website")],
+      ...(isAdmin ? [['malware', tr("Malware scanner"), Bug, tr("Scan websites and the server, quarantine threats")]] : []),
+      ['wafLogs', tr("Access logs"), ScrollText, tr("Visitors and what the WAF blocked")],
+      ['security', tr("Account security"), LockKeyhole, tr("Password, two-factor authentication and passkeys")],
+    ] },
+    { key: 'system', title: tr("System"), items: [
+      ...(isAdmin ? [['services', tr("Services"), Activity, tr("Start, stop and check the server's daemons")]] : []),
+      ...(isAdmin ? [['php', tr("PHP config"), Code2, tr("PHP versions, limits and extensions")]] : []),
+      ...(isAdmin ? [['settings', tr("Panel settings"), SettingsIcon, tr("Branding, panel address and certificate")]] : []),
+      ...(isAdmin ? [['updates', tr("Updates"), RefreshCw, tr("Panel and system updates")]] : []),
+      ...(isAdmin ? [['addons', tr("Addons"), PackageOpen, tr("Install and turn on optional features")]] : []),
+    ] },
+  ].filter(group => group.items.length > 0);
+  const settingsItems = settingsGroups.flatMap(group => group.items);
+
+  // An addon earns a sidebar entry only while it is turned on.
+  const addonNavItems = [
+    ...(mcpInfo?.enabled ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
+    ...(isAdmin && notifyInfo?.enabled ? [['notifications', tr("Notifications"), Bell]] : []),
+  ];
+
   const navSections = [
     { key: 'home', items: [['dashboard', tr("Dashboard"), Home]] },
     { key: 'hosting', title: tr("Hosting"), items: [
@@ -3788,29 +3815,17 @@ function App() {
       ['files', tr("File manager"), FolderOpen],
       ['sftp', tr("SFTP accounts"), KeyRound],
       ['backups', tr("Backups"), Archive],
-    ] },
-    { key: 'security', title: tr("Security"), items: [
-      ...(isAdmin ? [['firewall', tr("Firewall"), BrickWall]] : []),
-      ['waf', tr("WAF"), ShieldAlert],
-      ...(isAdmin ? [['malware', tr("Malware scanner"), Bug]] : []),
-      ['wafLogs', tr("Access logs"), ScrollText],
-      ['security', tr("Account security"), LockKeyhole],
-    ] },
-    { key: 'system', title: tr("System"), items: [
-      ...(isAdmin ? [['services', tr("Services"), Activity]] : []),
-      ...(isAdmin ? [['php', tr("PHP config"), Code2]] : []),
       ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
-      ...(isAdmin ? [['settings', tr("Panel settings"), SettingsIcon]] : []),
-      ...(isAdmin ? [['updates', tr("Updates"), RefreshCw]] : []),
-      ...(isAdmin ? [['addons', tr("Addons"), PackageOpen]] : []),
-      // Offered to a customer only once an admin has turned MCP on.
-      ...((isAdmin || mcpInfo?.enabled) ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
-      ...((isAdmin || notifyInfo?.enabled) ? [['notifications', tr("Notifications"), Bell]] : []),
     ] },
-  ].filter(section => section.items.length > 0);
+    ...(addonNavItems.length ? [{ key: 'addons', title: tr("Addons"), items: addonNavItems }] : []),
+    { key: 'config', items: [['config', tr("Settings"), SettingsIcon]] },
+  ];
 
   const navItems = navSections.flatMap(section => section.items);
-  const activeNavItem = navItems.find(([key]) => key === page) || navItems[0];
+  // A page reached from Settings keeps Settings lit in the sidebar.
+  const settingsPage = settingsItems.find(([key]) => key === page);
+  const navKey = settingsPage ? 'config' : page;
+  const activeNavItem = settingsPage || navItems.find(([key]) => key === navKey) || navItems[0];
 
   function renderNotifications() {
     const errorMessage = formatApiError(error, '').trim();
@@ -5352,6 +5367,23 @@ function App() {
     </>;
   }
 
+  function renderSettingsHub() {
+    return <section className="section settings-hub">
+      <div className="section-title">
+        <div><h2>{tr("Settings")}</h2><p className="hint">{tr("Security, server and panel configuration.")}</p></div>
+      </div>
+      {settingsGroups.map(group => <div className="settings-hub-group" key={group.key}>
+        <h3>{group.title}</h3>
+        <div className="settings-hub-grid">
+          {group.items.map(([key, label, Icon, summary]) => <button key={key} type="button" className="settings-tile" onClick={() => navigateToPage(key)}>
+            <span className="settings-tile-icon"><Icon size={18}/></span>
+            <span className="settings-tile-text"><strong>{label}</strong><small>{summary}</small></span>
+          </button>)}
+        </div>
+      </div>)}
+    </section>;
+  }
+
   // Labels live here rather than in the API so the i18n check sees them.
   function notifyEventLabels() {
     return {
@@ -5372,11 +5404,7 @@ function App() {
     return {
       login_new_ip: tr("Sign-in from a new address"),
       account_security: tr("Password, 2FA, passkey or token changes"),
-      ssl_expiring: tr("My websites' SSL certificates expiring"),
-      malware_found: tr("Malware on my websites"),
-      storage_quota: tr("My storage nearly or completely full"),
       backup_job: tr("Backups and restores I started have finished"),
-      account_status: tr("Account suspended / reactivated (always sent)"),
     };
   }
 
@@ -5426,7 +5454,7 @@ function App() {
         <div className="section-title">
           <div>
             <h2>{tr("Notifications")}</h2>
-            <p className="hint">{tr("Email and Telegram alerts: administrators hear about the server, every account about itself.")}</p>
+            <p className="hint">{tr("Email and Telegram alerts for administrators. Hosting customers are not notified.")}</p>
           </div>
           <button className="secondary" disabled={!!loading} onClick={loadNotifications}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
@@ -5439,7 +5467,7 @@ function App() {
 
       {enabled && isAdmin && f && <section className="section">
         <div className="section-title">
-          <div><h2>{tr("Channels")}</h2><p className="hint">{tr("Server-wide. Users receive through these too, on the channels they turn on for themselves.")}</p></div>
+          <div><h2>{tr("Channels")}</h2><p className="hint">{tr("Server-wide. Your own account's alerts go out through these too.")}</p></div>
           <button className="secondary" onClick={() => { setNotifyLog(null); setNotifyLogPage(1); setShowNotifyLog(true); }}><ScrollText size={14}/> {tr("Send log")}</button>
         </div>
         <div className="notify-grid">
@@ -5479,7 +5507,7 @@ function App() {
               <label className="wide"><span>{tr("Admin chat IDs")}</span><input value={f.admin_telegram_chats || ''} placeholder="123456789, -1001234567890"
                 onChange={e => setF({ admin_telegram_chats: e.target.value })} /></label>
             </div>
-            <p className="hint">{tr("A group works too: add the bot to it and use the group's ID (it starts with -100). Users link their own chat below.")}</p>
+            <p className="hint">{tr("A group works too: add the bot to it and use the group's ID (it starts with -100). Link your own chat below.")}</p>
             <div className="notify-test">
               <input value={notifyTest.telegram} placeholder={tr("Chat ID for a test")} onChange={e => setNotifyTest(prev => ({ ...prev, telegram: e.target.value }))} />
               <button className="secondary" disabled={!!loading || !notifyTest.telegram} onClick={() => sendNotifyTest('telegram')}>{tr("Send test")}</button>
@@ -5516,7 +5544,7 @@ function App() {
 
       {enabled && prefs && <section className="section">
         <div className="section-title">
-          <div><h2>{tr("My notifications")}</h2><p className="hint">{tr("About your own account and websites.")}</p></div>
+          <div><h2>{tr("My notifications")}</h2><p className="hint">{tr("About your own administrator account.")}</p></div>
           <button className="secondary" disabled={!!loading || !(prefs.email_available || prefs.telegram_linked)} onClick={sendMyNotifyTest}>{tr("Send me a test")}</button>
         </div>
         <div className="notify-grid">
@@ -6990,7 +7018,8 @@ function App() {
     // paint a page whose every request will 403.
     if (page === 'addons') return isAdmin ? renderAddons() : renderDashboard();
     if (page === 'mcp') return renderMcp();
-    if (page === 'notifications') return renderNotificationCenter();
+    if (page === 'notifications') return isAdmin ? renderNotificationCenter() : renderDashboard();
+    if (page === 'config') return renderSettingsHub();
     if (page === 'sftp') return renderSftp();
     if (page === 'services') return isAdmin ? renderServices() : renderDashboard();
     if (page === 'settings') return renderPanelSettings();
@@ -7053,7 +7082,7 @@ function App() {
         <nav className="sidebar-nav">
           {navSections.map(section => <div className="sidebar-section" key={section.key}>
             {section.title && <p className="sidebar-section-title">{section.title}</p>}
-            {section.items.map(([key, label, Icon]) => <button key={key} type="button" className={page === key ? 'active' : ''} onClick={() => navigateToPage(key)} aria-current={page === key ? 'page' : undefined}>
+            {section.items.map(([key, label, Icon]) => <button key={key} type="button" className={navKey === key ? 'active' : ''} onClick={() => navigateToPage(key)} aria-current={navKey === key ? 'page' : undefined}>
               <Icon size={16}/><span>{label}</span>
             </button>)}
           </div>)}
@@ -7066,7 +7095,9 @@ function App() {
             <Menu size={20}/><span><ActiveIcon size={17}/>{activeNavItem?.[1] || tr("Menu")}</span>
           </button>
           <div className="page-title">
-            <h1>{activeNavItem?.[1] || panelSettings.app_name || tr("opanel")}</h1>
+            {settingsPage
+              ? <h1 className="page-crumbs"><button type="button" onClick={() => navigateToPage('config')}>{tr("Settings")}</button><span aria-hidden="true">›</span>{settingsPage[1]}</h1>
+              : <h1>{activeNavItem?.[1] || panelSettings.app_name || tr("opanel")}</h1>}
           </div>
           <div className="top-actions">
             {renderLanguageToggle('secondary compact-btn top-lang')}
