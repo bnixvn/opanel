@@ -3091,13 +3091,6 @@ function App() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [showFirewallIpList, firewallIpQuery, firewallIpAction, firewallIpPage, firewallIpReload]);
 
-  useEffect(() => {
-    if (!showFirewallIpList) return undefined;
-    const onKey = event => { if (event.key === 'Escape') setShowFirewallIpList(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [showFirewallIpList]);
-
   function parseFirewallBlocklistUrls(text) {
     const lines = String(text || '').split('\n');
     const urls = [];
@@ -3645,9 +3638,11 @@ function App() {
     return () => { document.removeEventListener('mousedown', onPointer); document.removeEventListener('keydown', onKey); };
   }, [userMenuOpen]);
 
-  useEffect(() => { setUserMenuOpen(false); setMalwareDetailJob(null); window.scrollTo(0, 0); }, [page]);
+  useEffect(() => { setUserMenuOpen(false); setMalwareDetailJob(null); setShowFirewallIpList(false); window.scrollTo(0, 0); }, [page]);
   // Opening or leaving one website's WAF settings is a page change too.
   useEffect(() => { window.scrollTo(0, 0); }, [wafSiteConfig?.domain]);
+  // So is opening or leaving the Firewall's address list.
+  useEffect(() => { window.scrollTo(0, 0); }, [showFirewallIpList]);
 
   function roleLabel(role) {
     return role === 'admin' ? tr("Admin") : tr("End user");
@@ -5451,8 +5446,47 @@ function App() {
     </section>;
   }
 
+  // A sub-page of Firewall, like a malware scan's detail: same URL, a back button.
+  function renderFirewallAddresses() {
+    const list = firewallIpList || { items: [], total: 0, page: 1, size: 50, counts: firewallStatus?.ip_rule_counts || {} };
+    const counts = list.counts || {};
+    const pages = Math.max(1, Math.ceil((list.total || 0) / (list.size || 50)));
+    return <section className="section firewall-ip-page">
+      <div className="section-title">
+        <div className="waf-detail-title">
+          <button className="secondary" onClick={() => setShowFirewallIpList(false)}><ArrowLeft size={14}/> {tr("Firewall")}</button>
+          <div><h2>{tr("Blocked and allowed addresses")}</h2><p className="hint">{tr("{0} blocked · {1} allowed", counts.blocked || 0, counts.allowed || 0)}</p></div>
+        </div>
+      </div>
+      <div className="firewall-ip-toolbar">
+        <input value={firewallIpQuery} autoFocus aria-label={tr("Search addresses")} placeholder={tr("Search an IP, network or reason")}
+               onChange={e => { setFirewallIpQuery(e.target.value); setFirewallIpPage(1); }} />
+        <select value={firewallIpAction} aria-label={tr("Show")} onChange={e => { setFirewallIpAction(e.target.value); setFirewallIpPage(1); }}>
+          <option value="">{tr("All ({0})", (counts.blocked || 0) + (counts.allowed || 0))}</option>
+          <option value="deny">{tr("Blocked ({0})", counts.blocked || 0)}</option>
+          <option value="allow">{tr("Allowed ({0})", counts.allowed || 0)}</option>
+        </select>
+      </div>
+      {list.items.length > 0 ? <ul className="firewall-ip-list">
+        {list.items.map(rule => <li key={rule.id}>
+          <span className={`badge ${rule.action === 'deny' ? 'bad' : 'ok'}`}>{rule.action === 'deny' ? tr("Blocked") : tr("Allowed")}</span>
+          <code>{rule.network}{rule.port ? ` :${rule.port}/${String(rule.protocol || 'tcp').toUpperCase()}` : ''}</code>
+          <span className="firewall-ip-note" title={rule.note || ''}>{rule.note || '—'}</span>
+          <small title={rule.created_at ? new Date(rule.created_at).toLocaleString() : ''}>{[rule.source === 'mcp' ? 'MCP' : rule.source === 'panel' ? tr("Panel") : '', rule.created_at ? new Date(rule.created_at).toLocaleDateString() : ''].filter(Boolean).join(' · ')}</small>
+          <button className="mini secondary-light" disabled={!!loading} onClick={() => deleteFirewallRule(rule.id, rule.network)}>{rule.action === 'deny' ? tr("Unblock") : tr("Remove")}</button>
+        </li>)}
+      </ul> : <p className="hint">{firewallIpList === null ? tr("Loading…") : firewallIpQuery.trim() ? tr("No address matches “{0}”.", firewallIpQuery.trim()) : tr("No address is blocked or allowed by a panel rule. Blocklists and Fail2ban bans are listed on their own.")}</p>}
+      {pages > 1 && <div className="firewall-ip-pager">
+        <button className="mini secondary" disabled={list.page <= 1} onClick={() => setFirewallIpPage(p => Math.max(1, p - 1))}>{tr("Previous")}</button>
+        <span className="hint">{tr("Page {0} of {1} · {2} addresses", list.page, pages, list.total)}</span>
+        <button className="mini secondary" disabled={list.page >= pages} onClick={() => setFirewallIpPage(p => p + 1)}>{tr("Next")}</button>
+      </div>}
+    </section>;
+  }
+
   function renderFirewall() {
     if (!isAdmin) return <section className="section"><h2>{tr("Firewall")}</h2><p className="hint">{tr("No permission.")}</p></section>;
+    if (showFirewallIpList) return renderFirewallAddresses();
     const firewallText = firewallStatus?.stdout || firewallStatus?.stderr || tr("Click Refresh to load status.");
     const blocklistText = firewallBlocklists?.stdout || firewallBlocklists?.stderr || tr("No blocklist status loaded.");
     const blocklistUrls = parseFirewallBlocklistUrls(blocklistText);
@@ -6678,44 +6712,6 @@ function App() {
         </div>
       </div>
     </div>}
-    {showFirewallIpList && (() => {
-      const list = firewallIpList || { items: [], total: 0, page: 1, size: 50, counts: firewallStatus?.ip_rule_counts || {} };
-      const counts = list.counts || {};
-      const pages = Math.max(1, Math.ceil((list.total || 0) / (list.size || 50)));
-      return <div className="modal-overlay" onClick={() => setShowFirewallIpList(false)}>
-        <div className="modal-card firewall-ip-modal" role="dialog" aria-modal="true" aria-label={tr("Blocked and allowed addresses")} onClick={e => e.stopPropagation()}>
-          <div className="modal-header">
-            <h3>{tr("Blocked and allowed addresses")}</h3>
-            <button className="secondary-light" onClick={() => setShowFirewallIpList(false)} aria-label={tr("Close")}><X size={16}/></button>
-          </div>
-          <div className="modal-body">
-            <div className="firewall-ip-toolbar">
-              <input value={firewallIpQuery} autoFocus aria-label={tr("Search addresses")} placeholder={tr("Search an IP, network or reason")}
-                     onChange={e => { setFirewallIpQuery(e.target.value); setFirewallIpPage(1); }} />
-              <select value={firewallIpAction} aria-label={tr("Show")} onChange={e => { setFirewallIpAction(e.target.value); setFirewallIpPage(1); }}>
-                <option value="">{tr("All ({0})", (counts.blocked || 0) + (counts.allowed || 0))}</option>
-                <option value="deny">{tr("Blocked ({0})", counts.blocked || 0)}</option>
-                <option value="allow">{tr("Allowed ({0})", counts.allowed || 0)}</option>
-              </select>
-            </div>
-            {list.items.length > 0 ? <ul className="firewall-ip-list">
-              {list.items.map(rule => <li key={rule.id}>
-                <span className={`badge ${rule.action === 'deny' ? 'bad' : 'ok'}`}>{rule.action === 'deny' ? tr("Blocked") : tr("Allowed")}</span>
-                <code>{rule.network}{rule.port ? ` :${rule.port}/${String(rule.protocol || 'tcp').toUpperCase()}` : ''}</code>
-                <span className="firewall-ip-note" title={rule.note || ''}>{rule.note || '—'}</span>
-                <small title={rule.created_at ? new Date(rule.created_at).toLocaleString() : ''}>{[rule.source === 'mcp' ? 'MCP' : rule.source === 'panel' ? tr("Panel") : '', rule.created_at ? new Date(rule.created_at).toLocaleDateString() : ''].filter(Boolean).join(' · ')}</small>
-                <button className="mini secondary-light" disabled={!!loading} onClick={() => deleteFirewallRule(rule.id, rule.network)}>{rule.action === 'deny' ? tr("Unblock") : tr("Remove")}</button>
-              </li>)}
-            </ul> : <p className="hint">{firewallIpList === null ? tr("Loading…") : firewallIpQuery.trim() ? tr("No address matches “{0}”.", firewallIpQuery.trim()) : tr("No address is blocked or allowed by a panel rule. Blocklists and Fail2ban bans are listed on their own.")}</p>}
-            {pages > 1 && <div className="firewall-ip-pager">
-              <button className="mini secondary" disabled={list.page <= 1} onClick={() => setFirewallIpPage(p => Math.max(1, p - 1))}>{tr("Previous")}</button>
-              <span className="hint">{tr("Page {0} of {1} · {2} addresses", list.page, pages, list.total)}</span>
-              <button className="mini secondary" disabled={list.page >= pages} onClick={() => setFirewallIpPage(p => p + 1)}>{tr("Next")}</button>
-            </div>}
-          </div>
-        </div>
-      </div>;
-    })()}
     {dbOwnerModal && <div className="modal-overlay" onClick={() => setDbOwnerModal(null)}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="modal-header">

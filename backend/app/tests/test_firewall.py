@@ -283,5 +283,9 @@ def test_the_firewall_page_lists_blocked_addresses():
     assert "firewallStatus?.ip_rule_counts" in app
     assert "`/firewall/ip-rules?${params}`" in app
     assert "setShowFirewallIpList(true)" in app
+    # A sub-page of Firewall with a way back, not a dialog over it.
+    assert "if (showFirewallIpList) return renderFirewallAddresses();" in app
+    assert 'onClick={() => setShowFirewallIpList(false)}><ArrowLeft size={14}/> {tr("Firewall")}' in app
+    assert "firewall-ip-modal" not in app
     assert "deleteFirewallRule(rule.id, rule.network)" in app
     assert "note: firewallBlockNote.trim() || null" in app

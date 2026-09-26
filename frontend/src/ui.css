@@ -245,10 +245,11 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 .firewall-rule-forms .firewall-form .firewall-note-field{grid-column:1 / -1}
 .firewall-ip-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
 .firewall-ip-summary strong{margin-right:6px}
-/* The search and the pager stay put; only the rows scroll. */
-.modal-card.firewall-ip-modal{width:760px;display:flex;flex-direction:column;overflow:hidden}
-.firewall-ip-modal .modal-body{display:flex;flex-direction:column;min-height:0;padding:14px 20px 16px}
-.firewall-ip-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 170px;gap:8px;margin-bottom:10px}
+/* Firewall > address list. The search and the pager stay in view; only the
+   rows scroll (on a phone the page itself scrolls instead). */
+.firewall-ip-page .section-title{margin-bottom:12px}
+.firewall-ip-page .firewall-ip-list{max-height:max(240px,calc(100vh - 330px))}
+.firewall-ip-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:8px;margin-bottom:10px}
 .firewall-ip-list{list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow-y:auto;min-height:0}
 .firewall-ip-list li{display:grid;grid-template-columns:78px minmax(130px,max-content) minmax(0,1fr) max-content max-content;align-items:center;gap:10px;padding:4px 10px;border-top:1px solid var(--border);min-height:34px}
 .firewall-ip-list li:first-child{border-top:0}
@@ -259,6 +260,7 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 .firewall-ip-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px}
 @media(max-width:720px){
   .firewall-ip-toolbar{grid-template-columns:1fr}
+  .firewall-ip-page .firewall-ip-list{max-height:none}
   /* Two lines per address: badge, address, button; then reason and source/date. */
   .firewall-ip-list li{grid-template-columns:auto minmax(0,1fr) auto;row-gap:2px;column-gap:8px;padding:6px 10px}
   .firewall-ip-list code{white-space:normal;overflow-wrap:anywhere}
