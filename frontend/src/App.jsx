@@ -3766,6 +3766,19 @@ function App() {
     return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
   }
 
+  // A file's modification time (epoch seconds) at a fixed width, so the column
+  // lines up: 26/09/2026 10:31 in Vietnamese, 2026-09-26 10:31 in English.
+  function formatFileTime(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    const d = new Date(value * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return currentLanguage === 'vi'
+      ? `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${time}`
+      : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
+  }
+
   function formatPercent(value) {
     const amount = Number(value);
     if (!Number.isFinite(amount)) return '--';
@@ -4573,7 +4586,8 @@ function App() {
               </button>
               <button type="button" className="file-mode" disabled={!!loading} title={tr("Change permissions")} aria-label={tr("Change permissions of {0}", item.name)}
                 onClick={() => setChmodTarget({ path: item.path, name: item.name, is_dir: item.is_dir, mode: (item.mode || (item.is_dir ? '755' : '644')).slice(-3) })}>{item.mode || '---'}</button>
-              <span className="file-size">{item.is_dir ? tr("Folder") : formatBytes(item.size)}</span>
+              <span className="file-size">{item.is_dir ? tr("Folder") : formatBytes(item.size)}{item.modified ? <span className="file-date-inline"> · {formatFileTime(item.modified)}</span> : null}</span>
+              <span className="file-date" title={item.modified ? new Date(item.modified * 1000).toLocaleString() : ''}>{formatFileTime(item.modified)}</span>
               <div className="file-row-actions">
                 {!item.is_dir && <button className="mini secondary-light" disabled={!!loading} onClick={() => downloadFile(item.path)}><Download size={13}/></button>}
                 {isExtractableArchive(item) && <button className="mini secondary-light" disabled={!!loading} onClick={() => extractArchive(item)}><PackageOpen size={13}/> {tr("Extract")}</button>}

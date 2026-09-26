@@ -223,7 +223,7 @@
 
 .file-item {
   display: grid;
-  grid-template-columns: 20px minmax(240px, 1fr) 52px 82px auto;
+  grid-template-columns: 20px minmax(200px, 1fr) 52px 72px 112px auto;
   gap: 8px;
   align-items: center;
   background: var(--surface);
@@ -301,6 +301,19 @@
   color: var(--text-muted);
   font-weight: 700;
   white-space: nowrap;
+}
+
+.file-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The date sits beside the size once the columns stack (narrow screens). */
+.file-date-inline {
+  display: none;
 }
 
 .file-mode {
@@ -539,6 +552,15 @@
     grid-column: 2;
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .file-date {
+    display: none;
+  }
+
+  .file-date-inline {
+    display: inline;
+    font-variant-numeric: tabular-nums;
   }
 }
 
