@@ -1723,6 +1723,38 @@ def install_php_version(php_version: str, current_user: User = Depends(get_curre
     return result
 
 
+@router.get("/php/extensions")
+def get_php_extensions(php_version: str = Query(default="8.4"), current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        return php.list_php_extensions(php_version)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/php/extensions/{php_version}/{name}/{action}")
+def change_php_extension(php_version: str, name: str, action: str, request: Request,
+                         db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Install or remove one lsphp extension package. Server-wide: every site
+    on that PHP version gets (or loses) it, and OpenLiteSpeed restarts."""
+    ensure_role(current_user.role, Role.admin)
+    if action not in {"install", "remove"}:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        if action == "install":
+            result = php.install_php_extension(php_version, name)
+        else:
+            result = php.remove_php_extension(php_version, name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_action(db, current_user.id, f"php_extension_{action}", f"php{php_version}", name, request=request)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # PHP / LSPHP auto-tuning
 # ---------------------------------------------------------------------------

@@ -243,6 +243,28 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 .firewall-rule-forms .firewall-form button{grid-column:1 / -1}
 .firewall-status pre{max-height:320px}
 .firewall-rule-forms .firewall-form .firewall-note-field{grid-column:1 / -1}
+/* PHP config > PHP extensions: one row per extension package. */
+.user-create-card.php-ext-card{display:block}
+.php-ext-head h3{margin:0 0 4px}
+.php-ext-head .hint{margin:0 0 10px}
+.php-ext-list{list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
+.php-ext-list li{display:grid;grid-template-columns:96px minmax(0,1fr) minmax(170px,max-content) 88px;align-items:center;gap:10px;padding:4px 10px;border-top:1px solid var(--border);min-height:36px}
+.php-ext-list li:first-child{border-top:0}
+.php-ext-list code{font-size:12.5px;font-weight:700;color:var(--text);background:transparent;padding:0}
+.php-ext-desc{color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.php-ext-state{display:flex;align-items:center;gap:8px}
+.php-ext-state small{color:var(--text-muted);font-weight:600}
+.php-ext-list li>button{justify-self:end}
+.php-modules{margin-top:10px}
+.php-modules summary{cursor:pointer;font-weight:600;color:var(--text-secondary)}
+.php-module-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.php-module-chips code{font-size:12px;padding:2px 7px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-secondary)}
+@media(max-width:720px){
+  .php-ext-list li{grid-template-columns:minmax(0,1fr) auto;row-gap:3px;padding:7px 10px}
+  .php-ext-desc{grid-column:1 / -1;grid-row:2;white-space:normal}
+  .php-ext-state{grid-column:1 / -1;grid-row:3}
+  .php-ext-list li>button,.php-ext-list li>span:last-child{grid-column:2;grid-row:1}
+}
 .firewall-ip-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
 .firewall-ip-summary strong{margin-right:6px}
 /* Firewall > address list. The search and the pager stay in view; only the

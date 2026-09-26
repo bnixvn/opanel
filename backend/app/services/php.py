@@ -211,6 +211,103 @@ def install_php(php_version: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# PHP extensions (lsphp<XX>-<name> packages from the LiteSpeed repository)
+# ---------------------------------------------------------------------------
+# The same list as PHP_EXT_ALLOWED in opanel-helper, which is what enforces it.
+PHP_EXTENSIONS = {
+    "apcu": "In-memory user cache (APCu)",
+    "curl": "HTTP requests (cURL)",
+    "igbinary": "Compact serializer, used by Redis",
+    "imagick": "Image processing with ImageMagick",
+    "imap": "Read mailboxes over IMAP / POP3",
+    "intl": "Internationalization (ICU)",
+    "ldap": "LDAP directory access",
+    "mailparse": "Parse email messages",
+    "memcached": "Memcached client",
+    "msgpack": "MessagePack serializer",
+    "mysql": "MySQL / MariaDB (mysqli, PDO)",
+    "opcache": "Opcode cache",
+    "pgsql": "PostgreSQL (pgsql, PDO)",
+    "pspell": "Spell checking",
+    "redis": "Redis client",
+    "snmp": "SNMP",
+    "sqlite3": "SQLite (sqlite3, PDO)",
+    "sybase": "SQL Server / Sybase (PDO dblib)",
+    "tidy": "Clean up HTML (Tidy)",
+}
+# The PHP module a package provides, where the name differs from the package.
+_EXTENSION_MODULES = {"mysql": "mysqli", "opcache": "zend opcache", "sybase": "pdo_dblib"}
+_EXT_STATES = {"installed", "available", "missing"}
+
+
+def _require_installed_php(php_version: str) -> None:
+    if php_version not in SUPPORTED_PHP_VERSIONS:
+        raise ValueError(f"Unsupported PHP version. Allowed: {', '.join(SUPPORTED_PHP_VERSIONS)}")
+    if php_version not in list_installed_php():
+        raise ValueError(f"PHP {php_version} is not installed")
+
+
+def _require_extension(name: str) -> str:
+    if name not in PHP_EXTENSIONS:
+        raise ValueError("Unknown PHP extension")
+    return name
+
+
+def list_php_extensions(php_version: str) -> dict:
+    """Which offered extensions are installed for a PHP version, and which
+    modules that PHP actually loads."""
+    _require_installed_php(php_version)
+    result = shell.privileged("php-ext-status", helper_args=[php_version], check=False, fallback=["true"])
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "Cannot read PHP extensions").strip())
+    states: dict[str, tuple[str, bool]] = {}
+    modules: list[str] = []
+    for line in (result.stdout or "").splitlines():
+        parts = line.strip().split(" ", 1)
+        if len(parts) != 2:
+            continue
+        if parts[0] == "module":
+            modules.append(parts[1].strip())
+            continue
+        fields = parts[1].split()
+        if parts[0] == "ext" and len(fields) == 3 and fields[0] in PHP_EXTENSIONS and fields[1] in _EXT_STATES:
+            states[fields[0]] = (fields[1], fields[2] == "core")
+    loaded = {m.lower() for m in modules}
+    lsphp = php_version.replace(".", "")
+    extensions = []
+    for name, description in PHP_EXTENSIONS.items():
+        state, core = states.get(name, ("missing", False))
+        extensions.append({
+            "name": name,
+            "package": f"lsphp{lsphp}-{name}",
+            "description": description,
+            "state": state,
+            "core": core,
+            "loaded": _EXTENSION_MODULES.get(name, name) in loaded,
+        })
+    return {"php_version": php_version, "extensions": extensions,
+            "modules": sorted(set(modules), key=str.lower)}
+
+
+def install_php_extension(php_version: str, name: str) -> dict:
+    _require_installed_php(php_version)
+    _require_extension(name)
+    result = shell.privileged("php-ext-install", helper_args=[php_version, name], check=False, fallback=["true"])
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "Install failed").strip().removeprefix("opanel-helper: "))
+    return {"php_version": php_version, "name": name, "message": (result.stdout or "").strip()}
+
+
+def remove_php_extension(php_version: str, name: str) -> dict:
+    _require_installed_php(php_version)
+    _require_extension(name)
+    result = shell.privileged("php-ext-remove", helper_args=[php_version, name], check=False, fallback=["true"])
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "Remove failed").strip().removeprefix("opanel-helper: "))
+    return {"php_version": php_version, "name": name, "message": (result.stdout or "").strip()}
+
+
+# ---------------------------------------------------------------------------
 # PHP / LSPHP auto-tuner
 # ---------------------------------------------------------------------------
 # Hardware detection helpers imported from mariadb (shared with MariaDB tuner)

@@ -1699,6 +1699,101 @@ install_ioncube_loader() {
   echo "ionCube Loader enabled for PHP ${version}"
 }
 
+# ---- PHP extensions (PHP config page) ---------------------------------------
+# The extension packages the LiteSpeed repository ships per LSPHP version
+# (lsphp<XX>-<name>) that the panel offers. Left out: -common/-dev/-dbg/
+# -modules-source/-pear, which are not extensions, and -ioncube, because
+# install_ioncube_loader manages the loader itself.
+PHP_EXT_ALLOWED=(apcu curl igbinary imagick imap intl ldap mailparse memcached msgpack mysql opcache pgsql pspell redis snmp sqlite3 sybase tidy)
+# What install_php_version puts on every version, plus igbinary, which redis
+# depends on. Sites rely on these, so the panel never removes them.
+PHP_EXT_CORE=(curl igbinary imagick intl mysql opcache redis sqlite3)
+
+require_php_ext() {
+  local allowed
+  for allowed in "${PHP_EXT_ALLOWED[@]}"; do
+    [[ "$1" == "$allowed" ]] && return 0
+  done
+  deny "unsupported PHP extension: $1"
+}
+
+php_ext_is_core() {
+  local core
+  for core in "${PHP_EXT_CORE[@]}"; do
+    [[ "$1" == "$core" ]] && return 0
+  done
+  return 1
+}
+
+require_lsphp_installed() {
+  [[ -x "/usr/local/lsws/lsphp${1//./}/bin/lsphp" ]] || deny "PHP $1 is not installed"
+}
+
+php_ext_package_installed() {
+  dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
+}
+
+# One line per offered extension -- "ext <name> <installed|available|missing>
+# <core|optional>" -- then "module <name>" for every module PHP loads.
+php_ext_status() {
+  local version="$1" v ext pkg state kind
+  require_php_version "$version"
+  require_lsphp_installed "$version"
+  v="${version//./}"
+  for ext in "${PHP_EXT_ALLOWED[@]}"; do
+    pkg="lsphp${v}-${ext}"
+    if php_ext_package_installed "$pkg"; then
+      state=installed
+    elif apt-cache show "$pkg" >/dev/null 2>&1; then
+      state=available
+    else
+      state=missing
+    fi
+    kind=optional
+    php_ext_is_core "$ext" && kind=core
+    echo "ext ${ext} ${state} ${kind}"
+  done
+  timeout 20 "/usr/local/lsws/lsphp${v}/bin/php" -m 2>/dev/null | grep -E '^[A-Za-z]' | sed 's/^/module /' || true
+}
+
+php_ext_install() {
+  local version="$1" ext="$2" pkg
+  require_php_version "$version"
+  require_lsphp_installed "$version"
+  require_php_ext "$ext"
+  pkg="lsphp${version//./}-${ext}"
+  export DEBIAN_FRONTEND=noninteractive
+  if ! apt-cache show "$pkg" >/dev/null 2>&1; then
+    apt-get update --allow-releaseinfo-change >/dev/null 2>&1 || true
+    apt-cache show "$pkg" >/dev/null 2>&1 || deny "$pkg is not in the LiteSpeed repository"
+  fi
+  apt-get -o DPkg::Lock::Timeout=120 install -y "$pkg" >/dev/null || deny "apt could not install $pkg"
+  restart_openlitespeed
+  echo "Installed ${pkg}; PHP ${version} reloaded"
+}
+
+php_ext_remove() {
+  local version="$1" ext="$2" v pkg name core
+  require_php_version "$version"
+  require_lsphp_installed "$version"
+  require_php_ext "$ext"
+  php_ext_is_core "$ext" && deny "$ext is part of the panel's PHP set and cannot be removed"
+  v="${version//./}"
+  pkg="lsphp${v}-${ext}"
+  php_ext_package_installed "$pkg" || deny "$pkg is not installed"
+  export DEBIAN_FRONTEND=noninteractive
+  # Refuse when apt would take PHP itself or a package the panel needs with it.
+  for name in $(apt-get -s remove "$pkg" 2>/dev/null | awk '/^Remv /{print $2}'); do
+    [[ "$name" == "lsphp${v}" || "$name" == "lsphp${v}-common" ]] && deny "removing $pkg would also remove $name"
+    for core in "${PHP_EXT_CORE[@]}"; do
+      [[ "$name" == "lsphp${v}-${core}" ]] && deny "removing $pkg would also remove $name"
+    done
+  done
+  apt-get -o DPkg::Lock::Timeout=120 remove -y "$pkg" >/dev/null || deny "apt could not remove $pkg"
+  restart_openlitespeed
+  echo "Removed ${pkg}; PHP ${version} reloaded"
+}
+
 validate_php_config_file() {
   local file="$1" line key value
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -4700,6 +4795,21 @@ case "$cmd" in
   php-install)
     [[ $# -eq 1 ]] || deny "usage: php-install <version>"
     install_php_version "$1"
+    ;;
+
+  php-ext-status)
+    [[ $# -eq 1 ]] || deny "usage: php-ext-status <version>"
+    php_ext_status "$1"
+    ;;
+
+  php-ext-install)
+    [[ $# -eq 2 ]] || deny "usage: php-ext-install <version> <extension>"
+    php_ext_install "$1" "$2"
+    ;;
+
+  php-ext-remove)
+    [[ $# -eq 2 ]] || deny "usage: php-ext-remove <version> <extension>"
+    php_ext_remove "$1" "$2"
     ;;
 
   php-config-write)

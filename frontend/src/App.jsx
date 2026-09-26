@@ -468,6 +468,7 @@ function App() {
   const [phpConfig, setPhpConfig] = useState({ php_version: '8.4', display_errors: 'Off', max_execution_time: 300, max_input_time: 600, max_input_vars: 10000, memory_limit: '1024M', post_max_size: '1024M', upload_max_filesize: '1024M', opcache_enable: true });
   const [phpVersions, setPhpVersions] = useState({ installed: [], supported: [] });
   const [phpTuning, setPhpTuning] = useState(null);
+  const [phpExtensions, setPhpExtensions] = useState(null);
   const [firewallStatus, setFirewallStatus] = useState(null);
   const [firewallPort, setFirewallPort] = useState('80');
   const [firewallProtocol, setFirewallProtocol] = useState('tcp');
@@ -2990,6 +2991,27 @@ function App() {
     await checkService(name);
   }
 
+  async function loadPhpExtensions(version = phpConfig.php_version) {
+    setPhpExtensions(prev => (prev && prev.php_version === version ? prev : null));
+    // Silent: a version that is not installed has nothing to list, not an error banner.
+    const data = await request(`/maintenance/php/extensions?php_version=${encodeURIComponent(version)}`, { silent: true });
+    setPhpExtensions(data || { php_version: version, extensions: [], modules: [], unavailable: true });
+  }
+
+  async function changePhpExtension(ext, action) {
+    const version = phpExtensions?.php_version || phpConfig.php_version;
+    const question = action === 'install'
+      ? tr("Install {0} for PHP {1}? Every website on PHP {1} gets it, and OpenLiteSpeed restarts.", ext.package, version)
+      : tr("Remove {0} from PHP {1}? Websites on PHP {1} that use it will stop working, and OpenLiteSpeed restarts.", ext.package, version);
+    if (!confirm(question)) return;
+    const data = await request(`/maintenance/php/extensions/${encodeURIComponent(version)}/${encodeURIComponent(ext.name)}/${action}`, { method: 'POST' },
+      action === 'install' ? tr("Installing {0}...", ext.package) : tr("Removing {0}...", ext.package));
+    if (data) {
+      setNotice(action === 'install' ? tr("{0} installed for PHP {1}.", ext.name, version) : tr("{0} removed from PHP {1}.", ext.name, version));
+      await loadPhpExtensions(version);
+    }
+  }
+
   async function loadPhpConfig(version = phpConfig.php_version) {
     const data = await request(`/maintenance/php-config?php_version=${encodeURIComponent(version)}`, {}, tr("Loading PHP config..."));
     if (data) setPhpConfig(prev => ({ ...prev, ...data, php_version: version }));
@@ -3550,7 +3572,7 @@ function App() {
     // The databases page shows an owner per row for admins, and offers to
     // hand one over, so it needs the account list too.
     if (isAuthenticated && page === 'databases' && currentUser?.role === 'admin') loadUsers();
-    if (isAuthenticated && page === 'php') { loadPhpConfig(); loadPhpVersions(); }
+    if (isAuthenticated && page === 'php') { loadPhpConfig(); loadPhpVersions(); loadPhpExtensions(); }
     if (isAuthenticated && page === 'firewall') { loadFirewall(); loadFirewallBlocklists(); }
     if (isAuthenticated && page === 'waf') { loadWafRules(); loadBadBots(); }
     if (isAuthenticated && page === 'updates' && currentUser?.role === 'admin') loadUpdates();
@@ -5399,6 +5421,52 @@ function App() {
     </section>;
   }
 
+  function renderPhpExtensions() {
+    const version = phpConfig.php_version;
+    // Descriptions live here rather than in the API so the i18n check sees them.
+    const describe = {
+      apcu: tr("In-memory user cache (APCu)"), curl: tr("HTTP requests (cURL)"),
+      igbinary: tr("Compact serializer, used by Redis"), imagick: tr("Image processing with ImageMagick"),
+      imap: tr("Read mailboxes over IMAP / POP3"), intl: tr("Internationalization (ICU)"),
+      ldap: tr("LDAP directory access"), mailparse: tr("Parse email messages"),
+      memcached: tr("Memcached client"), msgpack: tr("MessagePack serializer"),
+      mysql: tr("MySQL / MariaDB (mysqli, PDO)"), opcache: tr("Opcode cache"),
+      pgsql: tr("PostgreSQL (pgsql, PDO)"), pspell: tr("Spell checking"), redis: tr("Redis client"),
+      snmp: tr("SNMP"), sqlite3: tr("SQLite (sqlite3, PDO)"), sybase: tr("SQL Server / Sybase (PDO dblib)"),
+      tidy: tr("Clean up HTML (Tidy)"),
+    };
+    const data = phpExtensions && phpExtensions.php_version === version ? phpExtensions : null;
+    return <div className="user-create-card php-ext-card" style={{ marginTop: 16 }}>
+      <div className="php-ext-head">
+        <h3>{tr("PHP extensions")} · {tr("PHP")} {version}</h3>
+        <p className="hint">{tr("Server-wide: every website on PHP {0} gets the same extensions. Installing or removing one restarts OpenLiteSpeed.", version)}</p>
+      </div>
+      {!data ? <p className="hint">{tr("Loading…")}</p>
+        : data.unavailable ? <p className="hint">{tr("PHP {0} is not installed on this server.", version)}</p>
+        : <>
+          <ul className="php-ext-list">
+            {data.extensions.map(ext => <li key={ext.name}>
+              <code>{ext.name}</code>
+              <span className="php-ext-desc">{describe[ext.name] || ext.description}</span>
+              <span className="php-ext-state">
+                {ext.state === 'installed'
+                  ? <span className={`badge ${ext.loaded ? 'ok' : 'warn'}`}>{ext.loaded ? tr("Enabled") : tr("Installed, not loaded")}</span>
+                  : <span className="badge">{ext.state === 'available' ? tr("Not installed") : tr("Not in repository")}</span>}
+                {ext.core && <small>{tr("Default")}</small>}
+              </span>
+              {ext.state === 'installed'
+                ? (ext.core ? <span /> : <button className="mini secondary-light" disabled={!!loading} onClick={() => changePhpExtension(ext, 'remove')}>{tr("Remove")}</button>)
+                : <button className="mini" disabled={!!loading || ext.state === 'missing'} onClick={() => changePhpExtension(ext, 'install')}>{tr("Install")}</button>}
+            </li>)}
+          </ul>
+          <details className="php-modules">
+            <summary>{tr("Modules PHP {0} loads ({1})", version, data.modules.length)}</summary>
+            <div className="php-module-chips">{data.modules.map(m => <code key={m}>{m}</code>)}</div>
+          </details>
+        </>}
+    </div>;
+  }
+
   function renderPhpConfig() {
     if (!isAdmin) return <section className="section"><h2>{tr("PHP config")}</h2><p className="hint">{tr("You do not have permission to edit PHP config.")}</p></section>;
     const notInstalled = sortPhpVersions(phpVersions.supported.filter(v => !phpVersions.installed.includes(v)));
@@ -5407,7 +5475,7 @@ function App() {
         <div><h2>{tr("PHP Configuration")}</h2></div>
       </div>
       <div className="user-create-card">
-        <label><span>{tr("PHP version")}</span><select value={phpConfig.php_version} onChange={e => { const v = e.target.value; setPhpConfig(prev => ({ ...prev, php_version: v })); loadPhpConfig(v); }}>
+        <label><span>{tr("PHP version")}</span><select value={phpConfig.php_version} onChange={e => { const v = e.target.value; setPhpConfig(prev => ({ ...prev, php_version: v })); loadPhpConfig(v); loadPhpExtensions(v); }}>
           {phpVersionOptions(phpVersions.installed, phpConfig.php_version).map(v => <option key={v} value={v}>{tr("PHP")} {v}</option>)}
         </select></label>
         <label><span>display_errors</span><select value={phpConfig.display_errors} onChange={e => setPhpConfig(prev => ({ ...prev, display_errors: e.target.value }))}>
@@ -5451,6 +5519,7 @@ function App() {
         <button disabled={!!loading} onClick={applyPhpTuning}><Zap size={14}/> {tr("Apply Auto-tune to PHP")} {phpConfig.php_version}</button>
         <button className="secondary-light" style={{ marginLeft: 8 }} onClick={() => setPhpTuning(null)}>{tr("Dismiss")}</button>
       </div>}
+      {renderPhpExtensions()}
       {notInstalled.length > 0 && <div className="user-create-card" style={{ marginTop: 16 }}>
         <h3>{tr("Install PHP")}</h3>
         <div className="php-install-grid">
