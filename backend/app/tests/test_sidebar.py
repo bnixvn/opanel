@@ -15,6 +15,9 @@ def test_the_sidebar_is_only_the_everyday_pages():
     keys = re.findall(r"\['(\w+)', tr\(", nav)
     assert keys == ["dashboard", "websites", "ssl", "databases", "cron", "files", "sftp", "backups", "users", "config"]
     assert "...(isAdmin ? [['users', tr(\"Panel users\"), Users]] : [])" in nav
+    # One list: no section headings, addons slot in before Settings.
+    assert "title:" not in nav
+    assert nav.index("...addonNavItems,") < nav.index("['config', tr(")
 
 
 def test_everything_else_is_on_the_settings_page():

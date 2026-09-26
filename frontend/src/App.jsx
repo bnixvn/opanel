@@ -3805,9 +3805,10 @@ function App() {
     ...(isAdmin && notifyInfo?.enabled ? [['notifications', tr("Notifications"), Bell]] : []),
   ];
 
+  // One plain list, top to bottom: no section headings.
   const navSections = [
-    { key: 'home', items: [['dashboard', tr("Dashboard"), Home]] },
-    { key: 'hosting', title: tr("Hosting"), items: [
+    { key: 'main', items: [
+      ['dashboard', tr("Dashboard"), Home],
       ['websites', tr("Websites"), Globe],
       ['ssl', tr("SSL"), Lock],
       ['databases', tr("Databases"), Database],
@@ -3816,9 +3817,9 @@ function App() {
       ['sftp', tr("SFTP accounts"), KeyRound],
       ['backups', tr("Backups"), Archive],
       ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
+      ...addonNavItems,
+      ['config', tr("Settings"), SettingsIcon],
     ] },
-    ...(addonNavItems.length ? [{ key: 'addons', title: tr("Addons"), items: addonNavItems }] : []),
-    { key: 'config', items: [['config', tr("Settings"), SettingsIcon]] },
   ];
 
   const navItems = navSections.flatMap(section => section.items);
