@@ -5456,7 +5456,7 @@ function App() {
               </span>
               {ext.state === 'installed'
                 ? (ext.core ? <span /> : <button className="mini secondary-light" disabled={!!loading} onClick={() => changePhpExtension(ext, 'remove')}>{tr("Remove")}</button>)
-                : <button className="mini" disabled={!!loading || ext.state === 'missing'} onClick={() => changePhpExtension(ext, 'install')}>{tr("Install")}</button>}
+                : <button className="mini secondary" disabled={!!loading || ext.state === 'missing'} onClick={() => changePhpExtension(ext, 'install')}>{tr("Install")}</button>}
             </li>)}
           </ul>
           <details className="php-modules">
