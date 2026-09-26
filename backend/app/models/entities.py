@@ -382,3 +382,49 @@ class WebauthnCredential(Base):
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User"] = relationship()
+
+
+class NotificationPreference(Base):
+    """One user's own choices for the Notifications addon.
+
+    Admin-wide settings (SMTP, the bot, admin recipients, which admin events
+    are sent) live with the addon in addons.json; this row is what a user sets
+    for the events about their own account and websites.
+    """
+
+    __tablename__ = "notification_preferences"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    email_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    telegram_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # Event keys this user turned off, comma separated.
+    muted_events: Mapped[str] = mapped_column(Text, default="")
+    # Recent addresses this account signed in from, newest first, comma separated.
+    known_ips: Mapped[str] = mapped_column(Text, default="")
+    telegram_link_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    telegram_link_expires: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class NotificationMessage(Base):
+    """One message to one recipient on one channel: the outbox and its log."""
+
+    __tablename__ = "notification_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    event: Mapped[str] = mapped_column(String(48))
+    audience: Mapped[str] = mapped_column(String(8))  # admin | user
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    channel: Mapped[str] = mapped_column(String(16))  # email | telegram
+    recipient: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text)
+    # pending -> sending -> sent, or back to pending with a later
+    # next_attempt_at, and failed once the retries are spent.
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

@@ -11,7 +11,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.permissions import Role, ensure_role
 from app.models.entities import ApiToken, User
-from app.services import provisioning
+from app.services import notifications, provisioning
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/api-tokens", tags=["api-tokens"])
@@ -85,6 +85,8 @@ def create_token(
         ip_allowlist=payload.ip_allowlist,
     )
     log_action(db, current_user.id, "create_api_token", payload.name, request=request)
+    notifications.security_change(current_user.id, "api_token_created",
+                                  notifications.client_ip(request), payload.name)
     result = _token_out(token)
     result["token"] = raw_token
     return result

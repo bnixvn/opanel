@@ -13,7 +13,7 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
 import './style.css';
@@ -66,6 +66,7 @@ const PAGE_ROUTES = {
   updates: '/updates',
   addons: '/addons',
   mcp: '/mcp',
+  notifications: '/notifications',
   services: '/services',
 };
 const ROUTE_PAGES = new Map([
@@ -568,6 +569,18 @@ function App() {
   const [apiTokenForm, setApiTokenForm] = useState({ name: '', scopes: ['provisioning:read', 'provisioning:write'], expires_days: 365, ip_allowlist: '' });
   const [createdToken, setCreatedToken] = useState(null);
   const [mcpInfo, setMcpInfo] = useState(null);
+  // Notifications addon: whether it is on, the admin's channel settings (and an
+  // editable copy whose secret fields start blank), and this account's choices.
+  const [notifyInfo, setNotifyInfo] = useState(null);
+  const [notifySettings, setNotifySettings] = useState(null);
+  const [notifyForm, setNotifyForm] = useState(null);
+  const [notifyPrefs, setNotifyPrefs] = useState(null);
+  const [notifyTest, setNotifyTest] = useState({ email: '', telegram: '' });
+  const [notifyLink, setNotifyLink] = useState(null);
+  const [showNotifyLog, setShowNotifyLog] = useState(false);
+  const [notifyLog, setNotifyLog] = useState(null);
+  const [notifyLogPage, setNotifyLogPage] = useState(1);
+  const [notifyLogStatus, setNotifyLogStatus] = useState('');
   const [mcpTokens, setMcpTokens] = useState([]);
   const [mcpAllTokens, setMcpAllTokens] = useState([]);
   const [mcpForm, setMcpForm] = useState({ name: '', can_write: false, expires_days: 90 });
@@ -1332,6 +1345,82 @@ function App() {
     const data = await request('/mcp/info', { silent: true }, '');
     if (data) setMcpInfo(data);
     return data;
+  }
+
+  async function loadNotifyInfo() {
+    const data = await request('/notifications/info', { silent: true }, '');
+    if (data) setNotifyInfo(data);
+    return data;
+  }
+
+  function applyNotifySettings(data) {
+    setNotifySettings(data);
+    setNotifyForm({ ...data, smtp_password: '', telegram_bot_token: '' });
+  }
+
+  async function loadNotifications() {
+    const info = await loadNotifyInfo();
+    if (!info?.enabled) return;
+    const prefs = await request('/notifications/me', {}, '');
+    if (prefs) setNotifyPrefs(prefs);
+    if (isAdmin) {
+      const data = await request('/notifications/settings', {}, '');
+      if (data) applyNotifySettings(data);
+    }
+  }
+
+  async function saveNotifySettings(extra = {}) {
+    const f = notifyForm || {};
+    const body = {
+      language: f.language, email_enabled: !!f.email_enabled, smtp_host: f.smtp_host || '', smtp_port: Number(f.smtp_port) || 587,
+      smtp_security: f.smtp_security, smtp_username: f.smtp_username || '', from_address: f.from_address || '', from_name: f.from_name || '',
+      telegram_enabled: !!f.telegram_enabled, admin_emails: f.admin_emails || '', admin_telegram_chats: f.admin_telegram_chats || '',
+      admin_events: f.admin_events || {}, ...extra,
+    };
+    if (f.smtp_password) body.smtp_password = f.smtp_password;
+    if (f.telegram_bot_token) body.telegram_bot_token = f.telegram_bot_token;
+    const data = await request('/notifications/settings', { method: 'PUT', body: JSON.stringify(body) }, tr("Saving notification settings..."));
+    if (data) {
+      applyNotifySettings(data);
+      setNotice(tr("Notification settings saved."));
+      const prefs = await request('/notifications/me', {}, '');
+      if (prefs) setNotifyPrefs(prefs);
+    }
+  }
+
+  async function sendNotifyTest(channel) {
+    const data = await request('/notifications/test', { method: 'POST', body: JSON.stringify({ channel, recipient: (notifyTest[channel] || '').trim() }) },
+      tr("Sending a test..."));
+    if (data) setNotice(channel === 'email' ? tr("Test email sent.") : tr("Test Telegram message sent."));
+  }
+
+  async function saveNotifyPrefs(patch) {
+    const data = await request('/notifications/me', { method: 'PUT', body: JSON.stringify(patch) }, '');
+    if (data) setNotifyPrefs(data);
+  }
+
+  async function startTelegramLink() {
+    const data = await request('/notifications/me/telegram/link', { method: 'POST' }, '');
+    if (data?.url) {
+      setNotifyLink(data);
+      window.open(data.url, '_blank', 'noopener');
+    }
+  }
+
+  async function verifyTelegramLink() {
+    const data = await request('/notifications/me/telegram/verify', { method: 'POST' }, tr("Checking Telegram..."));
+    if (data) { setNotifyPrefs(data); setNotifyLink(null); setNotice(tr("Telegram linked.")); }
+  }
+
+  async function unlinkTelegram() {
+    if (!confirm(tr("Stop sending notifications to your Telegram?"))) return;
+    const data = await request('/notifications/me/telegram', { method: 'DELETE' }, '');
+    if (data) setNotifyPrefs(data);
+  }
+
+  async function sendMyNotifyTest() {
+    const data = await request('/notifications/me/test', { method: 'POST' }, tr("Sending a test..."));
+    if (data) setNotice(tr("Test sent to your channels."));
   }
 
   async function loadDashboardSummary() {
@@ -3572,6 +3661,7 @@ function App() {
     // The databases page shows an owner per row for admins, and offers to
     // hand one over, so it needs the account list too.
     if (isAuthenticated && page === 'databases' && currentUser?.role === 'admin') loadUsers();
+    if (isAuthenticated && page === 'notifications') loadNotifications();
     if (isAuthenticated && page === 'php') { loadPhpConfig(); loadPhpVersions(); loadPhpExtensions(); }
     if (isAuthenticated && page === 'firewall') { loadFirewall(); loadFirewallBlocklists(); }
     if (isAuthenticated && page === 'waf') { loadWafRules(); loadBadBots(); }
@@ -3601,6 +3691,22 @@ function App() {
   useEffect(() => {
     if (isAuthenticated) loadMcpInfo();
   }, [isAuthenticated, addonList]);
+
+  // Same for Notifications: the page is offered once the addon is on.
+  useEffect(() => {
+    if (isAuthenticated) loadNotifyInfo();
+  }, [isAuthenticated, addonList]);
+
+  useEffect(() => {
+    if (!showNotifyLog) return undefined;
+    let cancelled = false;
+    (async () => {
+      const params = new URLSearchParams({ page: String(notifyLogPage), size: '50', status: notifyLogStatus });
+      const data = await request(`/notifications/log?${params}`, {});
+      if (!cancelled && data) setNotifyLog(data);
+    })();
+    return () => { cancelled = true; };
+  }, [showNotifyLog, notifyLogPage, notifyLogStatus]);
 
   useEffect(() => {
     if (isAuthenticated && page === 'addons' && isAdmin && addonList.some(a => a.id === 'mcp' && a.installed)) loadMcpAllTokens();
@@ -3660,7 +3766,7 @@ function App() {
     return () => { document.removeEventListener('mousedown', onPointer); document.removeEventListener('keydown', onKey); };
   }, [userMenuOpen]);
 
-  useEffect(() => { setUserMenuOpen(false); setMalwareDetailJob(null); setShowFirewallIpList(false); window.scrollTo(0, 0); }, [page]);
+  useEffect(() => { setUserMenuOpen(false); setMalwareDetailJob(null); setShowFirewallIpList(false); setShowNotifyLog(false); window.scrollTo(0, 0); }, [page]);
   // Opening or leaving one website's WAF settings is a page change too.
   useEffect(() => { window.scrollTo(0, 0); }, [wafSiteConfig?.domain]);
   // So is opening or leaving the Firewall's address list.
@@ -3699,6 +3805,7 @@ function App() {
       ...(isAdmin ? [['addons', tr("Addons"), PackageOpen]] : []),
       // Offered to a customer only once an admin has turned MCP on.
       ...((isAdmin || mcpInfo?.enabled) ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
+      ...((isAdmin || notifyInfo?.enabled) ? [['notifications', tr("Notifications"), Bell]] : []),
     ] },
   ].filter(section => section.items.length > 0);
 
@@ -5245,6 +5352,219 @@ function App() {
     </>;
   }
 
+  // Labels live here rather than in the API so the i18n check sees them.
+  function notifyEventLabels() {
+    return {
+      backup_failed: tr("Scheduled backup failed or warned"),
+      malware_found: tr("Malware found"),
+      ssl_expiring: tr("SSL certificate expiring (renewal failing)"),
+      service_status: tr("Service stopped / running again (web server, MariaDB, Redis, panel)"),
+      disk_low: tr("Disk over 90% / 95%"),
+      storage_quota: tr("An account at 90% / 100% of its storage"),
+      update_available: tr("New OPanel release"),
+      update_result: tr("Panel update finished or failed"),
+      login_lockout: tr("Address locked out after repeated failed sign-ins"),
+      da_import_done: tr("DirectAdmin import finished"),
+    };
+  }
+
+  function notifyUserEventLabels() {
+    return {
+      login_new_ip: tr("Sign-in from a new address"),
+      account_security: tr("Password, 2FA, passkey or token changes"),
+      ssl_expiring: tr("My websites' SSL certificates expiring"),
+      malware_found: tr("Malware on my websites"),
+      storage_quota: tr("My storage nearly or completely full"),
+      backup_job: tr("Backups and restores I started have finished"),
+      account_status: tr("Account suspended / reactivated (always sent)"),
+    };
+  }
+
+  function renderNotifyLog() {
+    const list = notifyLog || { items: [], total: 0, page: 1, size: 50 };
+    const pages = Math.max(1, Math.ceil((list.total || 0) / (list.size || 50)));
+    const statusLabel = { pending: tr("Waiting"), sending: tr("Sending"), sent: tr("Sent"), failed: tr("Failed") };
+    const statusClass = { sent: 'ok', failed: 'bad', pending: 'warn', sending: 'warn' };
+    return <section className="section notify-log-page">
+      <div className="section-title">
+        <div className="waf-detail-title">
+          <button className="secondary" onClick={() => setShowNotifyLog(false)}><ArrowLeft size={14}/> {tr("Notifications")}</button>
+          <div><h2>{tr("Send log")}</h2><p className="hint">{tr("Every email and Telegram message of the last 30 days.")}</p></div>
+        </div>
+        <select value={notifyLogStatus} aria-label={tr("Show")} onChange={e => { setNotifyLogStatus(e.target.value); setNotifyLogPage(1); }}>
+          <option value="">{tr("All")}</option><option value="sent">{tr("Sent")}</option>
+          <option value="failed">{tr("Failed")}</option><option value="pending">{tr("Waiting")}</option>
+        </select>
+      </div>
+      {list.items.length > 0 ? <ul className="notify-log-list">
+        {list.items.map(item => <li key={item.id}>
+          <span className={`badge ${statusClass[item.status] || ''}`}>{statusLabel[item.status] || item.status}</span>
+          <small>{item.created_at ? new Date(item.created_at).toLocaleString() : ''}</small>
+          <span className="notify-log-subject" title={item.subject}>{item.subject}</span>
+          <small className="notify-log-to" title={item.recipient}>{item.channel === 'email' ? '✉' : '✈'} {item.recipient}</small>
+          {item.last_error && <small className="notify-log-error" title={item.last_error}>{item.last_error}</small>}
+        </li>)}
+      </ul> : <p className="hint">{notifyLog === null ? tr("Loading…") : tr("Nothing has been sent yet.")}</p>}
+      {pages > 1 && <div className="firewall-ip-pager">
+        <button className="mini secondary" disabled={list.page <= 1} onClick={() => setNotifyLogPage(p => Math.max(1, p - 1))}>{tr("Previous")}</button>
+        <span className="hint">{tr("Page {0} of {1}", list.page, pages)}</span>
+        <button className="mini secondary" disabled={list.page >= pages} onClick={() => setNotifyLogPage(p => p + 1)}>{tr("Next")}</button>
+      </div>}
+    </section>;
+  }
+
+  function renderNotificationCenter() {
+    const enabled = !!notifyInfo?.enabled;
+    if (showNotifyLog && isAdmin) return renderNotifyLog();
+    const f = notifyForm;
+    const setF = patch => setNotifyForm(prev => ({ ...(prev || {}), ...patch }));
+    const prefs = notifyPrefs;
+    const adminLabels = notifyEventLabels();
+    const userLabels = notifyUserEventLabels();
+    return <>
+      <section className="section">
+        <div className="section-title">
+          <div>
+            <h2>{tr("Notifications")}</h2>
+            <p className="hint">{tr("Email and Telegram alerts: administrators hear about the server, every account about itself.")}</p>
+          </div>
+          <button className="secondary" disabled={!!loading} onClick={loadNotifications}><RefreshCw size={14}/> {tr("Refresh")}</button>
+        </div>
+        {notifyInfo === null && <p className="hint">{tr("Loading…")}</p>}
+        {notifyInfo !== null && !enabled && <div className="info-box"><AlertCircle size={14}/> {isAdmin
+          ? <>{tr("Notifications are off. Install the Notifications addon on the Addons page first.")}
+              {' '}<button className="mini" onClick={() => navigateToPage('addons')}><PackageOpen size={13}/> {tr("Open Addons")}</button></>
+          : tr("Notifications are not enabled on this panel. Ask your administrator to turn them on.")}</div>}
+      </section>
+
+      {enabled && isAdmin && f && <section className="section">
+        <div className="section-title">
+          <div><h2>{tr("Channels")}</h2><p className="hint">{tr("Server-wide. Users receive through these too, on the channels they turn on for themselves.")}</p></div>
+          <button className="secondary" onClick={() => { setNotifyLog(null); setNotifyLogPage(1); setShowNotifyLog(true); }}><ScrollText size={14}/> {tr("Send log")}</button>
+        </div>
+        <div className="notify-grid">
+          <div className="notify-card">
+            <div className="notify-card-head">
+              <h3>{tr("Email (SMTP)")}</h3>
+              <label className="notify-switch"><input type="checkbox" checked={!!f.email_enabled} onChange={e => setF({ email_enabled: e.target.checked })} /> {tr("On")}</label>
+            </div>
+            <div className="notify-form">
+              <label className="wide"><span>{tr("SMTP host")}</span><input value={f.smtp_host || ''} placeholder="smtp.gmail.com" onChange={e => setF({ smtp_host: e.target.value })} /></label>
+              <label><span>{tr("Port")}</span><input type="number" value={f.smtp_port || 587} onChange={e => setF({ smtp_port: e.target.value })} /></label>
+              <label><span>{tr("Security")}</span><select value={f.smtp_security || 'starttls'} onChange={e => setF({ smtp_security: e.target.value, smtp_port: e.target.value === 'ssl' ? 465 : e.target.value === 'starttls' ? 587 : f.smtp_port })}>
+                <option value="starttls">STARTTLS (587)</option><option value="ssl">SSL/TLS (465)</option><option value="none">{tr("None")}</option>
+              </select></label>
+              <label><span>{tr("Username")}</span><input value={f.smtp_username || ''} autoComplete="off" onChange={e => setF({ smtp_username: e.target.value })} /></label>
+              <label><span>{tr("Password")}</span><input type="password" value={f.smtp_password || ''} autoComplete="new-password"
+                placeholder={notifySettings?.smtp_password_set ? tr("Saved — leave blank to keep") : ''} onChange={e => setF({ smtp_password: e.target.value })} /></label>
+              <label><span>{tr("From address")}</span><input value={f.from_address || ''} placeholder="panel@example.com" onChange={e => setF({ from_address: e.target.value })} /></label>
+              <label><span>{tr("From name")}</span><input value={f.from_name || ''} onChange={e => setF({ from_name: e.target.value })} /></label>
+            </div>
+            <div className="notify-test">
+              <input value={notifyTest.email} placeholder={tr("Send a test to…")} onChange={e => setNotifyTest(prev => ({ ...prev, email: e.target.value }))} />
+              <button className="secondary" disabled={!!loading || !notifyTest.email} onClick={() => sendNotifyTest('email')}>{tr("Send test")}</button>
+            </div>
+            <p className="hint">{tr("Uses the saved settings. Many VPS providers block port 25; use 587 or 465.")}</p>
+          </div>
+
+          <div className="notify-card">
+            <div className="notify-card-head">
+              <h3>{tr("Telegram")}</h3>
+              <label className="notify-switch"><input type="checkbox" checked={!!f.telegram_enabled} onChange={e => setF({ telegram_enabled: e.target.checked })} /> {tr("On")}</label>
+            </div>
+            <div className="notify-form">
+              <label className="wide"><span>{tr("Bot token (from @BotFather)")}</span><input type="password" value={f.telegram_bot_token || ''} autoComplete="off"
+                placeholder={notifySettings?.telegram_bot_token_set ? tr("Saved — leave blank to keep") : '123456789:AA…'} onChange={e => setF({ telegram_bot_token: e.target.value })} /></label>
+              {notifySettings?.telegram_bot_username && <p className="hint wide">{tr("Bot:")} <a href={`https://t.me/${notifySettings.telegram_bot_username}`} target="_blank" rel="noopener noreferrer">@{notifySettings.telegram_bot_username}</a></p>}
+              <label className="wide"><span>{tr("Admin chat IDs")}</span><input value={f.admin_telegram_chats || ''} placeholder="123456789, -1001234567890"
+                onChange={e => setF({ admin_telegram_chats: e.target.value })} /></label>
+            </div>
+            <p className="hint">{tr("A group works too: add the bot to it and use the group's ID (it starts with -100). Users link their own chat below.")}</p>
+            <div className="notify-test">
+              <input value={notifyTest.telegram} placeholder={tr("Chat ID for a test")} onChange={e => setNotifyTest(prev => ({ ...prev, telegram: e.target.value }))} />
+              <button className="secondary" disabled={!!loading || !notifyTest.telegram} onClick={() => sendNotifyTest('telegram')}>{tr("Send test")}</button>
+            </div>
+          </div>
+        </div>
+
+        <div className="notify-grid">
+          <div className="notify-card">
+            <h3>{tr("Admin recipients")}</h3>
+            <div className="notify-form">
+              <label className="wide"><span>{tr("Admin email addresses")}</span><input value={f.admin_emails || ''} placeholder="noc@example.com, boss@example.com"
+                onChange={e => setF({ admin_emails: e.target.value })} /></label>
+              <label><span>{tr("Message language")}</span><select value={f.language || 'vi'} onChange={e => setF({ language: e.target.value })}>
+                <option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
+            </div>
+            <p className="hint">{tr("Blank: every administrator account with a real email address.")}</p>
+          </div>
+          <div className="notify-card">
+            <h3>{tr("Admin events")}</h3>
+            <div className="notify-events">
+              {(notifySettings?.admin_event_keys || []).map(key => <label key={key}>
+                <input type="checkbox" checked={f.admin_events?.[key] !== false}
+                  onChange={e => setF({ admin_events: { ...(f.admin_events || {}), [key]: e.target.checked } })} /> {adminLabels[key] || key}
+              </label>)}
+            </div>
+          </div>
+        </div>
+        <div className="notify-actions">
+          <button disabled={!!loading} onClick={() => saveNotifySettings()}><Save size={14}/> {tr("Save")}</button>
+          {notifySettings?.smtp_password_set && <button className="secondary-light" disabled={!!loading} onClick={() => saveNotifySettings({ clear_smtp_password: true })}>{tr("Forget SMTP password")}</button>}
+        </div>
+      </section>}
+
+      {enabled && prefs && <section className="section">
+        <div className="section-title">
+          <div><h2>{tr("My notifications")}</h2><p className="hint">{tr("About your own account and websites.")}</p></div>
+          <button className="secondary" disabled={!!loading || !(prefs.email_available || prefs.telegram_linked)} onClick={sendMyNotifyTest}>{tr("Send me a test")}</button>
+        </div>
+        <div className="notify-grid">
+          <div className="notify-card">
+            <div className="notify-card-head">
+              <h3>{tr("Email")}</h3>
+              <label className="notify-switch"><input type="checkbox" disabled={!prefs.email_available} checked={!!prefs.email_enabled && prefs.email_available}
+                onChange={e => saveNotifyPrefs({ email_enabled: e.target.checked })} /> {tr("On")}</label>
+            </div>
+            {!prefs.email_available ? <p className="hint">{tr("Email is not set up on this panel.")}</p>
+              : prefs.email_usable ? <p className="hint">{tr("Sent to {0}.", prefs.email)}</p>
+              : <p className="hint notify-warn">{tr("Your account email ({0}) is a placeholder. Set a real address in your profile to receive email.", prefs.email)}</p>}
+          </div>
+          <div className="notify-card">
+            <div className="notify-card-head">
+              <h3>{tr("Telegram")}</h3>
+              {prefs.telegram_linked && <label className="notify-switch"><input type="checkbox" checked={!!prefs.telegram_enabled}
+                onChange={e => saveNotifyPrefs({ telegram_enabled: e.target.checked })} /> {tr("On")}</label>}
+            </div>
+            {!prefs.telegram_available ? <p className="hint">{tr("Telegram is not set up on this panel.")}</p>
+              : prefs.telegram_linked ? <div className="notify-test"><span className="badge ok">{tr("Linked")}</span>
+                  <button className="mini secondary-light" disabled={!!loading} onClick={unlinkTelegram}>{tr("Unlink")}</button></div>
+              : notifyLink ? <>
+                  <p className="hint">{tr("In Telegram, press Start in the chat with @{0}, then come back and check.", prefs.telegram_bot_username)}</p>
+                  <div className="notify-test">
+                    <button className="secondary" onClick={() => window.open(notifyLink.url, '_blank', 'noopener')}>{tr("Open Telegram")}</button>
+                    <button disabled={!!loading} onClick={verifyTelegramLink}>{tr("I pressed Start — check")}</button>
+                  </div>
+                </>
+              : <button className="secondary" disabled={!!loading} onClick={startTelegramLink}>{tr("Link Telegram")}</button>}
+          </div>
+        </div>
+        <div className="notify-card">
+          <h3>{tr("What to send me")}</h3>
+          <div className="notify-events">
+            {(prefs.event_keys || []).map(key => {
+              const locked = (prefs.unmutable || []).includes(key);
+              return <label key={key}>
+                <input type="checkbox" disabled={locked} checked={locked || prefs.events?.[key] !== false}
+                  onChange={e => saveNotifyPrefs({ events: { ...(prefs.events || {}), [key]: e.target.checked } })} /> {userLabels[key] || key}
+              </label>;
+            })}
+          </div>
+        </div>
+      </section>}
+    </>;
+  }
+
   function renderMcp() {
     const enabled = !!mcpInfo?.enabled;
     return <>
@@ -5389,6 +5709,10 @@ function App() {
               </ul>}
               {addon.id === 'fail2ban' && renderAddonFail2ban(addon)}
               {addon.id === 'mcp' && renderAddonMcp(addon)}
+              {addon.id === 'notifications' && addon.installed && <div className="addon-panel">
+                <div className="addon-panel-head"><strong>{tr("Channels, recipients and events")}</strong>
+                  <button className="mini" onClick={() => navigateToPage('notifications')}><Bell size={13}/> {tr("Open Notifications")}</button></div>
+              </div>}
             </div>}
           </div>;
         })}
@@ -6666,6 +6990,7 @@ function App() {
     // paint a page whose every request will 403.
     if (page === 'addons') return isAdmin ? renderAddons() : renderDashboard();
     if (page === 'mcp') return renderMcp();
+    if (page === 'notifications') return renderNotificationCenter();
     if (page === 'sftp') return renderSftp();
     if (page === 'services') return isAdmin ? renderServices() : renderDashboard();
     if (page === 'settings') return renderPanelSettings();

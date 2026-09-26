@@ -513,12 +513,17 @@ def _update_malware_job(job_id: str, **updates) -> None:
         job = MALWARE_JOBS.get(job_id)
         if not job:
             return
+        newly_infected = updates.get("status") == "infected" and job.get("status") != "infected"
         updates.setdefault("updated_at", _now_iso())
         job.update(updates)
         if len(job.get("log", [])) > MAX_MALWARE_LOG_LINES:
             job["log"] = job["log"][-MAX_MALWARE_LOG_LINES:]
         snapshot = dict(job)
     _write_malware_job(snapshot)
+    if newly_infected:
+        from app.services import notifications
+
+        notifications.malware_scan_finished(snapshot)
 
 
 def _append_malware_log(job_id: str, line: str) -> None:

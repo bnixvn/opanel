@@ -19,7 +19,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, wordpress
+from app.services import mariadb, notifications, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, wordpress
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -261,6 +261,8 @@ def update_user_password(user_id: int, payload: UserPasswordUpdate, request: Req
     user.token_version = (user.token_version or 0) + 1
     db.commit()
     log_action(db, current_user.id, "update_user_password", user.username, request=request)
+    notifications.security_change(user.id, "password_changed" if user.id == current_user.id else "password_reset_by_admin",
+                                  notifications.client_ip(request))
     return {"message": f"Changed password for user {user.username}"}
 
 
@@ -277,6 +279,7 @@ def reset_user_two_factor(user_id: int, request: Request, db: Session = Depends(
     user.token_version = (user.token_version or 0) + 1
     db.commit()
     log_action(db, current_user.id, "reset_user_2fa", user.username, request=request)
+    notifications.security_change(user.id, "2fa_reset_by_admin", notifications.client_ip(request))
     return {"message": f"Reset 2FA for user {user.username}"}
 
 

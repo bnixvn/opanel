@@ -21,7 +21,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.models.entities import McpToken, User
-from app.services import addons, mcp
+from app.services import addons, mcp, notifications
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
@@ -81,7 +81,7 @@ async def mcp_endpoint(request: Request, db: Session = Depends(get_db)):
         return _unauthorized("The MCP token is invalid, expired or revoked")
     token, user = found
     # Tools issue certificates and restart services; keep that off the event loop.
-    client_ip = request.client.host if request.client else ""
+    client_ip = notifications.client_ip(request)
     ctx = mcp.Context(db=db, user=user, token=token, client_ip=client_ip)
     reply = await run_in_threadpool(_dispatch, ctx, body)
     if reply is None or reply == []:
@@ -150,6 +150,8 @@ def create_mcp_token(payload: McpTokenCreate, request: Request, db: Session = De
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     log_action(db, current_user.id, "mcp_token_create", token.name,
                "actions allowed" if token.can_write else "read-only", request=request)
+    notifications.security_change(current_user.id, "mcp_token_created",
+                                  notifications.client_ip(request), token.name)
     return {**mcp.token_out(token, current_user), "token": raw}
 
 

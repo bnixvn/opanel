@@ -25,7 +25,7 @@ from app.core.permissions import Role, ensure_role
 from app.core.security import create_access_token, hash_password, needs_rehash, verify_password
 from app.core.secrets import decrypt, encrypt
 from app.core.step_up import require_current_password, require_sensitive_action_step_up, verify_totp
-from app.services import passkeys
+from app.services import notifications, passkeys
 from app.models.entities import RevokedToken, User
 from app.schemas.schemas import (
     LoginResponse,
@@ -257,7 +257,7 @@ def _enforce_rate_limit(key: str) -> None:
     _memory_enforce_rate_limit(key)
 
 
-def _redis_record_failure(key: str, *, apply_lockout: bool) -> None:
+def _redis_record_failure(key: str, *, apply_lockout: bool) -> bool:
     """Record a login failure for ``key``.
 
     ``apply_lockout=True`` is what an IP key gets: both the short-window rate
@@ -288,13 +288,15 @@ def _redis_record_failure(key: str, *, apply_lockout: bool) -> None:
             *_, failure_count = pipe.execute()
             if failure_count >= _LOGIN_LOCKOUT_THRESHOLD:
                 client.set(lockout_key, "1", ex=_LOGIN_LOCKOUT_SECONDS)
+                return failure_count == _LOGIN_LOCKOUT_THRESHOLD
         else:
             pipe.execute()
     except RedisError as exc:
         raise _rate_limit_unavailable(exc) from exc
+    return False
 
 
-def _memory_record_failure(key: str, *, apply_lockout: bool) -> None:
+def _memory_record_failure(key: str, *, apply_lockout: bool) -> bool:
     now = time.monotonic()
     with _login_lock:
         # The short window is fed for both kinds of key. Where it is *enforced*
@@ -310,7 +312,7 @@ def _memory_record_failure(key: str, *, apply_lockout: bool) -> None:
         # would let wrong passwords from many addresses lock that account out
         # for 15 minutes, which is the whole reason the exemption exists.
         if not apply_lockout:
-            return
+            return False
         failures = _login_failures[key]
         failures.append(now)
         failure_cutoff = now - _LOGIN_LOCKOUT_SECONDS
@@ -318,19 +320,21 @@ def _memory_record_failure(key: str, *, apply_lockout: bool) -> None:
             failures.popleft()
         if len(failures) >= _LOGIN_LOCKOUT_THRESHOLD:
             _login_lockouts[key] = now + _LOGIN_LOCKOUT_SECONDS
+            return len(failures) == _LOGIN_LOCKOUT_THRESHOLD
+        return False
 
 
-def _record_failure(key: str, *, apply_lockout: bool = True) -> None:
+def _record_failure(key: str, *, apply_lockout: bool = True) -> bool:
+    """Count a failure. True when this one tripped the lockout."""
     if _rate_limit_backend() == "redis":
         try:
-            _redis_record_failure(key, apply_lockout=apply_lockout)
-            return
+            return _redis_record_failure(key, apply_lockout=apply_lockout)
         except HTTPException as exc:
             if exc.status_code == 503:
                 _log_redis_fallback(exc.detail)
             else:
                 raise
-    _memory_record_failure(key, apply_lockout=apply_lockout)
+    return _memory_record_failure(key, apply_lockout=apply_lockout)
 
 
 def _redis_record_success(key: str) -> None:
@@ -358,6 +362,10 @@ def _record_success(key: str) -> None:
         _login_attempts.pop(key, None)
         _login_failures.pop(key, None)
         _login_lockouts.pop(key, None)
+
+
+def _notify_lockout(request: Request, username: str) -> None:
+    notifications.notify_admin("login_lockout", {"ip": _client_key(request), "username": _safe_log_name(username)})
 
 
 def _issue_login_session(response: Response, request: Request, user: User) -> str:
@@ -436,7 +444,8 @@ def login(
         password_ok = False
 
     if not user or not user.is_active or not password_ok:
-        _record_failure(ip_key, apply_lockout=True)
+        if _record_failure(ip_key, apply_lockout=True):
+            _notify_lockout(request, form.username)
         _record_failure(user_key, apply_lockout=False)
         _log_auth_failure(request, form.username, "password")
         # Only now. A correct password never reaches this branch, so the real
@@ -455,7 +464,8 @@ def login(
     has_passkey = passkeys.has_passkeys(db, user)
 
     def _second_factor_failed(detail: str):
-        _record_failure(ip_key, apply_lockout=True)
+        if _record_failure(ip_key, apply_lockout=True):
+            _notify_lockout(request, form.username)
         _record_failure(user_key, apply_lockout=False)
         # Worth banning on too: reaching here means the password was already
         # right, so repeated failures are someone working on a live credential.
@@ -502,6 +512,7 @@ def login(
         except Exception:  # pragma: no cover
             db.rollback()
     token = _issue_login_session(response, request, user)
+    notifications.record_login(user, _client_key(request))
 
     # Bearer token still returned for backward compatibility with CLI tools or
     # mobile clients that cannot set cookies. Browser clients should ignore it
@@ -678,6 +689,7 @@ def enable_two_factor(
         current_user.token_version = (current_user.token_version or 0) + 1
         db.commit()
         db.refresh(current_user)
+        notifications.security_change(current_user.id, "2fa_enabled", _client_key(request))
     _issue_login_session(response, request, current_user)
     return TwoFactorStatus(enabled=True)
 
@@ -696,6 +708,7 @@ def disable_two_factor(
     current_user.token_version = (current_user.token_version or 0) + 1
     db.commit()
     db.refresh(current_user)
+    notifications.security_change(current_user.id, "2fa_disabled", _client_key(request))
     _issue_login_session(response, request, current_user)
     return TwoFactorStatus(enabled=False)
 
@@ -757,6 +770,7 @@ def passkey_register_complete(
     except passkeys.PasskeyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.refresh(current_user)
+    notifications.security_change(current_user.id, "passkey_added", _client_key(request), payload.name or "")
     # Registration bumps token_version, so this session needs reissuing or the
     # user is logged out by their own success.
     _issue_login_session(response, request, current_user)
@@ -782,6 +796,7 @@ def passkey_delete(
     if not passkeys.delete_credential(db, current_user, credential_id):
         raise HTTPException(status_code=404, detail="Passkey not found")
     db.refresh(current_user)
+    notifications.security_change(current_user.id, "passkey_removed", _client_key(request))
     _issue_login_session(response, request, current_user)
     return _passkey_status(db, current_user)
 

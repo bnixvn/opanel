@@ -273,6 +273,10 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
         schedule.last_message = _short_message([f"ok {len(messages)} user(s)"] + warnings + messages)
     schedule.last_run_at = now
     db.commit()
+    if errors or warnings:
+        from app.services import notifications
+
+        notifications.backup_schedule_failed(schedule, errors, warnings, now)
     return not errors
 
 
@@ -297,3 +301,12 @@ def run_due_schedules(now: datetime | None = None) -> int:
 if __name__ == "__main__":
     count = run_due_schedules()
     print(f"opanel backup scheduler ran {count} job(s).")
+    # This timer is the panel's minute tick: it also sends queued notifications
+    # and runs the Notifications addon's periodic checks (a no-op when the
+    # addon is off).
+    try:
+        from app.services import notifications
+
+        notifications.tick()
+    except Exception as exc:  # noqa: BLE001 - never fail the backup run for it
+        print(f"opanel notifications tick failed: {exc}")

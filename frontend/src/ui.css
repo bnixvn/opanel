@@ -243,6 +243,38 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 .firewall-rule-forms .firewall-form button{grid-column:1 / -1}
 .firewall-status pre{max-height:320px}
 .firewall-rule-forms .firewall-form .firewall-note-field{grid-column:1 / -1}
+/* Notifications page: channel cards, the admin form, event checklists, send log. */
+.notify-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
+.notify-card{background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px 16px;display:grid;gap:10px;align-content:start;min-width:0}
+.notify-card h3{margin:0;font-size:15px}
+.notify-card .hint{margin:0}
+.notify-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.notify-switch{display:inline-flex;align-items:center;gap:6px;font-weight:600;color:var(--text-secondary);cursor:pointer}
+.notify-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.notify-form label{display:grid;gap:5px;font-weight:600;color:var(--text-secondary);min-width:0}
+.notify-form label span{font-size:11px}
+.notify-form .wide{grid-column:1 / -1}
+.notify-test{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.notify-test input{flex:1 1 180px;min-width:0}
+.notify-events{display:grid;gap:6px}
+.notify-events label{display:flex;align-items:flex-start;gap:8px;font-weight:500;color:var(--text);cursor:pointer;line-height:1.4}
+.notify-events input,.notify-switch input{width:16px;min-width:16px;height:16px;min-height:0;padding:0;margin:0;flex:0 0 16px}
+.notify-events input{margin-top:2px}
+.notify-actions{display:flex;gap:8px;flex-wrap:wrap}
+.notify-warn{color:var(--warning-text)!important}
+.notify-log-page .section-title select{width:auto;min-width:160px}
+.notify-log-list{list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm)}
+.notify-log-list li{display:grid;grid-template-columns:72px 136px minmax(0,1fr) minmax(0,220px);align-items:center;gap:10px;padding:6px 10px;border-top:1px solid var(--border);min-height:36px}
+.notify-log-list li:first-child{border-top:0}
+.notify-log-list small{color:var(--text-muted);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.notify-log-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notify-log-error{grid-column:3 / -1;color:var(--danger-text)!important;white-space:normal!important}
+@media(max-width:900px){.notify-grid{grid-template-columns:1fr}}
+@media(max-width:720px){
+  .notify-form{grid-template-columns:1fr}
+  .notify-log-list li{grid-template-columns:auto minmax(0,1fr);row-gap:3px}
+  .notify-log-subject,.notify-log-to,.notify-log-error{grid-column:1 / -1}
+}
 /* PHP config > PHP extensions: one row per extension package. */
 .user-create-card.php-ext-card{display:block}
 .php-ext-head h3{margin:0 0 4px}

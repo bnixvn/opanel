@@ -38,7 +38,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cron, da_import, file_manager, mariadb, openlitespeed, php, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cron, da_import, file_manager, mariadb, notifications, openlitespeed, php, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -224,11 +224,17 @@ def _nested_percent(outer_done: float, outer_total: int,
 
 
 def _set_backup_job(job_id: str, **updates) -> None:
+    finished = None
     with _backup_jobs_lock:
         job = _backup_jobs.get(job_id)
         if not job:
             return
+        was_final = job.get("status") in {"done", "error"}
         job.update(updates)
+        if not was_final and job.get("status") in {"done", "error"}:
+            finished = dict(job)
+    if finished:
+        notifications.backup_job_finished(finished)
 
 
 def _remember_backup_job(job: dict) -> dict:
@@ -1050,11 +1056,20 @@ def _public_da_import_job(job: dict) -> dict:
 
 
 def _set_da_import_job(job_id: str, **updates) -> None:
+    finished = None
     with _da_import_jobs_lock:
         job = _da_import_jobs.get(job_id)
         if not job:
             return
+        was_final = job.get("status") in {"done", "error"}
         job.update(updates)
+        if not was_final and job.get("status") in {"done", "error"}:
+            finished = dict(job)
+    if finished:
+        notifications.notify_admin("da_import_done", {
+            "status": finished.get("status"), "file": finished.get("backup_file") or "",
+            "message": finished.get("error") or finished.get("message") or "",
+        })
 
 
 def _remember_da_import_job(job: dict) -> dict:
