@@ -417,11 +417,21 @@ function App() {
   const [backups, setBackups] = useState([]);
   const [backupJobs, setBackupJobs] = useState([]);
   const [userBackups, setUserBackups] = useState([]);
-  const [restoreBackups, setRestoreBackups] = useState([]);
+  // Restore: choose where the backups are, give that source what it needs,
+  // pick the accounts, restore. The remote password lives only in this state.
+  const BLANK_RESTORE_REMOTE = { protocol: 'sftp', host: '', port: 22, username: '', password: '', private_key: '', use_key: false, path: '' };
+  const [restoreSource, setRestoreSource] = useState('local');
+  const [restoreTargetId, setRestoreTargetId] = useState('');
+  const [restoreRemote, setRestoreRemote] = useState(BLANK_RESTORE_REMOTE);
+  // null until a source has been read; then { items, host_key, directories }.
+  const [restoreList, setRestoreList] = useState(null);
+  const [restoreListError, setRestoreListError] = useState('');
+  const [restoreListing, setRestoreListing] = useState(false);
   const [restorePicks, setRestorePicks] = useState([]);
-  const [remoteBackups, setRemoteBackups] = useState([]);
-  const [remoteBackupErrors, setRemoteBackupErrors] = useState([]);
-  const [restoreBackupDir, setRestoreBackupDir] = useState('');
+  const [restoreChoice, setRestoreChoice] = useState({});
+  const [restoreFilter, setRestoreFilter] = useState('');
+  const [restoreOverwrite, setRestoreOverwrite] = useState(false);
+  const [restoreJobId, setRestoreJobId] = useState('');
   const [selectedBackupUserId, setSelectedBackupUserId] = useState('');
   const [backupSchedules, setBackupSchedules] = useState([]);
   const [newBackupSchedule, setNewBackupSchedule] = useState({ user_ids: [], all_users: false, schedule: '0 2 * * *', target_id: '', retention: 7 });
@@ -435,11 +445,6 @@ function App() {
   };
   const [newSftpTarget, setNewSftpTarget] = useState(BLANK_TARGET);
   const [targetObjects, setTargetObjects] = useState({ id: null, bucket: '', items: [] });
-  const [daBackups, setDaBackups] = useState([]);
-  const [daBackupDir, setDaBackupDir] = useState('');
-  const [daImportJobs, setDaImportJobs] = useState([]);
-  const [daPicks, setDaPicks] = useState([]);
-  const [daOverwrite, setDaOverwrite] = useState(false);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState(() => standaloneEditor?.websiteId || '');
   const [sslMode, setSslMode] = useState('letsencrypt');
   const [manualSslForm, setManualSslForm] = useState({ certificate: '', private_key: '', ca_bundle: '' });
@@ -686,8 +691,9 @@ function App() {
     setCronItems([]);
     setCronUser('');
     setUserBackups([]);
-    setRestoreBackups([]);
-    setRestoreBackupDir('');
+    setRestoreList(null);
+    setRestorePicks([]);
+    setRestoreRemote(BLANK_RESTORE_REMOTE);
     setSelectedBackupUserId('');
     setBackupSchedules([]);
     setSftpTargets([]);
@@ -2552,7 +2558,6 @@ function App() {
 
   async function refreshUserBackupArea() {
     await loadUsers();
-    await loadRestoreBackups();
     await loadBackupJobs();
     if (selectedBackupUserId) await listUserBackups(selectedBackupUserId);
   }
@@ -2589,85 +2594,166 @@ function App() {
     if (data) setBackupSchedules(data);
   }
 
-  async function restoreSelectedBackups() {
-    const picked = restoreRows().filter(item => restorePicks.includes(item.pick));
-    if (picked.length === 0) return;
-    const names = picked.map(item => `  - ${item.account || item.username || '?'}: ${item.filename}${item.source === 's3' ? ` (from ${item.target})` : ''}`).join('\n');
-    const warning = picked.length === 1
-      ? tr("This overwrites that account's sites and databases with what is in the archive.")
-      : tr("These run one after another. Each overwrites that account's sites and databases with what is in the archive.");
-    if (!confirm(tr("Restore {0} backup(s)?\n\n{1}\n\n{2}", picked.length, names, warning))) return;
-    const data = await request('/maintenance/user-restore-batch', {
-      method: 'POST', body: JSON.stringify(splitRestorePicks(picked.map(item => item.pick))),
-    }, tr("Queueing restore..."));
-    if (data) {
-      setRestorePicks([]);
-      setNotice(tr("Restore of {0} backup(s) started. Watch Backup logs for progress.", picked.length));
-      loadBackupJobs();
+  function restoreGroupKey(item) {
+    return `${item.kind}:${item.account || item.username || '#' + item.ref}`;
+  }
+
+  // One row per account and kind, newest archive first. An archive whose
+  // account cannot be told from its name or folder is a row of its own.
+  function restoreGroups(items = restoreList?.items || []) {
+    const groups = new Map();
+    for (const item of items) {
+      const key = restoreGroupKey(item);
+      if (!groups.has(key)) groups.set(key, { key, kind: item.kind, account: item.account || item.username || '', items: [] });
+      groups.get(key).items.push(item);
+    }
+    const out = [...groups.values()];
+    out.forEach(group => group.items.sort((a, b) => (b.modified_at || '').localeCompare(a.modified_at || '')));
+    return out.sort((a, b) => (a.account || '~' + a.items[0].filename).localeCompare(b.account || '~' + b.items[0].filename));
+  }
+
+  function restoreChosen(group) {
+    return group.items.find(item => item.ref === restoreChoice[group.key]) || group.items[0];
+  }
+
+  // What the server needs to reach the source. Listing trusts whatever SFTP
+  // key answers and shows it; the restore then insists on that same key.
+  function restoreSourceBody(source = restoreSource, forRun = false) {
+    if (source === 'target') return { source, target_id: Number(restoreTargetId) || null };
+    if (source === 'remote') {
+      const { use_key, ...remote } = restoreRemote;
+      return {
+        source,
+        remote: {
+          ...remote,
+          host: remote.host.trim(),
+          port: Number(remote.port) || (remote.protocol === 'sftp' ? 22 : 21),
+          private_key: remote.protocol === 'sftp' && use_key ? remote.private_key : '',
+          host_key_fingerprint: forRun ? (restoreList?.host_key?.fingerprint || '') : '',
+        },
+      };
+    }
+    return { source: 'local' };
+  }
+
+  function chooseRestoreSource(source) {
+    if (source === restoreSource) return;
+    setRestoreSource(source);
+    setRestoreList(null);
+    setRestoreListError('');
+    setRestorePicks([]);
+    setRestoreChoice({});
+    setRestoreFilter('');
+  }
+
+  async function loadRestoreList(source = restoreSource) {
+    if (source === 'target' && !restoreTargetId) return;
+    if (source === 'remote' && !restoreRemote.host.trim()) {
+      setRestoreListError(tr("Enter the server's host name or IP address."));
+      return;
+    }
+    setRestoreListing(true);
+    setRestoreListError('');
+    try {
+      const csrf = readCookie('opanel_csrf');
+      const res = await fetch(`${API}/maintenance/restore/list`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
+        body: JSON.stringify(restoreSourceBody(source)),
+      });
+      const text = await res.text();
+      let data;
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text || tr("HTTP {0}", res.status) }; }
+      if (!res.ok) {
+        if (handleAuthExpired(res.status, data.detail)) return;
+        // Shown next to the form that caused it, not in the page banner:
+        // a wrong password is something to fix right there.
+        setRestoreList(null);
+        setRestoreListError(formatApiError(data.detail, tr("Could not read this source.")));
+        return;
+      }
+      setRestoreList(data);
+      const keys = new Set((data.items || []).map(restoreGroupKey));
+      setRestorePicks(prev => prev.filter(key => keys.has(key)));
+      describeRestoreItems(data.items || []);
+    } catch {
+      setRestoreListError(tr("Could not read this source."));
+    } finally {
+      setRestoreListing(false);
     }
   }
 
-  async function describeRestoreBackups(items) {
+  async function describeRestoreItems(items) {
     // The slow half: finding a manifest in an archive written before the
     // manifest moved to the front means decompressing all of it. The list is
-    // already on screen, so this fills in behind it without a spinner.
-    const files = items.filter(item => item.websites == null).map(item => item.backup_file);
-    if (files.length === 0) return;
-    // A few at a time, so rows fill in as the answers come back and one slow
-    // archive does not hold up the other sixteen. Archives written before the
-    // manifest moved to the front cost a full decompress to read -- 24 seconds
-    // for a 5 GB one -- and they age out as the rotation overwrites them.
+    // already on screen, so this fills in behind it without a spinner, a few
+    // at a time so one slow archive does not hold up the rest.
+    const files = items
+      .filter(item => item.kind === 'opanel' && item.backup_file && item.websites == null)
+      .map(item => item.backup_file);
     for (let start = 0; start < files.length; start += 3) {
-      const batch = files.slice(start, start + 3);
       const data = await request('/maintenance/user-restore-backups/describe', {
-        method: 'POST', body: JSON.stringify({ backup_files: batch }),
+        method: 'POST', body: JSON.stringify({ backup_files: files.slice(start, start + 3) }), silent: true,
       }, '');
       if (!data?.items) continue;
       const byFile = new Map(data.items.map(row => [row.backup_file, row]));
-      setRestoreBackups(prev => prev.map(item => byFile.has(item.backup_file)
-        ? { ...item, ...byFile.get(item.backup_file) } : item));
+      setRestoreList(prev => prev && ({
+        ...prev,
+        items: prev.items.map(item => byFile.has(item.ref) ? {
+          ...item,
+          username: byFile.get(item.ref).username || item.username,
+          websites: byFile.get(item.ref).websites,
+          valid: byFile.get(item.ref).valid,
+          error: byFile.get(item.ref).error || '',
+        } : item),
+      }));
     }
   }
 
-  async function loadRemoteBackups() {
-    const data = await request('/maintenance/user-restore-remote', {}, '');
-    if (!data) return;
-    setRemoteBackups(data.items || []);
-    setRemoteBackupErrors(data.errors || []);
-  }
-
-  // Local archives and the ones still on a destination, in one list. The
-  // id is what a tick records: a path for something already here, and
-  // "s3:<target>:<key>" for something that still has to come down.
-  function restoreRows() {
-    const local = restoreBackups.map(item => ({ ...item, pick: item.backup_file }));
-    const remote = remoteBackups.map(item => ({
-      ...item,
-      pick: `s3:${item.target_id}:${item.key}`,
-      websites: null,
-      valid: null,
-    }));
-    return [...local, ...remote];
-  }
-
-  function splitRestorePicks(picks) {
-    const backup_files = picks.filter(pick => !pick.startsWith('s3:'));
-    const remote_items = picks.filter(pick => pick.startsWith('s3:')).map(pick => {
-      const rest = pick.slice(3);
-      const cut = rest.indexOf(':');
-      return { target_id: Number(rest.slice(0, cut)), key: rest.slice(cut + 1) };
-    });
-    return { backup_files, remote_items };
-  }
-
-  async function loadRestoreBackups() {
-    const data = await request('/maintenance/user-restore-backups');
-    if (data?.items) {
-      setRestoreBackups(data.items);
-      describeRestoreBackups(data.items);
+  async function uploadRestoreArchives(files) {
+    const picked = Array.from(files || []);
+    if (picked.length === 0) return;
+    const form = new FormData();
+    picked.forEach(file => form.append('files', file));
+    const data = await request('/maintenance/restore/upload', { method: 'POST', body: form }, tr("Uploading backups..."));
+    if (data) {
+      setNotice(tr("Uploaded {0} backup(s).", data.items?.length || picked.length));
+      await loadRestoreList('local');
     }
-    if (data?.directory) setRestoreBackupDir(data.directory);
-    loadRemoteBackups();
+  }
+
+  async function deleteRestoreArchive(item) {
+    if (!confirm(tr("Delete this backup from the server?\n{0}", item.filename))) return;
+    const data = await request(`/maintenance/restore/local?ref=${encodeURIComponent(item.ref)}`, { method: 'DELETE' }, tr("Deleting backup..."));
+    if (data) await loadRestoreList('local');
+  }
+
+  async function runRestore() {
+    const chosen = restoreGroups().filter(group => restorePicks.includes(group.key)).map(restoreChosen);
+    if (chosen.length === 0) return;
+    const names = chosen.map(item => `  - ${item.account || item.username || '?'} (${item.kind === 'directadmin' ? 'DirectAdmin' : 'OPanel'}): ${item.filename}`).join('\n');
+    const notes = [];
+    if (chosen.some(item => item.kind === 'opanel')) notes.push(tr("This overwrites that account's sites and databases with what is in the archive."));
+    if (chosen.some(item => item.kind === 'directadmin')) notes.push(restoreOverwrite
+      ? tr("Overwrite is on. A user or website already on this server is replaced by what the archive carries: its files are copied over the ones there, its databases are re-imported, and the panel user gets a new password. Websites the account has that the archive does not mention are kept.")
+      : tr("Overwrite is off. An archive whose user or domains are already on this server stops without touching them; the others still import."));
+    if (restoreSource !== 'local') notes.push(tr("Each archive is downloaded to this server first and deleted again once it has been restored."));
+    if (chosen.length > 1) notes.push(tr("They run one after another on the server, so you can leave this page."));
+    if (!confirm(tr("Restore {0} account(s)?\n\n{1}\n\n{2}", chosen.length, names, notes.join('\n\n')))) return;
+    const data = await request('/maintenance/restore/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...restoreSourceBody(restoreSource, true),
+        items: chosen.map(item => ({ kind: item.kind, ref: item.ref })),
+        overwrite: restoreOverwrite,
+      }),
+    }, tr("Starting restore..."));
+    if (data?.job_id) {
+      setRestoreJobId(data.job_id);
+      setRestorePicks([]);
+      loadBackupJobs();
+    }
   }
 
   async function createBackupSchedule() {
@@ -2833,7 +2919,6 @@ function App() {
       await refreshAll();
       await loadUsers();
       await listUserBackups();
-      await loadRestoreBackups();
     }
   }
 
@@ -2869,119 +2954,7 @@ function App() {
         ? tr("Deleted, including {0} copy on S3.", remote.length)
         : tr("Deleted the local backup."));
       await listUserBackups();
-      await loadRestoreBackups();
     }
-  }
-
-  async function deleteRestoreBackup(file) {
-    if (!confirm(tr("Delete this restore backup?\n{0}", file))) return;
-    const data = await request(`/maintenance/user-restore-backups?backup_file=${encodeURIComponent(file)}`, { method: 'DELETE' }, tr("Deleting restore backup..."));
-    if (data) {
-      await loadRestoreBackups();
-      await listUserBackups();
-    }
-  }
-
-  async function uploadUserBackups(files) {
-    const selectedFiles = Array.from(files || []);
-    if (selectedFiles.length === 0) return;
-    const form = new FormData();
-    selectedFiles.forEach(file => form.append('files', file));
-    try {
-      setError(''); setLoading(tr("Uploading full user backups..."));
-      const csrfToken = readCookie('opanel_csrf');
-      const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
-      const res = await fetch(`${API}/maintenance/user-restore-backups/upload`, {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: form,
-      });
-      const responseText = await res.text();
-      let data;
-      try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { detail: responseText || tr("HTTP {0}", res.status) }; }
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Upload failed."))); return; }
-      setNotice(tr("Uploaded {0} full user backup file(s).", data.items?.length || selectedFiles.length));
-      await loadRestoreBackups();
-      await listUserBackups();
-    } catch (err) { setError(tr("Full user backup upload failed.")); }
-    finally { setLoading(''); }
-  }
-
-  async function loadDaBackups() {
-    try {
-      setError('');
-      const res = await fetch(`${API}/maintenance/da-backups`, { credentials: 'include' });
-      const data = await res.json();
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Failed to load DA backups."))); return; }
-      setDaBackups(data.items || []);
-      setDaPicks(prev => prev.filter(name => (data.items || []).some(item => item.filename === name)));
-      setDaBackupDir(data.directory || '');
-    } catch (err) { setError(tr("Failed to load DA backups.")); }
-  }
-
-  async function loadDaImportJobs() {
-    try {
-      setError('');
-      const res = await fetch(`${API}/maintenance/da-import/jobs`, { credentials: 'include' });
-      const data = await res.json();
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; return; }
-      setDaImportJobs(data.jobs || []);
-    } catch {}
-  }
-
-  async function uploadDaBackups(selectedFiles) {
-    if (!selectedFiles || !selectedFiles.length) return;
-    try {
-      setError(''); setLoading(tr("Uploading DA backups..."));
-      const csrfToken = readCookie('opanel_csrf');
-      const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
-      const form = new FormData();
-      Array.from(selectedFiles).forEach(file => form.append('files', file));
-      const res = await fetch(`${API}/maintenance/da-backups/upload`, {
-        method: 'POST', credentials: 'include', headers, body: form,
-      });
-      const data = await res.json();
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Upload failed."))); return; }
-      setNotice(tr("Uploaded {0} DA backup(s).", data.items?.length || selectedFiles.length));
-      await loadDaBackups();
-    } catch (err) { setError(tr("DA backup upload failed.")); }
-    finally { setLoading(''); }
-  }
-
-  async function deleteDaBackup(backupFile) {
-    if (!confirm(tr("Delete this DA backup?"))) return;
-    try {
-      setError('');
-      const csrfToken = readCookie('opanel_csrf');
-      const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
-      const url = new URL(`${API}/maintenance/da-backups`, window.location.origin);
-      url.searchParams.set('backup_file', backupFile);
-      const res = await fetch(url, { method: 'DELETE', credentials: 'include', headers });
-      const data = await res.json();
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Delete failed."))); return; }
-      setNotice(tr("Deleted DA backup: {0}", data.deleted));
-      await loadDaBackups();
-    } catch (err) { setError(tr("Failed to delete DA backup.")); }
-  }
-
-  async function startDaImport(files) {
-    if (!files.length) return;
-    const names = files.map(name => `  - ${name}`).join('\n');
-    const effect = daOverwrite
-      ? tr("Overwrite is on. A user or website already on this server is replaced by what the archive carries: its files are copied over the ones there, its databases are re-imported, and the panel user gets a new password. Websites the account has that the archive does not mention are kept.")
-      : tr("Overwrite is off. An archive whose user or domains are already on this server stops without touching them; the others still import.");
-    const order = files.length > 1 ? tr("\n\nThey run one after another on the server, so you can leave this page.") : '';
-    if (!confirm(tr("Import {0} DirectAdmin backup(s)?\n\n{1}\n\nThis creates panel users, websites, databases and OLS vhosts.\n\n{2}{3}", files.length, names, effect, order))) return;
-    const data = await request('/maintenance/da-import-batch', {
-      method: 'POST', body: JSON.stringify({ backup_files: files, overwrite: daOverwrite }),
-    }, tr("Queueing DA import..."));
-    if (!data) return;
-    setDaPicks(prev => prev.filter(name => !files.includes(name)));
-    const queued = data.jobs?.length || 0;
-    const skipped = data.skipped || [];
-    setNotice(tr("Queued {0} DA import(s).{1}", queued, skipped.length ? tr(" Already queued, not added again: {0}.", skipped.join(', ')) : ''));
-    await loadDaImportJobs();
   }
 
   async function openPhpMyAdmin(databaseId) {
@@ -3645,24 +3618,24 @@ function App() {
     return () => clearInterval(timer);
   }, [isAuthenticated, page, selectedWebsiteId, selectedBackupUserId, jobsRunning]);
 
-  // A batch of DA imports can run for hours, so follow the queue for as long
-  // as anything is in it rather than for a fixed number of polls.
-  const daQueued = Object.fromEntries(daImportJobs
-    .filter(job => job.status === 'running' || job.status === 'queued')
-    .map(job => [job.backup_file, job.status]));
-  const daImportsRunning = Object.keys(daQueued).length > 0;
-  const daImportsWereRunning = useRef(false);
-
+  // When a restore finishes, what it created should show up: the new panel
+  // users, their websites, and -- for this server -- the list it came from.
+  const restoreJob = backupJobs.find(job => job.job_id === restoreJobId);
+  const restoreJobFinished = !!restoreJob && (restoreJob.status === 'done' || restoreJob.status === 'error');
   useEffect(() => {
-    if (!isAuthenticated || page !== 'backups' || !daImportsRunning) return undefined;
-    const timer = setInterval(loadDaImportJobs, 3000);
-    return () => clearInterval(timer);
-  }, [isAuthenticated, page, daImportsRunning]);
+    if (!restoreJobFinished) return;
+    loadUsers();
+    refreshAll();
+    if (restoreSource === 'local') loadRestoreList('local');
+  }, [restoreJobFinished]);
 
+  // This server needs nothing typed in, so its list is read as soon as the
+  // step is on screen; a destination as soon as one is chosen.
   useEffect(() => {
-    if (daImportsWereRunning.current && !daImportsRunning) setNotice(tr("DA import queue finished. See Import Jobs for each archive."));
-    daImportsWereRunning.current = daImportsRunning;
-  }, [daImportsRunning]);
+    if (!isAuthenticated || !isAdmin || page !== 'backups' || backupTab !== 'restore') return;
+    if (restoreSource === 'local') loadRestoreList('local');
+    if (restoreSource === 'target' && restoreTargetId) loadRestoreList('target');
+  }, [isAuthenticated, isAdmin, page, backupTab, restoreSource, restoreTargetId]);
 
   useEffect(() => {
     if (isAuthenticated && page === 'users') { loadUsers(); loadPlans(); }
@@ -3691,7 +3664,7 @@ function App() {
     if (isAuthenticated && page === 'dashboard') loadDashboardSummary();
     if (isAuthenticated && page === 'sftp') { loadSftp(); if (isAdmin) loadUsers(); if (!websites.length) refreshAll(); }
     if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); loadNetworkStatus(); }
-    if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); loadRestoreBackups(); loadDaBackups(); loadDaImportJobs(); }
+    if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); }
   }, [isAuthenticated, page, currentUser?.role]);
 
   // Whether MCP is on decides if the page is offered at all, and an admin can
@@ -4752,6 +4725,220 @@ function App() {
     </section>;
   }
 
+  // ISO time from the server as the file manager shows times.
+  function formatIsoTime(value) {
+    const ms = Date.parse(value || '');
+    return Number.isFinite(ms) ? formatFileTime(ms / 1000) : '';
+  }
+
+  // DirectAdmin's restore, step by step: where the backups are, what it takes
+  // to reach them, which accounts, go. OPanel and DirectAdmin archives share
+  // the list; each is restored by its own importer.
+  function renderRestoreWizard() {
+    const allGroups = restoreGroups();
+    const needle = restoreFilter.trim().toLowerCase();
+    const groups = needle
+      ? allGroups.filter(group => (group.account + ' ' + group.items.map(item => item.filename).join(' ')).toLowerCase().includes(needle))
+      : allGroups;
+    const selectable = groups.filter(group => restoreChosen(group).valid !== false);
+    const pickedGroups = allGroups.filter(group => restorePicks.includes(group.key));
+    const pickedHasDa = pickedGroups.some(group => group.kind === 'directadmin');
+    const allPicked = selectable.length > 0 && selectable.every(group => restorePicks.includes(group.key));
+    const somePicked = selectable.some(group => restorePicks.includes(group.key));
+    const job = restoreJob;
+    const jobActive = !!job && (job.status === 'queued' || job.status === 'running');
+    const remote = restoreRemote;
+    const setRemote = patch => setRestoreRemote(prev => ({ ...prev, ...patch }));
+    const sources = [
+      ['local', HardDrive, tr("This server"), tr("Backups the panel made, and archives uploaded for restore.")],
+      ['target', Network, tr("Backup Destination"), tr("An S3 or SFTP destination saved under Backup Destination.")],
+      ['remote', Server, tr("Another server"), tr("Pull backups from another server over SFTP or FTP, such as an old DirectAdmin server.")],
+    ];
+    const stepTwoTitle = { local: tr("Backups on this server"), target: tr("Destination"), remote: tr("Connection") }[restoreSource];
+
+    return <div className="backup-tab-panel restore-wizard">
+      <div className="backup-panel-title">
+        <div><h3>{tr("Restore")}</h3><p className="hint">{tr("OPanel and DirectAdmin backups: choose where they are, pick the accounts, then restore.")}</p></div>
+      </div>
+
+      <section className="restore-step">
+        <h4><span className="restore-step-no">1</span>{tr("Source")}</h4>
+        <div className="restore-sources" role="radiogroup" aria-label={tr("Source")}>
+          {sources.map(([id, Icon, label, hint]) => <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={restoreSource === id}
+            className={`restore-source${restoreSource === id ? ' active' : ''}`}
+            onClick={() => chooseRestoreSource(id)}
+          >
+            <span className="settings-tile-icon"><Icon size={18}/></span>
+            <span className="settings-tile-text"><strong>{label}</strong><small>{hint}</small></span>
+          </button>)}
+        </div>
+      </section>
+
+      <section className="restore-step">
+        <h4><span className="restore-step-no">2</span>{stepTwoTitle}</h4>
+        {restoreSource === 'local' && <>
+          <p className="hint">
+            {tr("Read from")} <code>{restoreList?.directories?.opanel || '/var/backups/opanel/users'}</code> {tr("and")} <code>{restoreList?.directories?.directadmin || '/home/admin/opanel-backups/da'}</code>. {tr("An uploaded archive goes to the right one by its name.")}
+          </p>
+          <div className="actions restore-local-actions">
+            <label className="upload-button secondary">
+              <Upload size={14}/> {tr("Upload backups")}
+              <input type="file" multiple accept=".tar.gz,.tgz,.tar.zst,.tar.bz2,.tbz2,.tar.xz,.txz,.tar" onChange={e => { uploadRestoreArchives(e.target.files); e.target.value = ''; }} />
+            </label>
+            <button className="secondary" disabled={restoreListing} onClick={() => loadRestoreList('local')}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          </div>
+        </>}
+        {restoreSource === 'target' && <>
+          <div className="restore-form-row">
+            <select value={restoreTargetId} onChange={e => { setRestoreTargetId(e.target.value); setRestoreList(null); setRestoreListError(''); setRestorePicks([]); setRestoreChoice({}); }} aria-label={tr("Destination")}>
+              <option value="">{tr("Choose a destination")}</option>
+              {sftpTargets.map(target => <option key={target.id} value={target.id}>{target.name} ({target.kind === 's3' ? 'S3' : 'SFTP'})</option>)}
+            </select>
+            <button className="secondary" disabled={!restoreTargetId || restoreListing} onClick={() => loadRestoreList('target')}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          </div>
+          {sftpTargets.length === 0 && <p className="hint">{tr("No destination saved yet. Add one under Backup Destination.")}</p>}
+        </>}
+        {restoreSource === 'remote' && <form className="restore-remote" onSubmit={e => { e.preventDefault(); loadRestoreList('remote'); }} autoComplete="off">
+          <label className="field"><span className="field-label">{tr("Protocol")}</span>
+            <select value={remote.protocol} onChange={e => {
+              const protocol = e.target.value;
+              const port = Number(remote.port);
+              // Follow the protocol's usual port unless someone typed their own.
+              setRemote({ protocol, port: protocol === 'sftp' ? (port === 21 ? 22 : remote.port) : (port === 22 ? 21 : remote.port) });
+            }}>
+              <option value="sftp">SFTP</option>
+              <option value="ftp">FTP</option>
+              <option value="ftps">{tr("FTPS (FTP over TLS)")}</option>
+            </select>
+          </label>
+          <label className="field"><span className="field-label">{tr("Host")}</span><input value={remote.host} onChange={e => setRemote({ host: e.target.value })} placeholder="203.0.113.10" spellCheck={false} /></label>
+          <label className="field"><span className="field-label">{tr("Port")}</span><input type="number" min="1" max="65535" value={remote.port} onChange={e => setRemote({ port: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Username")}</span><input value={remote.username} onChange={e => setRemote({ username: e.target.value })} spellCheck={false} /></label>
+          <label className="field"><span className="field-label">{remote.protocol === 'sftp' && remote.use_key ? tr("Key passphrase") : tr("Password")}</span><input type="password" value={remote.password} onChange={e => setRemote({ password: e.target.value })} autoComplete="new-password" /></label>
+          <label className="field restore-remote-wide"><span className="field-label">{tr("Folder")}</span><input value={remote.path} onChange={e => setRemote({ path: e.target.value })} placeholder="/home/admin/admin_backups" spellCheck={false} /></label>
+          {remote.protocol === 'sftp' && <label className="check-line restore-remote-wide">
+            <input type="checkbox" checked={remote.use_key} onChange={e => setRemote({ use_key: e.target.checked })} />
+            {tr("Sign in with a private key")}
+          </label>}
+          {remote.protocol === 'sftp' && remote.use_key && <label className="field restore-remote-wide"><span className="field-label">{tr("Private key")}</span>
+            <textarea rows={4} value={remote.private_key} onChange={e => setRemote({ private_key: e.target.value })} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellCheck={false} />
+          </label>}
+          {remote.protocol === 'ftp' && <p className="hint restore-remote-wide">{tr("Plain FTP sends the password unencrypted. Use SFTP or FTPS if the server offers it.")}</p>}
+          <div className="actions restore-remote-wide">
+            <button type="submit" disabled={restoreListing}><Search size={14}/> {restoreListing ? tr("Connecting...") : tr("Connect and list backups")}</button>
+            <span className="hint">{tr("Used for this restore only; nothing here is saved.")}</span>
+          </div>
+        </form>}
+        {restoreList?.host_key && <p className="hint">{tr("Server key:")} <code>{restoreList.host_key.type} {restoreList.host_key.fingerprint}</code></p>}
+        {restoreListError && <div className="restore-error" role="alert"><AlertCircle size={14}/> <span>{restoreListError}</span></div>}
+      </section>
+
+      <section className="restore-step">
+        <h4><span className="restore-step-no">3</span>{tr("Accounts to restore")}</h4>
+        {restoreListing && <p className="hint">{tr("Reading backups...")}</p>}
+        {!restoreListing && !restoreList && restoreSource !== 'local' && <p className="hint">{tr("The accounts appear here once the source has been read.")}</p>}
+        {restoreList && allGroups.length === 0 && <EmptyState icon={Archive} message={tr("No backups found here.")} />}
+        {restoreList && allGroups.length > 0 && <>
+          <div className="restore-toolbar">
+            <label className="schedule-toggle">
+              <input
+                type="checkbox"
+                checked={allPicked}
+                ref={box => { if (box) box.indeterminate = somePicked && !allPicked; }}
+                onChange={e => {
+                  const keys = selectable.map(group => group.key);
+                  setRestorePicks(prev => e.target.checked ? [...new Set([...prev, ...keys])] : prev.filter(key => !keys.includes(key)));
+                }}
+              />
+              <span>{tr("Select all")}</span>
+            </label>
+            {allGroups.length > 6 && <input className="restore-filter" value={restoreFilter} onChange={e => setRestoreFilter(e.target.value)} placeholder={tr("Filter accounts")} aria-label={tr("Filter accounts")} />}
+            <span className="hint">{pickedGroups.length ? tr("{0} selected", pickedGroups.length) : tr("{0} account(s)", allGroups.length)}</span>
+          </div>
+          <div className="restore-accounts">
+            {groups.map(group => {
+              const chosen = restoreChosen(group);
+              const invalid = chosen.valid === false;
+              const picked = restorePicks.includes(group.key);
+              const toggle = () => {
+                if (invalid) return;
+                setRestorePicks(prev => picked ? prev.filter(key => key !== group.key) : [...prev, group.key]);
+              };
+              const detail = invalid
+                ? (chosen.error || tr("Invalid backup"))
+                : [formatBytes(chosen.size), formatIsoTime(chosen.modified_at),
+                  chosen.kind === 'opanel' && chosen.websites != null ? tr("{0} website(s)", chosen.websites) : ''].filter(Boolean).join(' · ');
+              const deletable = restoreSource === 'local' && (chosen.location === 'uploaded' || chosen.location === 'da');
+              return <div
+                key={group.key}
+                className={`restore-account${picked ? ' picked' : ''}${invalid ? ' invalid' : ''}`}
+                role="checkbox"
+                aria-checked={picked}
+                aria-disabled={invalid}
+                tabIndex={invalid ? -1 : 0}
+                onClick={toggle}
+                onKeyDown={e => { if (e.target === e.currentTarget && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); toggle(); } }}
+              >
+                <input type="checkbox" checked={picked} disabled={invalid} tabIndex={-1} onChange={toggle} onClick={e => e.stopPropagation()} aria-hidden="true" />
+                <span className="restore-account-main">
+                  <strong>{group.account || chosen.username || chosen.filename}</strong>
+                  <small>{detail}</small>
+                </span>
+                <span className={`badge${group.kind === 'opanel' ? ' ok' : ''}`}>{group.kind === 'directadmin' ? 'DirectAdmin' : 'OPanel'}</span>
+                {group.items.length > 1
+                  ? <select className="restore-version" value={chosen.ref} aria-label={tr("Backup to restore")}
+                      onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
+                      onChange={e => setRestoreChoice(prev => ({ ...prev, [group.key]: e.target.value }))}>
+                      {group.items.map(item => <option key={item.ref} value={item.ref}>{item.filename}{item.modified_at ? ` · ${formatIsoTime(item.modified_at)}` : ''}</option>)}
+                    </select>
+                  : (group.account || chosen.username)
+                    ? <span className="restore-version-name" title={chosen.ref}>{chosen.filename}</span>
+                    : <span />}
+                {deletable
+                  ? <button type="button" className="danger restore-delete" title={tr("Delete")} aria-label={tr("Delete")} disabled={!!loading}
+                      onClick={e => { e.stopPropagation(); deleteRestoreArchive(chosen); }}><Trash2 size={14}/></button>
+                  : <span className="restore-delete-spacer" />}
+              </div>;
+            })}
+            {groups.length === 0 && <p className="hint">{tr("No account matches this filter.")}</p>}
+          </div>
+        </>}
+      </section>
+
+      <section className="restore-step">
+        <h4><span className="restore-step-no">4</span>{tr("Restore")}</h4>
+        {pickedHasDa && <label className="check-line">
+          <input type="checkbox" checked={restoreOverwrite} onChange={e => setRestoreOverwrite(e.target.checked)} />
+          {tr("DirectAdmin backups: overwrite a user or website that is already on this server")}
+        </label>}
+        <div className="actions">
+          <button disabled={!!loading || jobActive || pickedGroups.length === 0} onClick={runRestore}>
+            <RotateCcw size={14}/> {pickedGroups.length ? tr("Restore {0} account(s)", pickedGroups.length) : tr("Restore")}
+          </button>
+          {!pickedGroups.length && !jobActive && <span className="hint">{tr("Pick at least one account above.")}</span>}
+        </div>
+        {job && <div className={`backup-job ${job.status}`}>
+          <Clock size={14}/>
+          <span>
+            <strong>{jobActive ? tr("Restoring") : job.status === 'done' ? tr("Restore finished") : tr("Restore finished with errors")}</strong>
+            <small className="restore-job-message">{job.message}</small>
+            {jobActive && <span className="job-progress">
+              <span className={`progress-bar${job.progress_percent == null ? ' indeterminate' : ''}`}>
+                <span className="progress-bar-fill" style={job.progress_percent == null ? undefined : { width: `${job.progress_percent}%` }} />
+              </span>
+              {job.progress_percent != null && <small className="job-progress-pct">{Math.round(job.progress_percent)}%</small>}
+            </span>}
+          </span>
+          <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'}>{job.status}</span>
+        </div>}
+      </section>
+    </div>;
+  }
+
   function renderBackups() {
     const selectedBackupUser = users.find(user => String(user.id) === String(selectedBackupUserId));
     const userNameById = id => users.find(user => String(user.id) === String(id))?.username || `User #${id}`;
@@ -4782,7 +4969,6 @@ function App() {
         ['website', tr("Backup website"), Globe],
         ['user', tr("Backup user"), Users],
         ['restore', tr("Restore"), RotateCcw],
-        ['da-import', tr("Import DA Backups"), Download],
         ['schedule', tr("Scheduled backups"), Clock],
         ['destination', tr("Backup Destination"), Network],
         ['logs', tr("Backup logs"), FileText],
@@ -4893,152 +5079,7 @@ function App() {
 
       </div>}
 
-      {isAdmin && activeBackupTab === 'restore' && <div className="backup-tab-panel">
-        <div className="backup-panel-title">
-          <div>
-            <h3>{tr("Restore")}</h3>
-            <p className="hint">{tr("Every full-user backup on this server: the ones the panel made, and anything uploaded to")} {restoreBackupDir || '/var/backups/opanel/users/restore'}{tr(". Tick the ones to restore and run them in one go.")}</p>
-          </div>
-          <div className="actions">
-            <button className="secondary" disabled={!!loading} onClick={loadRestoreBackups}><RefreshCw size={14}/> {tr("Refresh")}</button>
-            <label className="upload-button secondary">
-              <Upload size={14}/> {tr("Upload backups")}
-              <input type="file" multiple accept=".tar.gz,application/gzip" onChange={e => { uploadUserBackups(e.target.files); e.target.value = ''; }} />
-            </label>
-          </div>
-        </div>
-
-        {remoteBackupErrors.map(message => <div className="info-box" key={message}><AlertCircle size={14}/> {message}</div>)}
-        {restoreRows().length === 0 && <EmptyState icon={Archive} message={tr("No backups found to restore.")} />}
-
-        {restoreRows().length > 0 && <>
-          <div className="restore-toolbar">
-            <label className="schedule-toggle">
-              <input
-                type="checkbox"
-                checked={restorePicks.length > 0 && restorePicks.length === restoreRows().filter(item => item.valid !== false).length}
-                ref={box => { if (box) box.indeterminate = restorePicks.length > 0 && restorePicks.length < restoreRows().filter(item => item.valid !== false).length; }}
-                onChange={e => setRestorePicks(e.target.checked ? restoreRows().filter(item => item.valid !== false).map(item => item.pick) : [])}
-              />
-              <span>{tr("Select all restorable")}</span>
-            </label>
-            <span className="hint">{restorePicks.length ? tr("{0} selected", restorePicks.length) : (restoreRows().length === 1 ? tr("{0} backup", restoreRows().length) : tr("{0} backups", restoreRows().length))}</span>
-            <button disabled={!!loading || restorePicks.length === 0} onClick={restoreSelectedBackups}>
-              <RotateCcw size={14}/> {tr("Restore selected")}
-            </button>
-          </div>
-
-          <div className="backup-list">
-            {restoreRows().map(item => {
-              const picked = restorePicks.includes(item.pick);
-              return <div className={`backup-item restore-row${picked ? ' picked' : ''}`} key={item.pick}>
-                <label className="restore-pick">
-                  <input
-                    type="checkbox"
-                    checked={picked}
-                    disabled={item.valid === false}
-                    onChange={() => setRestorePicks(prev => picked ? prev.filter(f => f !== item.pick) : [...prev, item.pick])}
-                  />
-                </label>
-                <span>
-                  {item.filename || item.backup_file.split('/').pop()}
-                  <small>
-                    {item.valid === false
-                      ? (item.error || tr("Invalid backup"))
-                      : item.source === 's3'
-                        ? `${item.account || tr("unknown user")} - ${formatBytes(item.size)} - ${item.bucket}/${item.key}`
-                        : `${item.account || item.username || tr("unknown user")} - ${item.websites == null ? 'reading...' : item.websites + tr(" website(s)")} - ${formatBytes(item.size)}${item.modified_at ? ' - ' + new Date(item.modified_at).toLocaleString() : ''}`}
-                  </small>
-                </span>
-                <span className={`badge${item.source === 'account' ? ' ok' : ''}`}>
-                  {item.source === 's3' ? item.target : item.source === 'uploaded' ? tr("Uploaded") : tr("On server")}
-                </span>
-                <div className="actions">
-                  {item.source !== 's3' && <>
-                    <button className="secondary" disabled={!!loading} onClick={() => downloadUserBackup(item.backup_file)}><Download size={14}/> {tr("Download")}</button>
-                    <button className="danger" disabled={!!loading} onClick={() => deleteRestoreBackup(item.backup_file)}><Trash2 size={14}/></button>
-                  </>}
-                </div>
-              </div>;
-            })}
-          </div>
-        </>}
-
-      </div>}
-
-      {isAdmin && activeBackupTab === 'da-import' && <div className="backup-tab-panel">
-        <div className="backup-panel-title">
-          <div><h3>{tr("Import DirectAdmin Backups")}</h3><p className="hint">{tr("Upload and import DirectAdmin user backups (")}{daBackupDir || '/home/admin/opanel-backups/da'}{tr("). Archives are extracted, users/websites/databases created, and OLS vhosts configured automatically.")}</p></div>
-          <div className="actions">
-            <button className="secondary" disabled={!!loading} onClick={() => { loadDaBackups(); loadDaImportJobs(); }}><RefreshCw size={14}/> {tr("Refresh")}</button>
-            <label className="upload-button">
-              <Upload size={14}/> {tr("Upload archive")}
-              <input type="file" multiple accept=".tar.gz,.tar.bz2,.tar.xz,.tar.zst,.tar,.tgz,.tbz2,.txz" onChange={e => { uploadDaBackups(e.target.files); e.target.value = ''; }} />
-            </label>
-          </div>
-        </div>
-
-        <h4 style={{margin: '1rem 0 0.5rem'}}>{tr("Archives")}</h4>
-        {daBackups.length === 0 && <EmptyState icon={Archive} message={tr("No DA backup archives found. Upload a DirectAdmin backup to get started.")} />}
-        {daBackups.length > 0 && <div className="restore-toolbar">
-          <label className="schedule-toggle">
-            <input
-              type="checkbox"
-              checked={daPicks.length > 0 && daPicks.length === daBackups.length}
-              ref={box => { if (box) box.indeterminate = daPicks.length > 0 && daPicks.length < daBackups.length; }}
-              onChange={e => setDaPicks(e.target.checked ? daBackups.map(item => item.filename) : [])}
-            />
-            <span>{tr("Select all")}</span>
-          </label>
-          <label className="schedule-toggle" title={tr("Replace a panel user or website that is already on this server instead of stopping on it")}>
-            <input type="checkbox" checked={daOverwrite} onChange={e => setDaOverwrite(e.target.checked)} />
-            <span>{tr("Overwrite existing")}</span>
-          </label>
-          <span className="hint">{daPicks.length ? tr("{0} selected", daPicks.length) : (daBackups.length === 1 ? tr("{0} archive", daBackups.length) : tr("{0} archives", daBackups.length))}</span>
-          <button disabled={!!loading || daPicks.length === 0} onClick={() => startDaImport(daPicks)}>
-            <RotateCcw size={14}/> {tr("Import selected")}
-          </button>
-        </div>}
-        <div className="backup-list">
-          {daBackups.map(item => {
-            const picked = daPicks.includes(item.filename);
-            return <div className={`backup-item restore-row${picked ? ' picked' : ''}`} key={item.filename}>
-              <label className="restore-pick">
-                <input
-                  type="checkbox"
-                  checked={picked}
-                  onChange={() => setDaPicks(prev => picked ? prev.filter(f => f !== item.filename) : [...prev, item.filename])}
-                />
-              </label>
-              <span>{item.filename}<small>{formatBytes(item.size)}</small></span>
-              <span>{daQueued[item.filename] && <span className="badge">{daQueued[item.filename] === 'running' ? tr("Running") : tr("Queued")}</span>}</span>
-              <div className="actions">
-                <button disabled={!!loading} onClick={() => startDaImport([item.filename])}><RotateCcw size={14}/> {tr("Import")}</button>
-                <button className="danger" disabled={!!loading} onClick={() => deleteDaBackup(item.filename)}><Trash2 size={14}/></button>
-              </div>
-            </div>;
-          })}
-        </div>
-
-        {daImportJobs.length > 0 && <>
-          <h4 style={{margin: '1.5rem 0 0.5rem'}}>{tr("Import Jobs")}</h4>
-          <div className="backup-list">
-            {daImportJobs.map(job => <div className="backup-item" key={job.job_id}>
-              <span>
-                {job.backup_file}
-                <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'} style={{marginLeft: '0.5rem'}}>{job.status}</span>
-                {job.overwrite && <span className="badge" style={{marginLeft: '0.5rem'}}>{tr("overwrite")}</span>}
-                <small>{job.message || '...'}</small>
-                {job.summary && <small style={{whiteSpace: 'pre-wrap'}}>
-                  {tr("Domains:")} {job.summary.imported_domains?.join(', ') || tr("none")}{job.summary.subdomains?.length ? tr(" | Subdomains: {0}", job.summary.subdomains.length) : ''}{job.summary.databases?.length ? tr(" | DBs: {0}", job.summary.databases.length) : ''}{job.summary.ssl_enabled_domains?.length ? tr(" | SSL: {0}", job.summary.ssl_enabled_domains.join(', ')) : ''}
-                </small>}
-                {job.summary?.warnings?.map((warning, i) => <small key={i}>{warning}</small>)}
-                {job.error && <small style={{color: 'var(--danger)'}}>{job.error}</small>}
-              </span>
-            </div>)}
-          </div>
-        </>}
-      </div>}
+      {isAdmin && activeBackupTab === 'restore' && renderRestoreWizard()}
 
       {isAdmin && activeBackupTab === 'schedule' && <div className="backup-tab-panel">
         <div className="backup-panel-title">

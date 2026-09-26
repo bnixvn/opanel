@@ -1,3 +1,4 @@
+import ftplib
 import json
 import logging
 import threading
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
+import paramiko
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -28,6 +30,8 @@ from app.schemas.schemas import (
     PhpConfigUpdate,
     PhpConfigRestore,
     RestoreBackup,
+    RestoreRunIn,
+    RestoreSourceIn,
     BackupTargetCreate,
     BackupTargetOut,
     SftpBackupRun,
@@ -38,7 +42,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cron, da_import, file_manager, mariadb, notifications, openlitespeed, php, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cron, da_import, file_manager, mariadb, notifications, openlitespeed, php, restore_sources, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -1025,6 +1029,305 @@ def delete_user_restore_backup(backup_file: str, request: Request, db: Session =
         raise HTTPException(status_code=404, detail="Backup not found") from exc
     log_action(db, current_user.id, "delete_user_restore_backup", "restore_folder", deleted, request=request)
     return {"deleted": deleted}
+
+
+# ---------------------------------------------------------------------------
+# Restore: pick a source, pick the accounts, restore
+# ---------------------------------------------------------------------------
+# One flow for OPanel and DirectAdmin archives, from this server, a saved
+# Backup Destination or another server. The older endpoints above stay for API
+# callers; the panel's Restore tab uses these.
+
+def _restore_source(payload: RestoreSourceIn, db) -> tuple[restore_sources.Source, BackupTarget | None]:
+    if payload.source == "local":
+        return restore_sources.Source("local"), None
+    if payload.source == "target":
+        target = db.query(BackupTarget).filter(
+            BackupTarget.id == payload.target_id,
+            BackupTarget.is_active == True,  # noqa: E712
+        ).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Backup Destination not found")
+        if (target.kind or "sftp") == "s3":
+            return restore_sources.Source("target", s3=restore_sources.S3Bucket(
+                endpoint=target.s3_endpoint or "",
+                region=target.s3_region or "",
+                bucket=target.s3_bucket or "",
+                access_key=target.s3_access_key or "",
+                secret_key=_decrypted(target.s3_secret_key, "S3 secret key") or "",
+                prefix=target.remote_path or "",
+                use_path_style=bool(target.s3_use_path_style),
+            )), target
+        return restore_sources.Source("target", remote=restore_sources.Remote(
+            protocol="sftp",
+            host=target.host,
+            port=target.port or 22,
+            username=target.username or "",
+            password=_decrypted(target.password, "SFTP password") or "",
+            private_key=_decrypted(target.private_key, "SFTP private key") or "",
+            path=target.remote_path or "",
+            host_key_type=target.host_key_type or "",
+            host_key_fingerprint=target.host_key_fingerprint or "",
+        )), target
+    remote = payload.remote
+    return restore_sources.Source("remote", remote=restore_sources.Remote(
+        protocol=remote.protocol,
+        host=remote.host,
+        port=remote.port,
+        username=remote.username,
+        password=remote.password,
+        private_key=remote.private_key,
+        path=remote.path,
+        host_key_fingerprint=remote.host_key_fingerprint,
+    )), None
+
+
+def _restore_source_label(source: restore_sources.Source, target: BackupTarget | None) -> str:
+    if target is not None:
+        return f"destination {target.name}"
+    if source.remote is not None:
+        return f"{source.remote.protocol}://{source.remote.username}@{source.remote.host}:{source.remote.port}"
+    return "this server"
+
+
+_RESTORE_SOURCE_ERRORS = (
+    restore_sources.RestoreSourceError,
+    backup.SftpHostKeyMismatch,
+    backup.S3Error,
+    paramiko.SSHException,
+    ftplib.Error,
+    OSError,
+    EOFError,
+    ValueError,
+)
+
+
+@router.post("/restore/list")
+def list_restore_source(payload: RestoreSourceIn, db: Session = Depends(get_db),
+                        current_user: User = Depends(get_current_user)):
+    """The archives a source holds, both kinds, for the operator to pick from.
+
+    Only a listing: nothing is downloaded until a restore asks for it.
+    """
+    ensure_role(current_user.role, Role.admin)
+    source, target = _restore_source(payload, db)
+    try:
+        items = restore_sources.list_source(source)
+    except _RESTORE_SOURCE_ERRORS as exc:
+        raise HTTPException(status_code=502, detail=restore_sources.describe_error(exc, source)) from exc
+    result = {"items": items}
+    remote = source.remote
+    if remote is not None and remote.protocol == "sftp" and remote.seen_host_key_fingerprint:
+        # A saved destination that has never been used pins its key now, the
+        # way its first upload would have.
+        if target is not None and not target.host_key_fingerprint:
+            target.host_key_type = remote.seen_host_key_type
+            target.host_key_fingerprint = remote.seen_host_key_fingerprint
+            db.commit()
+        result["host_key"] = {"type": remote.seen_host_key_type,
+                              "fingerprint": remote.seen_host_key_fingerprint}
+    if source.kind == "local":
+        result["directories"] = {"opanel": backup.user_restore_dir(), "directadmin": da_import.da_backup_dir()}
+    return result
+
+
+@router.post("/restore/upload")
+def upload_restore_archives(
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Put archives from the operator's computer where the list reads them:
+    an OPanel backup in the restore folder, a DirectAdmin one in the
+    DirectAdmin folder. Which is which comes from the name."""
+    ensure_role(current_user.role, Role.admin)
+    if not files:
+        raise HTTPException(status_code=400, detail="No backup files uploaded")
+    saved = []
+    for file in files:
+        name = file.filename or ""
+        kind = restore_sources.archive_kind(name)
+        try:
+            if kind == restore_sources.KIND_OPANEL:
+                path = backup.save_uploaded_user_backup(name, file.file)
+            elif kind == restore_sources.KIND_DA:
+                path = da_import.save_da_backup(name, file.file)["path"]
+            else:
+                raise ValueError(f"{name}: not a backup archive (.tar.gz, .tar.zst, .tar.bz2, .tar.xz, .tar)")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        saved.append({"kind": kind, "path": path, "filename": Path(path).name})
+    log_action(db, current_user.id, "upload_restore_archives", "restore",
+               ", ".join(item["filename"] for item in saved)[:500])
+    return {"items": saved}
+
+
+@router.delete("/restore/local")
+def delete_restore_archive(ref: str, request: Request, db: Session = Depends(get_db),
+                           current_user: User = Depends(get_current_user)):
+    """Remove an archive that was uploaded for restore. The panel's own account
+    backups are managed under Backup user, where deleting one also offers to
+    remove its copy on the destination."""
+    ensure_role(current_user.role, Role.admin)
+    kind = restore_sources.archive_kind(ref)
+    try:
+        if kind == restore_sources.KIND_OPANEL:
+            deleted = backup.delete_user_restore_backup(ref)
+        elif kind == restore_sources.KIND_DA:
+            deleted = da_import.delete_da_backup(ref)
+        else:
+            raise FileNotFoundError(ref)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Backup not found") from exc
+    log_action(db, current_user.id, "delete_restore_archive", "restore", deleted, request=request)
+    return {"deleted": deleted}
+
+
+def _restore_running() -> bool:
+    with _backup_jobs_lock:
+        if any(job.get("kind") == "user_restore_batch" and job.get("status") in {"queued", "running"}
+               for job in _backup_jobs.values()):
+            return True
+    with _da_import_jobs_lock:
+        return any(job.get("status") in {"queued", "running"} for job in _da_import_jobs.values())
+
+
+def _da_summary_note(name: str, summary: dict) -> str:
+    domains = summary.get("imported_domains") or []
+    note = f"{name} (DirectAdmin): {len(domains)} domain(s)"
+    if summary.get("databases"):
+        note += f", {len(summary['databases'])} database(s)"
+    if summary.get("ssl_enabled_domains"):
+        note += f", SSL for {len(summary['ssl_enabled_domains'])}"
+    if summary.get("warnings"):
+        note += f", {len(summary['warnings'])} warning(s): " + " | ".join(summary["warnings"])[:600]
+    return note
+
+
+def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.Source,
+                     items: list[dict], overwrite: bool) -> None:
+    total = len(items)
+    _set_backup_job(job_id, status="running", started_at=_now_iso(), message=f"Restoring 1 of {total}")
+    db = SessionLocal()
+    done, failures = [], []
+    try:
+        for index, item in enumerate(items, start=1):
+            position = f"({index} of {total})"
+            ref, kind = item["ref"], item["kind"]
+            name = ref.replace("\\", "/").rsplit("/", 1)[-1]
+            local_path, fetched = ref, ""
+            try:
+                # From another server the download is the first half of an
+                # item's share of the bar and the restore the second.
+                remote = source.kind != "local"
+
+                def item_percent(fraction, _i=index):
+                    return _nested_percent(_i, total, int(min(1.0, fraction) * 1000), 1000)
+
+                if remote:
+                    def download_progress(got, of, _n=name):
+                        _set_backup_job(
+                            job_id,
+                            progress_percent=item_percent(0.5 * got / of) if of else None,
+                            progress_label=_n,
+                            message=f"Downloading {_n} {position}"
+                            + (f" - {got * 100 // of}%" if of else ""),
+                        )
+
+                    _set_backup_job(job_id, message=f"Downloading {name} {position}",
+                                    progress_percent=item_percent(0.0), progress_label=name)
+                    local_path = restore_sources.fetch(source, kind, ref, item.get("size") or 0,
+                                                       on_progress=download_progress)
+                    fetched = local_path
+                if kind == restore_sources.KIND_OPANEL:
+                    def site_progress(sites_done, of, label, _n=name):
+                        share = sites_done / of if of else 0.0
+                        _set_backup_job(
+                            job_id,
+                            progress_percent=item_percent(0.5 + 0.5 * share if remote else share),
+                            progress_label=f"{_n} - {label}" if label else _n,
+                            message=f"Restoring {_n} {position}" + (f" - {label}" if label else ""),
+                        )
+
+                    _set_backup_job(job_id, message=f"Restoring {name} {position}", progress_label=name)
+                    result = backup.restore_user_backup(local_path, db, on_progress=site_progress)
+                    log_action(db, request_user_id, "restore_user", result.get("username", "user"), name)
+                    note = f"{result.get('username', name)}: {len(result.get('websites') or [])} site(s)"
+                    if result.get("certificates"):
+                        note += f", {len(result['certificates'])} cert(s)"
+                    if result.get("ssl_warnings"):
+                        note += f", SSL not restored for {len(result['ssl_warnings'])}"
+                    done.append(note)
+                else:
+                    _set_backup_job(job_id, message=f"Importing {name} (DirectAdmin) {position}",
+                                    progress_label=name)
+                    summary = da_import.import_da_backup(local_path, db, overwrite=overwrite)
+                    log_action(db, request_user_id, "start_da_import", name, "overwrite" if overwrite else "")
+                    note = _da_summary_note(name, summary)
+                    done.append(note)
+                    notifications.notify_admin("da_import_done", {"status": "done", "file": name, "message": note})
+            except Exception as exc:  # noqa: BLE001 - one archive failing must not stop the rest
+                db.rollback()
+                logger.exception("Restore failed for %s", ref)
+                message = restore_sources.describe_error(exc, source)
+                failures.append(f"{name}: {message}")
+                if kind == restore_sources.KIND_DA:
+                    notifications.notify_admin("da_import_done", {"status": "error", "file": name, "message": message})
+            finally:
+                # A copy pulled down only to be restored is not a local backup:
+                # the source still has it, and a 5 GB archive left behind is
+                # disk nobody asked for.
+                if fetched:
+                    Path(fetched).unlink(missing_ok=True)
+        summary = "; ".join(done + failures)[:4000]
+        _set_backup_job(
+            job_id,
+            progress_percent=100.0,
+            progress_label="",
+            status="error" if failures else "done",
+            message=summary or "Nothing restored",
+            error="; ".join(failures)[:2000] if failures else "",
+            finished_at=_now_iso(),
+        )
+    finally:
+        db.close()
+
+
+@router.post("/restore/run")
+def run_restore(payload: RestoreRunIn, request: Request, db: Session = Depends(get_db),
+                current_user: User = Depends(get_current_user)):
+    """Restore the picked archives, one after another.
+
+    Sequential on purpose: each restore writes site files, imports databases
+    and reloads OpenLiteSpeed, and two at once would fight over all three --
+    which is also why a second restore is refused while one is running.
+    """
+    ensure_role(current_user.role, Role.admin)
+    source, target = _restore_source(payload, db)
+    items, seen = [], set()
+    for pick in payload.items:
+        try:
+            ref = restore_sources.check_ref(source, pick.kind, pick.ref)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"{pick.ref}: backup not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if ref in seen:
+            continue
+        seen.add(ref)
+        items.append({"kind": pick.kind, "ref": ref})
+    if _restore_running():
+        raise HTTPException(status_code=409, detail="A restore is already running. Wait for it to finish.")
+    job = _queue_backup_job(current_user, "user_restore_batch",
+                            f"Restore of {len(items)} backup(s) queued", count=len(items))
+    _backup_job_executor.submit(_run_restore_job, job["job_id"], current_user.id, source, items,
+                                payload.overwrite)
+    names = ", ".join(item["ref"].replace("\\", "/").rsplit("/", 1)[-1] for item in items)
+    log_action(db, current_user.id, "restore_backups",
+               f"{len(items)} backup(s) from {_restore_source_label(source, target)}"
+               + (" overwrite" if payload.overwrite else ""),
+               names[:500], request=request)
+    return job
 
 
 # ---------------------------------------------------------------------------

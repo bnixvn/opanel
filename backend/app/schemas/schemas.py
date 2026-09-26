@@ -904,6 +904,80 @@ class UserRestoreBackup(BaseModel):
     backup_file: str
 
 
+_REMOTE_HOST_RE = re.compile(r"^[A-Za-z0-9.:\[\]-]{1,253}$")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class RestoreRemoteIn(BaseModel):
+    """Another server to restore from, typed in for this restore only.
+
+    Nothing here is saved. A path or name with a control character is refused
+    outright: over FTP a CR/LF in a path is a second command.
+    """
+
+    protocol: Literal["sftp", "ftp", "ftps"] = "sftp"
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=22, ge=1, le=65535)
+    username: str = Field(default="", max_length=128)
+    password: str = Field(default="", max_length=1024)
+    private_key: str = Field(default="", max_length=16384)
+    path: str = Field(default="", max_length=1024)
+    # What the server showed when it was listed; the download insists on it.
+    host_key_fingerprint: str = Field(default="", max_length=128)
+
+    @field_validator("host")
+    @classmethod
+    def valid_host(cls, value: str) -> str:
+        value = value.strip()
+        if not _REMOTE_HOST_RE.fullmatch(value):
+            raise ValueError("Enter a host name or IP address")
+        return value
+
+    @field_validator("username", "path", "host_key_fingerprint")
+    @classmethod
+    def no_control_chars(cls, value: str) -> str:
+        if _CONTROL_CHARS_RE.search(value or ""):
+            raise ValueError("Control characters are not allowed")
+        return value.strip()
+
+
+class RestoreSourceIn(BaseModel):
+    """Where to restore from: this server, a saved Backup Destination, or
+    another server reached with the credentials in ``remote``."""
+
+    source: Literal["local", "target", "remote"] = "local"
+    target_id: Optional[int] = Field(default=None, gt=0)
+    remote: Optional[RestoreRemoteIn] = None
+
+    @model_validator(mode="after")
+    def source_has_what_it_needs(self):
+        if self.source == "target" and not self.target_id:
+            raise ValueError("Choose a Backup Destination")
+        if self.source == "remote" and self.remote is None:
+            raise ValueError("Enter the server to restore from")
+        return self
+
+
+class RestoreRunItem(BaseModel):
+    kind: Literal["opanel", "directadmin"]
+    ref: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("ref")
+    @classmethod
+    def no_control_chars(cls, value: str) -> str:
+        if _CONTROL_CHARS_RE.search(value):
+            raise ValueError("Control characters are not allowed")
+        return value
+
+
+class RestoreRunIn(RestoreSourceIn):
+    items: list[RestoreRunItem] = Field(min_length=1, max_length=50)
+    # DirectAdmin archives only: replace a user or website already on this
+    # server instead of stopping on it. An OPanel archive always restores over
+    # its own account and never over someone else's.
+    overwrite: bool = False
+
+
 class DAImportBatch(BaseModel):
     """DirectAdmin archives to import, one queued job each. overwrite applies
     to every archive in the batch: without it, one whose user or domains are

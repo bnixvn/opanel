@@ -556,3 +556,48 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .user-row .row-actions button{white-space:normal;height:auto;min-height:40px;line-height:1.25;padding-block:6px}
   .token-create-form.mcp-token-form{grid-template-columns:1fr}
 }
+/* Restore: four numbered steps -- source, what it needs, accounts, run. */
+.restore-wizard .restore-step{display:grid;gap:10px;min-width:0;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg)}
+.restore-step h4{display:flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:600;color:var(--brand-ink)}
+.restore-step-no{flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--primary);color:var(--primary-contrast);font-size:12px;font-weight:700}
+.restore-step .hint{margin:0}
+.restore-sources{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.restore-sources .restore-source{display:flex;align-items:flex-start;justify-content:flex-start;gap:12px;height:auto;min-height:0;padding:12px 14px;text-align:left;
+  background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-md);font-weight:400}
+.restore-sources .restore-source:hover:not(:disabled){background:var(--surface-hover);border-color:var(--primary-soft);color:var(--text)}
+.restore-sources .restore-source.active{background:var(--primary-light);border-color:var(--primary);color:var(--text)}
+.restore-local-actions{justify-content:flex-start}
+.restore-form-row{display:grid;grid-template-columns:minmax(0,420px) max-content;gap:10px;align-items:center}
+.restore-remote{display:grid;grid-template-columns:140px minmax(0,2fr) 96px minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:end}
+.restore-remote .field{min-width:0}
+.restore-remote-wide{grid-column:1 / -1}
+.restore-remote .actions{justify-content:flex-start;align-items:center}
+.restore-remote textarea{width:100%;font-family:var(--font-mono,monospace);font-size:12px}
+.restore-error{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border:1px solid var(--danger-border);background:var(--danger-bg);color:var(--danger);border-radius:var(--radius-md);font-size:13px;font-weight:600}
+.restore-error svg{flex:none;margin-top:2px}
+.restore-filter{width:220px;max-width:100%;height:34px;min-height:34px}
+.restore-accounts{display:grid;gap:8px}
+.restore-account{display:grid;grid-template-columns:auto minmax(0,1fr) max-content minmax(0,300px) 34px;align-items:center;gap:10px;
+  padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);cursor:pointer;min-width:0}
+.restore-account:hover{border-color:var(--border-hover)}
+.restore-account:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.restore-account.picked{border-color:var(--primary-soft);background:var(--surface-hover)}
+.restore-account.invalid{cursor:not-allowed}
+.restore-account.invalid small{color:var(--danger)}
+.restore-account>input[type=checkbox]{width:16px;height:16px;min-height:0;margin:0}
+.restore-account-main{display:grid;gap:2px;min-width:0}
+.restore-account-main strong{font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.restore-account-main small{font-size:12px;font-weight:600;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.restore-version{width:100%;min-width:0;height:34px;min-height:34px;font-size:12px}
+.restore-version-name{min-width:0;font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.restore-account .restore-delete{width:34px;min-width:34px;height:34px;min-height:34px;padding:0}
+.backup-job small.restore-job-message{white-space:normal;overflow:visible;overflow-wrap:anywhere}
+@media(max-width:1000px){.restore-remote{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){
+  .restore-form-row,.restore-remote{grid-template-columns:1fr}
+  .restore-account-main small{white-space:normal}
+  /* Name and badge on the first line, the archive picker and delete below. */
+  .restore-account{grid-template-columns:auto minmax(0,1fr) auto;row-gap:8px}
+  .restore-account .restore-version,.restore-account .restore-version-name{grid-column:2}
+  .restore-account .restore-delete,.restore-account .restore-delete-spacer{grid-column:3}
+}

@@ -1541,9 +1541,8 @@ class _PinnedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
 
     When ``expected`` is ``None`` (TOFU bootstrap) the policy accepts the key
     and stores it on ``self.captured`` for the caller to persist. When
-    ``expected`` is set the policy refuses to fall back here at all because
-    the verification has already happened in the caller; this is purely a
-    safety net to surface a clear error if logic upstream changes.
+    ``expected`` is set it accepts that key and refuses any other; the caller
+    compares the negotiated key against the pin again after connecting.
     """
 
     def __init__(self, expected_type: Optional[str], expected_fingerprint: Optional[str]):
@@ -1555,8 +1554,12 @@ class _PinnedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
     def missing_host_key(self, client, hostname, key):  # type: ignore[override]
         captured = _fingerprint(key)
         if self.expected_fingerprint:
-            # Verification path: a key was pinned but Paramiko did not find a
-            # matching entry. Refuse the connection.
+            # Verification path. Only the fingerprint is stored, so paramiko
+            # never has a matching known_hosts entry and always lands here:
+            # the pinned key itself must be accepted. Raising unconditionally
+            # failed every upload after the first one had pinned the key.
+            if captured == self.expected_fingerprint:
+                return
             raise SftpHostKeyMismatch(
                 f"SFTP host key mismatch for {hostname}: "
                 f"expected {self.expected_type or '?'} {self.expected_fingerprint}, "
