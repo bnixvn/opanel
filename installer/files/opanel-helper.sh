@@ -24,6 +24,11 @@ ALLOWED_ACTIONS=(start stop restart reload status is-active is-enabled)
 HOME_ROOT="/home"
 OLS_HTTPD_CONF="/usr/local/lsws/conf/httpd_config.conf"
 OLS_VHOSTS_DIR="/usr/local/lsws/conf/opanel/vhosts"
+# Per-site PHP error logs. Not under /var/log/openlitespeed: that is 2770 so
+# tenants cannot read each other's 0644 access logs, which also kept every
+# site's PHP (running as the site user) out of its own php_error.log. See
+# ensure_php_log_dir.
+PHP_LOG_ROOT="/var/log/opanel-php"
 PHP_CONF_DIRS=(/usr/local/lsws/lsphp{83,84}/etc/php.d)
 opanel_SITES_GROUP="opanel-sites"
 opanel_SFTP_GROUP="opanel-sftp"
@@ -2427,6 +2432,16 @@ require_site_domain_segment() {
     || deny "invalid site domain path segment: $1"
 }
 
+# 0711 root:root: every site user may pass through to its own directory, none
+# may list which sites exist. Each site's directory is 0750 and its own, so
+# tenants cannot read each other's errors (file paths, SQL, sometimes secrets).
+ensure_php_log_dir() {
+  local domain="$1" user="$2"
+  install -d -o root -g root -m 0711 "$PHP_LOG_ROOT"
+  chmod 0711 "$PHP_LOG_ROOT"
+  install -d -o "$user" -g "$user" -m 0750 "${PHP_LOG_ROOT}/${domain}"
+}
+
 read_site_log() {
   local domain="$1" kind="$2" lines="$3" resolved php_log php_resolved any=0
   require_domain "$domain"
@@ -2441,10 +2456,10 @@ read_site_log() {
   # The Error tab shows PHP's own error_log first (that is where application
   # errors land), then the OpenLiteSpeed server error log.
   if [[ "$kind" == "error" ]]; then
-    php_resolved=$(readlink -m "/var/log/openlitespeed/${domain}/php_error.log") || deny "cannot resolve log path"
+    php_resolved=$(readlink -m "${PHP_LOG_ROOT}/${domain}/php_error.log") || deny "cannot resolve log path"
     case "$php_resolved" in
-      /var/log/openlitespeed/*) ;;
-      *) deny "log path outside /var/log/openlitespeed: $php_resolved" ;;
+      "${PHP_LOG_ROOT}"/*) ;;
+      *) deny "log path outside ${PHP_LOG_ROOT}: $php_resolved" ;;
     esac
     echo "opanel_LOG_PATH=${php_resolved} + ${resolved}" >&2
     if [[ -s "$php_resolved" ]]; then
@@ -2774,7 +2789,7 @@ ensure_sites_group() {
 # Daily, seven days, uncompressed: logs stay greppable without zcat, which is
 # the point of keeping them. maxsize is the safety valve -- a site writing
 # gigabytes a day rotates before the daily run rather than after it.
-LOG_ROTATION_VERSION=2
+LOG_ROTATION_VERSION=3
 ensure_site_log_rotation() {
   command -v logrotate >/dev/null 2>&1 || return 0
   if [[ -f /etc/logrotate.d/opanel-sites ]] \
@@ -2783,6 +2798,7 @@ ensure_site_log_rotation() {
   fi
   cat >/etc/logrotate.d/opanel-sites <<EOF
 # opanel log rotation v${LOG_ROTATION_VERSION} -- managed by opanel, edits are overwritten
+${PHP_LOG_ROOT}/*/php_error.log
 /var/log/openlitespeed/*/php_error.log
 /var/log/openlitespeed/*.access.log
 /var/log/openlitespeed/*.error.log {
@@ -4382,21 +4398,20 @@ case "$cmd" in
     vhost_conf="$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
     vhost_tmp="$(mktemp)"
     cat >"$vhost_tmp"
+    # The site's PHP runs as its own Linux user and cannot write the
+    # OLS-owned <domain>.error.log, so PHP's error_log points at a per-domain
+    # directory the site user owns. Made before the unchanged-vhost shortcut so
+    # a refresh always leaves it in place.
+    vhost_site_user="$(sed -nE 's#^[[:space:]]*docRoot[[:space:]]+/home/([^/]+)/.*#\1#p' "$vhost_tmp" | head -1)"
+    if [[ -n "$vhost_site_user" ]] && id "$vhost_site_user" >/dev/null 2>&1; then
+      ensure_php_log_dir "$safe_domain" "$vhost_site_user"
+    fi
     # A bulk refresh re-renders every vhost with identical output; when the file
     # is byte-identical and already in place there is nothing to sync or restart.
     if [[ -f "$vhost_conf" ]] && cmp -s "$vhost_tmp" "$vhost_conf"; then
       rm -f "$vhost_tmp"
       echo "vhost unchanged: ${safe_domain}"
       exit 0
-    fi
-    # The site's PHP runs as its own Linux user and cannot write the
-    # OLS-owned <domain>.error.log, so PHP's error_log points at a per-domain
-    # directory the site user owns. Create it here (the vhost that references it
-    # is being written right now).
-    vhost_site_user="$(sed -nE 's#^[[:space:]]*docRoot[[:space:]]+/home/([^/]+)/.*#\1#p' "$vhost_tmp" | head -1)"
-    if [[ -n "$vhost_site_user" ]] && id "$vhost_site_user" >/dev/null 2>&1; then
-      [[ -d /var/log/openlitespeed ]] || install -d -o www-data -g opanel-sites -m 2770 /var/log/openlitespeed
-      install -d -o "$vhost_site_user" -g "$vhost_site_user" -m 0750 "/var/log/openlitespeed/$safe_domain"
     fi
     install -d -o root -g opanel -m 2775 "$OLS_VHOSTS_DIR/$safe_domain"
     install -m 0644 -o root -g opanel "$vhost_tmp" "$vhost_conf"
@@ -4426,7 +4441,7 @@ case "$cmd" in
     # directory holding its PHP error log. Every caller of this subcommand is
     # removing the site for good, and 54 deleted domains had left 162 of these.
     rm -f "/var/log/openlitespeed/${safe_domain}.access.log" "/var/log/openlitespeed/${safe_domain}.error.log"
-    rm -rf "/var/log/openlitespeed/${safe_domain}"
+    rm -rf "/var/log/openlitespeed/${safe_domain}" "${PHP_LOG_ROOT:?}/${safe_domain}"
     ols_sync_main_config
     restart_openlitespeed 2>/dev/null || true
     ;;

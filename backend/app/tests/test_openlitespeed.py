@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app.services import openlitespeed
 
 
@@ -81,7 +83,7 @@ def test_php_error_log_goes_to_a_dir_the_site_user_owns():
         "example.test", "/home/siteuser/example.test",
         app_type="wordpress", php_version="8.4", linux_user="siteuser",
     )
-    assert "php_admin_value   error_log /var/log/openlitespeed/example.test/php_error.log" in rendered
+    assert "php_admin_value   error_log /var/log/opanel-php/example.test/php_error.log" in rendered
     # the OLS server error log is unchanged
     assert "errorlog /var/log/openlitespeed/example.test.error.log {" in rendered
 
@@ -293,3 +295,49 @@ def test_rewrite_mode_none_emits_no_front_controller_rules():
         ssl_enabled=False,
     )
     assert "REQUEST_FILENAME" not in rendered
+
+
+# ---------------------------------------------------------------------------
+# PHP error logs must be writable by the site's PHP and private to the site
+# ---------------------------------------------------------------------------
+def _helper_function(name: str) -> str:
+    text = (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    start = text.index(f"\n{name}() {{")
+    return text[start:text.index("\n}\n", start)]
+
+
+def _helper_text() -> str:
+    return (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+
+
+def test_php_error_logs_are_not_under_the_closed_ols_log_dir():
+    """/var/log/openlitespeed is 2770 www-data:opanel-sites so tenants cannot
+    read each other's access logs. The site's PHP (its own uid, not in
+    opanel-sites) could not reach a php_error.log there either, so every PHP
+    error landed in the server-wide stderr.log and the Error tab was empty."""
+    path = openlitespeed._php_error_log_path("example.test").as_posix()
+    assert path == "/var/log/opanel-php/example.test/php_error.log"
+    assert not path.startswith("/var/log/openlitespeed/")
+
+
+def test_the_php_log_root_is_traverse_only_and_each_site_dir_private():
+    body = _helper_function("ensure_php_log_dir")
+    assert 'install -d -o root -g root -m 0711 "$PHP_LOG_ROOT"' in body
+    assert 'install -d -o "$user" -g "$user" -m 0750 "${PHP_LOG_ROOT}/${domain}"' in body
+    assert 'PHP_LOG_ROOT="/var/log/opanel-php"' in _helper_text()
+
+
+def test_the_log_dir_is_made_even_when_the_vhost_is_unchanged():
+    text = _helper_text()
+    start = text.index("  ols-vhost-write|ols-vhost-write-defer)")
+    block = text[start:text.index(";;", start)]
+    assert block.index("ensure_php_log_dir") < block.index('echo "vhost unchanged')
+
+
+def test_the_error_tab_reads_the_new_location_and_delete_removes_it():
+    body = _helper_function("read_site_log")
+    assert 'readlink -m "${PHP_LOG_ROOT}/${domain}/php_error.log"' in body
+    assert '"${PHP_LOG_ROOT}"/*) ;;' in body
+    text = _helper_text()
+    start = text.index("  ols-vhost-delete)")
+    assert '"${PHP_LOG_ROOT:?}/${safe_domain}"' in text[start:text.index(";;", start)]

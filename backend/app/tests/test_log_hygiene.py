@@ -48,7 +48,8 @@ def test_every_log_openlitespeed_writes_is_covered():
     block = _rotation_block()
 
     for pattern in (
-        "/var/log/openlitespeed/*/php_error.log",   # per-site PHP errors
+        "${PHP_LOG_ROOT}/*/php_error.log",          # per-site PHP errors
+        "/var/log/openlitespeed/*/php_error.log",   # where they were before 1.19.2
         "/var/log/openlitespeed/*.access.log",      # per-site access, 219 files on one box
         "/usr/local/lsws/logs/error.log",
         "/usr/local/lsws/logs/stderr.log",          # the one that reached 60 GB

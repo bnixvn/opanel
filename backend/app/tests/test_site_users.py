@@ -276,13 +276,13 @@ def test_vhost_write_creates_a_site_owned_php_log_dir():
     site's Linux user so its PHP process can actually write to it."""
     helper = HELPER_SCRIPT.read_text(encoding="utf-8")
     assert 's#^[[:space:]]*docRoot[[:space:]]+/home/([^/]+)/.*#\\1#p' in helper
-    assert 'install -d -o "$vhost_site_user" -g "$vhost_site_user" -m 0750 "/var/log/openlitespeed/$safe_domain"' in helper
+    assert 'ensure_php_log_dir "$safe_domain" "$vhost_site_user"' in helper
     # the Error tab reads the PHP log then the OLS server log
     assert "PHP error log" in helper
     assert "OpenLiteSpeed error log" in helper
     # php_error.log has no built-in rotation -> logrotate handles it. The path
     # is one of several in the stanza now, so match the path, not the brace.
-    assert "/var/log/openlitespeed/*/php_error.log" in helper
+    assert "${PHP_LOG_ROOT}/*/php_error.log" in helper
     assert "/etc/logrotate.d/opanel-sites" in helper
 
 

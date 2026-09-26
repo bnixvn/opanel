@@ -256,12 +256,21 @@ def _log_path(domain: str, kind: str) -> Path:
     return Path("/var/log/openlitespeed") / f"{safe_domain}.{safe_kind}.log"
 
 
+# PHP's error logs live outside /var/log/openlitespeed. That directory is 2770
+# www-data:opanel-sites because OLS writes every vhost's access log there 0644,
+# and a site user able to traverse it could read other tenants' request lines.
+# The site's PHP runs as that site user, so a php_error.log under it could not
+# be opened either: every PHP error went to the server-wide stderr.log and the
+# panel's Error tab stayed empty. This root is 0711 root:root (traverse, no
+# listing) and each site's directory in it is 0750 and owned by the site user.
+PHP_LOG_ROOT = Path("/var/log/opanel-php")
+
+
 def _php_error_log_path(domain: str) -> Path:
     """PHP's own error_log. The site's PHP runs as its Linux user, which cannot
     write the OLS-owned ``<domain>.error.log`` -- so PHP logs into a per-domain
-    directory the site user owns. This is why a site with a PHP fatal used to
-    leave no trace in the panel's Error tab."""
-    return Path("/var/log/openlitespeed") / _safe_domain(domain) / "php_error.log"
+    directory the site user owns, under PHP_LOG_ROOT."""
+    return PHP_LOG_ROOT / _safe_domain(domain) / "php_error.log"
 
 
 # ---------------------------------------------------------------------------
