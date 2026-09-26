@@ -697,7 +697,7 @@ def _block_ip(ctx: Context, args: dict):
         if rule.get("action") == "deny" and rule.get("type") == "ip" and rule.get("network") == network \
                 and not rule.get("port"):
             return {"ip": network, "blocked": True, "already": True, "rule_id": rule.get("id")}
-    firewall.block_ip(network)
+    firewall.block_ip(network, note=args.get("reason") or "", source="mcp")
     return {"ip": network, "blocked": True, "already": False}
 
 

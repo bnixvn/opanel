@@ -592,7 +592,31 @@ def allow_port(port: str | int, protocol: str = "tcp") -> CommandResult:
     return CommandResult(command=f"allow port {clean_port}/{clean_protocol}", returncode=0, stdout="Port allowed", stderr="")
 
 
-def allow_ip(network: str, port: Optional[str | int] = None, protocol: str = "tcp") -> CommandResult:
+RULE_NOTE_MAX = 120
+RULE_SOURCES = {"panel", "mcp"}
+CONTROL_CHARS_RE = re.compile("[\\x00-\\x1f\\x7f]")
+
+
+def _rule_meta(note: str = "", source: str = "panel") -> dict:
+    """Who added an address rule, when, and why -- shown on the Firewall page.
+
+    Blocks added through MCP carried their reason only in the audit log, so the
+    page listed nothing to explain an address nobody on the team had typed.
+    """
+    from datetime import datetime, timezone
+
+    meta = {
+        "source": source if source in RULE_SOURCES else "panel",
+        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    clean_note = " ".join(CONTROL_CHARS_RE.sub(" ", note or "").split())[:RULE_NOTE_MAX]
+    if clean_note:
+        meta["note"] = clean_note
+    return meta
+
+
+def allow_ip(network: str, port: Optional[str | int] = None, protocol: str = "tcp",
+             note: str = "", source: str = "panel") -> CommandResult:
     clean_network = _validate_network(network)
     clean_protocol = _validate_protocol(protocol)
     rules = _read_rules()
@@ -602,6 +626,7 @@ def allow_ip(network: str, port: Optional[str | int] = None, protocol: str = "tc
         "type": "ip",
         "network": clean_network,
         "protocol": clean_protocol,
+        **_rule_meta(note, source),
     }
     if port:
         rule["port"] = _validate_port(port)
@@ -611,7 +636,8 @@ def allow_ip(network: str, port: Optional[str | int] = None, protocol: str = "tc
     return CommandResult(command=f"allow ip {clean_network}", returncode=0, stdout="IP allowed", stderr="")
 
 
-def block_ip(network: str, port: Optional[str | int] = None, protocol: str = "tcp") -> CommandResult:
+def block_ip(network: str, port: Optional[str | int] = None, protocol: str = "tcp",
+             note: str = "", source: str = "panel") -> CommandResult:
     clean_network = _validate_network(network)
     clean_protocol = _validate_protocol(protocol)
     rules = _read_rules()
@@ -621,6 +647,7 @@ def block_ip(network: str, port: Optional[str | int] = None, protocol: str = "tc
         "type": "ip",
         "network": clean_network,
         "protocol": clean_protocol,
+        **_rule_meta(note, source),
     }
     if port:
         rule["port"] = _validate_port(port)

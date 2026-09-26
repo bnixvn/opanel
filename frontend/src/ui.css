@@ -242,6 +242,14 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 .firewall-rule-forms .firewall-form label:first-child,
 .firewall-rule-forms .firewall-form button{grid-column:1 / -1}
 .firewall-status pre{max-height:320px}
+.firewall-rule-forms .firewall-form .firewall-note-field{grid-column:1 / -1}
+.firewall-ip-rules{display:grid;gap:8px;margin-top:14px}
+.firewall-ip-row{grid-template-columns:minmax(140px,1fr) minmax(120px,max-content) minmax(0,2fr) minmax(0,max-content) auto}
+.firewall-ip-row code{font-weight:800;color:var(--text);background:transparent;padding:0}
+.firewall-ip-row>span:nth-child(2){display:flex;align-items:center;gap:8px}
+.firewall-ip-row small{color:var(--text-muted);font-weight:600}
+.firewall-ip-note{overflow-wrap:anywhere}
+@media(max-width:950px){.firewall-ip-row{grid-template-columns:1fr;gap:6px}}
 
 /* Services: a stopped service's Start and a running one's Stop are the only
    live buttons, so the obvious next step is the enabled one. */

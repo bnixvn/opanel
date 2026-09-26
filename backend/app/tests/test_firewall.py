@@ -201,3 +201,52 @@ def test_the_updater_repairs_missing_jumps_not_only_a_wrong_order():
     # !i || !u covers the jumps being gone; i < u covers them being swapped.
     assert "END{exit !(!i || !u || i < u)}" in updater
     assert "END{exit !(i && u && i < u)}" not in updater
+
+
+# ---------------------------------------------------------------------------
+# Address rules are listed on the Firewall page with who/when/why
+# ---------------------------------------------------------------------------
+def _no_iptables(monkeypatch, tmp_path):
+    monkeypatch.setattr(firewall, "RULES_FILE", tmp_path / "rules.json")
+    monkeypatch.setattr(firewall, "_ensure_rules_dir", lambda: None)
+    monkeypatch.setattr(firewall, "_iptables", lambda *a, **kw: None)
+    monkeypatch.setattr(firewall, "_ip6tables", lambda *a, **kw: None)
+
+
+def test_a_block_keeps_its_reason_source_and_time(monkeypatch, tmp_path):
+    _no_iptables(monkeypatch, tmp_path)
+    firewall.block_ip("216.73.217.0/24", note="ClaudeBot subnet\n 240 reqs", source="mcp")
+    firewall.allow_ip("203.0.113.5")
+    blocked, allowed = firewall.list_rules()
+    assert blocked["network"] == "216.73.217.0/24" and blocked["action"] == "deny"
+    assert blocked["note"] == "ClaudeBot subnet 240 reqs"
+    assert blocked["source"] == "mcp"
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", blocked["created_at"])
+    assert allowed["source"] == "panel" and "note" not in allowed
+
+
+def test_a_note_cannot_smuggle_control_characters_or_run_long(monkeypatch, tmp_path):
+    _no_iptables(monkeypatch, tmp_path)
+    firewall.block_ip("198.51.100.7", note="x" * 300 + "\x00\x1b[31m", source="somebody")
+    rule = firewall.list_rules()[0]
+    assert len(rule["note"]) == firewall.RULE_NOTE_MAX
+    assert rule["source"] == "panel"
+
+
+def test_the_status_lists_the_panels_address_rules_by_id(monkeypatch):
+    """The page could only show the raw iptables text, whose line numbers drift
+    from the rule ids DELETE /rules/{id} takes once a rule has been deleted."""
+    monkeypatch.setattr(firewall, "is_enabled", lambda: True)
+    monkeypatch.setattr(firewall, "list_rules", lambda: [
+        {"id": 1, "action": "allow", "type": "port", "port": "8080", "protocol": "tcp"},
+        {"id": 4, "action": "deny", "type": "ip", "network": "20.194.96.176/32", "source": "mcp"},
+    ])
+    data = firewall_api._status_result(CommandResult(command="status", returncode=0, stdout="", stderr=""))
+    assert data["ip_rules"] == [{"id": 4, "action": "deny", "type": "ip", "network": "20.194.96.176/32", "source": "mcp"}]
+
+
+def test_the_firewall_page_lists_blocked_addresses():
+    app = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    assert "firewallStatus?.ip_rules" in app
+    assert "deleteFirewallRule(rule.id, rule.network)" in app
+    assert "note: firewallBlockNote.trim() || null" in app

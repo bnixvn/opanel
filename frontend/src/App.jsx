@@ -477,6 +477,7 @@ function App() {
   const [firewallBlockIp, setFirewallBlockIp] = useState('');
   const [firewallBlockPort, setFirewallBlockPort] = useState('');
   const [firewallBlockProtocol, setFirewallBlockProtocol] = useState('tcp');
+  const [firewallBlockNote, setFirewallBlockNote] = useState('');
   const [firewallDeleteNumber, setFirewallDeleteNumber] = useState('');
   const [firewallBlocklists, setFirewallBlocklists] = useState(null);
   const [firewallBlocklistUrl, setFirewallBlocklistUrl] = useState('');
@@ -3058,12 +3059,13 @@ function App() {
   async function allowFirewallIp() { await runFirewallAction('/firewall/allow-ip', { method: 'POST', body: JSON.stringify({ ip: firewallAllowIp, port: firewallAllowPort || null, protocol: firewallAllowProtocol }) }, tr("Allowing IP...")); }
   async function blockFirewallIp() {
     if (!confirm(tr("Block {0}?", firewallBlockIp || tr("this IP")))) return;
-    await runFirewallAction('/firewall/block-ip', { method: 'POST', body: JSON.stringify({ ip: firewallBlockIp, port: firewallBlockPort || null, protocol: firewallBlockProtocol }) }, tr("Blocking IP..."));
+    await runFirewallAction('/firewall/block-ip', { method: 'POST', body: JSON.stringify({ ip: firewallBlockIp, port: firewallBlockPort || null, protocol: firewallBlockProtocol, note: firewallBlockNote.trim() || null }) }, tr("Blocking IP..."));
+    setFirewallBlockNote('');
   }
-  async function deleteFirewallRule(numberOverride = firewallDeleteNumber) {
+  async function deleteFirewallRule(numberOverride = firewallDeleteNumber, label = '') {
     const ruleNumber = String(numberOverride || '').trim();
     if (!ruleNumber) return;
-    if (!confirm(tr("Delete firewall rule #{0}?", ruleNumber))) return;
+    if (!confirm(label ? tr("Remove the firewall rule for {0}?", label) : tr("Delete firewall rule #{0}?", ruleNumber))) return;
     await runFirewallAction(`/firewall/rules/${encodeURIComponent(ruleNumber)}`, { method: 'DELETE' }, tr("Deleting rule..."));
     setFirewallDeleteNumber('');
   }
@@ -5427,6 +5429,7 @@ function App() {
     const blocklistText = firewallBlocklists?.stdout || firewallBlocklists?.stderr || tr("No blocklist status loaded.");
     const blocklistUrls = parseFirewallBlocklistUrls(blocklistText);
     const openPorts = Array.isArray(firewallStatus?.open_ports) ? firewallStatus.open_ports : [];
+    const ipRules = Array.isArray(firewallStatus?.ip_rules) ? firewallStatus.ip_rules : [];
     return <>
       <section className="section">
         <div className="section-title">
@@ -5446,6 +5449,19 @@ function App() {
               <small>{item.zone || tr("UserZone")}{item.source && item.source !== 'Anywhere' ? tr(" from {0}", item.source) : ''}</small>
             </span>)}
           </div> : <p className="hint">{tr("No open port rules found in OPANEL chains.")}</p>}
+        </div>
+        <div className="firewall-ip-rules">
+          <strong>{tr("Blocked and allowed addresses")}</strong>
+          {ipRules.length > 0 ? <div className="table">
+            {ipRules.map(rule => <div className="row firewall-ip-row" key={rule.id}>
+              <span><code>{rule.network}</code></span>
+              <span>{rule.action === 'deny' ? <span className="badge bad">{tr("Blocked")}</span> : <span className="badge ok">{tr("Allowed")}</span>}
+                <small>{rule.port ? `${rule.port}/${String(rule.protocol || 'tcp').toUpperCase()}` : tr("All ports")}</small></span>
+              <span className="firewall-ip-note">{rule.note || <span className="hint">{tr("No reason given")}</span>}</span>
+              <span className="firewall-ip-meta"><small>{[rule.source === 'mcp' ? tr("via MCP") : rule.source === 'panel' ? tr("via panel") : '', rule.created_at ? new Date(rule.created_at).toLocaleString() : ''].filter(Boolean).join(' · ')}</small></span>
+              <span><button className="mini secondary" disabled={!!loading} onClick={() => deleteFirewallRule(rule.id, rule.network)}>{rule.action === 'deny' ? tr("Unblock") : tr("Remove")}</button></span>
+            </div>)}
+          </div> : <p className="hint">{tr("No address is blocked or allowed by a panel rule. Blocklists and Fail2ban bans are listed on their own.")}</p>}
         </div>
         <details className="raw-output firewall-status">
           <summary>{tr("iptables status")}</summary>
@@ -5482,6 +5498,7 @@ function App() {
           <label><span>{tr("IP / CIDR")}</span><input value={firewallBlockIp} onChange={e => setFirewallBlockIp(e.target.value)} placeholder="5.6.7.8" /></label>
           <label><span>{tr("Port (optional)")}</span><input value={firewallBlockPort} onChange={e => setFirewallBlockPort(e.target.value)} placeholder={tr("All ports")} inputMode="numeric" /></label>
           <label><span>{tr("Protocol")}</span><select value={firewallBlockProtocol} onChange={e => setFirewallBlockProtocol(e.target.value)}><option value="tcp">{tr("TCP")}</option><option value="udp">{tr("UDP")}</option></select></label>
+          <label className="firewall-note-field"><span>{tr("Reason (optional)")}</span><input value={firewallBlockNote} maxLength={120} onChange={e => setFirewallBlockNote(e.target.value)} placeholder={tr("e.g. scanner hitting wp-login")} /></label>
           <button className="danger" disabled={!!loading || !firewallBlockIp} onClick={blockFirewallIp}>{tr("Block")}</button>
         </div>
       </section>

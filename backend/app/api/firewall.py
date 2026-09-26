@@ -24,6 +24,10 @@ def _status_result(result):
     rules = firewall.parse_numbered_rules(result.stdout)
     data["rules"] = rules
     data["open_ports"] = firewall.open_ports_from_rules(rules)
+    # The panel's own address rules (Block IP / Allow IP here, block_ip over
+    # MCP), by the id DELETE /rules/{id} takes. The iptables listing numbers
+    # lines, which drift from these ids once a rule has been deleted.
+    data["ip_rules"] = [rule for rule in firewall.list_rules() if rule.get("type") == "ip"]
     data["enabled"] = firewall.is_enabled()
     return data
 
@@ -66,7 +70,7 @@ def allow_port(payload: FirewallPortRule, current_user: User = Depends(get_curre
 def allow_ip(payload: FirewallIpRule, current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
     try:
-        result = firewall.allow_ip(payload.ip, payload.port, payload.protocol)
+        result = firewall.allow_ip(payload.ip, payload.port, payload.protocol, note=payload.note or "")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _result(result)
@@ -76,7 +80,7 @@ def allow_ip(payload: FirewallIpRule, current_user: User = Depends(get_current_u
 def block_ip(payload: FirewallIpRule, current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
     try:
-        result = firewall.block_ip(payload.ip, payload.port, payload.protocol)
+        result = firewall.block_ip(payload.ip, payload.port, payload.protocol, note=payload.note or "")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _result(result)

@@ -838,6 +838,7 @@ class FirewallIpRule(BaseModel):
     ip: str = Field(min_length=3, max_length=64)
     port: Optional[str] = Field(default=None, max_length=5)
     protocol: str = "tcp"
+    note: Optional[str] = Field(default=None, max_length=120)
 
 
 class FirewallBlocklistUrl(BaseModel):

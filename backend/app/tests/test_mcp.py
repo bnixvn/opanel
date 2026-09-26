@@ -361,10 +361,15 @@ def test_traffic_summary_counts_and_is_scoped(env, monkeypatch):
 def firewall_calls(monkeypatch):
     from app.services import firewall, mcp as mcp_service
 
-    blocked = []
+    class _Calls(list):
+        kwargs: list
+
+    blocked = _Calls()
     monkeypatch.setattr(firewall, "list_rules", lambda: [{"id": 3, "action": "deny", "type": "ip",
                                                            "network": "91.92.93.0/24"}])
-    monkeypatch.setattr(firewall, "block_ip", lambda network, *a, **k: blocked.append(network))
+    monkeypatch.setattr(firewall, "block_ip", lambda network, *a, **k: blocked.append(network) or blocked_kwargs.append(k))
+    blocked_kwargs = []
+    blocked.kwargs = blocked_kwargs
     monkeypatch.setattr(mcp_service, "_server_addresses", lambda: {"15.235.155.243"})
     return blocked
 
@@ -393,6 +398,9 @@ def test_block_ip_blocks_once(env, firewall_calls):
     assert again["already"] is True and firewall_calls == ["45.155.205.9/32"]
     audit = env.db.query(AuditLog).filter(AuditLog.action == "mcp_tool", AuditLog.target == "block_ip").all()
     assert audit and "wp-login brute force" in audit[0].detail
+    # The reason also travels with the rule, so the Firewall page can show why
+    # an address nobody typed there is blocked.
+    assert firewall_calls.kwargs[0] == {"note": "wp-login brute force", "source": "mcp"}
 
 
 def test_block_ip_never_blocks_the_calling_client(env, firewall_calls):
