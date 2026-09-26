@@ -1749,6 +1749,28 @@ def get_php_extensions(php_version: str = Query(default="8.4"), current_user: Us
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/php/extensions/all")
+def get_php_extensions_all(current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        return php.list_php_extensions_all()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/php/extensions/{name}/install-all")
+def install_php_extension_everywhere(name: str, request: Request, db: Session = Depends(get_db),
+                                     current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        result = php.install_php_extension_everywhere(name)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_action(db, current_user.id, "php_extension_install", ",".join(f"php{v}" for v in result["versions"]), name,
+               request=request)
+    return result
+
+
 @router.post("/php/extensions/{php_version}/{name}/{action}")
 def change_php_extension(php_version: str, name: str, action: str, request: Request,
                          db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

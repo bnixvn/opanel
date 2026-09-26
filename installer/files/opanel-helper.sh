@@ -1772,6 +1772,39 @@ php_ext_install() {
   echo "Installed ${pkg}; PHP ${version} reloaded"
 }
 
+# One extension on several PHP versions: a single apt run and one restart.
+php_ext_install_all() {
+  local ext="$1" version pkg
+  shift
+  require_php_ext "$ext"
+  [[ $# -ge 1 && $# -le 6 ]] || deny "usage: php-ext-install-all <extension> <version>..."
+  local packages=()
+  for version in "$@"; do
+    require_php_version "$version"
+    require_lsphp_installed "$version"
+    pkg="lsphp${version//./}-${ext}"
+    php_ext_package_installed "$pkg" && continue
+    packages+=("$pkg")
+  done
+  if [[ ${#packages[@]} -eq 0 ]]; then
+    echo "Already installed"
+    return 0
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  for pkg in "${packages[@]}"; do
+    if ! apt-cache show "$pkg" >/dev/null 2>&1; then
+      apt-get update --allow-releaseinfo-change >/dev/null 2>&1 || true
+      break
+    fi
+  done
+  for pkg in "${packages[@]}"; do
+    apt-cache show "$pkg" >/dev/null 2>&1 || deny "$pkg is not in the LiteSpeed repository"
+  done
+  apt-get -o DPkg::Lock::Timeout=120 install -y "${packages[@]}" >/dev/null || deny "apt could not install ${packages[*]}"
+  restart_openlitespeed
+  echo "Installed ${packages[*]}; PHP reloaded"
+}
+
 php_ext_remove() {
   local version="$1" ext="$2" v pkg name core
   require_php_version "$version"
@@ -4810,6 +4843,11 @@ case "$cmd" in
   php-ext-remove)
     [[ $# -eq 2 ]] || deny "usage: php-ext-remove <version> <extension>"
     php_ext_remove "$1" "$2"
+    ;;
+
+  php-ext-install-all)
+    [[ $# -ge 2 ]] || deny "usage: php-ext-install-all <extension> <version>..."
+    php_ext_install_all "$@"
     ;;
 
   php-config-write)

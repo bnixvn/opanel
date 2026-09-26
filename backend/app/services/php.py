@@ -289,6 +289,44 @@ def list_php_extensions(php_version: str) -> dict:
             "modules": sorted(set(modules), key=str.lower)}
 
 
+def list_php_extensions_all() -> dict:
+    """Every offered extension against every installed PHP version, for the
+    one table on the PHP config page. The versions are read in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    versions = list_installed_php()
+    if not versions:
+        return {"versions": [], "extensions": [], "modules": {}}
+    with ThreadPoolExecutor(max_workers=len(versions)) as pool:
+        results = dict(zip(versions, pool.map(list_php_extensions, versions)))
+    rows = []
+    for name in PHP_EXTENSIONS:
+        states = {}
+        core = False
+        for version, data in results.items():
+            ext = next(e for e in data["extensions"] if e["name"] == name)
+            states[version] = {"state": ext["state"], "loaded": ext["loaded"]}
+            core = core or ext["core"]
+        rows.append({"name": name, "core": core, "states": states})
+    return {"versions": versions, "extensions": rows,
+            "modules": {version: results[version]["modules"] for version in versions}}
+
+
+def install_php_extension_everywhere(name: str) -> dict:
+    """Install one extension on every installed PHP version that lacks it and
+    whose repository has it -- one apt run, one OpenLiteSpeed restart."""
+    _require_extension(name)
+    table = list_php_extensions_all()
+    row = next(r for r in table["extensions"] if r["name"] == name)
+    targets = [version for version, s in row["states"].items() if s["state"] == "available"]
+    if not targets:
+        raise ValueError("Nothing to install: every PHP version already has it or its repository does not")
+    result = shell.privileged("php-ext-install-all", helper_args=[name, *targets], check=False, fallback=["true"])
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "Install failed").strip().removeprefix("opanel-helper: "))
+    return {"name": name, "versions": targets, "message": (result.stdout or "").strip()}
+
+
 def install_php_extension(php_version: str, name: str) -> dict:
     _require_installed_php(php_version)
     _require_extension(name)

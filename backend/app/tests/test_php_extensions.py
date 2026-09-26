@@ -109,6 +109,58 @@ def test_the_helper_offers_the_same_extensions_and_guards_them():
 def test_the_php_page_offers_extensions():
     app = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     assert "{renderPhpExtensions()}" in app
-    assert "/maintenance/php/extensions/${encodeURIComponent(version)}/${encodeURIComponent(ext.name)}/${action}" in app
-    # Core extensions get no remove button.
-    assert "(ext.core ? <span /> :" in app
+    assert "/maintenance/php/extensions/${encodeURIComponent(version)}/${encodeURIComponent(name)}/${action}" in app
+    # One table: a column per PHP version and a last Install all column.
+    assert "/maintenance/php/extensions/all" in app
+    assert "versions.map(v => <th key={v}>" in app
+    assert "installPhpExtensionEverywhere(ext.name, missingOn)" in app
+    # Core extensions get no remove button; no descriptions any more.
+    assert "{!ext.core && <button className=\"php-ext-remove\"" in app
+    assert "php-ext-desc" not in app
+
+
+
+def test_the_table_merges_every_installed_version(monkeypatch):
+    monkeypatch.setattr(php, "list_installed_php", lambda: ["8.3", "8.4"])
+    statuses = {"8.3": STATUS, "8.4": STATUS.replace("ext apcu available", "ext apcu installed")}
+
+    def fake(command, helper_args=None, **kw):
+        return SimpleNamespace(returncode=0, stdout=statuses[helper_args[0]], stderr="")
+
+    monkeypatch.setattr(php.shell, "privileged", fake)
+    table = php.list_php_extensions_all()
+    assert table["versions"] == ["8.3", "8.4"]
+    apcu = next(r for r in table["extensions"] if r["name"] == "apcu")
+    assert apcu["states"]["8.3"]["state"] == "available" and apcu["states"]["8.4"]["state"] == "installed"
+    assert next(r for r in table["extensions"] if r["name"] == "mysql")["core"] is True
+    assert set(table["modules"]) == {"8.3", "8.4"}
+
+
+def test_install_all_targets_only_the_versions_that_lack_it(monkeypatch):
+    monkeypatch.setattr(php, "list_installed_php", lambda: ["8.1", "8.3", "8.4"])
+    statuses = {"8.1": STATUS.replace("ext apcu available", "ext apcu missing"),
+                "8.3": STATUS, "8.4": STATUS.replace("ext apcu available", "ext apcu installed")}
+    calls = []
+
+    def fake(command, helper_args=None, **kw):
+        calls.append((command, list(helper_args or [])))
+        if command == "php-ext-status":
+            return SimpleNamespace(returncode=0, stdout=statuses[helper_args[0]], stderr="")
+        return SimpleNamespace(returncode=0, stdout="Installed lsphp83-apcu", stderr="")
+
+    monkeypatch.setattr(php.shell, "privileged", fake)
+    result = php.install_php_extension_everywhere("apcu")
+    assert result["versions"] == ["8.3"]
+    assert calls[-1] == ("php-ext-install-all", ["apcu", "8.3"])
+    with pytest.raises(ValueError):
+        php.install_php_extension_everywhere("mysql")        # installed everywhere already
+    with pytest.raises(ValueError):
+        php.install_php_extension_everywhere("ioncube")
+
+
+def test_the_helper_installs_everywhere_in_one_apt_run():
+    body = _helper_function("php_ext_install_all")
+    assert 'require_php_ext "$ext"' in body and 'require_lsphp_installed "$version"' in body
+    assert body.count("apt-get -o DPkg::Lock::Timeout=120 install -y") == 1
+    assert body.count("restart_openlitespeed") == 1
+    assert '[[ $# -ge 1 && $# -le 6 ]]' in body

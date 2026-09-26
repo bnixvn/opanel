@@ -292,27 +292,28 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
   .notify-log-subject,.notify-log-to,.notify-log-error{grid-column:1 / -1}
 }
 /* PHP config > PHP extensions: one row per extension package. */
-.user-create-card.php-ext-card{display:block}
+.user-create-card.php-ext-card{display:block;min-width:0;max-width:100%}
 .php-ext-head h3{margin:0 0 4px}
 .php-ext-head .hint{margin:0 0 10px}
-.php-ext-list{list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
-.php-ext-list li{display:grid;grid-template-columns:96px minmax(0,1fr) minmax(170px,max-content) 88px;align-items:center;gap:10px;padding:4px 10px;border-top:1px solid var(--border);min-height:36px}
-.php-ext-list li:first-child{border-top:0}
-.php-ext-list code{font-size:12.5px;font-weight:700;color:var(--text);background:transparent;padding:0}
-.php-ext-desc{color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.php-ext-state{display:flex;align-items:center;gap:8px}
-.php-ext-state small{color:var(--text-muted);font-weight:600}
-.php-ext-list li>button{justify-self:end}
+.php-ext-table-wrap{max-width:100%;overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
+.php-ext-table{width:100%;border-collapse:collapse;font-size:13px}
+.php-ext-table th{padding:8px 10px;text-align:left;font-size:12px;font-weight:600;color:var(--text-muted);background:var(--surface-alt);border-bottom:1px solid var(--border);white-space:nowrap}
+.php-ext-table td{padding:4px 10px;border-top:1px solid var(--border);height:38px;white-space:nowrap;vertical-align:middle}
+.php-ext-table tbody tr:first-child td{border-top:0}
+.php-ext-table code{font-size:12.5px;font-weight:700;color:var(--text);background:transparent;padding:0}
+.php-ext-installed{font-size:12.5px;font-weight:600;color:var(--success-text)}
+.php-ext-installed.not-loaded{color:var(--warning-text)}
+.php-ext-table .php-ext-remove{height:20px;min-height:0;width:20px;padding:0;margin-left:6px;vertical-align:middle;background:transparent;border:0;color:var(--text-muted)}
+.php-ext-table .php-ext-remove:hover:not(:disabled){background:var(--danger-bg);color:var(--danger-text)}
+.php-ext-table .php-ext-install{width:32px;padding:0}
+.php-ext-na{color:var(--text-muted)}
+.php-ext-all{text-align:right}
 .php-modules{margin-top:10px}
 .php-modules summary{cursor:pointer;font-weight:600;color:var(--text-secondary)}
-.php-module-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.php-module-row{display:grid;grid-template-columns:70px minmax(0,1fr);gap:10px;align-items:start;margin-top:10px}
+.php-module-row strong{font-size:12.5px;padding-top:3px}
+.php-module-chips{display:flex;flex-wrap:wrap;gap:6px}
 .php-module-chips code{font-size:12px;padding:2px 7px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-secondary)}
-@media(max-width:720px){
-  .php-ext-list li{grid-template-columns:minmax(0,1fr) auto;row-gap:3px;padding:7px 10px}
-  .php-ext-desc{grid-column:1 / -1;grid-row:2;white-space:normal}
-  .php-ext-state{grid-column:1 / -1;grid-row:3}
-  .php-ext-list li>button,.php-ext-list li>span:last-child{grid-column:2;grid-row:1}
-}
 .firewall-ip-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
 .firewall-ip-summary strong{margin-right:6px}
 /* Firewall > address list. The search and the pager stay in view; only the
