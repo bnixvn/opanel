@@ -1480,8 +1480,47 @@ CLAMAV_SCAN_PRUNE_PATHS=(/proc /sys /dev /run /var/lib/clamav /var/backups/opane
 # least this often regardless of what the panel asks for.
 LMD_INCREMENTAL_DAYS=7
 
+pid_descends_from() {
+  local pid="$1" ancestor="$2" ppid
+  while [[ -n "$pid" && "$pid" -gt 1 ]]; do
+    [[ "$pid" == "$ancestor" ]] && return 0
+    ppid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)" || return 1
+    pid="$ppid"
+  done
+  return 1
+}
+
+# LMD hands its whole file list to clamscan / clamdscan and then only prints a
+# heartbeat ("N files | elapsed Xs"), so a scan of /home showed 0% for hours.
+# The scanner reads that list front to back, one path per file it scans, so
+# its read position in the list is the progress. Only scanners started by this
+# helper run are looked at: the realtime monitor runs its own.
+lmd_scan_progress_poller() {
+  local owner="$1" pid fd target pos size last="" counted=""
+  while sleep 5; do
+    for pid in $(pgrep -x clamscan; pgrep -x clamdscan); do
+      pid_descends_from "$pid" "$owner" || continue
+      for fd in /proc/"$pid"/fd/*; do
+        target="$(readlink "$fd" 2>/dev/null)" || continue
+        case "$target" in /usr/local/maldetect/tmp/.find.*) ;; *) continue ;; esac
+        size="$(stat -c %s "$target" 2>/dev/null)" || continue
+        pos="$(sed -nE 's/^pos:[[:space:]]*([0-9]+).*/\1/p' "/proc/$pid/fdinfo/${fd##*/}" 2>/dev/null || true)"
+        [[ -n "$pos" && "${size:-0}" -gt 0 ]] || continue
+        # What LMD actually scans (an incremental run is a subset of the tree).
+        if [[ "$counted" != "$target" ]]; then
+          counted="$target"
+          echo "opanel-scan-total $(wc -l <"$target" | tr -d '[:space:]')"
+        fi
+        [[ "$pos $size" == "$last" ]] && continue
+        last="$pos $size"
+        echo "opanel-scan-progress ${pos} ${size}"
+      done
+    done
+  done
+}
+
 run_malware_lmd_scan() {
-  local scan_root="$1" mode="${2:-full}" root tmp scanid report total hits total_pre
+  local scan_root="$1" mode="${2:-full}" root tmp scanid report total hits total_pre poller
   systemctl is-active --quiet clamav-daemon 2>/dev/null || deny "clamav-daemon is not running"
   root="$scan_root"
   [[ "$root" == "/" ]] && root=/home
@@ -1500,11 +1539,15 @@ run_malware_lmd_scan() {
   # that fired on every LMD scan. Clear the trap as it runs, and read the path
   # defensively so a stray firing is a harmless no-op.
   trap 'rm -f "${tmp:-}"; trap - RETURN' RETURN
+  lmd_scan_progress_poller "$$" &
+  poller=$!
   if [[ "$mode" == "incremental" ]]; then
     { stdbuf -oL maldet -r "$root" "$LMD_INCREMENTAL_DAYS" 2>&1 || true; } | tee "$tmp" || true
   else
     { stdbuf -oL maldet -r "$root" 2>&1 || true; } | tee "$tmp" || true
   fi
+  kill "$poller" 2>/dev/null || true
+  wait "$poller" 2>/dev/null || true
 
   scanid="$(grep -oE '[0-9]{6}-[0-9]{4}\.[0-9]+' "$tmp" | tail -n1)"
   if [[ -z "$scanid" ]]; then

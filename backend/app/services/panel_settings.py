@@ -1092,7 +1092,7 @@ def _run_system_scan_job(job_id: str, scan_root: str, mode: str = "full") -> Non
         process = _malware_scan.system_scan_process(scan_root, mode)
         last_flush = time.monotonic()
 
-        def flush(message: str) -> None:
+        def flush(message: str, percent: int | None = None) -> None:
             _update_malware_job(
                 job_id,
                 total_files=total,
@@ -1100,19 +1100,38 @@ def _run_system_scan_job(job_id: str, scan_root: str, mode: str = "full") -> Non
                 infected=len(threats),
                 errors=errors,
                 threats=threats,
-                progress_percent=int((scanned / total) * 100) if total else 0,
+                progress_percent=percent if percent is not None else (int((scanned / total) * 100) if total else 0),
                 message=message,
             )
 
         for raw_line in process.stdout or []:
             line = raw_line.rstrip()
             if line.startswith(_malware_scan.SYSTEM_SCAN_TOTAL_PREFIX):
+                had_total = bool(total)
                 try:
                     total = int(line[len(_malware_scan.SYSTEM_SCAN_TOTAL_PREFIX):].strip() or 0)
                 except ValueError:
                     total = 0
-                _append_malware_log(job_id, f"Found {total} files to scan under {scan_root}")
-                flush(f"Scanning 0/{total} files")
+                # LMD sends a second total: the list it actually scans, which
+                # for an incremental run is only the recently changed files.
+                _append_malware_log(job_id, f"LMD is scanning {total} files" if had_total
+                                    else f"Found {total} files to scan under {scan_root}")
+                flush(f"Scanning {scanned}/{total} files")
+                continue
+            if line.startswith(_malware_scan.SYSTEM_SCAN_PROGRESS_PREFIX):
+                # LMD only prints a heartbeat; the helper reports how far its
+                # scanner has read through the file list instead.
+                try:
+                    read, size = (int(part) for part in line[len(_malware_scan.SYSTEM_SCAN_PROGRESS_PREFIX):].split()[:2])
+                except ValueError:
+                    continue
+                if size > 0:
+                    fraction = min(1.0, read / size)
+                    if total:
+                        scanned = max(scanned, int(total * fraction))
+                    flush(f"Scanning {scanned}/{total} files" if total else "Scanning", int(fraction * 100))
+                continue
+            if _malware_scan.LMD_HEARTBEAT_RE.search(line):
                 continue
             if line.startswith(_malware_scan.SYSTEM_SCAN_SCANNED_PREFIX):
                 # LMD reports one total instead of a line per file.
