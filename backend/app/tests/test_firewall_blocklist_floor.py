@@ -122,8 +122,8 @@ def test_loopback_leaves_the_blocklist_chain_first():
 
 def test_the_readme_no_longer_claims_the_firewall_cannot_lock_you_out():
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    firewall = readme[readme.index("## Firewall"):][:3000]
-    assert "It can still lock you out from the other direction" in firewall, (
+    firewall = readme[readme.index("## Lưu ý về firewall"):][:3000]
+    assert "Blocklist vẫn có thể khoá bạn khỏi server" in firewall, (
         "the ACCEPT policy stops a bad allow rule locking you out; it does "
         "nothing about a DROP reached before any allowance"
     )

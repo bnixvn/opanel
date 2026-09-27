@@ -1,395 +1,195 @@
 # OPanel
 
-Lightweight hosting management panel for Ubuntu 24.04, powered by **OpenLiteSpeed** and **LSPHP**. OPanel helps you run WordPress and PHP websites from a single clean web UI with user ownership, quotas, backups, SSL, services, and firewall tools built in.
+**OPanel** là bảng điều khiển hosting gọn nhẹ cho **Ubuntu 24.04**, chạy trên **OpenLiteSpeed** và **LSPHP**. Một giao diện web duy nhất để quản lý website WordPress/PHP, SSL, cơ sở dữ liệu, backup, firewall, WAF và người dùng hosting, với mỗi tài khoản là một Linux user riêng biệt.
 
-## Features
+- **Phiên bản mới nhất:** xem [Releases](https://github.com/bnixvn/opanel/releases)
+- **Giao diện:** tiếng Việt và tiếng Anh, có chế độ sáng/tối
 
-- Dashboard resource monitoring for CPU, RAM, disk, and network throughput
-- WordPress one-click installer (default LSPHP 8.4, with 8.3 installed) with WP-CLI
-- WordPress and PHP sites with managed OpenLiteSpeed vhost settings
-- `.htaccess` fully supported (`allowOverride all` in all vhost templates)
-- Panel users map to Linux/SFTP users; website source lives in `/home/<panel-user>/<domain>/public_html`
-- Admin quick-login for creating sites as a selected user, plus one-owner assignment per website
-- Website count limits and soft storage quotas per end user
-- MariaDB database creation and management with phpMyAdmin SSO (60s tokens)
-- **MariaDB auto-tuner** — VPS-aware InnoDB, connections, and cache sizing
-- **PHP/LSPHP auto-tuner** — OPcache, LSAPI workers, memory limits tuned per VPS
-- Let's Encrypt SSL via certbot (webroot mode)
-- Native file manager with upload, edit, archive, and extract support
-- Backups: archive site files + SQL, scheduled full-user backups, restore, upload, download
-- DirectAdmin backup import — upload `.tar.zst`/`.tar.gz` archives and import sites, databases, and configs
-- SFTP backup targets for off-server backup copies
-- iptables + ipset firewall manager with protected panel/web/mail defaults, blocklists, and user rules
-- Update controls for apt-based OS packages and OPanel source updates
-- OpenLiteSpeed ModSecurity/WAF engine with lightweight WordPress/Laravel/PHP rules, per-site toggles, and HTTP flood protection
-- LSPHP config editor per version with auto-tune
-- Cron job manager with whitelisted WP-CLI commands
-- Role-based access: Admin / End user
-- Google Authenticator compatible 2FA
+## Ảnh chụp màn hình
 
-## Tech stack
+![Tổng quan](docs/screenshots/dashboard.webp)
 
-| Component | Technology |
-|-----------|-----------|
-| Backend | Python 3.12, FastAPI, SQLAlchemy, SQLite, Pydantic v2, Jinja2 |
-| Frontend | React 18, Vite, lucide-react |
-| Webserver | [OpenLiteSpeed](https://openlitespeed.org/) |
-| PHP | LSPHP 8.4 default + 8.3 installed; 7.4, 8.1, 8.2, and 8.5 can be installed from the panel |
-| Database | MariaDB |
-| Cache | Redis |
-| Firewall | iptables + ipset |
-| SSL | Let's Encrypt via certbot (webroot) |
-| WAF | OpenLiteSpeed ModSecurity |
-| System | systemd, Ubuntu 24.04 LTS |
+<table>
+<tr><td width="50%"><a href="docs/screenshots/login.webp"><img src="docs/screenshots/login.webp" alt="Đăng nhập"></a><br><sub>Đăng nhập</sub></td><td width="50%"><a href="docs/screenshots/dashboard-dark.webp"><img src="docs/screenshots/dashboard-dark.webp" alt="Giao diện tối"></a><br><sub>Giao diện tối</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/websites.webp"><img src="docs/screenshots/websites.webp" alt="Danh sách website"></a><br><sub>Danh sách website</sub></td><td width="50%"><a href="docs/screenshots/ssl.webp"><img src="docs/screenshots/ssl.webp" alt="SSL: Let's Encrypt, wildcard, chứng chỉ có sẵn hoặc thủ công"></a><br><sub>SSL: Let's Encrypt, wildcard, chứng chỉ có sẵn hoặc thủ công</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/databases.webp"><img src="docs/screenshots/databases.webp" alt="Cơ sở dữ liệu MariaDB và phpMyAdmin"></a><br><sub>Cơ sở dữ liệu MariaDB và phpMyAdmin</sub></td><td width="50%"><a href="docs/screenshots/cron.webp"><img src="docs/screenshots/cron.webp" alt="Cron"></a><br><sub>Cron</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/file-manager.webp"><img src="docs/screenshots/file-manager.webp" alt="Quản lý tệp"></a><br><sub>Quản lý tệp</sub></td><td width="50%"><a href="docs/screenshots/sftp.webp"><img src="docs/screenshots/sftp.webp" alt="Tài khoản SFTP"></a><br><sub>Tài khoản SFTP</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/backups.webp"><img src="docs/screenshots/backups.webp" alt="Sao lưu website"></a><br><sub>Sao lưu website</sub></td><td width="50%"><a href="docs/screenshots/restore.webp"><img src="docs/screenshots/restore.webp" alt="Restore kiểu DirectAdmin"></a><br><sub>Restore kiểu DirectAdmin</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/backup-schedules.webp"><img src="docs/screenshots/backup-schedules.webp" alt="Sao lưu định kỳ"></a><br><sub>Sao lưu định kỳ</sub></td><td width="50%"><a href="docs/screenshots/users.webp"><img src="docs/screenshots/users.webp" alt="Người dùng panel và hạn mức"></a><br><sub>Người dùng panel và hạn mức</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/settings.webp"><img src="docs/screenshots/settings.webp" alt="Trang Cài đặt"></a><br><sub>Trang Cài đặt</sub></td><td width="50%"><a href="docs/screenshots/firewall.webp"><img src="docs/screenshots/firewall.webp" alt="Tường lửa"></a><br><sub>Tường lửa</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/waf.webp"><img src="docs/screenshots/waf.webp" alt="WAF và chặn bad bot"></a><br><sub>WAF và chặn bad bot</sub></td><td width="50%"><a href="docs/screenshots/access-logs.webp"><img src="docs/screenshots/access-logs.webp" alt="Nhật ký truy cập"></a><br><sub>Nhật ký truy cập</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/account-security.webp"><img src="docs/screenshots/account-security.webp" alt="Bảo mật tài khoản: passkey và 2FA"></a><br><sub>Bảo mật tài khoản: passkey và 2FA</sub></td><td width="50%"><a href="docs/screenshots/panel-settings.webp"><img src="docs/screenshots/panel-settings.webp" alt="Cài đặt panel"></a><br><sub>Cài đặt panel</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/services.webp"><img src="docs/screenshots/services.webp" alt="Dịch vụ"></a><br><sub>Dịch vụ</sub></td><td width="50%"><a href="docs/screenshots/php.webp"><img src="docs/screenshots/php.webp" alt="Cấu hình PHP và extension"></a><br><sub>Cấu hình PHP và extension</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/updates.webp"><img src="docs/screenshots/updates.webp" alt="Cập nhật"></a><br><sub>Cập nhật</sub></td><td width="50%"><a href="docs/screenshots/addons.webp"><img src="docs/screenshots/addons.webp" alt="Addon"></a><br><sub>Addon</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/malware.webp"><img src="docs/screenshots/malware.webp" alt="Quét mã độc"></a><br><sub>Quét mã độc</sub></td><td width="50%"><a href="docs/screenshots/mcp.webp"><img src="docs/screenshots/mcp.webp" alt="Trợ lý AI (MCP)"></a><br><sub>Trợ lý AI (MCP)</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/notifications.webp"><img src="docs/screenshots/notifications.webp" alt="Thông báo qua email và Telegram"></a><br><sub>Thông báo qua email và Telegram</sub></td><td width="50%"><a href="docs/screenshots/customer-dashboard.webp"><img src="docs/screenshots/customer-dashboard.webp" alt="Tổng quan của khách hosting"></a><br><sub>Tổng quan của khách hosting</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/customer-websites.webp"><img src="docs/screenshots/customer-websites.webp" alt="Website của khách hosting"></a><br><sub>Website của khách hosting</sub></td><td width="50%"></td></tr>
+</table>
 
-## Versioning
+## Tính năng
 
-The `main` branch is the update/install source. Tagged releases use semantic versioning: `major.minor.patch`.
+### Website
+- **Tạo website:** WordPress cài sẵn bằng một cú nhấp (WP-CLI), website PHP hoặc website tĩnh.
+- **Nhiều phiên bản PHP:** LSPHP 8.4 (mặc định) và 8.3 cài sẵn; có thể cài thêm 7.4, 8.1, 8.2, 8.5 ngay trong panel. Mỗi website chọn phiên bản riêng.
+- **Tên miền phụ (alias)** cho mỗi website; `.htaccess` được hỗ trợ đầy đủ.
+- **Mỗi tài khoản một Linux user:** mã nguồn nằm ở `/home/<user>/<domain>/public_html`, PHP của website chạy bằng chính user đó, nên các tài khoản không đọc được file của nhau.
+- **LSCache** cho WordPress.
 
-## System requirements
+### SSL
+- **Let's Encrypt** (HTTP-01), tự gia hạn.
+- **Wildcard** qua Cloudflare DNS-01.
+- **Dùng lại chứng chỉ có sẵn** hoặc tải lên chứng chỉ thủ công.
 
-- Ubuntu 24.04 LTS (clean install recommended)
-- Root access
-- Optional: a domain pointing to the server public IP (for SSL on the panel)
-- 1 vCPU / 1 GB RAM minimum, 2 vCPU / 2 GB RAM recommended
+### Cơ sở dữ liệu
+- **MariaDB:** tạo và quản lý database, chuyển quyền sở hữu giữa các tài khoản.
+- **phpMyAdmin** đăng nhập một chạm (token dùng một lần, hết hạn sau 60 giây).
+- **Tự động tinh chỉnh MariaDB** theo RAM, CPU và loại ổ đĩa của VPS.
 
-## Fresh install
+### File, SFTP và Cron
+- **Trình quản lý file:** tải lên, sửa, nén/giải nén, phân quyền, hiện ngày sửa đổi.
+- **SFTP:** tài khoản chính của mỗi user, và tài khoản SFTP phụ giới hạn trong một thư mục (chroot).
+- **Cron:** chạy với PHP của website, hỗ trợ lệnh WP-CLI.
 
-Run as root on a fresh Ubuntu 24.04 server.
+### Backup và Restore
+- **Backup website** (file + database) và **backup toàn bộ tài khoản** (mọi website, database, chứng chỉ SSL).
+- **Backup theo lịch** hằng ngày, hằng tuần hoặc hằng tháng, xoay vòng 7 bản.
+- **Nơi lưu ngoài server:** S3 (AWS, Wasabi, Backblaze B2, MinIO, R2…) và SFTP.
+- **Restore kiểu DirectAdmin** qua 4 bước: chọn nguồn (trên server này, Backup Destination, hoặc máy chủ khác qua SFTP/FTP/FTPS), điền thông tin kết nối, chọn user, bấm Restore.
+- **Chuyển từ DirectAdmin:** restore trực tiếp file `user.admin.<user>.tar.zst`, kể cả kéo thẳng từ server DirectAdmin cũ; website, subdomain, database và SSL được tạo tự động.
 
-### Quick install (recommended)
+### Bảo mật
+- **Firewall** iptables + ipset: chặn IP/dải mạng kèm ghi chú, blocklist tự cập nhật, danh sách địa chỉ bị chặn có tìm kiếm và phân trang.
+- **WAF** ModSecurity cho OpenLiteSpeed với bộ rule gọn cho WordPress/Laravel/PHP, bật tắt theo từng website.
+- **Chặn bad bot** theo danh sách chung và danh sách riêng từng website.
+- **Đăng nhập an toàn:** 2FA (Google Authenticator), passkey, giới hạn số lần đăng nhập sai, nhật ký đăng nhập và nhật ký thao tác.
+- **Nhật ký truy cập** của từng website và những gì WAF đã chặn.
+
+### PHP
+- **Cấu hình từng phiên bản PHP:** giới hạn bộ nhớ, upload, thời gian chạy, OPcache.
+- **PHP extension:** một bảng cho mọi phiên bản PHP, cài từng ô hoặc "Install all".
+- **Tự động tinh chỉnh PHP** (OPcache, số worker LSAPI, bộ nhớ) theo cấu hình VPS.
+
+### Người dùng và hạn mức
+- **Vai trò:** Admin và End user (khách hosting chỉ thấy website của mình).
+- **Hạn mức** số website, số database và dung lượng cho mỗi tài khoản; gói hosting (plan).
+- **Admin đăng nhập nhanh** vào tài khoản khách để hỗ trợ.
+
+### Hệ thống
+- **Dashboard:** CPU, RAM, ổ đĩa, mạng và những việc cần chú ý.
+- **Dịch vụ:** xem, khởi động, dừng các dịch vụ của server.
+- **Cập nhật:** cập nhật OPanel và gói hệ điều hành ngay trong panel, có tự động cập nhật.
+- **Menu cứu hộ qua SSH** (`opanel`) khi không vào được giao diện web.
+- **Tích hợp WHMCS:** module server tại `modules/servers/opanel`.
+
+## Addon
+
+Các tính năng tuỳ chọn, cài và gỡ ở **Settings › Addons**. Addon chỉ hiện trên menu khi đang bật.
+
+| Addon | Chức năng |
+|---|---|
+| **Malware Scanner** | ClamAV + Linux Malware Detect: quét một website, mọi website hoặc toàn server, theo lịch hoặc thời gian thực; tự cách ly file độc hại và khôi phục nếu báo nhầm. ClamAV cần khoảng 1–1,5 GB RAM. |
+| **Fail2ban** | Chặn IP ở firewall sau nhiều lần đăng nhập SSH hoặc panel thất bại. |
+| **MCP server** | Cho trợ lý AI (Claude Code, Cursor, VS Code…) đọc và thao tác panel qua Model Context Protocol, mỗi người dùng một token riêng. |
+| **Notifications** | Gửi cảnh báo qua email (SMTP) và Telegram cho quản trị viên: backup lỗi, dịch vụ dừng, ổ đĩa đầy, SSL sắp hết hạn, phát hiện mã độc, có bản cập nhật… |
+
+## Yêu cầu hệ thống
+
+- Ubuntu 24.04 LTS, nên là máy mới cài
+- Quyền root
+- Tối thiểu 1 vCPU / 1 GB RAM; khuyến nghị 2 vCPU / 2 GB RAM (cộng thêm khoảng 1,5 GB nếu dùng Malware Scanner)
+- Không bắt buộc: một tên miền trỏ về IP của server để panel có SSL
+
+## Cài đặt
+
+Chạy bằng root trên server Ubuntu 24.04 mới:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/install.sh)
 ```
 
-### Git clone install
+Trình cài đặt sẽ hỏi tên miền của panel (để trống thì dùng IP), cổng (mặc định `2222`), có bật SSL Let's Encrypt hay không và email đăng ký SSL.
+
+### Cài đặt không cần trả lời
+
+Truyền sẵn các giá trị qua biến môi trường:
 
 ```bash
-set -e
-apt-get update
-apt-get install -y git
-OPANEL_REPO=https://github.com/bnixvn/opanel.git
-OPANEL_REF="${OPANEL_REF:-main}"
-echo "Installing OPanel ${OPANEL_REF}"
-rm -rf /tmp/opanel-source
-git clone --depth 1 --branch "${OPANEL_REF}" "${OPANEL_REPO}" /tmp/opanel-source
-cd /tmp/opanel-source
-trap '"'"'cd /; rm -rf /tmp/opanel-source'"'"' EXIT
-chmod +x installer/install.sh installer/update.sh
-bash installer/install.sh
+export PANEL_URL=https://panel.example.com:2222 ENABLE_SSL=yes SSL_EMAIL=admin@example.com
+bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/install.sh)
 ```
 
-To pin a specific tag, set `OPANEL_REF=v1.0.0` before running the script.
+### Trình cài đặt làm những gì
 
-### What the installer does
+1. Cài các gói nền: MariaDB, Redis, OpenSSH/SFTP, Node.js 22, certbot, phpMyAdmin, WP-CLI, iptables, ipset.
+2. Cài **OpenLiteSpeed** và **LSPHP 8.4 + 8.3** từ kho của LiteSpeed.
+3. Chép mã nguồn vào `/opt/opanel`, build giao diện, tạo môi trường Python.
+4. Tạo tài khoản dịch vụ `opanel` và tài khoản `admin` (Linux/SFTP).
+5. Tạo dịch vụ systemd `opanel-api`, cấu hình phpMyAdmin SSO và firewall.
+6. Cấp SSL Let's Encrypt cho tên miền của panel (nếu chọn).
+7. Cài lệnh `opanel-update` để cập nhật về sau.
 
-1. Installs base packages: git, MariaDB, Redis, OpenSSH/SFTP, Node.js 22, certbot, phpMyAdmin, WP-CLI, iptables, ipset
-2. Installs **OpenLiteSpeed** + **LSPHP 8.4 and 8.3** from the LiteSpeed repository, with PHP 8.4 as the default CLI/site version
-3. Copies source to `/opt/opanel`, builds the frontend, sets up the Python venv
-4. Creates the `opanel` service account and the `admin` Linux/SFTP account
-5. Creates the systemd service `opanel-api`
-6. Configures phpMyAdmin SSO
-7. Sets up iptables firewall with `OPANEL_INPUT`/`OPANEL_USER`/`OPANEL_BLOCKLIST` chains
-8. Starts the panel on the configured port
-9. Optionally issues Let's Encrypt SSL for the panel domain
-10. Installs `/usr/local/sbin/opanel-update` for future updates
+Sau khi cài xong, mở địa chỉ panel được in ra cuối quá trình cài. Mật khẩu `admin` được in ra ở đó và lưu trong `/root/login.txt`; hãy cất vào trình quản lý mật khẩu.
 
-You will be prompted for:
+## Cập nhật
 
-- Panel hostname (optional; blank uses the server IP)
-- Panel port (default `2222`)
-- Whether to enable Let's Encrypt SSL for the panel domain
-- An email for SSL registration
-
-After install, open the panel URL printed at the end of the installer. The admin password is shown there and saved to `/root/login.txt`; store it in a password manager.
-
-## Directory structure
-
-| Path | Purpose |
-|------|---------|
-| `/opt/opanel/` | Application source + frontend |
-| `/var/backups/opanel/` | Backup archives |
-| `/home/admin/opanel-backups/da/` | DirectAdmin backup import staging |
-| `/var/lib/opanel/` | Runtime data (firewall rules, etc.) |
-| `/usr/local/lsws/conf/opanel/` | OpenLiteSpeed vhost configs, SSL certs, ModSecurity rules |
-| `/usr/local/lsws/lsphp83/` | LSPHP 8.3 binaries and config |
-| `/usr/local/lsws/lsphp84/` | LSPHP 8.4 binaries and config (default) |
-| `/etc/mysql/mariadb.conf.d/99-opanel.cnf` | MariaDB auto-tuned config |
-| `/home/<user>/<domain>/public_html` | Website source files |
-
-## Project layout
-
-```
-opanel/
-├── backend/                    FastAPI application
-│   ├── app/
-│   │   ├── api/                HTTP routes
-│   │   ├── core/               config, db, security, permissions, secrets
-│   │   ├── models/             SQLAlchemy entities
-│   │   ├── schemas/            Pydantic v2 schemas
-│   │   ├── services/           openlitespeed, mariadb, php, wp, firewall, backup, etc.
-│   │   ├── templates/
-│   │   │   └── openlitespeed/  Jinja2 vhost templates (wordpress, php, static)
-│   │   ├── main.py
-│   │   └── seed.py             Seeds the first admin user
-│   ├── tests/                  pytest smoke tests
-│   └── requirements.txt
-├── frontend/                   React + Vite SPA
-│   └── src/
-├── installer/
-│   ├── files/                  opanel-helper.sh, sudoers, bpanelctl
-│   ├── install.sh              Full first-time install
-│   └── update.sh               Pull from GitHub and redeploy
-└── README.md
-```
-
-## SSH rescue menu
-
-Run as root:
-
-```bash
-opanel
-```
-
-Use this menu when the web panel is unavailable. It can show the saved login, show rescue status, print recent logs, restart panel services, reopen required firewall ports, reset the panel URL/port, repair panel SSL, fix runtime permissions, change the `admin` password, and update OPanel from the `main` branch. Website and user management stays in the web panel.
-
-## Updating
-
-### Quick update (recommended)
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/update.sh)
-```
-
-### With `opanel-update` (installed after first setup)
+Trong panel: **Settings › Updates**. Hoặc chạy bằng root:
 
 ```bash
 opanel-update
 ```
 
-### Pin a specific release
+```bash
+# Cài một bản phát hành cụ thể
+opanel-update --tag v1.23.0
+```
+
+Nếu trình duyệt vẫn hiện giao diện cũ, hãy tải lại trang bằng Ctrl + Shift + R.
+
+## Menu cứu hộ qua SSH
 
 ```bash
-opanel-update --tag v1.0.0
-```
-
-Or via curl:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/update.sh) --tag v1.0.0
-```
-
-### Update from a branch
-
-```bash
-opanel-update --branch main
-```
-
-### Manual update
-
-```bash
-cd /opt/opanel
-git pull
-bash installer/update.sh
-```
-
-If the browser still shows the old UI, do a hard refresh (Ctrl + Shift + R) or open in incognito.
-
-## Webserver
-
-OPanel uses **OpenLiteSpeed** as the webserver:
-
-- Vhost configs stored in `/usr/local/lsws/conf/opanel/vhosts/`
-- Per-site vhosts are managed by OPanel; raw custom directives are disabled
-- LSPHP replaces PHP-FPM — socket at `/tmp/lshttpd/{app_name}.sock`
-- LSCache built-in for WordPress sites
-- ModSecurity/WAF per-site toggle with HTTP flood protection
-- `.htaccess` fully supported (`allowOverride all` in all templates)
-- Rewrite inheritance enabled (`rewrite { inherit 1 }`) so SSL redirects propagate to context rules
-
-### Rewrite modes
-
-| Mode | Use case |
-|------|----------|
-| `none` | No rewrite rules |
-| `front_controller` | WordPress / generic PHP (index.php routing) |
-| `laravel` | Laravel (public/index.php) |
-| `codeigniter` | CodeIgniter |
-| `seohburl` | SEO-friendly URLs |
-
-## Firewall
-
-OPanel uses **iptables + ipset** for firewall management.
-
-> **This is a blocklist, not a default-deny firewall.** The `INPUT` policy is
-> `ACCEPT` and no managed chain ends in `DROP`, so a port is reachable unless
-> something explicitly blocks it. The "protected ports" below are the ports the
-> panel refuses to *let you block*, not the only ports that are open — every
-> other listening service on the host is reachable too. The policy is ACCEPT on
-> purpose, so that a mistake in the rules cannot lock you out of your own
-> server. If you need closed-by-default, put that in front of the host (a cloud
-> security group, or your own `iptables -P INPUT DROP` with matching allows) and
-> check `ss -ltnp` for anything listening that should not be.
->
-> **It can still lock you out from the other direction.** Subscribed blocklists
-> are fetched from URLs you supply and loaded as `DROP` rules ahead of
-> everything else, so a bad entry in a third-party list blocks traffic the
-> ACCEPT policy would otherwise have allowed. Entries wider than `/8` (IPv4) or
-> `/16` (IPv6) are refused and loopback is exempted, because `0.0.0.0/1` passes
-> every "is this a private/reserved network" test and contains `127.0.0.1`.
->
-> Installing OPanel also disables and purges `ufw`. Its configuration is copied
-> to `/var/lib/opanel/ufw-backup-<timestamp>` first, but the rules are **not**
-> translated — if the host was firewalled by ufw, it is not afterwards.
-
-- **Protected ports** (22, 80, 443, 465, 587, panel port) cannot be removed from the allow list
-- **User rules** allow/block specific ports and IPs
-- **Blocklists** via ipset sets (`opanel_blocklist4`, `opanel_blocklist6`) with auto-update from URL lists
-- All rules persist in `/var/lib/opanel/firewall/rules.json`
-- Chains: `OPANEL_INPUT`, `OPANEL_USER`, `OPANEL_BLOCKLIST`
-
-## Auto-tuning
-
-### MariaDB auto-tuner
-
-OPanel includes a VPS-aware MariaDB auto-tuner accessible from the panel UI or API.
-
-**What it tunes:** InnoDB buffer pool, log file size, flush method, IO capacity, max connections, thread cache, table cache, tmp tables, sort/read/join buffers.
-
-**How it works:** Detects total RAM, CPU cores, and SSD vs HDD, then picks from 8 tiers (512 MB to 64 GB+) to compute optimal values. Writes `/etc/mysql/mariadb.conf.d/99-opanel.cnf` and restarts MariaDB.
-
-```
-GET  /databases/mariadb/tuning      # Read current config + recommendation
-POST /databases/mariadb/tuning      # Apply auto-tune + restart MariaDB
-```
-
-### PHP/LSPHP auto-tuner
-
-OPanel includes a VPS-aware PHP auto-tuner for all installed LSPHP versions.
-
-Fresh installs include PHP 8.4 and 8.3. PHP 8.4 is the default version, and PHP 7.4, 8.1, 8.2, and 8.5 can be installed later from the **PHP Configuration** page.
-
-**What it tunes:** `memory_limit` (minimum/default `1024M`), OPcache (memory, max files, JIT, interned strings), LSAPI process manager (workers, idle timeout, max process time), upload limits.
-
-**How it works:** Same hardware detection as MariaDB tuner. Tiers from 512 MB to 8 GB+. Writes `/usr/local/lsws/lsphp{ver}/etc/php.d/99-opanel.ini` and restarts OpenLiteSpeed.
-
-```
-GET  /maintenance/php/tuning?php_version=8.4       # Read current + recommendation
-POST /maintenance/php/tuning?php_version=8.4        # Apply to one version
-POST /maintenance/php/tuning                        # Apply to ALL installed versions
-```
-
-Both auto-tuners are also accessible from the **PHP Configuration** page in the panel UI (Auto-tune button).
-
-## Configuration
-
-`/opt/opanel/backend/.env` is generated by the installer and contains:
-
-```ini
-APP_ENV=production
-SECRET_KEY=<random-32-bytes>
-COMMAND_DRY_RUN=false
-DATABASE_URL=sqlite:////opt/opanel/backend/opanel.db
-REDIS_URL=redis://localhost:6379/0
-RATE_LIMIT_BACKEND=redis
-ALLOWED_ORIGINS=https://panel.example.com
-BACKUP_ROOT=/var/backups/opanel
-SSL_EMAIL=admin@example.com
-PANEL_URL=http://SERVER_IP:2222
-PANEL_DOMAIN=
-PANEL_PORT=2222
-PANEL_SSL_CERT=
-PANEL_SSL_KEY=
-FRONTEND_DIST=/opt/opanel/frontend/dist
-```
-
-When `PANEL_URL` starts with `http://`, keep `PANEL_SSL_CERT` and `PANEL_SSL_KEY` empty. The API only starts TLS on port `2222` when `PANEL_URL` starts with `https://` and the panel certificate/key exist. Use a real panel domain for panel SSL; website SSL certificates are managed separately and must not be reused for the IP-based panel URL.
-
-The backend refuses to start in production with `COMMAND_DRY_RUN=true` or `ALLOWED_ORIGINS=*`. SECRET_KEY must be at least 32 chars in production.
-
-## Service commands
-
-```bash
-# API logs
-journalctl -u opanel-api -f
-
-# Restart the API after backend changes
-systemctl restart opanel-api
-
-# OpenLiteSpeed commands
-/usr/local/lsws/bin/lswsctrl restart
-/usr/local/lsws/bin/lswsctrl reload
-
-# Service status
-systemctl status opanel-api lsws mariadb redis-server
-
-# SSH rescue menu
 opanel
-
-# Change a cloned/template VM from old IP to the current/new IP
-opanel change-ip
-
-# Change the opanel admin login password
-opanel change-admin-password
-
-# Make opanel admin use the current root password after cloning a VPS/template
-opanel sync-admin-root-password
 ```
 
-## Roles
+Dùng khi không vào được giao diện web: xem thông tin đăng nhập, trạng thái, log gần đây, khởi động lại dịch vụ, mở lại cổng firewall, đổi địa chỉ/cổng panel, sửa SSL của panel, sửa quyền, đổi mật khẩu `admin` và cập nhật OPanel.
 
-| Role | Capabilities |
-|------|--------------|
-| `admin` | Full control: websites, users, ownership assignment, services, firewall, PHP config, auto-tuning, backups, and security settings. |
-| `end_user` | Manage only websites assigned to the account, including files, databases, SSL, WordPress tools, cron, and own backups. |
+```bash
+opanel change-ip                  # Đổi IP sau khi clone VPS
+opanel change-admin-password      # Đổi mật khẩu admin
+journalctl -u opanel-api -f       # Xem log của panel
+systemctl status opanel-api lsws mariadb redis-server
+```
 
-## User and website ownership
+## Thư mục quan trọng
 
-- Each panel user also has a Linux user with the same normalized username.
-- The panel password is synced to the Linux password so the same account can log in with chrooted SFTP, for example `admin` to `/home/admin`.
-- Panel Linux users are members of `opanel-sftp`; the installer adds an SSHD `Match Group opanel-sftp` block for password-based SFTP access. SSH shells, TTYs and forwarding are disabled for these users.
-- New websites are created under `/home/<panel-user>/<domain>/public_html`.
-- If an admin creates a website without impersonating another user, the website belongs to the admin account.
-- Admins can quick-login as another panel user before creating websites for that account.
-- Admins can assign a website to exactly one panel user. Moving ownership also moves the site path to the new Linux user and rewrites the OpenLiteSpeed vhost configuration.
-- Deleting a panel user permanently deletes all websites, files, databases, backup schedule links, cron entries, and Linux-user data owned by that user.
+| Đường dẫn | Nội dung |
+|---|---|
+| `/opt/opanel/` | Mã nguồn và giao diện |
+| `/opt/opanel/backend/.env` | Cấu hình của panel |
+| `/home/<user>/<domain>/public_html` | Mã nguồn website |
+| `/var/backups/opanel/` | File backup |
+| `/home/admin/opanel-backups/da/` | Backup DirectAdmin chờ restore |
+| `/var/lib/opanel/` | Dữ liệu vận hành (firewall, addon, lịch sử quét, khu cách ly) |
+| `/var/log/opanel-php/<domain>/php_error.log` | Log lỗi PHP của từng website |
+| `/usr/local/lsws/conf/opanel/` | Cấu hình vhost OpenLiteSpeed, SSL, rule ModSecurity |
 
-## Quotas
+## Lưu ý về firewall
 
-- End users have a website count limit and a storage limit in MB.
-- Admin users are not storage-limited.
-- Storage usage is calculated from all websites owned by the user.
-- OPanel enforces the storage limit before site creation, upload, edit, archive, extract, and ownership assignment operations.
-- This is an application-level soft quota, not an OS disk quota.
+- **Không phải firewall chặn mặc định.** Chính sách `INPUT` là `ACCEPT` và không chain nào của panel kết thúc bằng `DROP`, nên mọi dịch vụ đang lắng nghe đều truy cập được trừ khi bị chặn rõ ràng. Các cổng 22, 80, 443, 465, 587 và cổng panel chỉ là những cổng panel không cho phép bạn chặn, chứ không phải những cổng duy nhất đang mở. Nếu cần chặn mặc định, hãy đặt ở lớp phía trước (security group của nhà cung cấp) và kiểm tra `ss -ltnp`.
+- **Blocklist vẫn có thể khoá bạn khỏi server.** Blocklist tải từ URL bạn nhập và được nạp thành rule `DROP` trước mọi rule khác, nên một dòng sai trong danh sách của bên thứ ba có thể chặn chính bạn. Dải rộng hơn `/8` (IPv4) hoặc `/16` (IPv6) bị từ chối và loopback luôn được miễn.
+- **Cài OPanel sẽ tắt và gỡ `ufw`.** Cấu hình cũ được sao lưu ở `/var/lib/opanel/ufw-backup-<thời gian>` nhưng rule không được chuyển đổi: server đang được ufw bảo vệ sẽ không còn được bảo vệ như trước.
 
-## Backups
+## Công nghệ
 
-- Each website backup archives files and database into a single `.tar.gz`.
-- Admins can create backups for any website; end users can back up their own sites.
-- Full-user backups bundle all websites (files + databases) and the user's local MariaDB dump into a single `.tar.gz` archive.
-- SFTP backup targets let you save backups off-server.
-- Scheduled backups: admins schedule daily/weekly/monthly backups for all panel users; end users can manage backup targets and run own backups.
+| Thành phần | Công nghệ |
+|---|---|
+| Backend | Python 3.12, FastAPI, SQLAlchemy, SQLite, Pydantic v2 |
+| Frontend | React, Vite, lucide-react |
+| Web server | OpenLiteSpeed + LSPHP |
+| Cơ sở dữ liệu | MariaDB, Redis |
+| Bảo mật | iptables + ipset, ModSecurity, Let's Encrypt (certbot) |
+| Hệ điều hành | Ubuntu 24.04 LTS, systemd |
 
-## Security model
+## Giấy phép
 
-- 2FA (Google Authenticator compatible) can be enforced at install time and at user creation.
-- Login rate limiting: 5 attempts per minute, 20 per 10 minutes, 100 per hour.
-- Login audit log records all sign-in and sign-out activity.
-- Security session tied to the admin role only; public routes cannot trigger an access escalation.
-- The backend rejects `COMMAND_DRY_RUN=true` and `ALLOWED_ORIGINS=*` in production.
-- Linux users are enforced for end-user accounts and at install time.
-- All credentials are hashed with bcrypt cost 12 before storage.
-- Tool commands execute through an allowlisted helper (`opanel-helper.sh`).
-- File manager operations are isolated into the exact Linux user home folder.
-- phpMyAdmin access uses a signed one-time token (60s TTL) that is verified on login and destroyed after use.
-- Certbot runs in webroot mode (`certbot certonly --webroot`) so no nginx dependency is needed.
-- Backup creation streams files+DB through a tar pipeline instead of copying to temp dirs.
-- Backups run at low IO priority (`ionice -c 3`) and normal scheduler priority (`nice -n 10`).
-- Panel data lives in SQLite at `/opt/opanel/backend/opanel.db`.
-
-## License
-
-Copyright 2026 bNix Limited.
-
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See the `LICENSE` file in the repository.
+Copyright 2026 bNix Limited. Phát hành theo giấy phép GNU Affero General Public License v3.0 (AGPL-3.0).

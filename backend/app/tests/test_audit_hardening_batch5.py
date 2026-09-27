@@ -256,12 +256,12 @@ def test_the_zip_path_is_left_alone():
 # --------------------------------------------------------------------------
 def test_the_readme_does_not_promise_default_deny():
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    firewall = readme[readme.index("## Firewall") :][:2200]
-    assert "not a default-deny firewall" in firewall, (
+    firewall = readme[readme.index("## Lưu ý về firewall") :][:2200]
+    assert "Không phải firewall chặn mặc định" in firewall, (
         "INPUT policy is ACCEPT and no managed chain ends in DROP, but the "
         "page presented a closed-by-default posture"
     )
-    assert "are always allowed" not in firewall
+    assert "luôn được cho phép" not in firewall
     assert "ufw-backup-" in firewall
 
 
