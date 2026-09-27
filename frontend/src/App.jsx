@@ -3760,9 +3760,9 @@ function App() {
       ['security', tr("Account security"), LockKeyhole, tr("Password, two-factor authentication and passkeys")],
     ] },
     { key: 'system', title: tr("System"), items: [
+      ...(isAdmin ? [['settings', tr("Panel settings"), SettingsIcon, tr("Branding, panel address and certificate")]] : []),
       ...(isAdmin ? [['services', tr("Services"), Activity, tr("Start, stop and check the server's daemons")]] : []),
       ...(isAdmin ? [['php', tr("PHP config"), Code2, tr("PHP versions, limits and extensions")]] : []),
-      ...(isAdmin ? [['settings', tr("Panel settings"), SettingsIcon, tr("Branding, panel address and certificate")]] : []),
       ...(isAdmin ? [['updates', tr("Updates"), RefreshCw, tr("Panel and system updates")]] : []),
       ...(isAdmin ? [['addons', tr("Addons"), PackageOpen, tr("Install and turn on optional features")]] : []),
     ] },

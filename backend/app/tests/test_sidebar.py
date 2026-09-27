@@ -24,7 +24,8 @@ def test_everything_else_is_on_the_settings_page():
     hub = _block("  const settingsGroups = [", "  const settingsItems =")
     keys = re.findall(r"\['(\w+)', tr\(", hub)
     # The Malware Scanner is an addon now: in the sidebar while it runs, not here.
-    assert keys == ["firewall", "waf", "wafLogs", "security", "services", "php", "settings", "updates", "addons"]
+    # Panel settings leads the System group.
+    assert keys == ["firewall", "waf", "wafLogs", "security", "settings", "services", "php", "updates", "addons"]
     for admin_only in ("firewall", "services", "php", "settings", "updates", "addons"):
         index = hub.index(f"['{admin_only}', tr(")
         assert "isAdmin ?" in hub[max(0, index - 20):index], admin_only
