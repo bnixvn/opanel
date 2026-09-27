@@ -490,8 +490,7 @@ def _malware_install() -> None:
     try:
         if not malware_scan.clamav_installed():
             malware_scan.install_clamav()
-        if not malware_scan.clamd_running():
-            malware_scan.start_clamd()
+        malware_scan.start_clamd()
     except Exception:
         panel_settings._persist_malware_enabled(False)
         raise
@@ -503,9 +502,11 @@ def _malware_start() -> None:
     from app.services import malware_scan, panel_settings
 
     panel_settings.set_malware_scan(True)
-    if malware_scan.clamav_installed() and not malware_scan.clamd_running():
-        if not malware_scan.start_clamd():
-            raise RuntimeError("Scanning is on, but the ClamAV daemon did not start")
+    # Always, not only when clamd does not answer: a stop disabled the units,
+    # and a clamd that answers anyway would leave them disabled for the next
+    # reboot.
+    if malware_scan.clamav_installed() and not malware_scan.start_clamd():
+        raise RuntimeError("Scanning is on, but the ClamAV daemon did not start")
 
 
 def _malware_stop() -> None:

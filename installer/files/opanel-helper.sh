@@ -4960,12 +4960,18 @@ case "$cmd" in
 
   clamav-start)
     install -d -o clamav -g clamav -m 0755 /run/clamav 2>/dev/null || true
-    systemctl enable --now clamav-daemon
+    # Both, as the package ships them: the socket unit is what brings clamd
+    # up on the first connection after a reboot.
+    systemctl enable clamav-daemon.socket >/dev/null 2>&1 || true
+    systemctl enable --now clamav-daemon.service
     echo "clamav-daemon started"
     ;;
 
   clamav-stop)
-    systemctl disable --now clamav-daemon 2>/dev/null || systemctl stop clamav-daemon
+    # The socket unit too. Left listening, it starts clamd again on the next
+    # connection -- the panel's own status check was enough -- so "stopped"
+    # never gave the memory back.
+    systemctl disable --now clamav-daemon.socket clamav-daemon.service 2>/dev/null       || systemctl stop clamav-daemon.socket clamav-daemon.service
     echo "clamav-daemon stopped"
     ;;
 

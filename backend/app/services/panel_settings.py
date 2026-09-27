@@ -375,7 +375,7 @@ def set_malware_realtime(enabled: bool) -> dict:
         raise ValueError(str(exc)) from exc
     current = current_settings()
     current["message"] = (
-        "Real-time protection enabled (LMD inotify monitor on /home)"
+        "Real-time protection enabled (LMD inotify monitor on /home and the temp dirs)"
         if enabled
         else "Real-time protection disabled -- back to scheduled scans"
     )
