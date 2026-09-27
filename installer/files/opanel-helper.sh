@@ -1155,9 +1155,11 @@ install_waf_engine() {
 
 install_clamav_engine() {
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update --allow-releaseinfo-change
+  # Wait for another apt run (an addon install, unattended-upgrades) rather
+  # than failing on its lock.
+  apt-get -o DPkg::Lock::Timeout=300 update --allow-releaseinfo-change
   if ! dpkg -s clamav clamav-daemon >/dev/null 2>&1; then
-    apt-get install -y clamav clamav-daemon
+    apt-get -o DPkg::Lock::Timeout=300 install -y clamav clamav-daemon
   fi
   # Ensure the daemon socket directory exists and the service is enabled.
   install -d -o clamav -g clamav -m 0755 /run/clamav 2>/dev/null || true
@@ -4145,7 +4147,7 @@ PY
 addon_fail2ban_install() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update --allow-releaseinfo-change >/dev/null 2>&1 || true
-  apt-get install -y fail2ban || deny "apt-get install fail2ban failed"
+  apt-get -o DPkg::Lock::Timeout=300 install -y fail2ban || deny "apt-get install fail2ban failed"
   # Without python3-systemd the journal backend cannot read anything, and both
   # jails would sit enabled and blind.
   apt-get install -y python3-systemd >/dev/null 2>&1 || true

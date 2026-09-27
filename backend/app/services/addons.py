@@ -34,6 +34,10 @@ STATE_FILE = Path("/var/lib/opanel/addons.json")
 ADDON_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
 
 _state_lock = threading.Lock()
+# One install or removal at a time. Each is an apt run; two at once had the
+# second fail on apt's lock ("Could not get lock /var/lib/apt/lists/lock")
+# when an admin installed every addon in a row.
+_install_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +382,8 @@ def _background(addon_id: str, action: str, command: str) -> None:
     """
     def worker() -> None:
         try:
-            _run_addon_command(command, addon_id)
+            with _install_lock:
+                _run_addon_command(command, addon_id)
         except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
             _update_state(addon_id, last_error=str(exc))
         else:
@@ -399,7 +404,8 @@ def _background_call(addon_id: str, action: str, work) -> None:
     """_background for an addon whose work is panel code, not a helper call."""
     def worker() -> None:
         try:
-            work()
+            with _install_lock:
+                work()
         except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
             _update_state(addon_id, last_error=str(exc))
         else:

@@ -603,3 +603,8 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 }
 /* An addon card's link to its page: never squeezed by the text beside it. */
 .addon-panel-head .mini{flex:none;width:auto;white-space:nowrap}
+/* Services: three actions do not fit one line of a four-column card in
+   Vietnamese. Wrap them instead of spilling over the next card's badge. */
+.service-card{min-width:0}
+.service-actions{flex-wrap:wrap}
+.service-actions button{flex:1 1 auto;min-width:max-content}

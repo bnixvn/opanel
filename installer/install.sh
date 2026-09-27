@@ -540,6 +540,12 @@ copy_sources() {
   rm -rf "${APP_DIR}/backend" "${APP_DIR}/frontend"
   cp -r "$BACKEND_SRC" "${APP_DIR}/backend"
   cp -r "$FRONTEND_SRC" "${APP_DIR}/frontend"
+  # The panel reads its version from here. Without it a fresh install showed
+  # the fallback (1.0.44) and "update available" for the release it had just
+  # installed, until its first update copied the file (as update.sh does).
+  if [[ -f "${PROJECT_ROOT}/VERSION" ]]; then
+    install -m 0644 "${PROJECT_ROOT}/VERSION" "${APP_DIR}/VERSION"
+  fi
 }
 
 build_frontend() {
