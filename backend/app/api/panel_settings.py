@@ -298,6 +298,10 @@ def run_malware_scan(
     current_user: User = Depends(get_current_user),
 ):
     ensure_role(current_user.role, Role.admin)
+    from app.services import malware_scan
+
+    if not malware_scan._persisted_enabled():
+        raise HTTPException(status_code=409, detail="The Malware Scanner addon is not running. Start it on the Addons page.")
     scope = (payload.scope or "").strip().lower()
     try:
         if scope == "system":

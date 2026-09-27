@@ -1677,24 +1677,10 @@ function App() {
     }
   }
 
-  async function loadMalwareScanStatus() {
-    const data = await request('/panel-settings/malware-scan', {}, tr("Loading malware scan status..."));
+  async function loadMalwareScanStatus(quiet = false) {
+    const data = await request('/panel-settings/malware-scan', quiet ? { silent: true } : {},
+      quiet ? '' : tr("Loading malware scan status..."));
     if (data) setMalwareScanStatus(data);
-  }
-
-  async function toggleMalwareScan(enable) {
-    if (enable && !malwareScanStatus?.installed) {
-      if (!confirm(tr("ClamAV is not installed on this server. It will be installed now (may take 1-2 minutes). Continue?"))) return;
-    }
-    const data = await request('/panel-settings/malware-scan/toggle', {
-      method: 'POST',
-      body: JSON.stringify({ enabled: enable }),
-    }, enable ? tr("Enabling malware scanning...") : tr("Disabling malware scanning..."));
-    if (data) {
-      setPanelSettings(data);
-      setNotice(data.message || tr("Malware scanning {0}.", enable ? tr("enabled") : tr("disabled")));
-      await loadMalwareScanStatus();
-    }
   }
 
   async function toggleMalwareRealtime(enable) {
@@ -3678,6 +3664,11 @@ function App() {
     if (isAuthenticated) loadNotifyInfo();
   }, [isAuthenticated, addonList]);
 
+  // And the Malware Scanner addon.
+  useEffect(() => {
+    if (isAuthenticated && isAdmin) loadMalwareScanStatus(true);
+  }, [isAuthenticated, isAdmin, addonList]);
+
   useEffect(() => {
     if (!showNotifyLog) return undefined;
     let cancelled = false;
@@ -3765,7 +3756,6 @@ function App() {
     { key: 'security', title: tr("Security"), items: [
       ...(isAdmin ? [['firewall', tr("Firewall"), BrickWall, tr("Open ports, blocked addresses and blocklists")]] : []),
       ['waf', tr("WAF"), ShieldAlert, tr("Web application firewall for each website")],
-      ...(isAdmin ? [['malware', tr("Malware scanner"), Bug, tr("Scan websites and the server, quarantine threats")]] : []),
       ['wafLogs', tr("Access logs"), ScrollText, tr("Visitors and what the WAF blocked")],
       ['security', tr("Account security"), LockKeyhole, tr("Password, two-factor authentication and passkeys")],
     ] },
@@ -3783,6 +3773,7 @@ function App() {
   const addonNavItems = [
     ...(mcpInfo?.enabled ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
     ...(isAdmin && notifyInfo?.enabled ? [['notifications', tr("Notifications"), Bell]] : []),
+    ...(isAdmin && malwareScanStatus?.enabled ? [['malware', tr("Malware Scanner"), Bug]] : []),
   ];
 
   // One plain list, top to bottom: no section headings.
@@ -3806,7 +3797,10 @@ function App() {
   // A page reached from Settings keeps Settings lit in the sidebar.
   const settingsPage = settingsItems.find(([key]) => key === page);
   const navKey = settingsPage ? 'config' : page;
-  const activeNavItem = settingsPage || navItems.find(([key]) => key === navKey) || navItems[0];
+  // The scanner's page stays reachable by URL while its addon is off (it says
+  // how to turn it on), so it keeps its own title then too.
+  const activeNavItem = settingsPage || navItems.find(([key]) => key === navKey)
+    || (page === 'malware' && isAdmin ? ['malware', tr("Malware Scanner"), Bug] : navItems[0]);
 
   function renderNotifications() {
     const errorMessage = formatApiError(error, '').trim();
@@ -4017,7 +4011,7 @@ function App() {
     if (sites.suspended) attention.push({ tone: 'warn', text: tr("{0} website(s) suspended.", sites.suspended), action: tr("Open"), target: 'websites' });
     if (isAdmin && sum.backups && !sum.backups.schedules) attention.push({ tone: 'warn', text: tr("No scheduled backup is set up."), action: tr("Set up"), target: 'backups' });
     if (isAdmin && sum.waf?.engine === 'off') attention.push({ tone: 'warn', text: tr("The WAF engine is not installed."), action: tr("Open"), target: 'waf' });
-    if (isAdmin && sum.malware && !sum.malware.installed) attention.push({ tone: 'warn', text: tr("The malware scanner is not installed."), action: tr("Open"), target: 'malware' });
+    if (isAdmin && sum.malware && !sum.malware.installed) attention.push({ tone: 'info', text: tr("The Malware Scanner addon is not installed."), action: tr("Install"), target: 'addons' });
     if (!isAdmin && !currentUser?.totp_enabled) attention.push({ tone: 'info', text: tr("Two-factor sign-in is off for your account."), action: tr("Turn on"), target: 'security' });
     if (isAdmin && sum.updates?.update_available) attention.push({ tone: 'info', text: tr("Panel update {0} is available.", sum.updates.latest_version), action: tr("Open"), target: 'updates' });
 
@@ -5786,6 +5780,10 @@ function App() {
               </ul>}
               {addon.id === 'fail2ban' && renderAddonFail2ban(addon)}
               {addon.id === 'mcp' && renderAddonMcp(addon)}
+              {addon.id === 'malware' && addon.installed && <div className="addon-panel">
+                <div className="addon-panel-head"><strong>{tr("Scans, schedules, real-time protection and quarantine")}</strong>
+                  <button className="mini" disabled={!addon.running} onClick={() => navigateToPage('malware')}><Bug size={13}/> {tr("Open Malware Scanner")}</button></div>
+              </div>}
               {addon.id === 'notifications' && addon.installed && <div className="addon-panel">
                 <div className="addon-panel-head"><strong>{tr("Channels, recipients and events")}</strong>
                   <button className="mini" onClick={() => navigateToPage('notifications')}><Bell size={13}/> {tr("Open Notifications")}</button></div>
@@ -6538,13 +6536,10 @@ function App() {
         </div>
         <div className="info-box">
           <p className="hint">{mw.detail || tr("Checking status...")}</p>
-          {!mwInstalled && <p className="hint" style={{marginTop:8}}>{tr("When enabled, ClamAV is installed on this server, and Linux Malware Detect is layered on top of it (its web-focused signatures catch the PHP shells ClamAV misses). Uploaded files are scanned in real-time.")}</p>}
+          {!mwEnabled && <p className="hint" style={{marginTop:8}}>{tr("The Malware Scanner is an addon. Install or start it on the Addons page; stopping or removing it there frees the memory ClamAV uses.")}</p>}
           {mwInstalled && mwActive && <p className="hint" style={{marginTop:8}}>{tr("Uploaded files are scanned automatically. Scheduled scans default to incremental (files changed recently) once a full baseline scan has run, with a full scan at least weekly.")}</p>}
           <div className="actions" style={{marginTop:12}}>
-            {!mwEnabled
-              ? <button disabled={!!loading} onClick={() => toggleMalwareScan(true)}><Shield size={14}/> {tr("Enable Malware Scanner")}</button>
-              : <button className="danger" disabled={!!loading} onClick={() => toggleMalwareScan(false)}>{tr("Disable Malware Scanner")}</button>
-            }
+            {!mwEnabled && <button disabled={!!loading} onClick={() => navigateToPage('addons')}><PackageOpen size={14}/> {tr("Open Addons")}</button>}
             {mwActive && <button className="secondary" disabled={!!loading} onClick={updateMalwareSignatures}><RefreshCw size={14}/> {tr("Update signatures")}</button>}
           </div>
         </div>
@@ -6691,7 +6686,9 @@ function App() {
         </div>}
       </section>}
 
-      {isAdmin && [
+      {/* Schedules belong to a running scanner; while the addon is off the
+          page is only the way to the Addons page. */}
+      {isAdmin && mwEnabled && [
         {
           scope: 'system',
           title: tr("Full server scan"),

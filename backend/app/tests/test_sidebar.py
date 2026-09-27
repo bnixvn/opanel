@@ -23,8 +23,9 @@ def test_the_sidebar_is_only_the_everyday_pages():
 def test_everything_else_is_on_the_settings_page():
     hub = _block("  const settingsGroups = [", "  const settingsItems =")
     keys = re.findall(r"\['(\w+)', tr\(", hub)
-    assert keys == ["firewall", "waf", "malware", "wafLogs", "security", "services", "php", "settings", "updates", "addons"]
-    for admin_only in ("firewall", "malware", "services", "php", "settings", "updates", "addons"):
+    # The Malware Scanner is an addon now: in the sidebar while it runs, not here.
+    assert keys == ["firewall", "waf", "wafLogs", "security", "services", "php", "settings", "updates", "addons"]
+    for admin_only in ("firewall", "services", "php", "settings", "updates", "addons"):
         index = hub.index(f"['{admin_only}', tr(")
         assert "isAdmin ?" in hub[max(0, index - 20):index], admin_only
     assert "  config: '/settings'," in APP_JSX and "  settings: '/panel-settings'," in APP_JSX
@@ -35,6 +36,7 @@ def test_addons_appear_only_while_turned_on():
     addons = _block("  const addonNavItems = [", "  ];")
     assert "...(mcpInfo?.enabled ? [['mcp'" in addons
     assert "...(isAdmin && notifyInfo?.enabled ? [['notifications'" in addons
+    assert "...(isAdmin && malwareScanStatus?.enabled ? [['malware'" in addons
 
 
 def test_a_page_opened_from_settings_keeps_settings_lit_and_shows_the_way_back():

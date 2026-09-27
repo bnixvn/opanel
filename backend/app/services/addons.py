@@ -96,6 +96,39 @@ ADDONS: dict[str, dict] = {
             "trust; a self-signed one will be refused.",
         ],
     },
+    "malware": {
+        "id": "malware",
+        "name": "Malware Scanner",
+        "summary": "ClamAV and Linux Malware Detect: scan websites and the server, quarantine threats.",
+        "description": (
+            "Installs ClamAV with Linux Malware Detect on top of it: LMD's "
+            "web-focused signatures catch the PHP shells and injected code "
+            "ClamAV misses. Scan one website, every website or the whole "
+            "server, now or on a schedule; turn on real-time protection to "
+            "scan files as they are written; move a threat to quarantine and "
+            "put it back if it was a false positive."
+        ),
+        "category": "security",
+        "version": "1",
+        # The scanner keeps its own state -- the panel settings flag and
+        # ClamAV's packages -- and its own installer. The addon is the front
+        # for them rather than a helper package. See _is_managed.
+        "kind": "managed",
+        "packages": ["clamav", "clamav-daemon"],
+        "service": "clamav-daemon",
+        "features": ["malware"],
+        "notes": [
+            "ClamAV holds its signatures in memory: expect about 1-1.5 GB of "
+            "RAM while it runs.",
+            "Installing downloads ClamAV, its signature database and Linux "
+            "Malware Detect, which takes a few minutes.",
+            "Stopping turns scanning and real-time protection off and gives "
+            "the memory back; the software, schedules, scan history and "
+            "quarantine stay.",
+            "Removing also uninstalls ClamAV and Linux Malware Detect. Scan "
+            "history and quarantined files are kept.",
+        ],
+    },
     "notifications": {
         "id": "notifications",
         "name": "Notifications",
@@ -137,15 +170,31 @@ def _is_panel_addon(definition: dict) -> bool:
     return definition.get("kind") == "panel"
 
 
+def _is_managed(definition: dict) -> bool:
+    """An addon fronting a feature that has its own installer and state.
+
+    The Malware Scanner was a panel feature before it was an addon: whether it
+    is on is the panel settings flag, whether it is installed is ClamAV's
+    packages. The addon reads and drives those, so a box that already had
+    scanning on shows the addon installed without any migration.
+    """
+    return definition.get("kind") == "managed"
+
+
 def helper_addon_ids() -> set[str]:
     """The addons the root helper operates; its allowlist must match this."""
-    return {key for key, value in ADDONS.items() if not _is_panel_addon(value)}
+    return {key for key, value in ADDONS.items()
+            if not _is_panel_addon(value) and not _is_managed(value)}
 
 
 def is_enabled(addon_id: str) -> bool:
-    """Whether a panel addon is installed and switched on."""
+    """Whether an addon without a helper package is installed and switched on."""
     if not is_known(addon_id):
         return False
+    if _is_managed(ADDONS[addon_id]):
+        from app.services import malware_scan
+
+        return malware_scan._persisted_enabled()
     entry = _entry(addon_id)
     return bool(entry.get("installed")) and bool(entry.get("running", True))
 
@@ -227,9 +276,41 @@ def status(addon_id: str) -> dict:
         running = installed and bool(entry.get("running", True))
         live.update(installed=installed, running=running, enabled=running,
                     version=definition["version"] if installed else "")
+    elif _is_managed(definition):
+        detail = _malware_status(live, entry)
+        entry = {**entry, **live.pop("_busy", {})}
     else:
         detail = _helper_status(addon_id, live)
     return _describe(definition, entry, live, detail)
+
+
+def _malware_status(live: dict, entry: dict) -> str:
+    """The scanner's own answer, in the addon's terms.
+
+    Installed is ClamAV's packages; running is scanning on with clamd up. The
+    flag on while the packages are not there yet is an install still under
+    way, which the page shows as busy.
+    """
+    from app.services import malware_scan
+
+    try:
+        state = malware_scan.refresh_status()
+    except Exception as exc:  # noqa: BLE001 - a status read must not raise
+        return str(exc)
+    installing = bool(state.get("enabled")) and not state.get("installed")
+    live.update(
+        installed=bool(state.get("installed")) or installing,
+        running=bool(state.get("active")),
+        enabled=bool(state.get("installed")),
+        version=state.get("lmd_version") or "",
+    )
+    if installing and not entry.get("busy"):
+        live["_busy"] = {"busy": True, "busy_action": "install"}
+    if state.get("installed") and not state.get("active"):
+        return state.get("detail") or ""
+    if installing and "failed" in (state.get("detail") or ""):
+        return state.get("detail") or ""
+    return ""
 
 
 def _helper_status(addon_id: str, live: dict) -> str:
@@ -314,6 +395,26 @@ def _background(addon_id: str, action: str, command: str) -> None:
     threading.Thread(target=worker, daemon=True).start()
 
 
+def _background_call(addon_id: str, action: str, work) -> None:
+    """_background for an addon whose work is panel code, not a helper call."""
+    def worker() -> None:
+        try:
+            work()
+        except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
+            _update_state(addon_id, last_error=str(exc))
+        else:
+            fields: dict = {"last_error": ""}
+            if action == "install":
+                fields["installed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            elif action == "uninstall":
+                fields.update(installed_at="", installed_by="")
+            _update_state(addon_id, **fields)
+        finally:
+            _update_state(addon_id, busy=False, busy_action="")
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def install(addon_id: str, actor: str = "") -> dict:
     definition = _require_known(addon_id)
     current = status(addon_id)
@@ -324,6 +425,10 @@ def install(addon_id: str, actor: str = "") -> dict:
     if _is_panel_addon(definition):
         _update_state(addon_id, installed=True, running=True, last_error="", installed_by=actor,
                       installed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        return status(addon_id)
+    if _is_managed(definition):
+        _update_state(addon_id, busy=True, busy_action="install", last_error="", installed_by=actor)
+        _background_call(addon_id, "install", _malware_install)
         return status(addon_id)
     _update_state(addon_id, busy=True, busy_action="install", last_error="", installed_by=actor)
     _background(addon_id, "install", "addon-install")
@@ -341,6 +446,11 @@ def uninstall(addon_id: str, actor: str = "") -> dict:
         _update_state(addon_id, installed=False, running=False, last_error="",
                       installed_at="", installed_by="")
         return status(addon_id)
+    if _is_managed(definition):
+        _malware_stop()
+        _update_state(addon_id, busy=True, busy_action="uninstall", last_error="")
+        _background_call(addon_id, "uninstall", _malware_remove)
+        return status(addon_id)
     _update_state(addon_id, busy=True, busy_action="uninstall", last_error="")
     _background(addon_id, "uninstall", "addon-uninstall")
     return status(addon_id)
@@ -355,8 +465,63 @@ def set_running(addon_id: str, running: bool) -> dict:
     if _is_panel_addon(definition):
         _update_state(addon_id, running=bool(running))
         return status(addon_id)
+    if _is_managed(definition):
+        if running:
+            _malware_start()
+        else:
+            _malware_stop()
+        return status(addon_id)
     _run_addon_command("addon-enable" if running else "addon-disable", addon_id)
     return status(addon_id)
+
+
+# ---------------------------------------------------------------------------
+# Malware Scanner (managed)
+# ---------------------------------------------------------------------------
+def _malware_install() -> None:
+    """ClamAV (and Linux Malware Detect with it), then scanning on.
+
+    A failed install turns the flag back off, so the addon reads as not
+    installed with the error beside it instead of installing forever.
+    """
+    from app.services import malware_scan, panel_settings
+
+    panel_settings._persist_malware_enabled(True)
+    try:
+        if not malware_scan.clamav_installed():
+            malware_scan.install_clamav()
+        if not malware_scan.clamd_running():
+            malware_scan.start_clamd()
+    except Exception:
+        panel_settings._persist_malware_enabled(False)
+        raise
+    finally:
+        malware_scan.refresh_status()
+
+
+def _malware_start() -> None:
+    from app.services import malware_scan, panel_settings
+
+    panel_settings.set_malware_scan(True)
+    if malware_scan.clamav_installed() and not malware_scan.clamd_running():
+        if not malware_scan.start_clamd():
+            raise RuntimeError("Scanning is on, but the ClamAV daemon did not start")
+
+
+def _malware_stop() -> None:
+    """Scanning off and clamd stopped, which is what frees the memory. The
+    real-time monitor goes too: it scans through clamd."""
+    from app.services import panel_settings
+
+    panel_settings.set_malware_realtime(False)
+    panel_settings.set_malware_scan(False)
+
+
+def _malware_remove() -> None:
+    from app.services import malware_scan
+
+    malware_scan.remove_clamav()
+    malware_scan.refresh_status()
 
 
 # ---------------------------------------------------------------------------

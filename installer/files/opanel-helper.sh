@@ -1376,6 +1376,42 @@ ensure_lmd_monitor_layout() {
   return 0
 }
 
+# The ClamAV packages the Malware Scanner addon installs, directly or as their
+# dependencies. libclamav stays: a library another package may link against.
+CLAMAV_PACKAGES=(clamav clamav-daemon clamav-freshclam clamav-base clamdscan)
+
+# Removing the Malware Scanner addon: the real-time monitor, Linux Malware
+# Detect and ClamAV go. The panel's own quarantine store and scan history under
+# /var/lib/opanel are not touched -- a quarantined file is still somebody's.
+remove_clamav_engine() {
+  local installed=() pkg name ok
+  export DEBIAN_FRONTEND=noninteractive
+  disable_lmd_monitor >/dev/null 2>&1 || true
+  if [[ -d "$LMD_DIR" ]] || command -v maldet >/dev/null 2>&1; then
+    systemctl disable --now maldet.service >/dev/null 2>&1 || true
+    systemctl unmask maldet.service >/dev/null 2>&1 || true
+    rm -f /usr/lib/systemd/system/maldet.service /lib/systemd/system/maldet.service \
+      /usr/local/sbin/maldet /usr/local/sbin/lmd /etc/cron.d/maldet /etc/cron.daily/maldet \
+      /etc/default/maldet /etc/sysconfig/maldet
+    rm -rf -- "${LMD_DIR:?}"
+    systemctl daemon-reload
+  fi
+  systemctl disable --now clamav-daemon clamav-freshclam >/dev/null 2>&1 || true
+  for pkg in "${CLAMAV_PACKAGES[@]}"; do
+    dpkg-query -W -f '${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" && installed+=("$pkg")
+  done
+  if (( ${#installed[@]} )); then
+    # Refuse when apt would take anything that is not ClamAV with it.
+    for name in $(apt-get -s purge "${installed[@]}" 2>/dev/null | awk '/^(Purg|Remv) /{print $2}'); do
+      ok=0
+      for pkg in "${CLAMAV_PACKAGES[@]}"; do [[ "$name" == "$pkg" ]] && ok=1; done
+      (( ok )) || deny "removing ClamAV would also remove $name"
+    done
+    apt-get -o DPkg::Lock::Timeout=120 purge -y "${installed[@]}" >/dev/null || deny "apt could not remove ClamAV"
+  fi
+  echo "Malware Scanner removed: ClamAV and Linux Malware Detect uninstalled"
+}
+
 disable_lmd_monitor() {
   systemctl disable --now opanel-maldet-monitor.service >/dev/null 2>&1 || true
   lmd_stop_stray_monitor
@@ -4866,6 +4902,11 @@ case "$cmd" in
 
   clamav-install)
     install_clamav_engine
+    ;;
+
+  clamav-remove)
+    [[ $# -eq 0 ]] || deny "usage: clamav-remove"
+    remove_clamav_engine
     ;;
 
   clamav-status)
