@@ -13,7 +13,7 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
 import './style.css';
@@ -382,6 +382,11 @@ function App() {
   }
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
+  // Demo mode: the public demo accounts the login page offers, and the admin's
+  // settings form on the Addons page.
+  const [demoInfo, setDemoInfo] = useState(null);
+  const [demoSettings, setDemoSettings] = useState(null);
+  const [demoForm, setDemoForm] = useState({ accounts: [], show_on_login: true });
   const [otpCode, setOtpCode] = useState('');
   const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
   const [page, setPage] = useState(() => pageFromPathname(window.location.pathname));
@@ -772,11 +777,13 @@ function App() {
     }
   }
 
-  async function login() {
+  async function login(creds = null) {
+    const signInAs = creds && typeof creds.username === 'string' ? creds.username : username;
+    const signInWith = creds && typeof creds.password === 'string' ? creds.password : password;
     try {
       setError('');
       setLoading(tr("Logging in..."));
-      const body = new URLSearchParams({ username, password });
+      const body = new URLSearchParams({ username: signInAs, password: signInWith });
       if (needsTwoFactor || otpCode) body.set('otp', otpCode);
       const res = await fetch(`${API}/auth/login`, {
         method: 'POST',
@@ -813,7 +820,7 @@ function App() {
           return;
         }
         if (!assertion) { fallbackToCode(tr("No passkey was offered.")); return; }
-        const retry = new URLSearchParams({ username, password });
+        const retry = new URLSearchParams({ username: signInAs, password: signInWith });
         retry.set('passkey', JSON.stringify({
           id: assertion.id,
           rawId: bufToB64url(assertion.rawId),
@@ -1352,6 +1359,47 @@ function App() {
     const data = await request('/mcp/info', { silent: true }, '');
     if (data) setMcpInfo(data);
     return data;
+  }
+
+  async function loadDemoInfo() {
+    try {
+      const res = await fetch(`${API}/demo/info`, { credentials: 'include' });
+      setDemoInfo(res.ok ? await res.json() : null);
+    } catch {
+      setDemoInfo(null);
+    }
+  }
+
+  function applyDemoSettings(data) {
+    setDemoSettings(data);
+    setDemoForm({
+      accounts: (data.accounts || []).map(a => ({ user_id: String(a.user_id), password: a.password || '' })),
+      show_on_login: data.show_on_login !== false,
+    });
+  }
+
+  async function loadDemoSettings() {
+    const data = await request('/demo/settings', { silent: true }, '');
+    if (data) applyDemoSettings(data);
+  }
+
+  function randomDemoPassword() {
+    const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    return 'Demo-' + Array.from(crypto.getRandomValues(new Uint8Array(12)), b => chars[b % chars.length]).join('');
+  }
+
+  async function saveDemoSettings() {
+    const accounts = demoForm.accounts
+      .filter(a => a.user_id)
+      .map(a => ({ user_id: Number(a.user_id), password: a.password }));
+    if (!confirm(tr("Save the demo accounts?\n\nEach one gets the public password shown here, loses its two-factor sign-in and becomes read-only while Demo mode is on. An account taken off the list gets a new random password."))) return;
+    const data = await request('/demo/settings', {
+      method: 'PUT', body: JSON.stringify({ accounts, show_on_login: demoForm.show_on_login }),
+    }, tr("Saving demo accounts..."));
+    if (data) {
+      applyDemoSettings(data);
+      setNotice(tr("Demo accounts saved."));
+    }
   }
 
   async function loadNotifyInfo() {
@@ -3659,6 +3707,15 @@ function App() {
     if (isAuthenticated) loadMcpInfo();
   }, [isAuthenticated, addonList]);
 
+  useEffect(() => {
+    if (!isAuthenticated) loadDemoInfo();
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isAdmin || page !== 'addons') return;
+    if (addonList.some(a => a.id === 'demo' && a.installed)) { loadDemoSettings(); loadUsers(); }
+  }, [isAuthenticated, isAdmin, page, addonList]);
+
   // Same for Notifications: the page is offered once the addon is on.
   useEffect(() => {
     if (isAuthenticated) loadNotifyInfo();
@@ -5720,6 +5777,45 @@ function App() {
     </div>;
   }
 
+  function renderAddonDemo(addon) {
+    if (!demoSettings) return <p className="hint">{tr("Loading…")}</p>;
+    const rows = demoForm.accounts;
+    const setRow = (index, patch) => setDemoForm(prev => ({
+      ...prev, accounts: prev.accounts.map((row, i) => i === index ? { ...row, ...patch } : row),
+    }));
+    const choosable = users.filter(u => u.id !== currentUser?.id);
+    return <div className="addon-panel demo-settings">
+      <div className="addon-panel-head"><strong>{tr("Demo accounts")}</strong></div>
+      <p className="hint">{tr("Each demo account can open every page its role allows and change nothing. Use accounts made for the demo, on a server with sample data only.")}</p>
+      {rows.length === 0 && <p className="hint">{tr("No demo account yet.")}</p>}
+      {rows.map((row, index) => <div className="demo-account-row" key={index}>
+        <select value={row.user_id} onChange={e => setRow(index, { user_id: e.target.value })} aria-label={tr("Account")}>
+          <option value="">{tr("Choose an account")}</option>
+          {choosable.map(u => <option key={u.id} value={String(u.id)}>{u.username} ({roleLabel(u.role)})</option>)}
+        </select>
+        <input value={row.password} onChange={e => setRow(index, { password: e.target.value })}
+          placeholder={tr("Public password (12+ characters)")} aria-label={tr("Public password")} spellCheck={false} />
+        <button type="button" className="mini secondary-light" onClick={() => setRow(index, { password: randomDemoPassword() })}>{tr("Generate")}</button>
+        <button type="button" className="mini danger-light icon-only" aria-label={tr("Remove")} title={tr("Remove")}
+          onClick={() => setDemoForm(prev => ({ ...prev, accounts: prev.accounts.filter((_, i) => i !== index) }))}><Trash2 size={13}/></button>
+      </div>)}
+      <div className="actions demo-settings-actions">
+        <button type="button" className="mini secondary" disabled={rows.length >= 5}
+          onClick={() => setDemoForm(prev => ({ ...prev, accounts: [...prev.accounts, { user_id: '', password: randomDemoPassword() }] }))}>
+          <Plus size={13}/> {tr("Add a demo account")}</button>
+      </div>
+      <label className="check-line">
+        <input type="checkbox" checked={demoForm.show_on_login} onChange={e => setDemoForm(prev => ({ ...prev, show_on_login: e.target.checked }))} />
+        {tr("Show the demo accounts on the login page, with a one-click sign-in")}
+      </label>
+      {!addon.running && <p className="hint">{tr("Demo mode is stopped: demo accounts cannot sign in.")}</p>}
+      <div className="actions">
+        <button type="button" disabled={!!loading || rows.some(r => r.user_id && r.password.length < 12)} onClick={saveDemoSettings}>
+          <Save size={14}/> {tr("Save demo accounts")}</button>
+      </div>
+    </div>;
+  }
+
   function renderAddons() {
     if (!isAdmin) return <section className="section"><h2>{tr("Addons")}</h2><p className="hint">{tr("No permission.")}</p></section>;
     return <section className="section">
@@ -5780,6 +5876,7 @@ function App() {
               </ul>}
               {addon.id === 'fail2ban' && renderAddonFail2ban(addon)}
               {addon.id === 'mcp' && renderAddonMcp(addon)}
+              {addon.id === 'demo' && addon.installed && renderAddonDemo(addon)}
               {addon.id === 'malware' && addon.installed && <div className="addon-panel">
                 <div className="addon-panel-head"><strong>{tr("Scans, schedules, real-time protection and quarantine")}</strong>
                   <button className="mini" disabled={!addon.running} onClick={() => navigateToPage('malware')}><Bug size={13}/> {tr("Open Malware Scanner")}</button></div>
@@ -7113,8 +7210,21 @@ function App() {
           <input value={username} onChange={e => setUsername(e.target.value)} placeholder={tr("Username")} autoComplete="username" />
           <input value={password} onChange={e => setPassword(e.target.value)} placeholder={tr("Password")} type="password" autoComplete="current-password" onKeyDown={e => { if (e.key === 'Enter') login(); }} />
           {needsTwoFactor && <input value={otpCode} onChange={e => setOtpCode(e.target.value)} placeholder={tr("Authentication code")} inputMode="numeric" autoComplete="one-time-code" onKeyDown={e => { if (e.key === 'Enter') login(); }} />}
-          <button disabled={!!loading || !username || !password} onClick={login}>{loading ? tr("Logging in...") : tr("Login")}</button>
+          <button disabled={!!loading || !username || !password} onClick={() => login()}>{loading ? tr("Logging in...") : tr("Login")}</button>
         </div>
+        {demoInfo?.accounts?.length > 0 && <div className="demo-login">
+          <div className="demo-login-head"><Eye size={15}/><strong>{tr("Demo")}</strong></div>
+          <p className="hint">{tr("Read-only: look around freely, nothing you change is saved.")}</p>
+          {demoInfo.accounts.map(account => <div className="demo-login-row" key={account.username}>
+            <span className="demo-login-cred">
+              <small>{account.role === 'admin' ? tr("Administrator") : tr("Hosting customer")}</small>
+              <code>{account.username}</code><span aria-hidden="true">/</span><code>{account.password}</code>
+            </span>
+            <button type="button" className="secondary" disabled={!!loading}
+              onClick={() => { setUsername(account.username); setPassword(account.password); login(account); }}>
+              <LogIn size={14}/> {tr("Sign in")}</button>
+          </div>)}
+        </div>}
       </section>
       {renderNotifications()}
     </main>;
@@ -7180,6 +7290,7 @@ function App() {
           </div>
         </section>
         <div className="content-body">
+          {currentUser?.demo && <div className="demo-banner" role="status"><Eye size={15}/> <span>{tr("You are viewing a read-only demo: you can open every page, and nothing you change is saved.")}</span></div>}
           {renderPage()}
           {loading && <div className="loading"><span></span>{loading}</div>}
         </div>

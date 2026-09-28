@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import ALGORITHM
 from app.models.entities import RevokedToken, User
+from app.services import demo_mode
 
 
 # auto_error=False because the token may instead be in an HttpOnly cookie.
@@ -105,6 +106,7 @@ def get_current_user_optional(
         raise
     _attach_auth_state(request, token, payload)
     _enforce_cookie_csrf(request, bearer_token, session_cookie)
+    demo_mode.enforce(request, user)
     return user
 
 
@@ -120,4 +122,6 @@ def get_current_user(
     user, payload = _user_from_token(token, db)
     _attach_auth_state(request, token, payload)
     _enforce_cookie_csrf(request, bearer_token, session_cookie)
+    # A demo account reads and never writes, and only while Demo mode is on.
+    demo_mode.enforce(request, user)
     return user

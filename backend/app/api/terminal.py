@@ -15,7 +15,7 @@ from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.security import ALGORITHM
 from app.models.entities import RevokedToken, User, Website
-from app.services import terminal
+from app.services import demo_mode, terminal
 
 router = APIRouter(prefix="/terminal", tags=["terminal"])
 
@@ -192,6 +192,9 @@ async def terminal_websocket(
         return
 
     current_user = user
+    if demo_mode.is_demo_account(user):
+        await websocket.close(code=4003, reason="Read-only demo")
+        return
 
     # Get website
     website = db.query(Website).filter(Website.id == website_id).first()

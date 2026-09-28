@@ -100,6 +100,40 @@ ADDONS: dict[str, dict] = {
             "trust; a self-signed one will be refused.",
         ],
     },
+    "demo": {
+        "id": "demo",
+        "name": "Demo mode",
+        "summary": "Read-only demo accounts: anyone can look around the panel, nobody can change anything.",
+        "description": (
+            "Pick one or more accounts and give each a public password. While "
+            "Demo mode is on they can open every page their role allows -- an "
+            "administrator demo account sees the whole panel -- but every "
+            "change is refused on the server, and so are downloads, the web "
+            "terminal and phpMyAdmin. The login page can show the demo "
+            "accounts with a one-click sign-in, and the panel shows a banner "
+            "while a demo account is signed in."
+        ),
+        "category": "integration",
+        "version": "1",
+        # Part of the panel: installing it only turns it on. See _is_panel_addon.
+        "kind": "panel",
+        "packages": [],
+        "service": "",
+        "features": ["demo"],
+        "notes": [
+            "Use accounts made for the demo: choosing one resets its password "
+            "to the public one, clears its two-factor sign-in, and gives its "
+            "SFTP login a random password so the public one opens nothing "
+            "but the panel.",
+            "With Demo mode stopped or removed a demo account cannot sign in "
+            "at all, so it never becomes a full account with a published "
+            "password. Taking an account off the list gives it a new random "
+            "password.",
+            "A demo account sees what its role sees: an administrator demo "
+            "account shows other accounts, logs and visitor addresses. Run "
+            "the demo on a server holding only sample data.",
+        ],
+    },
     "malware": {
         "id": "malware",
         "name": "Malware Scanner",

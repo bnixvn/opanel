@@ -42,7 +42,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cron, da_import, file_manager, mariadb, notifications, openlitespeed, php, restore_sources, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, openlitespeed, php, restore_sources, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -1103,13 +1103,15 @@ _RESTORE_SOURCE_ERRORS = (
 
 
 @router.post("/restore/list")
-def list_restore_source(payload: RestoreSourceIn, db: Session = Depends(get_db),
+def list_restore_source(payload: RestoreSourceIn, request: Request, db: Session = Depends(get_db),
                         current_user: User = Depends(get_current_user)):
     """The archives a source holds, both kinds, for the operator to pick from.
 
     Only a listing: nothing is downloaded until a restore asks for it.
     """
     ensure_role(current_user.role, Role.admin)
+    if payload.source != "local" and demo_mode.is_demo_request(request):
+        raise HTTPException(status_code=403, detail=demo_mode.READ_ONLY_MESSAGE)
     source, target = _restore_source(payload, db)
     try:
         items = restore_sources.list_source(source)

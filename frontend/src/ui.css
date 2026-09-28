@@ -608,3 +608,20 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .service-card{min-width:0}
 .service-actions{flex-wrap:wrap}
 .service-actions button{flex:1 1 auto;min-width:max-content}
+/* Demo mode: the login page's demo accounts, the in-panel banner, the settings form. */
+.demo-login{display:grid;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.demo-login-head{display:flex;align-items:center;gap:6px;color:var(--primary-ink)}
+.demo-login-head strong{font-size:14px;font-weight:600;color:var(--text)}
+.demo-login .hint{margin:0}
+.demo-login-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md)}
+.demo-login-cred{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;min-width:0;font-size:13px}
+.demo-login-cred small{flex-basis:100%;font-size:12px;font-weight:600;color:var(--text-muted)}
+.demo-login-cred code{font-size:12.5px;overflow-wrap:anywhere}
+.demo-login-row button{flex:none;height:32px;min-height:32px;padding:0 12px}
+.demo-banner{display:flex;align-items:center;gap:8px;margin:0 0 14px;padding:10px 14px;border:1px solid var(--primary-soft);background:var(--primary-light);color:var(--text);border-radius:var(--radius-md);font-size:13px;font-weight:600}
+.demo-banner svg{flex:none;color:var(--primary-ink)}
+.demo-settings{display:grid;gap:10px}
+.demo-account-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) max-content max-content;gap:8px;align-items:center}
+.demo-account-row select,.demo-account-row input{min-width:0;height:34px;min-height:34px}
+.demo-settings-actions{justify-content:flex-start}
+@media(max-width:720px){.demo-account-row{grid-template-columns:1fr max-content max-content}.demo-account-row select{grid-column:1 / -1}}

@@ -25,7 +25,7 @@ from app.core.permissions import Role, ensure_role
 from app.core.security import create_access_token, hash_password, needs_rehash, verify_password
 from app.core.secrets import decrypt, encrypt
 from app.core.step_up import require_current_password, require_sensitive_action_step_up, verify_totp
-from app.services import notifications, passkeys
+from app.services import demo_mode, notifications, passkeys
 from app.models.entities import RevokedToken, User
 from app.schemas.schemas import (
     LoginResponse,
@@ -457,6 +457,11 @@ def login(
             detail="Invalid username or password",
         )
 
+    # A demo account's password is public. It opens a read-only session, and
+    # only while Demo mode is on -- never a full one with Demo mode off.
+    if demo_mode.is_demo_account(user) and not demo_mode.is_active():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=demo_mode.OFF_MESSAGE)
+
     # Second factor. An account may hold a passkey, an authenticator app, or
     # both; when it holds both the passkey is offered first and the code is the
     # way through when the passkey cannot be used -- a borrowed machine, a
@@ -512,7 +517,8 @@ def login(
         except Exception:  # pragma: no cover
             db.rollback()
     token = _issue_login_session(response, request, user)
-    notifications.record_login(user, _client_key(request))
+    if not demo_mode.is_demo_account(user):
+        notifications.record_login(user, _client_key(request))
 
     # Bearer token still returned for backward compatibility with CLI tools or
     # mobile clients that cannot set cookies. Browser clients should ignore it
@@ -558,6 +564,8 @@ def session_status(
         "storage_limit_mb": current_user.storage_limit_mb,
         "database_limit": current_user.database_limit,
         "totp_enabled": current_user.totp_enabled,
+        # Read-only demo account: the panel shows a banner and hides nothing.
+        "demo": demo_mode.is_demo_account(current_user),
     }
     user_data.update(storage_quota.storage_usage_summary(db, current_user))
     return {"authenticated": True, "user": user_data}
