@@ -5795,7 +5795,8 @@ function App() {
         </select>
         <input value={row.password} onChange={e => setRow(index, { password: e.target.value })}
           placeholder={tr("Public password (12+ characters)")} aria-label={tr("Public password")} spellCheck={false} />
-        <button type="button" className="mini secondary-light" onClick={() => setRow(index, { password: randomDemoPassword() })}>{tr("Generate")}</button>
+        <button type="button" className="mini secondary-light icon-only" aria-label={tr("Generate")} title={tr("Generate")}
+          onClick={() => setRow(index, { password: randomDemoPassword() })}><Dices size={14}/></button>
         <button type="button" className="mini danger-light icon-only" aria-label={tr("Remove")} title={tr("Remove")}
           onClick={() => setDemoForm(prev => ({ ...prev, accounts: prev.accounts.filter((_, i) => i !== index) }))}><Trash2 size={13}/></button>
       </div>)}
