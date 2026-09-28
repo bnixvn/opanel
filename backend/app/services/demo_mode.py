@@ -17,6 +17,12 @@ everything here is about what that password can never do:
   random one nobody knows.
 - Taking an account off the list gives it a new random password, for the same
   reason.
+- Not on code that has never heard of Demo mode. The panel was once updated
+  back to a release without it, and a demo admin account with a published
+  password became a full admin. A demo account's password is therefore stored
+  as ``opanel-demo$<bcrypt>``: any panel without this module fails to verify
+  it (an unknown hash is a failed login), and only check_password below opens
+  it.
 """
 from __future__ import annotations
 
@@ -45,6 +51,7 @@ BLOCKED_GETS = [re.compile(pattern) for pattern in (
     r"^/api/maintenance/user-backups-download$",
     r"^/api/maintenance/files/\d+/download$",
 )]
+HASH_PREFIX = "opanel-demo$"
 READ_ONLY_MESSAGE = "This is a read-only demo: changes are not saved."
 OFF_MESSAGE = "This is a demo account, and demo mode is off."
 
@@ -65,6 +72,27 @@ def is_active() -> bool:
 
 def is_demo_account(user) -> bool:
     return user is not None and user.id in demo_user_ids()
+
+
+def demo_hash(password: str) -> str:
+    from app.core.security import hash_password
+
+    return HASH_PREFIX + hash_password(password)
+
+
+def is_demo_hash(hashed_password: str) -> bool:
+    return bool(hashed_password) and hashed_password.startswith(HASH_PREFIX)
+
+
+def check_password(user, password: str) -> bool:
+    """The login check for every account: a demo hash is opened here, and only
+    for an account that is on the demo list."""
+    from app.core.security import verify_password
+
+    stored = user.hashed_password or ""
+    if is_demo_hash(stored):
+        return is_demo_account(user) and verify_password(password, stored[len(HASH_PREFIX):])
+    return verify_password(password, stored)
 
 
 def is_demo_request(request: Request) -> bool:
@@ -148,7 +176,7 @@ def save(db, accounts: list[dict], show_on_login: bool, actor) -> dict:
         # The Linux/SFTP login gets a password nobody knows: the panel one is
         # about to be published.
         site_users.set_panel_user_password(user.username, secrets.token_urlsafe(24))
-        user.hashed_password = hash_password(password)
+        user.hashed_password = demo_hash(password)
         user.totp_enabled, user.totp_secret = False, None
         user.is_active = True
         user.token_version = (user.token_version or 0) + 1

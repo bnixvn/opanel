@@ -64,7 +64,7 @@ def test_choosing_an_account_publishes_its_panel_password_but_not_its_sftp_one(p
     before = viewer.token_version or 0
     _save(db, admin, viewer)
     db.refresh(viewer)
-    assert verify_password(PUBLIC, viewer.hashed_password)
+    assert demo_mode.check_password(viewer, PUBLIC)
     assert linux["demoview"] != PUBLIC and len(linux["demoview"]) >= 24
     assert viewer.totp_enabled is False and viewer.totp_secret is None
     assert viewer.token_version == before + 1
@@ -81,8 +81,30 @@ def test_an_account_taken_off_the_list_loses_the_public_password(people):
     _save(db, admin, viewer)
     demo_mode.save(db, [], True, admin)
     db.refresh(viewer)
+    assert not demo_mode.check_password(viewer, PUBLIC)
     assert not verify_password(PUBLIC, viewer.hashed_password)
     assert demo_mode.demo_user_ids() == set()
+
+
+def test_a_panel_without_demo_mode_cannot_open_a_demo_account(people):
+    """The panel was once updated back to a release without Demo mode, and the
+    demo admin account -- password published on the login page -- became a
+    full admin. Its hash is now one that code without this module rejects."""
+    db, admin, viewer, _ = people
+    _save(db, admin, viewer)
+    db.refresh(viewer)
+    assert viewer.hashed_password.startswith(demo_mode.HASH_PREFIX)
+    # What every OPanel release before Demo mode runs at login:
+    assert verify_password(PUBLIC, viewer.hashed_password) is False
+    # And the prefix is only honoured for an account on the demo list.
+    demo_mode.save(db, [], True, admin)
+    viewer.hashed_password = demo_mode.demo_hash(PUBLIC)
+    assert demo_mode.check_password(viewer, PUBLIC) is False
+
+
+def test_login_goes_through_the_demo_aware_check():
+    login = inspect.getsource(auth_api.login)
+    assert "password_ok = demo_mode.check_password(user, form.password)" in login
 
 
 # --- read only -------------------------------------------------------------------

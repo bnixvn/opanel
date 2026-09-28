@@ -438,7 +438,8 @@ def login(
 
     user = db.query(User).filter(User.username == form.username).first()
     if user and user.is_active:
-        password_ok = verify_password(form.password, user.hashed_password)
+        # demo_mode.check_password: a demo account's hash only opens here.
+        password_ok = demo_mode.check_password(user, form.password)
     else:
         verify_password(form.password, _DUMMY_HASH)
         password_ok = False
@@ -461,6 +462,11 @@ def login(
     # only while Demo mode is on -- never a full one with Demo mode off.
     if demo_mode.is_demo_account(user) and not demo_mode.is_active():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=demo_mode.OFF_MESSAGE)
+    if demo_mode.is_demo_account(user) and not demo_mode.is_demo_hash(user.hashed_password):
+        # Chosen before the hash was marked: mark it now, so a panel without
+        # Demo mode can never open it.
+        user.hashed_password = demo_mode.demo_hash(form.password)
+        db.commit()
 
     # Second factor. An account may hold a passkey, an authenticator app, or
     # both; when it holds both the passkey is offered first and the code is the
