@@ -621,7 +621,10 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .demo-banner{display:flex;align-items:center;gap:8px;margin:0 0 14px;padding:10px 14px;border:1px solid var(--primary-soft);background:var(--primary-light);color:var(--text);border-radius:var(--radius-md);font-size:13px;font-weight:600}
 .demo-banner svg{flex:none;color:var(--primary-ink)}
 .demo-settings{display:grid;gap:10px}
-.demo-account-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) max-content max-content;gap:8px;align-items:center}
-.demo-account-row select,.demo-account-row input{min-width:0;height:34px;min-height:34px}
+/* An addon card is narrow: the account on its own line, the password and its
+   buttons under it. */
+.demo-account-row{display:grid;grid-template-columns:minmax(0,1fr) max-content max-content;gap:6px 8px;align-items:center;padding:10px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md)}
+.demo-account-row select{grid-column:1 / -1}
+.demo-account-row select,.demo-account-row input{width:100%;min-width:0;height:34px;min-height:34px}
+.demo-account-row input{font-family:var(--font-mono,monospace);font-size:12.5px}
 .demo-settings-actions{justify-content:flex-start}
-@media(max-width:720px){.demo-account-row{grid-template-columns:1fr max-content max-content}.demo-account-row select{grid-column:1 / -1}}
