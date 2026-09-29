@@ -301,7 +301,7 @@ def test_the_webmail_link_is_signed_short_lived_and_names_the_mailbox(env):
     res = env.as_user("alice").post(f"/api/mail/mailboxes/{box['id']}/webmail")
     assert res.status_code == 200, res.text
     url = res.json()["url"]
-    assert url.startswith("https://panel.example.test:2096/sso?token=")
+    assert url.startswith("https://panel.example.test:2096/api/auth/sso?token=")
     payload, signature = url.split("token=", 1)[1].split(".")
     expected = hmac.new(SSO_SECRET.encode(), payload.encode(), hashlib.sha256).digest()
     assert hmac.compare_digest(expected, _b64decode(signature))
@@ -321,7 +321,7 @@ def test_a_domain_with_its_own_webmail_host_links_there(env):
     call = [c for c in env.calls if c.command == "mail-webmail-host"][-1]
     assert call.args[:2] == ["alice.test", "on"]
     url = env.as_user("alice").post(f"/api/mail/mailboxes/{box['id']}/webmail").json()["url"]
-    assert url.startswith("https://webmail.alice.test/sso?token=")
+    assert url.startswith("https://webmail.alice.test/api/auth/sso?token=")
 
 
 def test_a_website_cannot_take_a_webmail_host(env):

@@ -892,7 +892,7 @@ def sso_url(db: Session, actor: User, mailbox_id: int) -> str:
     claims = {"email": row.address, "exp": int(time.time()) + SSO_TTL_SECONDS, "nonce": secrets.token_urlsafe(24)}
     payload = _b64(json.dumps(claims, separators=(",", ":")).encode("utf-8"))
     signature = _b64(hmac.new(secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).digest())
-    return f"{webmail_base(row.mail_domain)}/sso?token={payload}.{signature}"
+    return f"{webmail_base(row.mail_domain)}/api/auth/sso?token={payload}.{signature}"
 
 
 # ---------------------------------------------------------------------------
