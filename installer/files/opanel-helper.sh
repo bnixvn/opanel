@@ -5613,7 +5613,8 @@ addon_mail_uninstall() {
       mail_webmail_host_remove "$host"
     done < <(cat "$MAIL_WEBMAIL_HOSTS")
   fi
-  rm -f "$MAIL_WEBMAIL_VHOST"
+  # OpenLiteSpeed keeps its own copies beside a vhost file it loaded.
+  rm -f "$MAIL_WEBMAIL_VHOST" "${MAIL_WEBMAIL_VHOST}.txt" "${MAIL_WEBMAIL_VHOST}0" "${MAIL_WEBMAIL_VHOST}0,v"
   ols_sync_main_config
   restart_openlitespeed || true
   mail_close_ports

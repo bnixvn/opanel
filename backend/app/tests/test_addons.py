@@ -556,3 +556,14 @@ def test_the_wait_asks_the_server_only_once_it_answers():
     assert "want=0" in body and body.count("for attempt in $(seq 1 20)") == 2, (
         "one loop to reach the server, one to wait for the chains"
     )
+
+
+def test_the_remove_prompt_accepts_the_name_it_asks_for():
+    """The prompt says "type the addon name" and the card shows "Email"; the
+    check compared with the id ("mail"), so Email, Demo mode, MCP server and
+    Malware Scanner could not be removed from the page at all."""
+    app_jsx = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    body = app_jsx[app_jsx.index("async function uninstallAddon(addon) {"):]
+    body = body[:body.index("\n  }\n")]
+    assert "String(addon.name || '').trim().toLowerCase()" in body
+    assert "typed.trim().toLowerCase() !== addon.id)" not in body

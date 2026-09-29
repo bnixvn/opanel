@@ -3637,7 +3637,11 @@ function App() {
     // name rather than clicking through a generic confirm.
     const typed = window.prompt(tr("Remove {0} and stop what it is doing?\n\nType the addon name to confirm:", addon.name));
     if (typed === null) return;
-    if (typed.trim().toLowerCase() !== addon.id) { setError(tr("Name did not match; nothing was removed.")); return; }
+    // The prompt asks for the name shown on the card ("Email"); the id ("mail")
+    // is accepted too. Comparing with the id alone refused every addon whose
+    // name is not its id.
+    const answer = typed.trim().toLowerCase();
+    if (answer !== String(addon.name || '').trim().toLowerCase() && answer !== addon.id) { setError(tr("Name did not match; nothing was removed.")); return; }
     const data = await request(`/addons/${addon.id}/uninstall`, { method: 'POST' }, tr("Removing {0}...", addon.name));
     if (data) loadAddons(true);
   }
