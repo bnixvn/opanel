@@ -695,6 +695,40 @@ def website_created(db: Session, website: Website, hosts: Optional[list[str]] = 
         log.warning("DNS records for %s were not added: %s", website.domain, exc)
 
 
+def website_removed(db: Session, hosts: list[str], owner_id: int) -> None:
+    """A website or alias is gone: take away the A/AAAA records the panel
+    added for its names -- only values that still point at this server, and
+    not for a name another website still serves. The zone stays. Never fails
+    the caller."""
+    if not installed():
+        return
+    try:
+        served = set()
+        for name in _owned_names(db):
+            served.update({name, name[4:] if name.startswith("www.") else f"www.{name}"})
+        addresses = server_addresses()
+        ours = {"A": set(addresses["ipv4"]), "AAAA": set(addresses["ipv6"])}
+        for host in hosts:
+            host = (host or "").lower()
+            zone = zone_for_name(db, host, owner_id)
+            if zone is None:
+                continue
+            data = _get_zone(zone.name)
+            changes = []
+            for name in [host] + ([f"www.{host}"] if not host.startswith("www.") else []):
+                if name in served:
+                    continue
+                for rtype in ("A", "AAAA"):
+                    current = _values(data, name, rtype)
+                    keep = [value for value in current if value not in ours[rtype]]
+                    if keep != current:
+                        changes.append(_replace(name, rtype, keep, (_rrset(data, name, rtype) or {}).get("ttl") or 3600))
+            if changes:
+                _patch(zone.name, changes)
+    except Exception as exc:  # noqa: BLE001 - DNS must never stop a website
+        log.warning("DNS records of %s were not removed: %s", ", ".join(hosts), exc)
+
+
 def _write_mail_records(zone: str, mail_domain: MailDomain) -> None:
     from app.services import mail
 

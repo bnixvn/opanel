@@ -291,6 +291,28 @@ def test_a_website_record_never_overwrites_what_the_owner_set(env):
     assert env.pdns.values("alice.test", "www.alice.test", "CNAME") == ["cdn.example.net."]
 
 
+def test_a_removed_website_takes_its_own_records_with_it(env):
+    _zone(env, "alice", "alice.test")
+    env.pdns("PATCH", "/zones/alice.test.", {"rrsets": [{"name": "www.shop.alice.test.", "type": "A", "ttl": 300,
+                                                          "changetype": "REPLACE",
+                                                          "records": [{"content": "203.0.113.7", "disabled": False},
+                                                                      {"content": "198.51.100.9", "disabled": False}]}]})
+    shop = env.db.query(Website).filter_by(domain="shop.alice.test").one()
+    env.db.delete(shop)
+    env.db.commit()
+    dns_manager.website_removed(env.db, ["shop.alice.test"], env.people["alice"].id)
+    assert env.pdns.values("alice.test", "shop.alice.test", "A") == []
+    assert env.pdns.values("alice.test", "shop.alice.test", "AAAA") == []
+    # The value the owner added stays; the zone and the other website too.
+    assert env.pdns.values("alice.test", "www.shop.alice.test", "A") == ["198.51.100.9"]
+    assert env.pdns.values("alice.test", "alice.test", "A") == ["203.0.113.7"]
+    # A name another website still serves keeps its records.
+    dns_manager.website_removed(env.db, ["alice.test"], env.people["alice"].id)
+    assert env.pdns.values("alice.test", "alice.test", "A") == ["203.0.113.7"]
+    source = (PROJECT_ROOT / "backend" / "app" / "api" / "websites.py").read_text(encoding="utf-8")
+    assert source.count("dns_manager.website_removed(") == 2
+
+
 def test_no_zone_is_made_in_another_accounts_parent_zone(env):
     _zone(env, "root_admin", "bob.test")
     site = Website(domain="shop.bob.test", owner_id=env.people["alice"].id, root_path="/x", document_root="public_html",

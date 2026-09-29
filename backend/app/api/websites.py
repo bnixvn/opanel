@@ -489,6 +489,7 @@ def delete_website_alias(
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Cannot write webserver config: {exc}") from exc
     db.commit()
+    dns_manager.website_removed(db, [domain], website.owner_id)
     log_action(db, current_user.id, "delete_website_alias", website.domain, domain, request=request)
     return {"ok": True}
 
@@ -764,6 +765,7 @@ def set_website_webserver_custom(website_id: int, payload: WebsiteNginxCustom, r
 @router.delete("/{website_id}")
 def delete_website(website_id: int, request: Request, delete_files: bool = True, delete_database: bool = True, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     website = _get_authorized_website(db, website_id, current_user)
+    dns_hosts = [website.domain] + [alias.domain for alias in website.aliases or []]
     # .all(): a website can carry more than one database, and .first() left the
     # rest behind with their MariaDB schemas intact.
     db_items = db.query(DatabaseAccount).filter(DatabaseAccount.website_id == website.id).all()
@@ -787,8 +789,10 @@ def delete_website(website_id: int, request: Request, delete_files: bool = True,
             wordpress.delete_wordpress(website.root_path)
     for db_item in db_items:
         db.delete(db_item)
+    owner_id = website.owner_id
     db.delete(website)
     db.commit()
+    dns_manager.website_removed(db, dns_hosts, owner_id)
     log_action(db, current_user.id, "delete_website", website.domain, request=request)
     return {"ok": True}
 
