@@ -711,8 +711,14 @@ def normalize_dmarc(value: str) -> str:
 
 
 def set_dns_custom(db: Session, actor: User, domain_id: int, payload: dict) -> MailDomain:
-    """The owner's own SPF and DMARC values and extra records. Empty SPF or
-    DMARC goes back to what the panel suggests."""
+    """A domain's own SPF and DMARC values and extra records, set by an
+    administrator. Empty SPF or DMARC goes back to what the panel suggests.
+
+    Customers do not edit these: what their domain needs comes from the
+    panel's suggestion and the template of the relay it sends through, and
+    the customer publishes those records at their DNS provider."""
+    if not _is_admin(actor):
+        raise PermissionError("Only an administrator changes a domain's mail DNS records")
     row = get_domain(db, actor, domain_id)
     records = payload.get("records") or []
     if not isinstance(records, list) or len(records) > MAX_CUSTOM_RECORDS:
@@ -860,6 +866,7 @@ def dns_view(row: MailDomain, actor: User) -> dict:
         "records": check_dns(row),
         "custom": {"spf": custom.get("spf") or "", "dmarc": custom.get("dmarc") or "",
                    "records": custom.get("records") or []},
+        "can_customize": _is_admin(actor),
         "relay": {
             "choice": row.relay or "",
             "effective": relay["id"] if relay else "",

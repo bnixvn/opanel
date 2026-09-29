@@ -1607,7 +1607,7 @@ function App() {
 
   function applyMailDnsView(domain, data) {
     const custom = data?.custom || {};
-    setMailDns({ domain, records: data?.records || [], relay: data?.relay || null });
+    setMailDns({ domain, records: data?.records || [], relay: data?.relay || null, canCustomize: !!data?.can_customize });
     setDnsCustomForm({
       spf: custom.spf || '',
       dmarc: custom.dmarc || '',
@@ -6105,7 +6105,7 @@ function App() {
   }
 
   function renderMailDns() {
-    const { domain, records, relay } = mailDns;
+    const { domain, records, relay, canCustomize } = mailDns;
     const form = dnsCustomForm;
     const statusLabel = { ok: tr("Found"), missing: tr("Missing"), different: tr("Different"), unknown: tr("Not checked") };
     const statusClass = { ok: 'ok', missing: 'bad', different: 'warn', unknown: '' };
@@ -6117,7 +6117,7 @@ function App() {
       webmail: tr("Webmail address (optional)"),
     };
     const titleFor = record => titles[record.key]
-      || (record.source === 'relay' ? tr("Asked for by the relay {0}", record.relay) : tr("Your record"));
+      || (record.source === 'relay' ? tr("Asked for by the relay {0}", record.relay) : tr("Extra record"));
     const suggested = key => (records || []).find(r => r.key === key)?.suggested || '';
     return <section className="section mail-dns-page">
       <div className="section-title">
@@ -6148,7 +6148,7 @@ function App() {
           <div className="mail-dns-head">
             <strong>{titleFor(record)}</strong>
             <span className="mail-dns-type"><code>{record.type}</code>{record.priority != null && <small>{tr("priority {0}", record.priority)}</small>}</span>
-            {(record.custom || record.source === 'custom') && <span className="badge">{tr("Custom")}</span>}
+            {isAdmin && (record.custom || record.source === 'custom') && <span className="badge">{tr("Custom")}</span>}
             <span className={`badge mail-dns-status ${statusClass[record.status] || ''}`}>{statusLabel[record.status] || record.status}</span>
           </div>
           {renderCopyBlock(tr("Name"), record.name)}
@@ -6157,9 +6157,9 @@ function App() {
           {record.key === 'webmail' && <p className="hint">{tr("Only needed for webmail.{0}; turn that on in the Domains tab once this record is in place.", domain.domain)}</p>}
         </div>)}
       </div>}
-      {records && form && <div className="create-inline mail-dns-custom">
+      {records && form && canCustomize && <div className="create-inline mail-dns-custom">
         <div className="create-inline-head"><strong>{tr("Customize the mail records")}</strong></div>
-        <p className="hint">{tr("For a relay or another service that sends as {0}: your own SPF and DMARC, and the extra records they ask for. Leave SPF or DMARC empty to use the suggestion. The panel only shows and checks these; publish them at your DNS provider.", domain.domain)}</p>
+        <p className="hint">{tr("For this domain only: its own SPF and DMARC, and records another service asks for. Records every domain on a relay needs belong in that relay's DNS template (Relays tab). Customers see these records and publish them; they cannot change them.")}</p>
         <label className="field"><span className="field-label">SPF</span>
           <input value={form.spf} placeholder={suggested('spf')} spellCheck={false} onChange={e => setDnsCustomForm(prev => ({ ...prev, spf: e.target.value }))} /></label>
         <label className="field"><span className="field-label">DMARC</span>
@@ -6200,10 +6200,14 @@ function App() {
           <label className="field"><span className="field-label">{tr("Password")}</span><input type="password" value={f.password} autoComplete="new-password"
             placeholder={f.password_set ? tr("Saved — leave empty to keep") : ''} onChange={e => set({ password: e.target.value })} /></label>
         </div>
-        <label className="field"><span className="field-label">{tr("SPF for this relay")} <em>{tr("added to the SPF record of every domain that uses it")}</em></span>
-          <input value={f.spf_include} placeholder="include:spf.brevo.com" spellCheck={false} onChange={e => set({ spf_include: e.target.value })} /></label>
-        <div className="field"><span className="field-label">{tr("DNS records the relay asks for")}</span>
-          {renderDnsRecordEditor(f.dns_records, rows => set({ dns_records: rows }), { template: true })}</div>
+        <div className="mail-relay-template">
+          <strong>{tr("Mail DNS template")}</strong>
+          <p className="hint">{tr("What every domain that sends through this relay must publish. Customers see it on their domain's DNS records page and set up their domain from it.")}</p>
+          <label className="field"><span className="field-label">{tr("SPF for this relay")} <em>{tr("added to the SPF record of every domain that uses it")}</em></span>
+            <input value={f.spf_include} placeholder="include:spf.brevo.com" spellCheck={false} onChange={e => set({ spf_include: e.target.value })} /></label>
+          <div className="field"><span className="field-label">{tr("DNS records the relay asks for")}</span>
+            {renderDnsRecordEditor(f.dns_records, rows => set({ dns_records: rows }), { template: true })}</div>
+        </div>
         {!f.id && <label className="check-line"><input type="checkbox" checked={!!f.make_default} onChange={e => set({ make_default: e.target.checked })} /> {tr("Use it as the default relay")}</label>}
         <p className="hint">{tr("587 uses STARTTLS and 465 SSL/TLS, and the relay's certificate must be valid. Leave the username empty for a relay that knows this server by its address.")}</p>
         <div className="actions">

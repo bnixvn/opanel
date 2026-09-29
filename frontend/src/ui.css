@@ -710,6 +710,9 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .mail-relay-form .field{display:grid;gap:4px;min-width:0}
 .mail-relay-form .field > input{width:100%;font-family:var(--font-mono,monospace);font-size:12.5px}
 .mail-relay-form em{font-style:normal;font-weight:500;color:var(--text-muted)}
+.mail-relay-template{display:grid;gap:10px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md)}
+.mail-relay-template > strong{font-size:14px;font-weight:600}
+.mail-relay-template > .hint{margin:0}
 .mail-stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
 .mail-stat{display:grid;gap:2px;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md)}
 .mail-stat small{font-size:12px;color:var(--text-secondary)}

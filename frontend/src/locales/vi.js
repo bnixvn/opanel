@@ -2062,4 +2062,8 @@ export default {
   "Fail2ban is not installed. Install it on the Addons page to ban addresses that keep failing to sign in.": "Fail2ban chưa được cài. Hãy cài ở trang Addons để chặn các địa chỉ đăng nhập sai nhiều lần.",
   "Fail2ban is stopped: nothing is being banned. Start it to protect SSH and the panel login.": "Fail2ban đang dừng: không địa chỉ nào bị chặn. Hãy bật lại để bảo vệ SSH và trang đăng nhập panel.",
   "Open Firewall": "Mở trang Firewall",
+  "Extra record": "Bản ghi bổ sung",
+  "For this domain only: its own SPF and DMARC, and records another service asks for. Records every domain on a relay needs belong in that relay's DNS template (Relays tab). Customers see these records and publish them; they cannot change them.": "Chỉ cho tên miền này: SPF và DMARC riêng, cùng các bản ghi mà dịch vụ khác yêu cầu. Bản ghi mà mọi tên miền dùng chung một relay đều cần thì đặt trong mẫu DNS của relay đó (tab Relay). Khách hàng thấy các bản ghi này và thêm chúng ở nhà cung cấp DNS, nhưng không sửa được.",
+  "Mail DNS template": "Mẫu DNS cho mail",
+  "What every domain that sends through this relay must publish. Customers see it on their domain's DNS records page and set up their domain from it.": "Những bản ghi mà mọi tên miền gửi thư qua relay này phải thêm. Khách hàng thấy mẫu này ở trang Bản ghi DNS của tên miền và cấu hình tên miền theo đó.",
 };

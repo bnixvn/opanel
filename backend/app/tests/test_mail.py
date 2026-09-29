@@ -424,10 +424,10 @@ def test_the_dns_records_follow_the_relay(env, monkeypatch):
     assert view["relay"]["effective_name"] == "Brevo" and view["relay"]["options"] == []
 
 
-def test_an_owner_customises_the_mail_records(env, monkeypatch):
+def test_an_admin_customises_a_domains_mail_records(env, monkeypatch):
     domain_id = _add_domain(env, "alice", "alice.test")
     monkeypatch.setattr(mail, "_resolve", lambda name, rtype: [])
-    res = env.as_user("alice").put(f"/api/mail/domains/{domain_id}/dns", json={
+    res = env.as_user("root_admin").put(f"/api/mail/domains/{domain_id}/dns", json={
         "spf": "v=spf1 mx include:_spf.google.com ~all", "dmarc": "v=DMARC1; p=reject",
         "records": [{"type": "TXT", "name": "google-site-verification", "value": "abc"},
                     {"type": "CNAME", "name": "em123.alice.test", "value": "u1.wl.sendgrid.net"},
@@ -439,8 +439,12 @@ def test_an_owner_customises_the_mail_records(env, monkeypatch):
     assert records["custom-0"]["name"] == "google-site-verification.alice.test"
     assert records["custom-1"]["name"] == "em123.alice.test"
     assert records["custom-2"]["priority"] == 20
+    # The customer sees them, and may not change them.
+    view = env.as_user("alice").get(f"/api/mail/domains/{domain_id}/dns").json()
+    assert view["can_customize"] is False
+    assert any(r["key"] == "custom-0" for r in view["records"])
     # Empty values go back to the suggestion.
-    res = env.as_user("alice").put(f"/api/mail/domains/{domain_id}/dns", json={"spf": "", "dmarc": "", "records": []})
+    res = env.as_user("root_admin").put(f"/api/mail/domains/{domain_id}/dns", json={"spf": "", "dmarc": "", "records": []})
     records = {r["key"]: r for r in res.json()["records"]}
     assert not records["spf"]["custom"] and records["dmarc"]["value"].startswith("v=DMARC1; p=quarantine")
 
@@ -454,14 +458,19 @@ def test_an_owner_customises_the_mail_records(env, monkeypatch):
 ])
 def test_bad_custom_records_are_refused(env, payload):
     domain_id = _add_domain(env, "alice", "alice.test")
-    res = env.as_user("alice").put(f"/api/mail/domains/{domain_id}/dns", json={"spf": "", "dmarc": "", "records": [], **payload})
+    res = env.as_user("root_admin").put(f"/api/mail/domains/{domain_id}/dns", json={"spf": "", "dmarc": "", "records": [], **payload})
     assert res.status_code in (400, 422), payload
 
 
-def test_another_customers_dns_cannot_be_changed(env):
-    domain_id = _add_domain(env, "bob", "bob.test")
-    res = env.as_user("alice").put(f"/api/mail/domains/{domain_id}/dns", json={"spf": "v=spf1 -all"})
-    assert res.status_code == 404
+def test_customers_cannot_change_mail_dns_records(env):
+    """Records come from the panel and the relay's template; only an admin
+    adds to them."""
+    own = _add_domain(env, "alice", "alice.test")
+    other = _add_domain(env, "bob", "bob.test")
+    for domain_id in (own, other):
+        res = env.as_user("alice").put(f"/api/mail/domains/{domain_id}/dns", json={"spf": "v=spf1 -all"})
+        assert res.status_code == 403, domain_id
+    assert env.db.get(MailDomain, own).dns_custom == ""
 
 
 def test_a_custom_spf_is_checked_for_every_mechanism(env, monkeypatch):
