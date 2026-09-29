@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
 import secrets
@@ -65,10 +66,6 @@ DESTINATION_RE = re.compile(
 HOST_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$|^(?:\d{1,3}\.){3}\d{1,3}$")
 
 SETTINGS_DEFAULTS = {
-    "smarthost_enabled": False,
-    "smarthost_host": "",
-    "smarthost_port": 587,
-    "smarthost_username": "",
     "auth_rate_per_hour": 300,
     "local_rate_per_hour": 300,
     "max_message_mb": 50,
@@ -566,6 +563,7 @@ def domain_out(row: MailDomain) -> dict:
         "catch_all": row.catch_all or "",
         "webmail_host": bool(row.webmail_host),
         "webmail_url": webmail_base(row) + "/",
+        "relay": row.relay or "",
         "mailboxes": len(row.mailboxes),
         "forwarders": len(row.forwarders),
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -602,6 +600,144 @@ def overview(db: Session, actor: User) -> dict:
 # ---------------------------------------------------------------------------
 # DNS
 # ---------------------------------------------------------------------------
+DNS_TYPES = ("TXT", "CNAME", "MX", "A", "AAAA")
+MAX_CUSTOM_RECORDS = 20
+DEFAULT_DMARC = "v=DMARC1; p=quarantine; adkim=r; aspf=r"
+_LABEL_RE = re.compile(r"^(?:@|[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,200}[A-Za-z0-9_])?)$")
+_SPF_TOKEN_RE = re.compile(r"^[+~?-]?(?:include|ip4|ip6|a|mx|exists|ptr)(?::[A-Za-z0-9.:/_%{}-]{1,253})?(?:/\d{1,3})?$")
+
+
+def _dns_custom(row: MailDomain) -> dict:
+    try:
+        data = json.loads(row.dns_custom or "{}")
+    except ValueError:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def _fqdn(label: str, domain: str) -> str:
+    """A record name as the owner writes it ("@", "mail", "x._domainkey"),
+    made absolute within the domain."""
+    label = (label or "@").strip().rstrip(".")
+    if label in ("@", "", domain):
+        return domain
+    if label.endswith("." + domain):
+        return label
+    return f"{label}.{domain}"
+
+
+def _relative(name: str, domain: str) -> str:
+    name = (name or "").strip().rstrip(".").lower()
+    if name in ("", "@", domain):
+        return "@"
+    if name.endswith("." + domain):
+        return name[: -len(domain) - 1]
+    return name
+
+
+def normalize_dns_record(item: dict, domain: str = "", template: bool = False) -> dict:
+    """One extra record, as an owner or a relay template gives it. A template
+    may say {domain} in its value; the name is always inside the domain."""
+    if not isinstance(item, dict):
+        raise ValueError("A DNS record must have a type, a name and a value")
+    rtype = str(item.get("type") or "").strip().upper()
+    if rtype not in DNS_TYPES:
+        raise ValueError(f"The record type must be one of {', '.join(DNS_TYPES)}")
+    label = _relative(str(item.get("name") or "@"), domain) if domain else str(item.get("name") or "@").strip()
+    if not _LABEL_RE.fullmatch(label):
+        raise ValueError(f"Not a record name: {item.get('name')!r} (use @ for the domain itself)")
+    value = str(item.get("value") or "").strip()
+    if not value or len(value) > 2048 or any(ch in value for ch in "\r\n\0"):
+        raise ValueError("Every record needs a value (one line, at most 2048 characters)")
+    check = value.replace("{domain}", domain or "example.com")
+    if rtype in ("CNAME", "MX"):
+        check = check.rstrip(".").lower()
+        if not DOMAIN_RE.fullmatch(check):
+            raise ValueError(f"{rtype} must point at a hostname: {value}")
+        value = value.rstrip(".").lower()
+    elif rtype in ("A", "AAAA"):
+        try:
+            address = ipaddress.ip_address(check)
+        except ValueError as exc:
+            raise ValueError(f"Not an IP address: {value}") from exc
+        if (rtype == "A") != (address.version == 4):
+            raise ValueError(f"{value} is not an {'IPv4' if rtype == 'A' else 'IPv6'} address")
+    record = {"type": rtype, "name": label, "value": value}
+    if rtype == "MX":
+        try:
+            priority = int(item.get("priority") if item.get("priority") not in (None, "") else 10)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("The MX priority must be a whole number") from exc
+        if not 0 <= priority <= 65535:
+            raise ValueError("The MX priority must be between 0 and 65535")
+        record["priority"] = priority
+    if template and "{domain}" in label:
+        raise ValueError("{domain} goes in the value; the name is relative to the domain already")
+    return record
+
+
+def normalize_spf(value: str) -> str:
+    text = " ".join((value or "").split())
+    if not text:
+        return ""
+    tokens = text.split(" ")
+    if tokens[0].lower() != "v=spf1" or len(text) > 450:
+        raise ValueError("SPF must start with v=spf1 (at most 450 characters)")
+    for token in tokens[1:]:
+        if token.lower() in ("~all", "-all", "?all", "+all", "all") or token.lower().startswith("redirect="):
+            continue
+        if not _SPF_TOKEN_RE.fullmatch(token):
+            raise ValueError(f"Not an SPF mechanism: {token}")
+    return text
+
+
+def normalize_spf_include(value: str) -> str:
+    text = " ".join((value or "").split())
+    for token in text.split(" ") if text else []:
+        if not _SPF_TOKEN_RE.fullmatch(token):
+            raise ValueError(f"Not an SPF mechanism: {token} (for example include:spf.relay.example)")
+    if len(text) > 200:
+        raise ValueError("The SPF part for the relay is too long")
+    return text
+
+
+def normalize_dmarc(value: str) -> str:
+    text = " ".join((value or "").split())
+    if not text:
+        return ""
+    if not text.upper().startswith("V=DMARC1") or len(text) > 450 or any(ch in text for ch in "\r\n\0"):
+        raise ValueError("DMARC must start with v=DMARC1 (at most 450 characters)")
+    return text
+
+
+def set_dns_custom(db: Session, actor: User, domain_id: int, payload: dict) -> MailDomain:
+    """The owner's own SPF and DMARC values and extra records. Empty SPF or
+    DMARC goes back to what the panel suggests."""
+    row = get_domain(db, actor, domain_id)
+    records = payload.get("records") or []
+    if not isinstance(records, list) or len(records) > MAX_CUSTOM_RECORDS:
+        raise ValueError(f"At most {MAX_CUSTOM_RECORDS} extra records")
+    custom = {
+        "spf": normalize_spf(payload.get("spf") or ""),
+        "dmarc": normalize_dmarc(payload.get("dmarc") or ""),
+        "records": [normalize_dns_record(item, row.domain) for item in records],
+    }
+    row.dns_custom = json.dumps(custom, separators=(",", ":")) if any(custom.values()) else ""
+    db.commit()
+    return row
+
+
+def effective_relay(row: MailDomain) -> Optional[dict]:
+    """The relay this domain's outgoing mail leaves through, or None."""
+    choice = row.relay or ""
+    if choice == "direct":
+        return None
+    relays = {relay["id"]: relay for relay in _relays()}
+    if choice:
+        return relays.get(choice)
+    return relays.get(_stored_settings().get("default_relay") or "")
+
+
 def dns_records(row: MailDomain) -> list[dict]:
     host = hostname()
     try:
@@ -609,19 +745,33 @@ def dns_records(row: MailDomain) -> list[dict]:
     except Exception:  # noqa: BLE001
         addresses = {"ipv4": [], "ipv6": []}
     ipv4, ipv6 = addresses.get("ipv4") or [], addresses.get("ipv6") or []
+    relay = effective_relay(row)
     spf = ["v=spf1", "mx", "a"] + [f"ip4:{ip}" for ip in ipv4[:2]] + [f"ip6:{ip}" for ip in ipv6[:1]]
-    relay = current_settings()
-    note = ""
-    if relay.get("smarthost_enabled") and relay.get("smarthost_host"):
-        note = "Outgoing mail leaves through your relay: add the SPF include your relay provider documents."
+    if relay and relay.get("spf_include"):
+        spf += relay["spf_include"].split()
+    suggested_spf = " ".join(spf + ["~all"])
+    custom = _dns_custom(row)
     records = [
         {"key": "mx", "type": "MX", "name": row.domain, "value": host, "priority": 10},
-        {"key": "spf", "type": "TXT", "name": row.domain, "value": " ".join(spf + ["~all"]), "note": note},
+        {"key": "spf", "type": "TXT", "name": row.domain, "value": custom.get("spf") or suggested_spf,
+         "suggested": suggested_spf, "custom": bool(custom.get("spf"))},
         {"key": "dkim", "type": "TXT", "name": f"{DKIM_SELECTOR}._domainkey.{row.domain}",
          "value": f"v=DKIM1; k=rsa; p={row.dkim_public}"},
-        {"key": "dmarc", "type": "TXT", "name": f"_dmarc.{row.domain}",
-         "value": "v=DMARC1; p=quarantine; adkim=r; aspf=r"},
+        {"key": "dmarc", "type": "TXT", "name": f"_dmarc.{row.domain}", "value": custom.get("dmarc") or DEFAULT_DMARC,
+         "suggested": DEFAULT_DMARC, "custom": bool(custom.get("dmarc"))},
     ]
+    if relay:
+        for index, item in enumerate(relay.get("dns_records") or []):
+            records.append({
+                "key": f"relay-{index}", "type": item["type"], "name": _fqdn(item["name"], row.domain),
+                "value": item["value"].replace("{domain}", row.domain), "priority": item.get("priority"),
+                "source": "relay", "relay": relay.get("name") or relay["id"],
+            })
+    for index, item in enumerate(custom.get("records") or []):
+        records.append({
+            "key": f"custom-{index}", "type": item["type"], "name": _fqdn(item["name"], row.domain),
+            "value": item["value"], "priority": item.get("priority"), "source": "custom",
+        })
     if ipv4:
         records.append({"key": "webmail", "type": "A", "name": f"webmail.{row.domain}", "value": ipv4[0],
                         "optional": True})
@@ -650,33 +800,48 @@ def _resolve(name: str, rtype: str) -> Optional[list[str]]:
             out.append(b"".join(item.strings).decode("utf-8", "replace"))
         elif rtype == "MX":
             out.append(str(item.exchange).rstrip(".").lower())
+        elif rtype == "CNAME":
+            out.append(str(item.target).rstrip(".").lower())
         else:
             out.append(item.to_text())
     return out
 
 
+def _squash(text: str) -> str:
+    return "".join((text or "").split()).strip('"').lower()
+
+
+def _spf_mechanisms(text: str) -> set[str]:
+    return {token.lower() for token in (text or "").split()[1:]
+            if token.lower() not in ("~all", "-all", "?all", "+all", "all")}
+
+
 def check_dns(row: MailDomain) -> list[dict]:
     records = dns_records(row)
-    host = hostname()
-    ipv4 = [r["value"] for r in records if r["key"] == "webmail"]
     for record in records:
-        key = record["key"]
-        if key == "mx":
-            found = _resolve(row.domain, "MX")
-            ok = found is not None and host in found
-        elif key == "spf":
-            txt = _resolve(row.domain, "TXT")
+        key, rtype, want = record["key"], record["type"], record["value"]
+        if key == "spf":
+            txt = _resolve(record["name"], "TXT")
             found = None if txt is None else [t for t in txt if t.lower().startswith("v=spf1")]
-            ok = bool(found) and any(" mx" in t or any(ip in t for ip in ipv4) for t in found)
+            # Every mechanism the panel asks for must be there; the owner may
+            # have more of their own.
+            ok = bool(found) and len(found) == 1 and _spf_mechanisms(want) <= _spf_mechanisms(found[0])
         elif key == "dkim":
             found = _resolve(record["name"], "TXT")
             ok = found is not None and any(row.dkim_public and row.dkim_public in t.replace(" ", "") for t in found)
         elif key == "dmarc":
+            txt = _resolve(record["name"], "TXT")
+            found = None if txt is None else [t for t in txt if t.upper().startswith("V=DMARC1")]
+            ok = bool(found) and (not record.get("custom") or any(_squash(t) == _squash(want) for t in found))
+        elif rtype == "TXT":
             found = _resolve(record["name"], "TXT")
-            ok = found is not None and any(t.upper().startswith("V=DMARC1") for t in found)
+            ok = found is not None and any(_squash(t) == _squash(want) for t in found)
+        elif rtype in ("MX", "CNAME"):
+            found = _resolve(record["name"], rtype)
+            ok = found is not None and want.rstrip(".").lower() in found
         else:
-            found = _resolve(record["name"], "A")
-            ok = found is not None and record["value"] in found
+            found = _resolve(record["name"], rtype)
+            ok = found is not None and want in found
         if found is None:
             record["status"] = "unknown"
         elif ok:
@@ -685,6 +850,25 @@ def check_dns(row: MailDomain) -> list[dict]:
             record["status"] = "different" if found else "missing"
         record["found"] = found or []
     return records
+
+
+def dns_view(row: MailDomain, actor: User) -> dict:
+    custom = _dns_custom(row)
+    relay = effective_relay(row)
+    return {
+        "domain": row.domain,
+        "records": check_dns(row),
+        "custom": {"spf": custom.get("spf") or "", "dmarc": custom.get("dmarc") or "",
+                   "records": custom.get("records") or []},
+        "relay": {
+            "choice": row.relay or "",
+            "effective": relay["id"] if relay else "",
+            "effective_name": (relay.get("name") or relay["id"]) if relay else "",
+            # Customers see which relay their mail uses; only an admin picks it.
+            "options": [{"id": r["id"], "name": r.get("name") or r["id"]} for r in _relays()]
+            if _is_admin(actor) else [],
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -738,6 +922,11 @@ def build_state(db: Session) -> dict:
         for forward in row.forwarders:
             state["forwarders"].append({"address": f"{forward.local_part}@{row.domain}",
                                         "to": forward.destination_list})
+    relay_ids = {relay["id"] for relay in _relays()}
+    state["relay_routes"] = {row.domain: row.relay for row in domains
+                             if row.relay == "direct" or row.relay in relay_ids}
+    default_relay = _stored_settings().get("default_relay") or ""
+    state["default_relay"] = default_relay if default_relay in relay_ids else ""
     if by_owner:
         for site in db.query(Website).filter(Website.owner_id.in_(list(by_owner))).all():
             if site.linux_user:
@@ -812,22 +1001,22 @@ def _stored_settings() -> dict:
     return dict(stored) if isinstance(stored, dict) else {}
 
 
+def _store_settings(stored: dict) -> None:
+    addons._update_state(ADDON_ID, settings=stored)
+
+
 def current_settings() -> dict:
-    """The settings as the page shows them: no password, only whether one is set."""
     stored = _stored_settings()
     merged = dict(SETTINGS_DEFAULTS)
     for key in SETTINGS_DEFAULTS:
         if key in stored:
             merged[key] = stored[key]
-    merged["smarthost_password_set"] = bool(stored.get("smarthost_password"))
     return merged
 
 
 def save_settings(payload: dict) -> dict:
     stored = _stored_settings()
-    merged = {key: stored.get(key, default) for key, default in SETTINGS_DEFAULTS.items()}
-    if stored.get("smarthost_password"):
-        merged["smarthost_password"] = stored["smarthost_password"]
+    merged = current_settings()
 
     def whole(key, low, high, label):
         try:
@@ -847,29 +1036,6 @@ def save_settings(payload: dict) -> dict:
             raise ValueError(f"{label} must be between 1 and 100")
         return value
 
-    if "smarthost_enabled" in payload:
-        merged["smarthost_enabled"] = bool(payload["smarthost_enabled"])
-    if "smarthost_host" in payload:
-        host = str(payload["smarthost_host"] or "").strip().lower()
-        if host and not HOST_RE.fullmatch(host):
-            raise ValueError("The relay host must be a hostname such as smtp.example.com")
-        merged["smarthost_host"] = host
-    if "smarthost_port" in payload:
-        merged["smarthost_port"] = whole("smarthost_port", 1, 65535, "The relay port")
-    if "smarthost_username" in payload:
-        username = str(payload["smarthost_username"] or "").strip()
-        if len(username) > 255 or any(ch in username for ch in "\r\n\0"):
-            raise ValueError("The relay username is not valid")
-        merged["smarthost_username"] = username
-        if not username:
-            merged.pop("smarthost_password", None)
-    if payload.get("smarthost_password"):
-        password = str(payload["smarthost_password"])
-        if len(password) > 255 or any(ch in password for ch in "\r\n\0"):
-            raise ValueError("The relay password is not valid")
-        merged["smarthost_password"] = secret_store.encrypt(password)
-    if merged["smarthost_enabled"] and not merged["smarthost_host"]:
-        raise ValueError("Enter the relay host, or turn the relay off")
     if "auth_rate_per_hour" in payload:
         merged["auth_rate_per_hour"] = whole("auth_rate_per_hour", 0, 100000, "The mailbox sending limit")
     if "local_rate_per_hour" in payload:
@@ -886,26 +1052,177 @@ def save_settings(payload: dict) -> dict:
         merged["greylisting"] = bool(payload["greylisting"])
     if "default_quota_mb" in payload:
         merged["default_quota_mb"] = whole("default_quota_mb", 1, MAX_USER_QUOTA_MB, "The default mailbox size")
-    addons._update_state(ADDON_ID, settings=merged)
+    stored.update(merged)
+    # The single relay of the first Email release; relays are a list now.
+    for old in ("smarthost_enabled", "smarthost_host", "smarthost_port", "smarthost_username", "smarthost_password"):
+        stored.pop(old, None)
+    _store_settings(stored)
     if installed():
         apply_settings()
     return current_settings()
 
 
-def helper_settings() -> dict:
-    """What mail-configure receives, with the relay password in clear."""
+# ---------------------------------------------------------------------------
+# Outgoing relays (smarthosts)
+# ---------------------------------------------------------------------------
+RELAY_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+RELAY_TLS = ("starttls", "ssl", "none")
+MAX_RELAYS = 20
+MAX_RELAY_RECORDS = 10
+
+
+def _relays() -> list[dict]:
+    relays = _stored_settings().get("relays")
+    return [dict(r) for r in relays if isinstance(r, dict) and RELAY_ID_RE.fullmatch(str(r.get("id") or ""))] \
+        if isinstance(relays, list) else []
+
+
+def relay_out(relay: dict, db: Optional[Session] = None, default: str = "") -> dict:
+    out = {
+        "id": relay["id"],
+        "name": relay.get("name") or relay["id"],
+        "host": relay.get("host") or "",
+        "port": int(relay.get("port") or 587),
+        "tls": relay.get("tls") or "starttls",
+        "username": relay.get("username") or "",
+        "password_set": bool(relay.get("password")),
+        "spf_include": relay.get("spf_include") or "",
+        "dns_records": list(relay.get("dns_records") or []),
+        "default": relay["id"] == default,
+    }
+    if db is not None:
+        explicit = [row.domain for row in db.query(MailDomain).filter(MailDomain.relay == relay["id"]).all()]
+        out["domains"] = explicit
+    return out
+
+
+def list_relays(db: Session) -> dict:
+    default = _stored_settings().get("default_relay") or ""
+    return {"relays": [relay_out(r, db, default) for r in _relays()], "default_relay": default}
+
+
+def save_relay(db: Session, payload: dict, relay_id: Optional[str] = None) -> dict:
     stored = _stored_settings()
+    relays = _relays()
+    current = next((r for r in relays if r["id"] == relay_id), None) if relay_id else None
+    if relay_id and current is None:
+        raise LookupError("Relay not found")
+    if not relay_id and len(relays) >= MAX_RELAYS:
+        raise ValueError(f"At most {MAX_RELAYS} relays")
+    relay = dict(current or {})
+    name = " ".join(str(payload.get("name") or "").split())
+    if not 1 <= len(name) <= 64:
+        raise ValueError("Give the relay a name (at most 64 characters)")
+    host = str(payload.get("host") or "").strip().lower().rstrip(".")
+    if not HOST_RE.fullmatch(host):
+        raise ValueError("The relay host must be a hostname such as smtp.example.com, or an IPv4 address")
+    try:
+        port = int(payload.get("port") or 587)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("The relay port must be a number") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("The relay port must be between 1 and 65535")
+    tls = str(payload.get("tls") or ("ssl" if port == 465 else "starttls"))
+    if tls not in RELAY_TLS:
+        raise ValueError("TLS must be starttls, ssl or none")
+    username = str(payload.get("username") or "").strip()
+    if len(username) > 255 or any(ch in username for ch in "\r\n\0"):
+        raise ValueError("The relay username is not valid")
+    relay.update(name=name, host=host, port=port, tls=tls, username=username,
+                 spf_include=normalize_spf_include(payload.get("spf_include") or ""))
+    records = payload.get("dns_records") or []
+    if not isinstance(records, list) or len(records) > MAX_RELAY_RECORDS:
+        raise ValueError(f"At most {MAX_RELAY_RECORDS} DNS records for a relay")
+    relay["dns_records"] = [normalize_dns_record(item, template=True) for item in records]
+    password = payload.get("password")
+    if not username:
+        relay.pop("password", None)
+    elif password:
+        password = str(password)
+        if len(password) > 255 or any(ch in password for ch in "\r\n\0"):
+            raise ValueError("The relay password is not valid")
+        relay["password"] = secret_store.encrypt(password)
+    elif not relay.get("password"):
+        raise ValueError("Enter the relay password, or leave the username empty for a relay without a login")
+    # Exim finds a relay's login by its host, so one host carries one login.
+    if username and any(r["host"] == host and r.get("username") and r["id"] != relay.get("id") for r in relays):
+        raise ValueError(f"Another relay already logs in to {host}")
+    if not relay.get("id"):
+        relay["id"] = "r" + secrets.token_hex(4)
+        relays.append(relay)
+    else:
+        relays = [relay if r["id"] == relay["id"] else r for r in relays]
+    stored["relays"] = relays
+    if payload.get("make_default"):
+        stored["default_relay"] = relay["id"]
+    _store_settings(stored)
+    _apply_relays(db)
+    return relay_out(relay, db, stored.get("default_relay") or "")
+
+
+def delete_relay(db: Session, relay_id: str) -> str:
+    stored = _stored_settings()
+    relays = _relays()
+    relay = next((r for r in relays if r["id"] == relay_id), None)
+    if relay is None:
+        raise LookupError("Relay not found")
+    stored["relays"] = [r for r in relays if r["id"] != relay_id]
+    if stored.get("default_relay") == relay_id:
+        stored["default_relay"] = ""
+    # Domains that used it follow the default again.
+    for row in db.query(MailDomain).filter(MailDomain.relay == relay_id).all():
+        row.relay = ""
+    db.commit()
+    _store_settings(stored)
+    _apply_relays(db)
+    return relay.get("name") or relay_id
+
+
+def set_default_relay(db: Session, relay_id: str) -> str:
+    relay_id = relay_id or ""
+    if relay_id and relay_id not in {r["id"] for r in _relays()}:
+        raise LookupError("Relay not found")
+    stored = _stored_settings()
+    stored["default_relay"] = relay_id
+    _store_settings(stored)
+    sync(db)
+    return relay_id
+
+
+def set_domain_relay(db: Session, actor: User, domain_id: int, choice: str) -> MailDomain:
+    if not _is_admin(actor):
+        raise PermissionError("Only an administrator chooses the relay a domain sends through")
+    row = get_domain(db, actor, domain_id)
+    choice = choice or ""
+    if choice not in ("", "direct") and choice not in {r["id"] for r in _relays()}:
+        raise LookupError("Relay not found")
+    row.relay = choice
+    db.commit()
+    sync(db)
+    return row
+
+
+def _apply_relays(db: Session) -> None:
+    if installed():
+        apply_settings()
+        sync(db)
+
+
+def helper_settings() -> dict:
+    """What mail-configure receives, relay passwords in clear."""
     values = current_settings()
-    relay = None
-    if values["smarthost_enabled"] and values["smarthost_host"]:
-        relay = {
-            "host": values["smarthost_host"],
-            "port": int(values["smarthost_port"]),
-            "username": values["smarthost_username"],
-            "password": secret_store.decrypt(stored.get("smarthost_password")) if values["smarthost_username"] else "",
-        }
+    relays = []
+    for relay in _relays():
+        relays.append({
+            "id": relay["id"],
+            "host": relay.get("host") or "",
+            "port": int(relay.get("port") or 587),
+            "tls": relay.get("tls") or "starttls",
+            "username": relay.get("username") or "",
+            "password": secret_store.decrypt(relay.get("password")) if relay.get("username") else "",
+        })
     return {
-        "smarthost": relay,
+        "relays": relays,
         "auth_rate_per_hour": int(values["auth_rate_per_hour"]),
         "local_rate_per_hour": int(values["local_rate_per_hour"]),
         "max_message_mb": int(values["max_message_mb"]),
@@ -922,10 +1239,24 @@ def apply_settings() -> None:
         raise RuntimeError(f"Saved, but the mail server did not take the settings: {detail}")
 
 
-def mail_log(lines: int = 100) -> str:
-    count = max(1, min(int(lines or 100), 1000))
-    result = shell.privileged("mail-log", helper_args=[str(count)], check=False)
-    return (result.stdout or "").strip() if result.returncode == 0 else (result.stderr or "").strip()
+# ---------------------------------------------------------------------------
+# Logs, queue and Rspamd (administrators)
+# ---------------------------------------------------------------------------
+def _filter_lines(text: str, q: str, limit: int) -> list[str]:
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    term = (q or "").strip().lower()
+    if term:
+        lines = [line for line in lines if term in line.lower()]
+    return lines[-limit:]
+
+
+def mail_log(lines: int = 200, q: str = "") -> list[str]:
+    require_installed()
+    count = max(1, min(int(lines or 200), 5000))
+    # A filter looks further back than the lines it shows.
+    fetch = 5000 if q else count
+    result = shell.privileged("mail-log", helper_args=[str(fetch)], check=False)
+    return _filter_lines(result.stdout if result.returncode == 0 else "", q, count)
 
 
 def queue_size() -> Optional[int]:
@@ -934,3 +1265,87 @@ def queue_size() -> Optional[int]:
     result = shell.privileged("mail-queue", check=False)
     text = (result.stdout or "").strip()
     return int(text) if result.returncode == 0 and text.isdigit() else None
+
+
+def _rspamd(command: str) -> dict:
+    require_installed()
+    result = shell.privileged("mail-rspamd", helper_args=[command], check=False)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "Rspamd did not answer").strip()
+                           .replace("opanel-helper: ", ""))
+    try:
+        data = json.loads(result.stdout or "{}")
+    except ValueError as exc:
+        raise RuntimeError("Rspamd answered with something that is not JSON") from exc
+    return data if isinstance(data, dict) else {}
+
+
+def rspamd_stat() -> dict:
+    data = _rspamd("stat")
+    actions = data.get("actions") if isinstance(data.get("actions"), dict) else {}
+    return {
+        "scanned": int(data.get("scanned") or 0),
+        "spam": int(data.get("spam_count") or 0),
+        "ham": int(data.get("ham_count") or 0),
+        "learned": int(data.get("learned") or 0),
+        "connections": int(data.get("connections") or 0),
+        "uptime": int(data.get("uptime") or 0),
+        "version": str(data.get("version") or ""),
+        "actions": {str(k): int(v or 0) for k, v in actions.items()},
+    }
+
+
+def _history_row(row: dict) -> dict:
+    def first(*keys):
+        for key in keys:
+            value = row.get(key)
+            if value:
+                return value
+        return ""
+
+    rcpt = first("rcpt_mime", "rcpt_smtp") or []
+    if isinstance(rcpt, str):
+        rcpt = [rcpt]
+    symbols = row.get("symbols") if isinstance(row.get("symbols"), dict) else {}
+    ranked = sorted(((name, float((info or {}).get("score") or 0)) for name, info in symbols.items()),
+                    key=lambda item: -abs(item[1]))
+    stamp = row.get("unix_time") or 0
+    try:
+        when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(stamp)))
+    except (TypeError, ValueError, OverflowError):
+        when = ""
+    return {
+        "time": when,
+        "ip": str(row.get("ip") or ""),
+        "from": str(first("sender_mime", "sender_smtp")),
+        "to": [str(item) for item in rcpt][:10],
+        "subject": str(row.get("subject") or ""),
+        "score": round(float(row.get("score") or 0), 2),
+        "required": round(float(row.get("required_score") or 0), 2),
+        "action": str(row.get("action") or ""),
+        "symbols": [{"name": name, "score": round(value, 2)} for name, value in ranked[:15]],
+        "size": int(row.get("size") or 0),
+        "user": str(row.get("user") or ""),
+        "message_id": str(row.get("message-id") or ""),
+    }
+
+
+def rspamd_history(page: int = 1, per_page: int = 50, q: str = "", action: str = "") -> dict:
+    rows = [_history_row(r) for r in (_rspamd("history").get("rows") or []) if isinstance(r, dict)]
+    term = (q or "").strip().lower()
+    if term:
+        rows = [r for r in rows if term in " ".join([r["from"], " ".join(r["to"]), r["subject"], r["ip"],
+                                                     r["message_id"]]).lower()]
+    if action:
+        rows = [r for r in rows if r["action"] == action]
+    page, per_page = max(1, int(page or 1)), max(1, min(int(per_page or 50), 200))
+    return {"items": rows[(page - 1) * per_page: page * per_page], "total": len(rows), "page": page,
+            "per_page": per_page}
+
+
+def rspamd_log(lines: int = 300, q: str = "") -> list[str]:
+    require_installed()
+    count = max(1, min(int(lines or 300), 5000))
+    fetch = 5000 if q else count
+    result = shell.privileged("mail-rspamd", helper_args=["log", str(fetch)], check=False)
+    return _filter_lines(result.stdout if result.returncode == 0 else "", q, count)

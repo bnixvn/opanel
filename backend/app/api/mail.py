@@ -71,13 +71,41 @@ class ForwarderUpdate(BaseModel):
     destinations: list[str] = Field(min_length=1, max_length=mail.MAX_DESTINATIONS)
 
 
+class DnsRecordIn(BaseModel):
+    type: str = Field(min_length=1, max_length=8)
+    name: str = Field(default="@", max_length=253)
+    value: str = Field(min_length=1, max_length=2048)
+    priority: Optional[int] = Field(default=None, ge=0, le=65535)
+
+
+class DomainDnsIn(BaseModel):
+    spf: str = Field(default="", max_length=450)
+    dmarc: str = Field(default="", max_length=450)
+    records: list[DnsRecordIn] = Field(default_factory=list, max_length=mail.MAX_CUSTOM_RECORDS)
+
+
+class DomainRelayIn(BaseModel):
+    relay: str = Field(default="", max_length=40)
+
+
+class RelayIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=587, ge=1, le=65535)
+    tls: Optional[str] = Field(default=None, max_length=10)
+    username: str = Field(default="", max_length=255)
+    # Empty keeps the stored one.
+    password: str = Field(default="", max_length=255)
+    spf_include: str = Field(default="", max_length=200)
+    dns_records: list[DnsRecordIn] = Field(default_factory=list, max_length=mail.MAX_RELAY_RECORDS)
+    make_default: bool = False
+
+
+class DefaultRelayIn(BaseModel):
+    relay_id: str = Field(default="", max_length=40)
+
+
 class MailSettingsIn(BaseModel):
-    smarthost_enabled: Optional[bool] = None
-    smarthost_host: Optional[str] = Field(default=None, max_length=253)
-    smarthost_port: Optional[int] = Field(default=None, ge=1, le=65535)
-    smarthost_username: Optional[str] = Field(default=None, max_length=255)
-    # Empty or missing keeps the stored one.
-    smarthost_password: Optional[str] = Field(default=None, max_length=255)
     auth_rate_per_hour: Optional[int] = Field(default=None, ge=0, le=100000)
     local_rate_per_hour: Optional[int] = Field(default=None, ge=0, le=100000)
     max_message_mb: Optional[int] = Field(default=None, ge=1, le=200)
@@ -126,7 +154,24 @@ def delete_domain(domain_id: int, request: Request, confirm: str = "", db: Sessi
 @router.get("/domains/{domain_id}/dns")
 def get_domain_dns(domain_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     row = _call(mail.get_domain, db, current_user, domain_id)
-    return {"domain": row.domain, "records": mail.check_dns(row)}
+    return mail.dns_view(row, current_user)
+
+
+@router.put("/domains/{domain_id}/dns")
+def put_domain_dns(domain_id: int, payload: DomainDnsIn, request: Request, db: Session = Depends(get_db),
+                   current_user: User = Depends(get_current_user)):
+    row = _call(mail.set_dns_custom, db, current_user, domain_id, payload.model_dump())
+    log_action(db, current_user.id, "mail_dns_custom", row.domain, f"{len(payload.records)} extra records",
+               request=request)
+    return mail.dns_view(row, current_user)
+
+
+@router.put("/domains/{domain_id}/relay")
+def put_domain_relay(domain_id: int, payload: DomainRelayIn, request: Request, db: Session = Depends(get_db),
+                     current_user: User = Depends(get_current_user)):
+    row = _call(mail.set_domain_relay, db, current_user, domain_id, payload.relay)
+    log_action(db, current_user.id, "mail_domain_relay", row.domain, row.relay or "default", request=request)
+    return mail.dns_view(row, current_user)
 
 
 @router.post("/domains/{domain_id}/dkim/rotate")
@@ -244,12 +289,80 @@ def put_settings(payload: MailSettingsIn, request: Request, db: Session = Depend
     ensure_role(current_user.role, Role.admin)
     values = {key: value for key, value in payload.model_dump().items() if value is not None}
     result = _call(mail.save_settings, values)
-    log_action(db, current_user.id, "mail_settings",
-               "relay " + (result["smarthost_host"] if result["smarthost_enabled"] else "off"), request=request)
+    log_action(db, current_user.id, "mail_settings", ", ".join(sorted(values)), request=request)
     return {"settings": result}
 
 
-@router.get("/log")
-def get_log(lines: int = 100, current_user: User = Depends(get_current_user)):
+# ---------------------------------------------------------------------------
+# Outgoing relays (administrators)
+# ---------------------------------------------------------------------------
+@router.get("/relays")
+def get_relays(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
-    return {"log": mail.mail_log(lines)}
+    return mail.list_relays(db)
+
+
+@router.post("/relays")
+def post_relay(payload: RelayIn, request: Request, db: Session = Depends(get_db),
+               current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    relay = _call(mail.save_relay, db, payload.model_dump())
+    log_action(db, current_user.id, "mail_relay_add", relay["name"], "%s:%s" % (relay["host"], relay["port"]),
+               request=request)
+    return mail.list_relays(db)
+
+
+@router.put("/relays/{relay_id}")
+def put_relay(relay_id: str, payload: RelayIn, request: Request, db: Session = Depends(get_db),
+              current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    relay = _call(mail.save_relay, db, payload.model_dump(), relay_id)
+    log_action(db, current_user.id, "mail_relay_update", relay["name"], "%s:%s" % (relay["host"], relay["port"]),
+               request=request)
+    return mail.list_relays(db)
+
+
+@router.delete("/relays/{relay_id}")
+def delete_relay(relay_id: str, request: Request, db: Session = Depends(get_db),
+                 current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    name = _call(mail.delete_relay, db, relay_id)
+    log_action(db, current_user.id, "mail_relay_delete", name, request=request)
+    return mail.list_relays(db)
+
+
+@router.put("/default-relay")
+def put_default_relay(payload: DefaultRelayIn, request: Request, db: Session = Depends(get_db),
+                      current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    relay_id = _call(mail.set_default_relay, db, payload.relay_id)
+    log_action(db, current_user.id, "mail_default_relay", relay_id or "none", request=request)
+    return mail.list_relays(db)
+
+
+# ---------------------------------------------------------------------------
+# Logs, queue and Rspamd (administrators)
+# ---------------------------------------------------------------------------
+@router.get("/log")
+def get_log(lines: int = 200, q: str = "", current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    return {"lines": _call(mail.mail_log, lines, q), "queue": mail.queue_size()}
+
+
+@router.get("/rspamd/stat")
+def get_rspamd_stat(current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    return _call(mail.rspamd_stat)
+
+
+@router.get("/rspamd/history")
+def get_rspamd_history(page: int = 1, per_page: int = 50, q: str = "", action: str = "",
+                       current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    return _call(mail.rspamd_history, page, per_page, q, action)
+
+
+@router.get("/rspamd/log")
+def get_rspamd_log(lines: int = 300, q: str = "", current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    return {"lines": _call(mail.rspamd_log, lines, q)}

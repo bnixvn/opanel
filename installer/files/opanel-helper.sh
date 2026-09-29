@@ -4360,10 +4360,11 @@ mail_ensure_layout() {
     --no-create-home --shell /usr/sbin/nologin vmail
   install -d -o vmail -g vmail -m 0770 "$MAIL_VMAIL_DIR"
   install -d -o root -g root -m 0755 "$MAIL_DIR" "${MAIL_DIR}/sieve"
-  install -d -o root -g Debian-exim -m 0750 "${MAIL_DIR}/dkim"
+  install -d -o root -g Debian-exim -m 0750 "${MAIL_DIR}/dkim" "${MAIL_DIR}/relay"
   local name
   # Exim's maps: addresses and domains, readable by the Exim user only.
-  for name in domains mailboxes aliases catchall senders local_senders dkim_domains; do
+  for name in domains mailboxes aliases catchall senders local_senders dkim_domains \
+      relay_routes relay_hosts relay_transports relay_auth; do
     [[ -f "${MAIL_DIR}/${name}" ]] || : | mail_write_file "${MAIL_DIR}/${name}" root:Debian-exim 0640
   done
   # Dovecot's: password hashes, readable by the Dovecot auth process only.
@@ -4441,17 +4442,10 @@ auth_rate = whole(raw.get("auth_rate_per_hour"), 0, 100000, 300)
 local_rate = whole(raw.get("local_rate_per_hour"), 0, 100000, 300)
 max_mb = whole(raw.get("max_message_mb"), 1, 200, 50)
 
-host_re = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
-ipv4_re = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
-relay = raw.get("smarthost") if isinstance(raw.get("smarthost"), dict) else None
-relay_host = str((relay or {}).get("host") or "").strip().lower()
-if relay and (host_re.fullmatch(relay_host) or ipv4_re.fullmatch(relay_host)):
-    relay_port = whole(relay.get("port"), 1, 65535, 587)
-    relay_auth = bool(str(relay.get("username") or ""))
-else:
-    relay = None
-
 M = mail_dir
+# The domain a message is sent for: the one it is DKIM-signed for, else the
+# envelope sender's. Outgoing relays are chosen by it.
+SEND_DOMAIN = "${if def:acl_m_dkim{$acl_m_dkim}{${lc:$sender_address_domain}}}"
 conf = f"""# Managed by OPanel (Email addon). Rewritten whenever the mail settings
 # change -- edit them in the panel, not here.
 primary_hostname = {host}
@@ -4590,20 +4584,22 @@ conf += f"""  warn    condition     = ${{if inlisti{{${{lc:${{domain:$h_from:}}}
 
 begin routers
 """
-if relay:
-    transport = "remote_smtps_relay" if relay_port == 465 else "remote_smtp_relay"
-    conf += f"""
+conf += f"""
+# Outgoing relays (smarthosts). relay_routes maps a sending domain to a relay
+# id, "*" to the server's default relay and "direct" to delivery without one;
+# relay_hosts and relay_transports say where each relay is and how to talk to
+# it. With no route the message goes out directly (dnslookup).
 relay:
   driver = manualroute
   domains = ! +local_domains : ! +virtual_domains
-  transport = {transport}
-  route_list = * {relay_host}::{relay_port} byname
+  condition = ${{if !eq{{${{lookup{{{SEND_DOMAIN}}}lsearch*{{{M}/relay_routes}}{{$value}}{{direct}}}}}}{{direct}}}}
+  address_data = ${{lookup{{{SEND_DOMAIN}}}lsearch*{{{M}/relay_routes}}}}
+  route_data = ${{lookup{{$address_data}}lsearch{{{M}/relay_hosts}}}}
+  transport = ${{lookup{{$address_data}}lsearch{{{M}/relay_transports}}{{$value}}{{remote_smtp_relay}}}}
   host_find_failed = defer
   same_domain_copy_routing = yes
   no_more
-"""
-else:
-    conf += """
+
 dnslookup:
   driver = dnslookup
   domains = ! +local_domains : ! +virtual_domains
@@ -4664,17 +4660,20 @@ remote_smtp:
   dkim_canon = relaxed
   dkim_strict = false
 """
-if relay:
-    for name, smtps in (("remote_smtp_relay", False), ("remote_smtps_relay", True)):
-        conf += f"""
+# One transport per way of reaching a relay. A relay with a login is listed
+# in relay_auth by host, which is what makes Exim authenticate to it.
+relay_modes = (
+    ("remote_smtp_relay", "  hosts_require_tls = *\n  tls_verify_certificates = system\n  tls_verify_hosts = *\n"),
+    ("remote_smtps_relay", "  protocol = smtps\n  hosts_require_tls = *\n  tls_verify_certificates = system\n  tls_verify_hosts = *\n"),
+    ("remote_smtp_relay_plain", ""),
+)
+for name, tls in relay_modes:
+    conf += f"""
 {name}:
   driver = smtp
   helo_data = {host}
-  port = {relay_port}
-{"  protocol = smtps" + chr(10) if smtps else ""}  hosts_require_tls = *
-  tls_verify_certificates = system
-  tls_verify_hosts = *
-{"  hosts_require_auth = *" + chr(10) if relay_auth else ""}  dkim_domain = ${{lookup{{$acl_m_dkim}}lsearch{{{M}/dkim_domains}}{{$value}}{{}}}}
+{tls}  hosts_require_auth = ${{lookup{{$host}}lsearch{{{M}/relay_auth}}{{*}}{{}}}}
+  dkim_domain = ${{lookup{{$acl_m_dkim}}lsearch{{{M}/dkim_domains}}{{$value}}{{}}}}
   dkim_selector = opanel
   dkim_private_key = ${{lookup{{$acl_m_dkim}}lsearch{{{M}/dkim_domains}}{{{M}/dkim/$value.key}}{{0}}}}
   dkim_canon = relaxed
@@ -4719,12 +4718,20 @@ dovecot_login:
   server_set_id = $auth1
   server_advertise_condition = ${{if or{{{{def:tls_in_cipher}}{{match_ip{{$sender_host_address}}{{<; 127.0.0.1 ; ::1}}}}}}}}
 """
-if relay and relay_auth:
-    conf += f"""
+# Relay logins, read per relay from /etc/opanel-mail/relay/<id>.user|.pass.
+# PLAIN first; LOGIN for relays that offer only that (Office 365).
+user_part = f"${{sg{{${{readfile{{{M}/relay/${{lookup{{$host}}lsearch{{{M}/relay_auth}}{{$value}}{{none}}}}.user}}{{}}}}}}{{\\\\^}}{{^^}}}}"
+pass_part = f"${{sg{{${{readfile{{{M}/relay/${{lookup{{$host}}lsearch{{{M}/relay_auth}}{{$value}}{{none}}}}.pass}}{{}}}}}}{{\\\\^}}{{^^}}}}"
+conf += f"""
 relay_plain:
   driver = plaintext
   public_name = PLAIN
-  client_send = ^${{sg{{${{readfile{{{M}/relay.user}}{{}}}}}}{{\\\\^}}{{^^}}}}^${{sg{{${{readfile{{{M}/relay.pass}}{{}}}}}}{{\\\\^}}{{^^}}}}
+  client_send = ^{user_part}^{pass_part}
+
+relay_login:
+  driver = plaintext
+  public_name = LOGIN
+  client_send = : {user_part} : {pass_part}
 """
 Path(out_path).write_text(conf, encoding="utf-8")
 PY
@@ -4737,35 +4744,90 @@ PY
 }
 
 mail_write_relay_credentials() {
-  # The relay login, for relay_plain. Stored as two files Exim reads with
-  # readfile, so no character in a password can break the configuration.
+  # The relays from settings.json: where each is (relay_hosts), how Exim talks
+  # to it (relay_transports), which hosts need a login (relay_auth) and the
+  # logins themselves, one pair of files per relay so that no character in a
+  # password can break the configuration. Which domain uses which relay is
+  # mail-sync's (relay_routes).
   python3 - "$MAIL_SETTINGS_FILE" "$MAIL_DIR" <<'PY'
 import grp
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 settings_path, mail_dir = sys.argv[1:3]
+mail_dir = Path(mail_dir)
 try:
     raw = json.loads(Path(settings_path).read_text(encoding="utf-8"))
 except Exception:
     raw = {}
-relay = raw.get("smarthost") if isinstance(raw, dict) and isinstance(raw.get("smarthost"), dict) else {}
+relays = raw.get("relays") if isinstance(raw, dict) and isinstance(raw.get("relays"), list) else []
+
+ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+HOST = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$|^(?:\d{1,3}\.){3}\d{1,3}$")
+TRANSPORT = {"starttls": "remote_smtp_relay", "ssl": "remote_smtps_relay", "none": "remote_smtp_relay_plain"}
 gid = grp.getgrnam("Debian-exim").gr_gid
-for name, value in (("relay.user", relay.get("username")), ("relay.pass", relay.get("password"))):
-    path = Path(mail_dir) / name
+
+
+def clean(value):
     value = str(value or "")
-    if not value or any(ch in value for ch in "\r\n\0"):
-        path.unlink(missing_ok=True)
-        continue
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+    return "" if any(ch in value for ch in "\r\n\0") or len(value) > 255 else value
+
+
+def write(path, text, mode=0o640):
+    tmp = path.with_name(f".{path.name}.tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(value)
+        handle.write(text)
     os.chown(tmp, 0, gid)
-    os.chmod(tmp, 0o640)
+    os.chmod(tmp, mode)
     tmp.replace(path)
+
+
+hosts, transports, auth = [], [], []
+logins = {}
+seen_auth_hosts = set()
+for relay in relays:
+    if not isinstance(relay, dict):
+        continue
+    rid = str(relay.get("id") or "")
+    host = str(relay.get("host") or "").strip().lower()
+    try:
+        port = int(relay.get("port") or 587)
+    except (TypeError, ValueError):
+        port = 0
+    tls = str(relay.get("tls") or "starttls")
+    if not ID.fullmatch(rid) or not HOST.fullmatch(host) or not 1 <= port <= 65535 or tls not in TRANSPORT:
+        sys.exit(f"opanel-helper: invalid relay {rid or host!r}")
+    hosts.append(f"{rid}: {host}::{port} byname")
+    transports.append(f"{rid}: {TRANSPORT[tls]}")
+    user, password = clean(relay.get("username")), clean(relay.get("password"))
+    if user:
+        if host in seen_auth_hosts:
+            sys.exit(f"opanel-helper: two relays with a login on {host}")
+        seen_auth_hosts.add(host)
+        auth.append(f"{host}: {rid}")
+        logins[rid] = (user, password)
+
+relay_dir = mail_dir / "relay"
+relay_dir.mkdir(mode=0o750, exist_ok=True)
+os.chown(relay_dir, 0, gid)
+os.chmod(relay_dir, 0o750)
+for rid, (user, password) in logins.items():
+    write(relay_dir / f"{rid}.user", user)
+    write(relay_dir / f"{rid}.pass", password)
+for stale in relay_dir.iterdir():
+    if stale.suffix in (".user", ".pass") and stale.stem not in logins:
+        stale.unlink()
+write(mail_dir / "relay_hosts", "".join(line + "\n" for line in hosts))
+write(mail_dir / "relay_transports", "".join(line + "\n" for line in transports))
+write(mail_dir / "relay_auth", "".join(line + "\n" for line in auth))
+# The single-relay files of the first Email release.
+for old in ("relay.user", "relay.pass"):
+    (mail_dir / old).unlink(missing_ok=True)
+print(f"{len(hosts)} relays written")
 PY
 }
 
@@ -5003,8 +5065,9 @@ RSPAMD
 enabled = false;
 RSPAMD
   mail_write_file /etc/rspamd/local.d/logging.inc root:root 0644 <<'RSPAMD'
-# Managed by OPanel (Email addon).
-level = "warning";
+# Managed by OPanel (Email addon). "notice" logs one line per scanned
+# message, which the Rspamd page of the panel reads.
+level = "notice";
 RSPAMD
   mail_write_file /etc/rspamd/local.d/options.inc root:root 0644 <<RSPAMD
 # Managed by OPanel (Email addon): DNS blocklists need a resolver of our own.
@@ -5397,6 +5460,19 @@ for key, values in (data.get("local_senders") or {}).items():
 
 dkim = [d for d in domains if (mail_dir / "dkim" / f"{d}.key").is_file()]
 
+RELAY_ID = re.compile(r"^(?:direct|[a-z0-9][a-z0-9-]{0,31})$")
+routes = []
+for name, value in (data.get("relay_routes") or {}).items():
+    name, value = str(name).lower(), str(value or "")
+    if name not in domain_set or not RELAY_ID.fullmatch(value):
+        fail(f"invalid relay route {name!r}: {value!r}")
+    routes.append(f"{name}: {value}")
+default_relay = str(data.get("default_relay") or "")
+if default_relay:
+    if not RELAY_ID.fullmatch(default_relay) or default_relay == "direct":
+        fail(f"invalid default relay {default_relay!r}")
+    routes.append(f"*: {default_relay}")
+
 exim_gid = grp.getgrnam("Debian-exim").gr_gid
 dovecot_gid = grp.getgrnam("dovecot").gr_gid
 
@@ -5419,6 +5495,7 @@ write("catchall", [f"{d}: {t}" for d, t in sorted(catchall.items())], exim_gid)
 write("senders", [f"{a}: {' : '.join(d)}" for a, d in sorted(senders.items()) if d], exim_gid)
 write("local_senders", [f"{u}: {' : '.join(d)}" for u, d in sorted(local_senders.items()) if d], exim_gid)
 write("dkim_domains", [f"{d}: {d}" for d in dkim], exim_gid)
+write("relay_routes", sorted(routes), exim_gid)
 previously_denied = set()
 try:
     previously_denied = {line.split(":", 1)[0] for line in (mail_dir / "denied").read_text(encoding="utf-8").splitlines() if line}
@@ -6656,6 +6733,34 @@ case "$cmd" in
     count="${1:-100}"
     [[ "$count" =~ ^[0-9]{1,4}$ ]] || count=100
     tail -n "$count" /var/log/exim4/mainlog 2>/dev/null || true
+    ;;
+
+  mail-rspamd)
+    # Read-only views of Rspamd for the panel: its controller's statistics
+    # and scan history (loopback, no password needed), and its log.
+    require_mail_installed
+    case "${1:-}" in
+      stat|history)
+        [[ $# -eq 1 ]] || deny "usage: mail-rspamd stat|history|log [lines]"
+        python3 - "$1" <<'PY'
+import sys
+import urllib.request
+
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:11334/{sys.argv[1]}", timeout=15) as res:
+        sys.stdout.write(res.read().decode("utf-8", "replace"))
+except Exception as exc:
+    sys.exit(f"opanel-helper: Rspamd did not answer: {exc}")
+PY
+        ;;
+      log)
+        [[ $# -le 2 ]] || deny "usage: mail-rspamd log [lines]"
+        count="${2:-300}"
+        [[ "$count" =~ ^[0-9]{1,5}$ ]] || count=300
+        tail -n "$count" /var/log/rspamd/rspamd.log 2>/dev/null || true
+        ;;
+      *) deny "usage: mail-rspamd stat|history|log [lines]" ;;
+    esac
     ;;
 
   mail-queue)

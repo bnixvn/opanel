@@ -13,7 +13,7 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye, Mail, Inbox, Forward } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye, Mail, Inbox, Forward, Send } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
 import './style.css';
@@ -602,6 +602,17 @@ function App() {
   const [catchAllDraft, setCatchAllDraft] = useState({});
   const [mailSettings, setMailSettings] = useState(null);
   const [mailSettingsForm, setMailSettingsForm] = useState(null);
+  const [mailRelays, setMailRelays] = useState(null);
+  const [relayForm, setRelayForm] = useState(null);
+  const [dnsCustomForm, setDnsCustomForm] = useState(null);
+  const [rspamdView, setRspamdView] = useState('history');
+  const [rspamdStat, setRspamdStat] = useState(null);
+  const [rspamdHistory, setRspamdHistory] = useState(null);
+  const [rspamdFilter, setRspamdFilter] = useState({ q: '', action: '', page: 1 });
+  const [rspamdLog, setRspamdLog] = useState(null);
+  const [rspamdLogQuery, setRspamdLogQuery] = useState({ lines: 500, q: '' });
+  const [eximLog, setEximLog] = useState(null);
+  const [eximLogQuery, setEximLogQuery] = useState({ lines: 500, q: '' });
   const [notifySettings, setNotifySettings] = useState(null);
   const [notifyForm, setNotifyForm] = useState(null);
   const [notifyPrefs, setNotifyPrefs] = useState(null);
@@ -1505,12 +1516,6 @@ function App() {
     }
   }
 
-  async function openMailDns(domain) {
-    setMailDns({ domain, records: null });
-    const data = await request(`/mail/domains/${domain.id}/dns`, { silent: true }, '');
-    setMailDns({ domain, records: data?.records || [] });
-  }
-
   async function rotateMailDkim(domain) {
     if (!confirm(tr("Make a new DKIM key for {0}?\n\nMail is signed with the new key at once, so update the DKIM record in DNS right away: until you do, receivers cannot verify the signature.", domain.domain))) return;
     const data = await request(`/mail/domains/${domain.id}/dkim/rotate`, { method: 'POST' }, tr("Creating a new key..."));
@@ -1598,9 +1603,112 @@ function App() {
     if (data) { setNotice(tr("{0} deleted.", item.address)); loadForwarders(); loadMailInfo(); }
   }
 
+  function applyMailDnsView(domain, data) {
+    const custom = data?.custom || {};
+    setMailDns({ domain, records: data?.records || [], relay: data?.relay || null });
+    setDnsCustomForm({
+      spf: custom.spf || '',
+      dmarc: custom.dmarc || '',
+      records: (custom.records || []).map(r => ({ ...r, priority: r.priority ?? '' })),
+    });
+  }
+
+  async function openMailDns(domain) {
+    setMailDns({ domain, records: null, relay: null });
+    const data = await request(`/mail/domains/${domain.id}/dns`, { silent: true }, '');
+    applyMailDnsView(domain, data);
+  }
+
+  function dnsRecordsBody(rows) {
+    return rows
+      .filter(r => String(r.value || '').trim())
+      .map(r => ({
+        type: r.type,
+        name: String(r.name || '@').trim() || '@',
+        value: String(r.value).trim(),
+        ...(r.type === 'MX' && String(r.priority ?? '').trim() !== '' ? { priority: Number(r.priority) } : {}),
+      }));
+  }
+
+  async function saveDnsCustom() {
+    const f = dnsCustomForm;
+    const body = { spf: f.spf.trim(), dmarc: f.dmarc.trim(), records: dnsRecordsBody(f.records) };
+    const data = await request(`/mail/domains/${mailDns.domain.id}/dns`, { method: 'PUT', body: JSON.stringify(body) }, tr("Saving..."));
+    if (data) { setNotice(tr("Saved. Publish the records at the DNS provider of {0}.", mailDns.domain.domain)); applyMailDnsView(mailDns.domain, data); }
+  }
+
+  async function saveDomainRelay(value) {
+    const data = await request(`/mail/domains/${mailDns.domain.id}/relay`, { method: 'PUT', body: JSON.stringify({ relay: value }) }, tr("Saving..."));
+    if (data) { setNotice(tr("Outgoing mail for {0} saved.", mailDns.domain.domain)); applyMailDnsView(mailDns.domain, data); }
+  }
+
+  // --- Email: relays (administrators) ---
+  async function loadMailRelays() {
+    const data = await request('/mail/relays', {}, '');
+    if (data) setMailRelays(data);
+  }
+
+  function editRelay(relay) {
+    setRelayForm(relay
+      ? { ...relay, password: '', dns_records: (relay.dns_records || []).map(r => ({ ...r, priority: r.priority ?? '' })), make_default: false }
+      : { name: '', host: '', port: 587, tls: 'starttls', username: '', password: '', spf_include: '', dns_records: [],
+          make_default: !(mailRelays?.relays || []).length });
+  }
+
+  async function saveRelay() {
+    const f = relayForm;
+    const body = {
+      name: f.name.trim(), host: f.host.trim(), port: Number(f.port) || 587, tls: f.tls,
+      username: f.username.trim(), password: f.password, spf_include: f.spf_include.trim(),
+      dns_records: dnsRecordsBody(f.dns_records), make_default: !!f.make_default,
+    };
+    const data = await request(f.id ? `/mail/relays/${f.id}` : '/mail/relays', { method: f.id ? 'PUT' : 'POST', body: JSON.stringify(body) }, tr("Saving relay..."));
+    if (data) { setMailRelays(data); setRelayForm(null); setNotice(tr("Relay saved. Domains that use it need its DNS records.")); }
+  }
+
+  async function deleteRelay(relay) {
+    if (!confirm(tr("Delete the relay {0}?\n\nDomains that use it go back to the default relay.", relay.name))) return;
+    const data = await request(`/mail/relays/${relay.id}`, { method: 'DELETE' }, tr("Deleting..."));
+    if (data) { setMailRelays(data); setNotice(tr("{0} deleted.", relay.name)); }
+  }
+
+  async function setDefaultRelay(relayId) {
+    const data = await request('/mail/default-relay', { method: 'PUT', body: JSON.stringify({ relay_id: relayId }) }, tr("Saving..."));
+    if (data) { setMailRelays(data); setNotice(relayId ? tr("Default relay saved.") : tr("Mail now leaves directly, except for domains with a relay of their own.")); }
+  }
+
+  // --- Email: Rspamd and logs (administrators) ---
+  async function loadRspamdStat() {
+    const data = await request('/mail/rspamd/stat', {}, '');
+    setRspamdStat(data || null);
+  }
+
+  async function loadRspamdHistory(page = rspamdFilter.page, action = rspamdFilter.action) {
+    const params = new URLSearchParams({ page: String(page), per_page: '50' });
+    if (rspamdFilter.q.trim()) params.set('q', rspamdFilter.q.trim());
+    if (action) params.set('action', action);
+    const data = await request(`/mail/rspamd/history?${params}`, {}, '');
+    setRspamdHistory(data || { items: [], total: 0, page: 1, per_page: 50 });
+    setRspamdFilter(prev => ({ ...prev, page, action }));
+  }
+
+  async function loadRspamdLog(query = rspamdLogQuery) {
+    const params = new URLSearchParams({ lines: String(query.lines) });
+    if (query.q.trim()) params.set('q', query.q.trim());
+    const data = await request(`/mail/rspamd/log?${params}`, {}, '');
+    setRspamdLog(data?.lines || []);
+  }
+
+  async function loadEximLog(query = eximLogQuery) {
+    const params = new URLSearchParams({ lines: String(query.lines) });
+    if (query.q.trim()) params.set('q', query.q.trim());
+    const data = await request(`/mail/log?${params}`, {}, '');
+    setEximLog(data?.lines || []);
+  }
+
   function applyMailSettings(data) {
     setMailSettings(data);
-    setMailSettingsForm({ ...data.settings, smarthost_password: '' });
+    setMailSettingsForm({ ...data.settings });
   }
 
   async function loadMailSettings() {
@@ -1611,10 +1719,6 @@ function App() {
   async function saveMailSettings() {
     const f = mailSettingsForm;
     const body = {
-      smarthost_enabled: !!f.smarthost_enabled,
-      smarthost_host: String(f.smarthost_host || '').trim(),
-      smarthost_port: Number(f.smarthost_port) || 587,
-      smarthost_username: String(f.smarthost_username || '').trim(),
       auth_rate_per_hour: Number(f.auth_rate_per_hour) || 0,
       local_rate_per_hour: Number(f.local_rate_per_hour) || 0,
       max_message_mb: Number(f.max_message_mb) || 50,
@@ -1623,7 +1727,6 @@ function App() {
       greylisting: !!f.greylisting,
       default_quota_mb: Number(f.default_quota_mb) || 1024,
     };
-    if (f.smarthost_password) body.smarthost_password = f.smarthost_password;
     const data = await request('/mail/settings', { method: 'PUT', body: JSON.stringify(body) }, tr("Applying mail settings..."));
     if (data) { setNotice(tr("Mail settings applied.")); loadMailSettings(); }
   }
@@ -3954,9 +4057,11 @@ function App() {
   }, [isAuthenticated, page, mailTab, mailPage, mailFilter.domain_id]);
 
   useEffect(() => {
-    if (!isAuthenticated || !isAdmin || page !== 'addons') return;
-    if (addonList.some(a => a.id === 'mail' && a.installed)) loadMailSettings();
-  }, [isAuthenticated, isAdmin, page, addonList]);
+    if (!isAuthenticated || !isAdmin || page !== 'mail') return;
+    if (mailTab === 'relay') loadMailRelays();
+    if (mailTab === 'rspamd') { loadRspamdStat(); loadRspamdHistory(1); loadRspamdLog(); }
+    if (mailTab === 'server') { loadMailSettings(); loadEximLog(); }
+  }, [isAuthenticated, isAdmin, page, mailTab]);
 
   useEffect(() => {
     if (!isAuthenticated || !isAdmin || page !== 'addons') return;
@@ -5939,8 +6044,30 @@ function App() {
     </div>;
   }
 
+  function renderDnsRecordEditor(rows, onChange, { domain = '', template = false } = {}) {
+    const setRow = (index, patch) => onChange(rows.map((row, i) => i === index ? { ...row, ...patch } : row));
+    return <div className="dns-editor">
+      {rows.map((row, index) => <div className={`dns-editor-row${row.type === 'MX' ? ' with-priority' : ''}`} key={index}>
+        <select value={row.type} aria-label={tr("Type")} onChange={e => setRow(index, { type: e.target.value })}>
+          {['TXT', 'CNAME', 'MX', 'A', 'AAAA'].map(type => <option key={type} value={type}>{type}</option>)}
+        </select>
+        <input value={row.name} placeholder="@" aria-label={tr("Name")} spellCheck={false} onChange={e => setRow(index, { name: e.target.value })} />
+        {row.type === 'MX' && <input type="number" min="0" max="65535" value={row.priority ?? ''} placeholder="10" aria-label={tr("Priority")} onChange={e => setRow(index, { priority: e.target.value })} />}
+        <input className="dns-editor-value" value={row.value} placeholder={template ? tr("Value ({domain} = the domain)") : tr("Value")} aria-label={tr("Value")} spellCheck={false} onChange={e => setRow(index, { value: e.target.value })} />
+        <button type="button" className="mini danger-light icon-only" aria-label={tr("Remove")} title={tr("Remove")} onClick={() => onChange(rows.filter((_, i) => i !== index))}><Trash2 size={13}/></button>
+      </div>)}
+      <div className="actions dns-editor-actions">
+        <button type="button" className="mini secondary" disabled={rows.length >= (template ? 10 : 20)} onClick={() => onChange([...rows, { type: 'TXT', name: '@', value: '', priority: '' }])}><Plus size={13}/> {tr("Add a record")}</button>
+      </div>
+      <p className="hint">{template
+        ? tr("Names are relative to each domain that uses the relay: @ is the domain itself, brevo1._domainkey a name under it. {domain} in a value becomes the domain name.")
+        : tr("Names are relative to {0}: @ is the domain itself.", domain)}</p>
+    </div>;
+  }
+
   function renderMailDns() {
-    const { domain, records } = mailDns;
+    const { domain, records, relay } = mailDns;
+    const form = dnsCustomForm;
     const statusLabel = { ok: tr("Found"), missing: tr("Missing"), different: tr("Different"), unknown: tr("Not checked") };
     const statusClass = { ok: 'ok', missing: 'bad', different: 'warn', unknown: '' };
     const titles = {
@@ -5950,6 +6077,9 @@ function App() {
       dmarc: tr("Policy (DMARC)"),
       webmail: tr("Webmail address (optional)"),
     };
+    const titleFor = record => titles[record.key]
+      || (record.source === 'relay' ? tr("Asked for by the relay {0}", record.relay) : tr("Your record"));
+    const suggested = key => (records || []).find(r => r.key === key)?.suggested || '';
     return <section className="section mail-dns-page">
       <div className="section-title">
         <div className="waf-detail-title">
@@ -5962,22 +6092,233 @@ function App() {
           <button className="secondary-light" disabled={!!loading} onClick={() => rotateMailDkim(domain)}><KeyRound size={14}/> {tr("New DKIM key")}</button>
         </div>
       </div>
+      {relay && <div className="mail-relay-card">
+        <div className="mail-relay-card-head"><Send size={15}/><strong>{tr("Outgoing mail")}</strong></div>
+        {isAdmin && <select value={relay.choice} disabled={!!loading} aria-label={tr("Outgoing mail")} onChange={e => saveDomainRelay(e.target.value)}>
+          <option value="">{tr("Server default")}</option>
+          <option value="direct">{tr("Direct, without a relay")}</option>
+          {relay.options.map(option => <option key={option.id} value={option.id}>{tr("Relay: {0}", option.name)}</option>)}
+        </select>}
+        <p className="hint">{relay.effective_name
+          ? tr("Mail from {0} leaves through the relay {1}; the records it asks for are listed below.", domain.domain, relay.effective_name)
+          : tr("Mail from {0} is delivered directly from this server.", domain.domain)}</p>
+      </div>}
       {records === null && <p className="hint">{tr("Checking DNS…")}</p>}
       {records && <div className="mail-dns-list">
         {records.map(record => <div className="mail-dns-record" key={record.key}>
           <div className="mail-dns-head">
-            <strong>{titles[record.key] || record.type}</strong>
+            <strong>{titleFor(record)}</strong>
             <span className="mail-dns-type"><code>{record.type}</code>{record.priority != null && <small>{tr("priority {0}", record.priority)}</small>}</span>
+            {(record.custom || record.source === 'custom') && <span className="badge">{tr("Custom")}</span>}
             <span className={`badge ${statusClass[record.status] || ''}`}>{statusLabel[record.status] || record.status}</span>
           </div>
           {renderCopyBlock(tr("Name"), record.name)}
           {renderCopyBlock(tr("Value"), record.value, { multiline: record.key === 'dkim' })}
           {record.status === 'different' && (record.found || []).length > 0 && <p className="hint">{tr("Found now:")} <code>{record.found.join(' | ')}</code></p>}
           {record.key === 'webmail' && <p className="hint">{tr("Only needed for webmail.{0}; turn that on in the Domains tab once this record is in place.", domain.domain)}</p>}
-          {record.note && <p className="hint">{tr(record.note)}</p>}
         </div>)}
       </div>}
+      {records && form && <div className="create-inline mail-dns-custom">
+        <div className="create-inline-head"><strong>{tr("Customize the mail records")}</strong></div>
+        <p className="hint">{tr("For a relay or another service that sends as {0}: your own SPF and DMARC, and the extra records they ask for. Leave SPF or DMARC empty to use the suggestion. The panel only shows and checks these; publish them at your DNS provider.", domain.domain)}</p>
+        <label className="field"><span className="field-label">SPF</span>
+          <input value={form.spf} placeholder={suggested('spf')} spellCheck={false} onChange={e => setDnsCustomForm(prev => ({ ...prev, spf: e.target.value }))} /></label>
+        <label className="field"><span className="field-label">DMARC</span>
+          <input value={form.dmarc} placeholder={suggested('dmarc')} spellCheck={false} onChange={e => setDnsCustomForm(prev => ({ ...prev, dmarc: e.target.value }))} /></label>
+        <div className="field"><span className="field-label">{tr("Extra records")}</span>
+          {renderDnsRecordEditor(form.records, rows => setDnsCustomForm(prev => ({ ...prev, records: rows })), { domain: domain.domain })}</div>
+        <div className="actions"><button type="button" disabled={!!loading} onClick={saveDnsCustom}><Save size={14}/> {tr("Save records")}</button></div>
+      </div>}
     </section>;
+  }
+
+  function relayTlsLabel(tls) {
+    return { starttls: 'STARTTLS', ssl: 'SSL/TLS', none: tr("no TLS") }[tls] || tls;
+  }
+
+  function renderRelayForm() {
+    const f = relayForm;
+    const set = patch => setRelayForm(prev => ({ ...prev, ...patch }));
+    const canSave = f.name.trim() && f.host.trim() && (!f.username.trim() || f.password || f.password_set);
+    return <div className="mail-tab">
+      <div className="create-inline mail-relay-form">
+        <div className="create-inline-head">
+          <strong>{f.id ? tr("Edit relay {0}", f.name) : tr("New relay")}</strong>
+          <button type="button" className="secondary icon-only mini" onClick={() => setRelayForm(null)} aria-label={tr("Close")} title={tr("Close")}><X size={15}/></button>
+        </div>
+        <div className="mail-settings-grid">
+          <label className="field"><span className="field-label">{tr("Name")}</span><input value={f.name} placeholder="Brevo" onChange={e => set({ name: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Relay host")}</span><input value={f.host} placeholder="smtp-relay.brevo.com" spellCheck={false} onChange={e => set({ host: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Port")}</span><input type="number" min="1" max="65535" value={f.port}
+            onChange={e => set({ port: e.target.value, ...(e.target.value === '465' ? { tls: 'ssl' } : f.tls === 'ssl' ? { tls: 'starttls' } : {}) })} /></label>
+          <label className="field"><span className="field-label">TLS</span>
+            <select value={f.tls} onChange={e => set({ tls: e.target.value })}>
+              <option value="starttls">STARTTLS</option>
+              <option value="ssl">SSL/TLS</option>
+              <option value="none">{tr("None (private network only)")}</option>
+            </select></label>
+          <label className="field"><span className="field-label">{tr("Username")}</span><input value={f.username} autoComplete="off" spellCheck={false} onChange={e => set({ username: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Password")}</span><input type="password" value={f.password} autoComplete="new-password"
+            placeholder={f.password_set ? tr("Saved — leave empty to keep") : ''} onChange={e => set({ password: e.target.value })} /></label>
+        </div>
+        <label className="field"><span className="field-label">{tr("SPF for this relay")} <em>{tr("added to the SPF record of every domain that uses it")}</em></span>
+          <input value={f.spf_include} placeholder="include:spf.brevo.com" spellCheck={false} onChange={e => set({ spf_include: e.target.value })} /></label>
+        <div className="field"><span className="field-label">{tr("DNS records the relay asks for")}</span>
+          {renderDnsRecordEditor(f.dns_records, rows => set({ dns_records: rows }), { template: true })}</div>
+        {!f.id && <label className="check-line"><input type="checkbox" checked={!!f.make_default} onChange={e => set({ make_default: e.target.checked })} /> {tr("Use it as the default relay")}</label>}
+        <p className="hint">{tr("587 uses STARTTLS and 465 SSL/TLS, and the relay's certificate must be valid. Leave the username empty for a relay that knows this server by its address.")}</p>
+        <div className="actions">
+          <button type="button" className="secondary-light" onClick={() => setRelayForm(null)}>{tr("Cancel")}</button>
+          <button type="button" disabled={!canSave || !!loading} onClick={saveRelay}><Save size={14}/> {tr("Save relay")}</button>
+        </div>
+      </div>
+    </div>;
+  }
+
+  function renderMailRelays() {
+    if (relayForm) return renderRelayForm();
+    const data = mailRelays;
+    const relays = data?.relays || [];
+    return <div className="mail-tab">
+      <p className="hint">{tr("A relay (smarthost) sends this server's outgoing mail for it: needed where the provider blocks port 25, and it can help mail reach the inbox. Each domain uses the default relay unless its DNS page picks another one or direct delivery.")}</p>
+      <div className="mail-toolbar">
+        <label className="field mail-default-relay"><span className="field-label">{tr("Default relay")}</span>
+          <select value={data?.default_relay || ''} disabled={!data || !!loading} onChange={e => setDefaultRelay(e.target.value)}>
+            <option value="">{tr("None: deliver directly")}</option>
+            {relays.map(relay => <option key={relay.id} value={relay.id}>{relay.name}</option>)}
+          </select></label>
+        <button type="button" onClick={() => editRelay(null)}><Plus size={15}/> {tr("New relay")}</button>
+      </div>
+      {data === null && <p className="hint">{tr("Loading…")}</p>}
+      {data && relays.length === 0 && <EmptyState icon={Send} message={tr("No relay yet: mail leaves this server directly.")} />}
+      {relays.length > 0 && <div className="table">
+        {relays.map(relay => <div className="row mail-relay-row" key={relay.id}>
+          <span className="mail-row-name">
+            <strong>{relay.name}{relay.default && <span className="badge ok">{tr("Default")}</span>}</strong>
+            <small>{relay.host}:{relay.port} · {relayTlsLabel(relay.tls)}{relay.username ? ` · ${relay.username}` : ` · ${tr("no login")}`}</small>
+          </span>
+          <span className="mail-relay-meta">
+            {relay.spf_include && <small><code>{relay.spf_include}</code></small>}
+            {(relay.dns_records || []).length > 0 && <small>{tr("{0} DNS records", relay.dns_records.length)}</small>}
+            {(relay.domains || []).length > 0 && <small>{tr("Chosen by {0}", relay.domains.join(', '))}</small>}
+          </span>
+          <span className="row-actions">
+            <button className="mini secondary" disabled={!!loading} onClick={() => editRelay(relay)}><Pencil size={13}/> {tr("Edit")}</button>
+            <button className="mini danger" disabled={!!loading} onClick={() => deleteRelay(relay)} aria-label={tr("Delete {0}", relay.name)} title={tr("Delete")}><Trash2 size={13}/></button>
+          </span>
+        </div>)}
+      </div>}
+    </div>;
+  }
+
+  function rspamdActionLabel(action) {
+    return {
+      'no action': tr("Delivered"),
+      'add header': tr("Marked as spam"),
+      'rewrite subject': tr("Subject marked"),
+      greylist: tr("Greylisted"),
+      'soft reject': tr("Deferred"),
+      reject: tr("Rejected"),
+    }[action] || action;
+  }
+
+  function renderLogViewer(lines, query, setQuery, reload) {
+    return <>
+      <div className="mail-toolbar mail-log-toolbar">
+        <form className="mail-search" onSubmit={e => { e.preventDefault(); reload(query); }}>
+          <input value={query.q} placeholder={tr("Filter, e.g. an address or a message ID")} aria-label={tr("Filter")} onChange={e => setQuery(prev => ({ ...prev, q: e.target.value }))} />
+          <button type="submit" className="secondary icon-only" aria-label={tr("Search")} title={tr("Search")}><Search size={14}/></button>
+        </form>
+        <select value={query.lines} aria-label={tr("Lines")} onChange={e => { const next = { ...query, lines: Number(e.target.value) }; setQuery(next); reload(next); }}>
+          {[200, 500, 1000, 3000].map(n => <option key={n} value={n}>{tr("Last {0} lines", n)}</option>)}
+        </select>
+        <button type="button" className="secondary" disabled={!!loading} onClick={() => reload(query)}><RefreshCw size={14}/> {tr("Refresh")}</button>
+      </div>
+      {lines === null ? <p className="hint">{tr("Loading…")}</p>
+        : lines.length ? <pre className="mail-log">{lines.join('\n')}</pre>
+          : <p className="hint">{query.q ? tr("No line matches.") : tr("The log is empty.")}</p>}
+    </>;
+  }
+
+  function renderMailRspamd() {
+    const stat = rspamdStat;
+    const list = rspamdHistory;
+    const pages = Math.max(1, Math.ceil((list?.total || 0) / (list?.per_page || 50)));
+    const actionClass = { reject: 'bad', 'soft reject': 'warn', greylist: 'warn', 'add header': 'warn', 'rewrite subject': 'warn', 'no action': 'ok' };
+    const cards = [[tr("Scanned"), stat?.scanned], [tr("Spam"), stat?.spam], [tr("Ham"), stat?.ham], [tr("Learned"), stat?.learned]];
+    return <div className="mail-tab">
+      <div className="mail-stat-grid">
+        {cards.map(([label, value]) => <div className="mail-stat" key={label}><small>{label}</small><strong>{value ?? '—'}</strong></div>)}
+        {stat && Object.entries(stat.actions || {}).filter(([, count]) => count > 0).map(([action, count]) =>
+          <div className="mail-stat" key={action}><small>{rspamdActionLabel(action)}</small><strong>{count}</strong></div>)}
+      </div>
+      <div className="segmented-control" role="tablist" aria-label="Rspamd">
+        {[['history', tr("Scan history")], ['log', tr("Log")]].map(([id, label]) => <button key={id} type="button" role="tab"
+          aria-selected={rspamdView === id} className={rspamdView === id ? 'active' : ''} onClick={() => setRspamdView(id)}>{label}</button>)}
+      </div>
+      {rspamdView === 'history' && <>
+        <div className="mail-toolbar">
+          <form className="mail-search" onSubmit={e => { e.preventDefault(); loadRspamdHistory(1); }}>
+            <input value={rspamdFilter.q} placeholder={tr("Sender, recipient, subject or IP")} aria-label={tr("Search")} onChange={e => setRspamdFilter(prev => ({ ...prev, q: e.target.value }))} />
+            <button type="submit" className="secondary icon-only" aria-label={tr("Search")} title={tr("Search")}><Search size={14}/></button>
+          </form>
+          <select value={rspamdFilter.action} aria-label={tr("Result")} onChange={e => loadRspamdHistory(1, e.target.value)}>
+            <option value="">{tr("Every result")}</option>
+            {['no action', 'add header', 'rewrite subject', 'greylist', 'soft reject', 'reject'].map(action => <option key={action} value={action}>{rspamdActionLabel(action)}</option>)}
+          </select>
+          <button type="button" className="secondary" disabled={!!loading} onClick={() => { loadRspamdStat(); loadRspamdHistory(rspamdFilter.page); }}><RefreshCw size={14}/> {tr("Refresh")}</button>
+        </div>
+        {list === null && <p className="hint">{tr("Loading…")}</p>}
+        {list && list.items.length === 0 && <EmptyState icon={ShieldCheck} message={rspamdFilter.q || rspamdFilter.action ? tr("No scanned message matches.") : tr("No message has been scanned yet.")} />}
+        {list && list.items.length > 0 && <div className="table">
+          {list.items.map((item, index) => <div className="row rspamd-row" key={`${item.time}-${index}`}>
+            <span className="rspamd-when">
+              <small>{item.time ? new Date(item.time).toLocaleString() : ''}</small>
+              <span className={`badge ${actionClass[item.action] || ''}`}>{rspamdActionLabel(item.action)}</span>
+            </span>
+            <span className="mail-row-name">
+              <strong title={item.subject}>{item.subject || tr("(no subject)")}</strong>
+              <small>{item.from || '—'} → {item.to.join(', ') || '—'}</small>
+              {item.ip && <small>{item.ip}{item.user ? ` · ${tr("signed in as {0}", item.user)}` : ''}</small>}
+            </span>
+            <span className="rspamd-score"><strong>{item.score}</strong><small>/ {item.required}</small></span>
+            <span className="rspamd-symbols">{item.symbols.slice(0, 10).map(symbol =>
+              <code key={symbol.name} className={symbol.score > 0 ? 'pos' : symbol.score < 0 ? 'neg' : ''} title={String(symbol.score)}>{symbol.name}{symbol.score ? ` ${symbol.score > 0 ? '+' : ''}${symbol.score}` : ''}</code>)}</span>
+          </div>)}
+        </div>}
+        {pages > 1 && <div className="firewall-ip-pager">
+          <button className="mini secondary" disabled={rspamdFilter.page <= 1} onClick={() => loadRspamdHistory(rspamdFilter.page - 1)}>{tr("Previous")}</button>
+          <span className="hint">{tr("Page {0} of {1}", rspamdFilter.page, pages)}</span>
+          <button className="mini secondary" disabled={rspamdFilter.page >= pages} onClick={() => loadRspamdHistory(rspamdFilter.page + 1)}>{tr("Next")}</button>
+        </div>}
+        <p className="hint">{tr("Rspamd keeps the last 200 scans. A message sent by a signed-in mailbox is not scanned.")}</p>
+      </>}
+      {rspamdView === 'log' && renderLogViewer(rspamdLog, rspamdLogQuery, setRspamdLogQuery, loadRspamdLog)}
+    </div>;
+  }
+
+  function renderMailServer() {
+    const f = mailSettingsForm;
+    const set = patch => setMailSettingsForm(prev => ({ ...prev, ...patch }));
+    return <div className="mail-tab">
+      {!f ? <p className="hint">{tr("Loading…")}</p> : <div className="create-inline mail-settings">
+        <div className="create-inline-head"><strong>{tr("Mail server")}</strong></div>
+        <p className="hint">{tr("Server name: {0}. Messages waiting to be sent: {1}.", mailSettings?.hostname || '—', mailSettings?.queue ?? '—')}</p>
+        <div className="mail-settings-grid">
+          <label className="field"><span className="field-label">{tr("Recipients per mailbox per hour")} <em>{tr("0 = no limit")}</em></span><input type="number" min="0" value={f.auth_rate_per_hour ?? 300} onChange={e => set({ auth_rate_per_hour: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Messages per website account per hour")} <em>{tr("0 = no limit")}</em></span><input type="number" min="0" value={f.local_rate_per_hour ?? 300} onChange={e => set({ local_rate_per_hour: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Largest message (MB)")}</span><input type="number" min="1" max="200" value={f.max_message_mb ?? 50} onChange={e => set({ max_message_mb: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("New mailbox size (MB)")}</span><input type="number" min="1" value={f.default_quota_mb ?? 1024} onChange={e => set({ default_quota_mb: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Spam score: move to Junk")}</span><input type="number" min="1" max="100" step="0.5" value={f.spam_header_score ?? 6} onChange={e => set({ spam_header_score: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Spam score: refuse")}</span><input type="number" min="1" max="100" step="0.5" value={f.spam_reject_score ?? 15} onChange={e => set({ spam_reject_score: e.target.value })} /></label>
+        </div>
+        <label className="check-line"><input type="checkbox" checked={!!f.greylisting} onChange={e => set({ greylisting: e.target.checked })} />
+          {tr("Greylisting: doubtful senders are asked to retry a few minutes later")}</label>
+        <div className="actions"><button type="button" disabled={!!loading} onClick={saveMailSettings}><Save size={14}/> {tr("Apply mail settings")}</button></div>
+      </div>}
+      <h3 className="mail-subhead">{tr("Exim log")}</h3>
+      {renderLogViewer(eximLog, eximLogQuery, setEximLogQuery, loadEximLog)}
+    </div>;
   }
 
   function renderMailClientHelp() {
@@ -6009,8 +6350,13 @@ function App() {
     if (mailDns) return renderMailDns();
     const domains = info.domains || [];
     const limit = Number(info.mailbox_limit) || 0;
-    const tabs = [['mailboxes', tr("Mailboxes"), Inbox], ['forwarders', tr("Forwarders"), Forward], ['domains', tr("Domains"), Globe]];
-    const activeTab = domains.length ? mailTab : 'domains';
+    const tabs = [
+      ['mailboxes', tr("Mailboxes"), Inbox], ['forwarders', tr("Forwarders"), Forward], ['domains', tr("Domains"), Globe],
+      // Server-wide: relays, the spam filter and the mail server itself.
+      ...(isAdmin ? [['relay', tr("Relays"), Send], ['rspamd', 'Rspamd', ShieldCheck], ['server', tr("Server"), Server]] : []),
+    ];
+    const serverTabs = ['relay', 'rspamd', 'server'];
+    const activeTab = domains.length || serverTabs.includes(mailTab) ? mailTab : 'domains';
     return <>
       <section className="section mail-page">
         <div className="section-title">
@@ -6025,48 +6371,30 @@ function App() {
         </div>
         <div className="segmented-control backup-tabs" role="tablist" aria-label={tr("Email sections")}>
           {tabs.map(([id, label, Icon]) => <button key={id} type="button" role="tab" aria-selected={activeTab === id}
-            className={activeTab === id ? 'active' : ''} disabled={!domains.length && id !== 'domains'}
+            className={activeTab === id ? 'active' : ''} disabled={!domains.length && !['domains', ...serverTabs].includes(id)}
             onClick={() => { setMailTab(id); setMailPage(1); }}><Icon size={14}/>{label}</button>)}
         </div>
         {activeTab === 'mailboxes' && renderMailboxes()}
         {activeTab === 'forwarders' && renderForwarders()}
         {activeTab === 'domains' && renderMailDomains()}
+        {activeTab === 'relay' && renderMailRelays()}
+        {activeTab === 'rspamd' && renderMailRspamd()}
+        {activeTab === 'server' && renderMailServer()}
       </section>
-      {domains.length > 0 && renderMailClientHelp()}
+      {domains.length > 0 && !serverTabs.includes(activeTab) && renderMailClientHelp()}
     </>;
   }
 
   function renderAddonMail(addon) {
-    const f = mailSettingsForm;
-    if (!f) return <p className="hint">{tr("Loading…")}</p>;
-    const set = patch => setMailSettingsForm(prev => ({ ...prev, ...patch }));
-    return <div className="addon-panel mail-settings">
-      <div className="addon-panel-head"><strong>{tr("Mail server")}</strong>
-        <button className="mini" onClick={() => navigateToPage('mail')}><Mail size={13}/> {tr("Open Email")}</button></div>
-      <p className="hint">{tr("Server name: {0}. Messages waiting to be sent: {1}.", mailSettings?.hostname || '—', mailSettings?.queue ?? '—')}</p>
+    const open = tab => { setMailTab(tab); navigateToPage('mail'); };
+    return <div className="addon-panel">
+      <div className="addon-panel-head"><strong>{tr("Mailboxes, relays, the spam filter and server settings")}</strong></div>
       {!addon.running && <p className="hint">{tr("The mail server is stopped: no mail is received or sent, and webmail is off.")}</p>}
-      <label className="check-line"><input type="checkbox" checked={!!f.smarthost_enabled} onChange={e => set({ smarthost_enabled: e.target.checked })} />
-        {tr("Send outgoing mail through a relay (smarthost)")}</label>
-      {f.smarthost_enabled && <div className="mail-settings-grid">
-        <label className="field"><span className="field-label">{tr("Relay host")}</span><input value={f.smarthost_host || ''} placeholder="smtp.example.com" spellCheck={false} onChange={e => set({ smarthost_host: e.target.value })} /></label>
-        <label className="field"><span className="field-label">{tr("Port")}</span><input type="number" min="1" max="65535" value={f.smarthost_port ?? 587} onChange={e => set({ smarthost_port: e.target.value })} /></label>
-        <label className="field"><span className="field-label">{tr("Username")}</span><input value={f.smarthost_username || ''} autoComplete="off" spellCheck={false} onChange={e => set({ smarthost_username: e.target.value })} /></label>
-        <label className="field"><span className="field-label">{tr("Password")}</span><input type="password" value={f.smarthost_password || ''} autoComplete="new-password"
-          placeholder={f.smarthost_password_set ? tr("Saved — leave empty to keep") : ''} onChange={e => set({ smarthost_password: e.target.value })} /></label>
-      </div>}
-      {f.smarthost_enabled && <p className="hint">{tr("Port 587 uses STARTTLS and 465 SSL/TLS; the relay's certificate must be valid.")}</p>}
-      <div className="mail-settings-grid">
-        <label className="field"><span className="field-label">{tr("Recipients per mailbox per hour")} <em>{tr("0 = no limit")}</em></span><input type="number" min="0" value={f.auth_rate_per_hour ?? 300} onChange={e => set({ auth_rate_per_hour: e.target.value })} /></label>
-        <label className="field"><span className="field-label">{tr("Messages per website account per hour")} <em>{tr("0 = no limit")}</em></span><input type="number" min="0" value={f.local_rate_per_hour ?? 300} onChange={e => set({ local_rate_per_hour: e.target.value })} /></label>
-        <label className="field"><span className="field-label">{tr("Largest message (MB)")}</span><input type="number" min="1" max="200" value={f.max_message_mb ?? 50} onChange={e => set({ max_message_mb: e.target.value })} /></label>
-        <label className="field"><span className="field-label">{tr("New mailbox size (MB)")}</span><input type="number" min="1" value={f.default_quota_mb ?? 1024} onChange={e => set({ default_quota_mb: e.target.value })} /></label>
-        <label className="field"><span className="field-label">{tr("Spam score: move to Junk")}</span><input type="number" min="1" max="100" step="0.5" value={f.spam_header_score ?? 6} onChange={e => set({ spam_header_score: e.target.value })} /></label>
-        <label className="field"><span className="field-label">{tr("Spam score: refuse")}</span><input type="number" min="1" max="100" step="0.5" value={f.spam_reject_score ?? 15} onChange={e => set({ spam_reject_score: e.target.value })} /></label>
-      </div>
-      <label className="check-line"><input type="checkbox" checked={!!f.greylisting} onChange={e => set({ greylisting: e.target.checked })} />
-        {tr("Greylisting: doubtful senders are asked to retry a few minutes later")}</label>
       <div className="actions">
-        <button type="button" disabled={!!loading} onClick={saveMailSettings}><Save size={14}/> {tr("Apply mail settings")}</button>
+        <button type="button" className="mini" onClick={() => open('mailboxes')}><Mail size={13}/> {tr("Open Email")}</button>
+        <button type="button" className="mini secondary" onClick={() => open('relay')}><Send size={13}/> {tr("Relays")}</button>
+        <button type="button" className="mini secondary" onClick={() => open('rspamd')}><ShieldCheck size={13}/> Rspamd</button>
+        <button type="button" className="mini secondary" onClick={() => open('server')}><Server size={13}/> {tr("Server")}</button>
       </div>
     </div>;
   }

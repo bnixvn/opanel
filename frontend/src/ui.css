@@ -687,3 +687,52 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .mail-filter{grid-template-columns:1fr;width:100%}
   .mail-webmail-host span{max-width:none}
 }
+/* Email: relays, custom DNS records, Rspamd and logs. */
+.dns-editor{display:grid;gap:8px;min-width:0}
+.dns-editor-row{display:grid;grid-template-columns:96px minmax(120px,1fr) minmax(160px,2fr) auto;gap:6px;align-items:center}
+.dns-editor-row.with-priority{grid-template-columns:96px minmax(120px,1fr) 80px minmax(160px,2fr) auto}
+.dns-editor-row input,.dns-editor-row select{width:100%;min-width:0;height:34px;min-height:34px}
+.dns-editor-row input{font-family:var(--font-mono,monospace);font-size:12.5px}
+.dns-editor-actions{justify-content:flex-start}
+.dns-editor .hint{margin:0}
+.mail-dns-custom{margin-top:14px}
+.mail-dns-custom .field input{width:100%;font-family:var(--font-mono,monospace);font-size:12.5px}
+.mail-relay-card{display:grid;gap:8px;margin-bottom:14px;padding:14px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md)}
+.mail-relay-card-head{display:flex;align-items:center;gap:8px;color:var(--text)}
+.mail-relay-card-head svg{color:var(--primary-ink)}
+.mail-relay-card select{max-width:360px}
+.mail-relay-card .hint{margin:0}
+.mail-default-relay{display:grid;gap:4px;min-width:240px}
+.mail-relay-row{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) auto}
+.mail-relay-row .mail-row-name strong{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mail-relay-meta{display:grid;gap:3px;min-width:0;font-size:12px;color:var(--text-secondary)}
+.mail-relay-meta code{font-family:var(--font-mono,monospace);font-size:12px;overflow-wrap:anywhere}
+.mail-relay-form .field{display:grid;gap:4px;min-width:0}
+.mail-relay-form .field > input{width:100%;font-family:var(--font-mono,monospace);font-size:12.5px}
+.mail-relay-form em{font-style:normal;font-weight:500;color:var(--text-muted)}
+.mail-stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.mail-stat{display:grid;gap:2px;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md)}
+.mail-stat small{font-size:12px;color:var(--text-secondary)}
+.mail-stat strong{font-size:18px;font-weight:600;color:var(--text)}
+.rspamd-row{grid-template-columns:150px minmax(0,1.3fr) 80px minmax(0,1.4fr);align-items:start}
+.rspamd-when{display:grid;gap:4px;justify-items:start}
+.rspamd-when small{font-size:12px;color:var(--text-secondary)}
+.rspamd-row .mail-row-name small{display:block;overflow-wrap:anywhere}
+.rspamd-row .mail-row-name strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rspamd-score{display:flex;align-items:baseline;gap:3px}
+.rspamd-score strong{font-size:15px}
+.rspamd-score small{font-size:12px;color:var(--text-muted)}
+.rspamd-symbols{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.rspamd-symbols code{font-family:var(--font-mono,monospace);font-size:11.5px;padding:1px 6px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);color:var(--text-secondary)}
+.rspamd-symbols code.pos{border-color:var(--danger-border);background:var(--danger-bg);color:var(--danger-text)}
+.rspamd-symbols code.neg{border-color:var(--success-border);background:var(--success-bg);color:var(--success-text)}
+.mail-log-toolbar{justify-content:flex-start}
+.mail-log-toolbar .mail-search{flex:1 1 320px;max-width:520px}
+.mail-log{margin:0;max-height:560px;overflow:auto;padding:12px;background:var(--console-bg);color:var(--console-text);border-radius:var(--radius-md);font-family:var(--font-mono,monospace);font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+.mail-subhead{margin:18px 0 0;font-size:15px;font-weight:600}
+@media(max-width:760px){
+  .dns-editor-row,.dns-editor-row.with-priority{grid-template-columns:1fr 1fr;}
+  .dns-editor-row .dns-editor-value{grid-column:1 / -1}
+  .mail-relay-row,.rspamd-row{grid-template-columns:1fr;gap:8px}
+  .mail-relay-row .row-actions{justify-content:flex-start}
+}

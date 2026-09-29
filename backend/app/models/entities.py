@@ -452,6 +452,12 @@ class MailDomain(Base):
     dkim_public: Mapped[str] = mapped_column(Text, default="")
     # webmail.<domain> is served with its own certificate.
     webmail_host: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Outgoing mail: "" follows the server's default relay, "direct" sends
+    # without one, anything else is the id of a relay (Email addon settings).
+    relay: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    # The owner's own DNS values as JSON: {"spf", "dmarc", "records": [...]}.
+    # The panel only shows and checks them; it does not host DNS.
+    dns_custom: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     owner: Mapped["User"] = relationship()
