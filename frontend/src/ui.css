@@ -667,7 +667,7 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .mail-dns-list{display:grid;gap:12px}
 .mail-dns-record{display:grid;gap:10px;padding:14px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);min-width:0}
 .mail-dns-head{display:flex;align-items:center;gap:10px}
-.mail-dns-head .badge{margin-left:auto}
+.mail-dns-head .mail-dns-status{margin-left:auto}
 .mail-dns-type{display:inline-flex;align-items:baseline;gap:6px}
 .mail-dns-type code{font-family:var(--font-mono,monospace);font-size:12px;font-weight:600;padding:2px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
 .mail-dns-type small{font-size:12px;color:var(--text-muted)}

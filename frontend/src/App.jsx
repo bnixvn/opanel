@@ -6110,7 +6110,7 @@ function App() {
             <strong>{titleFor(record)}</strong>
             <span className="mail-dns-type"><code>{record.type}</code>{record.priority != null && <small>{tr("priority {0}", record.priority)}</small>}</span>
             {(record.custom || record.source === 'custom') && <span className="badge">{tr("Custom")}</span>}
-            <span className={`badge ${statusClass[record.status] || ''}`}>{statusLabel[record.status] || record.status}</span>
+            <span className={`badge mail-dns-status ${statusClass[record.status] || ''}`}>{statusLabel[record.status] || record.status}</span>
           </div>
           {renderCopyBlock(tr("Name"), record.name)}
           {renderCopyBlock(tr("Value"), record.value, { multiline: record.key === 'dkim' })}
