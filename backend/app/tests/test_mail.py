@@ -447,3 +447,12 @@ def test_rspamd_asks_its_own_resolver():
     assert 'nameserver = ["127.0.0.1:${MAIL_UNBOUND_PORT}"];' in HELPER
     assert "interface: 127.0.0.1" in HELPER and 'MAIL_UNBOUND_PORT="5335"' in HELPER
     assert "systemctl mask unbound-resolvconf.service" in HELPER
+
+
+def test_a_suspended_mailbox_is_refused_by_a_deny_passdb():
+    """nologin=y in the passwd file let an IMAP login through on the test box;
+    Dovecot's deny passdb refuses the account before any password check, and
+    applies to the webmail's master-user logins too."""
+    assert "deny = yes" in HELPER and "${MAIL_DIR}/denied" in HELPER
+    assert 'denied.append(f"{addr}:")' in HELPER
+    assert "nologin=y" not in HELPER

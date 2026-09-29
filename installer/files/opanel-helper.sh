@@ -4367,6 +4367,7 @@ mail_ensure_layout() {
   done
   # Dovecot's: password hashes, readable by the Dovecot auth process only.
   [[ -f "${MAIL_DIR}/passwd" ]] || : | mail_write_file "${MAIL_DIR}/passwd" root:dovecot 0640
+  [[ -f "${MAIL_DIR}/denied" ]] || : | mail_write_file "${MAIL_DIR}/denied" root:dovecot 0640
   [[ -f "$MAIL_WEBMAIL_HOSTS" ]] || : | mail_write_file "$MAIL_WEBMAIL_HOSTS" root:root 0644
   [[ -f "$MAIL_SETTINGS_FILE" ]] || printf '{}\n' | mail_write_file "$MAIL_SETTINGS_FILE" root:root 0600
 }
@@ -4812,6 +4813,12 @@ passdb {
   args = ${MAIL_DIR}/master-users
   master = yes
   pass = yes
+}
+# Suspended mailboxes: listed here, refused before any password is checked.
+passdb {
+  driver = passwd-file
+  args = username_format=%Lu ${MAIL_DIR}/denied
+  deny = yes
 }
 passdb {
   driver = passwd-file
@@ -5325,6 +5332,7 @@ for item in data.get("domains") or []:
 
 mailboxes = {}
 passwd = []
+denied = []
 for item in data.get("mailboxes") or []:
     addr = address(item.get("address"), "mailbox")
     if addr.split("@", 1)[1] not in domain_set:
@@ -5344,7 +5352,7 @@ for item in data.get("mailboxes") or []:
     if quota:
         extra.append(f"userdb_quota_rule=*:storage={quota}M")
     if not item.get("enabled", True):
-        extra.append("nologin=y")
+        denied.append(f"{addr}:")
     mailboxes[addr] = True
     passwd.append(f"{addr}:{secret}::::::{' '.join(extra)}")
 
@@ -5411,6 +5419,7 @@ write("senders", [f"{a}: {' : '.join(d)}" for a, d in sorted(senders.items()) if
 write("local_senders", [f"{u}: {' : '.join(d)}" for u, d in sorted(local_senders.items()) if d], exim_gid)
 write("dkim_domains", [f"{d}: {d}" for d in dkim], exim_gid)
 write("passwd", sorted(passwd), dovecot_gid)
+write("denied", sorted(denied), dovecot_gid)
 print(f"mail maps written: {len(domains)} domains, {len(mailboxes)} mailboxes, {len(aliases)} forwarders")
 PY
   rm -f -- "$payload"
