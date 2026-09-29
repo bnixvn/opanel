@@ -740,11 +740,12 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .mail-relay-row .row-actions{justify-content:flex-start}
 }
 /* DNS Manager addon. */
-.dns-ns-card{display:grid;gap:10px;padding:14px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);min-width:0}
-.dns-ns-head{display:flex;align-items:center;gap:8px;color:var(--text)}
-.dns-ns-head svg{color:var(--primary-ink)}
-.dns-ns-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
-.dns-ns-card .hint{margin:0}
+.dns-ns-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);min-width:0}
+.dns-ns-label{display:inline-flex;align-items:center;gap:6px;font-weight:600;color:var(--text);margin-right:4px}
+.dns-ns-label svg{color:var(--primary-ink)}
+.dns-ns-line code{font-family:var(--font-mono,monospace);font-size:12.5px;padding:3px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);overflow-wrap:anywhere}
+.dns-ns-line .hint{margin:0}
+.dns-search{width:100%}
 .dns-zone-row{grid-template-columns:minmax(0,1fr) auto}
 .dns-delegation{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 14px}
 .dns-delegation .hint{margin:0;flex:1 1 280px}

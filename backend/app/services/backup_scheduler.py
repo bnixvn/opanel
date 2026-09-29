@@ -310,3 +310,10 @@ if __name__ == "__main__":
         notifications.tick()
     except Exception as exc:  # noqa: BLE001 - never fail the backup run for it
         print(f"opanel notifications tick failed: {exc}")
+    # DNS Manager: every domain on the panel has a zone (a no-op without it).
+    try:
+        from app.services import dns_manager
+
+        dns_manager.tick()
+    except Exception as exc:  # noqa: BLE001
+        print(f"opanel DNS Manager tick failed: {exc}")

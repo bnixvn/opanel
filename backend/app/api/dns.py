@@ -64,7 +64,6 @@ class DnsSettingsIn(BaseModel):
     ns2: Optional[str] = Field(default=None, max_length=253)
     hostmaster: Optional[str] = Field(default=None, max_length=254)
     default_ttl: Optional[int] = None
-    auto_zone: Optional[bool] = None
 
 
 @router.get("/overview")
@@ -161,10 +160,12 @@ def put_settings(payload: DnsSettingsIn, request: Request, db: Session = Depends
     return result
 
 
-@router.post("/zones-for-websites")
-def post_missing_zones(request: Request, db: Session = Depends(get_db),
-                       current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.admin)
-    created = _call(dns_manager.create_missing_zones, db, current_user)
-    log_action(db, current_user.id, "dns_zones_for_websites", f"{len(created)} zones", request=request)
+@router.post("/sync")
+def post_sync(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """A zone for each of the caller's domains that has none (every domain for
+    an administrator); the DNS page asks for this as it opens."""
+    created = _call(dns_manager.sync_zones, db, None if dns_manager._is_admin(current_user) else current_user.id)
+    if created:
+        log_action(db, current_user.id, "dns_zones_sync", f"{len(created)} zones", ", ".join(created)[:500],
+                   request=request)
     return {"created": created}

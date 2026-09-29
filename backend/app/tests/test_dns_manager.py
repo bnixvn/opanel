@@ -159,22 +159,40 @@ def test_customers_see_and_change_only_their_own_zones(env):
     assert env.as_user("root_admin").get(f"/api/dns/zones/{own}").status_code == 200
 
 
-def test_candidates_leave_out_names_already_in_the_owners_zone(env):
-    assert env.as_user("alice").get("/api/dns/overview").json()["candidates"] == ["alice.test", "shop.alice.test"]
-    _zone(env, "alice", "alice.test")
-    assert env.as_user("alice").get("/api/dns/overview").json()["candidates"] == []
-
-
-def test_zones_for_existing_websites_put_subdomains_in_the_parent_zone(env):
-    res = env.as_user("root_admin").post("/api/dns/zones-for-websites")
+def test_every_domain_on_the_panel_gets_dns(env):
+    alias = WebsiteAlias(website_id=env.db.query(Website).filter_by(domain="bob.test").one().id, domain="bob-alias.test")
+    env.db.add(alias)
+    env.db.commit()
+    # A customer's sync covers their own domains only.
+    res = env.as_user("alice").post("/api/dns/sync")
     assert res.status_code == 200, res.text
-    assert sorted(res.json()["created"]) == ["alice.test", "bob.test"]
+    assert res.json()["created"] == ["alice.test"]
+    # The subdomain website lands in its domain's zone, not a zone of its own.
     assert env.pdns.values("alice.test", "shop.alice.test", "A") == ["203.0.113.7"]
-    assert env.as_user("alice").post("/api/dns/zones-for-websites").status_code == 403
+    assert env.as_user("root_admin").post("/api/dns/sync").json()["created"] == ["bob-alias.test", "bob.test"]
+    assert env.db.query(DnsZone).filter_by(name="bob-alias.test").one().owner_id == env.people["bob"].id
+    assert env.as_user("root_admin").post("/api/dns/sync").json()["created"] == []
+    names = [z["name"] for z in env.as_user("root_admin").get("/api/dns/zones").json()["items"]]
+    assert names == ["alice.test", "bob-alias.test", "bob.test"]
 
 
-def test_deleting_a_zone_needs_its_name(env):
+def test_the_minute_tick_and_the_addon_install_make_the_zones():
+    scheduler = (PROJECT_ROOT / "backend" / "app" / "services" / "backup_scheduler.py").read_text(encoding="utf-8")
+    assert "dns_manager.tick()" in scheduler
+    source = (PROJECT_ROOT / "backend" / "app" / "services" / "addons.py").read_text(encoding="utf-8")
+    assert 'if addon_id == "dns" and action == "install":' in source and "dns_manager.sync_zones(db)" in source
+
+
+def test_a_zone_in_use_by_the_panel_is_not_deleted_by_hand(env):
     zone_id = _zone(env, "alice", "alice.test")
+    assert env.as_user("alice").get("/api/dns/zones").json()["items"][0]["on_panel"] is True
+    res = env.as_user("alice").delete(f"/api/dns/zones/{zone_id}?confirm=alice.test")
+    assert res.status_code == 400 and "in use" in res.json()["detail"]
+    # Once no website uses it, it can go -- by its name.
+    for site in env.db.query(Website).filter(Website.domain.in_(["alice.test", "shop.alice.test"])).all():
+        env.db.delete(site)
+    env.db.commit()
+    assert env.as_user("alice").get(f"/api/dns/zones/{zone_id}").json()["zone"]["on_panel"] is False
     assert env.as_user("alice").delete(f"/api/dns/zones/{zone_id}").status_code == 400
     assert env.as_user("alice").delete(f"/api/dns/zones/{zone_id}?confirm=alice.test").status_code == 200
     assert "alice.test." not in env.pdns.zones and env.db.query(DnsZone).count() == 0

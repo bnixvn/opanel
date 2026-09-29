@@ -47,7 +47,7 @@ DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a
 HOST_RE = re.compile(r"^(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?)(?:\.[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?)*$")
 LABEL_RE = re.compile(r"^(?:@|\*|(?:\*\.)?[a-z0-9_](?:[a-z0-9_.-]{0,200}[a-z0-9_])?)$")
 
-SETTINGS_DEFAULTS = {"ns1": "", "ns2": "", "hostmaster": "", "default_ttl": 3600, "auto_zone": True}
+SETTINGS_DEFAULTS = {"ns1": "", "ns2": "", "hostmaster": "", "default_ttl": 3600}
 
 
 class NotInstalled(RuntimeError):
@@ -121,8 +121,7 @@ def save_settings(db: Session, payload: dict) -> dict:
         if ttl not in TTL_CHOICES:
             raise ValueError("Pick one of the offered TTLs")
         stored["default_ttl"] = ttl
-    if "auto_zone" in payload:
-        stored["auto_zone"] = bool(payload["auto_zone"])
+    stored.pop("auto_zone", None)
     before = current_settings()
     addons._update_state(ADDON_ID, settings=stored)
     after = current_settings()
@@ -353,21 +352,6 @@ def _owned_names(db: Session, owner_id: Optional[int] = None) -> dict[str, int]:
     return names
 
 
-def candidate_domains(db: Session, actor: User) -> list[str]:
-    """Domains a zone can be added for: not one already, and not a name
-    whose records already sit in a zone of its owner's."""
-    names = _owned_names(db, None if _is_admin(actor) else actor.id)
-    zones = {name: owner for name, owner in db.query(DnsZone.name, DnsZone.owner_id).all()}
-    out = set()
-    for name, owner in names.items():
-        name = name[4:] if name.startswith("www.") else name
-        labels = name.split(".")
-        covered = any(zones.get(".".join(labels[i:])) == owner for i in range(1, len(labels) - 1))
-        if name not in zones and not covered:
-            out.add(name)
-    return sorted(out)
-
-
 def zone_for_name(db: Session, name: str, owner_id: Optional[int] = None) -> Optional[DnsZone]:
     """The closest hosted zone a name falls in, optionally only the owner's."""
     labels = name.rstrip(".").lower().split(".")
@@ -470,9 +454,22 @@ def seed_zone(db: Session, zone: DnsZone, ttl: Optional[int] = None) -> None:
         log.warning("could not add the default records of %s: %s", zone.name, exc)
 
 
+def _panel_names(db: Session) -> set[str]:
+    """Every website and alias name on the panel, without a leading www."""
+    return {name[4:] if name.startswith("www.") else name for name in _owned_names(db) if name}
+
+
+def _on_panel(name: str, panel_names: set[str]) -> bool:
+    return any(n == name or n.endswith("." + name) for n in panel_names)
+
+
 def delete_zone(db: Session, actor: User, zone_id: int) -> str:
     row = get_zone(db, actor, zone_id)
     name = row.name
+    # Every domain on the panel has DNS; a zone goes by hand only once no
+    # website or alias uses it any more.
+    if _on_panel(name, _panel_names(db)):
+        raise ValueError("This zone is in use by a website on the panel; it stays while the website does")
     try:
         _api("DELETE", f"/zones/{_abs(name)}")
     except LookupError:
@@ -497,10 +494,13 @@ def delete_for_owner(db: Session, owner: User) -> list[str]:
     return names
 
 
-def zone_out(row: DnsZone) -> dict:
-    return {"id": row.id, "name": row.name, "owner_id": row.owner_id,
-            "owner": row.owner.username if row.owner else "",
-            "created_at": row.created_at.isoformat() if row.created_at else None}
+def zone_out(row: DnsZone, panel_names: Optional[set[str]] = None) -> dict:
+    out = {"id": row.id, "name": row.name, "owner_id": row.owner_id,
+           "owner": row.owner.username if row.owner else "",
+           "created_at": row.created_at.isoformat() if row.created_at else None}
+    if panel_names is not None:
+        out["on_panel"] = _on_panel(row.name, panel_names)
+    return out
 
 
 def list_zones(db: Session, actor: User, q: str = "", page: int = 1, per_page: int = 50) -> dict:
@@ -513,7 +513,8 @@ def list_zones(db: Session, actor: User, q: str = "", page: int = 1, per_page: i
     total = query.count()
     page, per_page = max(1, int(page or 1)), max(1, min(int(per_page or 50), 200))
     rows = query.order_by(DnsZone.name).offset((page - 1) * per_page).limit(per_page).all()
-    return {"items": [zone_out(r) for r in rows], "total": total, "page": page, "per_page": per_page}
+    names = _panel_names(db)
+    return {"items": [zone_out(r, names) for r in rows], "total": total, "page": page, "per_page": per_page}
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +547,8 @@ def records(db: Session, actor: User, zone_id: int) -> dict:
                           "value": shown["value"] if rtype != "SOA" else record["content"],
                           "priority": shown["priority"], "content": record["content"], "locked": locked,
                           "mail": mail_of})
-    return {"zone": zone_out(row), "records": items, "nameservers": [ns.rstrip(".") for ns in _ns_records()],
+    return {"zone": zone_out(row, _panel_names(db)), "records": items,
+            "nameservers": [ns.rstrip(".") for ns in _ns_records()],
             "addresses": server_addresses()}
 
 
@@ -702,7 +704,10 @@ def website_created(db: Session, website: Website, hosts: Optional[list[str]] = 
         for host in hosts or [website.domain] + [a.domain for a in website.aliases or []]:
             host = (host or "").lower()
             zone = zone_for_name(db, host, website.owner_id)
-            if zone is None and current_settings()["auto_zone"] and zone_for_name(db, host) is None:
+            # Every domain on the panel has DNS: a zone of its own, unless it
+            # falls in a zone already (another account's parent zone included --
+            # a sub-zone there would take over names that account answers for).
+            if zone is None and zone_for_name(db, host) is None:
                 owner = db.get(User, website.owner_id)
                 zone = create_zone(db, owner, host[4:] if host.startswith("www.") else host,
                                    owner_id=website.owner_id) if owner else None
@@ -1035,25 +1040,46 @@ def overview(db: Session, actor: User) -> dict:
         "default_ttl": values["default_ttl"],
         "ttl_choices": list(TTL_CHOICES),
         "record_types": list(RECORD_TYPES),
-        "candidates": candidate_domains(db, actor) if is_installed else [],
         "settings": values if _is_admin(actor) else None,
     }
 
 
-def create_missing_zones(db: Session, actor: User) -> list[str]:
-    """Administrators: a zone for every website domain that has none."""
-    require_installed()
+def sync_zones(db: Session, owner_id: Optional[int] = None) -> list[str]:
+    """Every domain on the panel -- website and alias names -- has DNS: a
+    zone of its own, or its place in a zone above it. Parents first, so a
+    subdomain lands in its domain's zone. Websites that came in without the
+    panel's website hook (DirectAdmin import, a restore, WHMCS) get theirs
+    here: on the minute tick, after the addon is installed, and when the DNS
+    page opens. Returns the zones it made."""
+    if not installed() or not _ns_records():
+        return []
     created = []
-    # Parents first, so a website on a subdomain lands in its domain's zone.
-    sites = sorted(db.query(Website).all(), key=lambda s: ((s.domain or "").count("."), s.domain or ""))
-    for site in sites:
-        name = (site.domain or "").lower()
-        name = name[4:] if name.startswith("www.") else name
-        if zone_for_name(db, name) is not None:
+    names = _owned_names(db, owner_id)
+    for raw, owner in sorted(names.items(), key=lambda item: (item[0].count("."), item[0])):
+        name = raw[4:] if raw.startswith("www.") else raw
+        if not DOMAIN_RE.fullmatch(name) or zone_for_name(db, name) is not None:
+            continue
+        owner_user = db.get(User, owner)
+        if owner_user is None:
             continue
         try:
-            create_zone(db, actor, name, owner_id=site.owner_id)
+            create_zone(db, owner_user, name, owner_id=owner)
             created.append(name)
         except (ValueError, PermissionError, RuntimeError, LookupError) as exc:
             log.warning("zone for %s not created: %s", name, exc)
     return created
+
+
+def tick() -> None:
+    """The panel's minute tick: zones for domains that have none yet."""
+    if not installed():
+        return
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        created = sync_zones(db)
+        if created:
+            print(f"opanel DNS Manager made zones for: {', '.join(created)}")
+    finally:
+        db.close()

@@ -506,6 +506,20 @@ def _after_lifecycle(addon_id: str, action: str) -> None:
     The Email addon's mailboxes live in the panel's database; a fresh install
     gets them written out, with the relay and limits the admin had set.
     """
+    if addon_id == "dns" and action == "install":
+        # Every domain on the panel has DNS from the start.
+        try:
+            from app.core.database import SessionLocal
+            from app.services import dns_manager
+
+            db = SessionLocal()
+            try:
+                dns_manager.sync_zones(db)
+            finally:
+                db.close()
+        except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
+            _update_state(addon_id, last_error=f"Installed, but the zones could not all be made: {exc}")
+        return
     if addon_id != "mail":
         return
     try:
