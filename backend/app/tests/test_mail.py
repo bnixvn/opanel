@@ -415,3 +415,13 @@ def test_passwords_never_reach_a_command_line():
 
 def test_the_helper_and_the_panel_agree_on_mailbox_names():
     assert mail.LOCAL_PART_RE.pattern.strip("^$") in HELPER
+
+
+def test_the_sync_payload_is_saved_before_the_heredoc_takes_stdin():
+    """python3 - <<'PY' reads its program from stdin, so the panel's JSON has
+    to be on disk first. The first live install failed exactly here."""
+    body = HELPER[HELPER.index("mail_sync_from_stdin() {"):]
+    body = body[:body.index("\n}\n")]
+    assert body.index('cat >"$payload"') < body.index("python3 - ")
+    assert "sys.stdin" not in body
+    assert 'rm -f -- "$payload"' in body

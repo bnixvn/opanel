@@ -757,6 +757,9 @@ def sync(db: Session) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "mail-sync failed").strip().replace("opanel-helper: ", "")
         raise RuntimeError(f"Saved, but the mail server could not be updated: {detail}")
+    # A sync that works again clears the error a failed one left on the addon card.
+    if "mailboxes could not be written out" in (addons._entry(ADDON_ID).get("last_error") or ""):
+        addons._update_state(ADDON_ID, last_error="")
 
 
 def usage_kib() -> dict[str, int]:

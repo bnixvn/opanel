@@ -5212,7 +5212,14 @@ mail_sync_from_stdin() {
   # The full mail state as JSON on stdin; see app/services/mail.py for the
   # shape. Every field is validated again here, and nothing is written unless
   # all of it passes.
-  python3 - "$MAIL_DIR" <<'PY'
+  #
+  # The payload is saved first: the Python below is itself a heredoc, which
+  # takes stdin, so it could never read the panel's JSON there.
+  local payload rc=0
+  payload="$(mktemp "${MAIL_DIR}/.sync.XXXXXX")"
+  chmod 0600 "$payload"
+  cat >"$payload"
+  python3 - "$MAIL_DIR" "$payload" <<'PY' || rc=$?
 import grp
 import json
 import os
@@ -5221,6 +5228,7 @@ import sys
 from pathlib import Path
 
 mail_dir = Path(sys.argv[1])
+payload_path = Path(sys.argv[2])
 DOMAIN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 LOCAL = re.compile(r"^[a-z0-9](?:[a-z0-9._+-]{0,62}[a-z0-9_+-])?$")
 REMOTE = re.compile(r"^[A-Za-z0-9._%+=-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
@@ -5228,7 +5236,7 @@ HASH = re.compile(r"^\{(?:BLF-CRYPT|SHA512-CRYPT)\}\$[A-Za-z0-9./$]{20,200}$")
 LINUX_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 
 try:
-    data = json.loads(sys.stdin.read())
+    data = json.loads(payload_path.read_text(encoding="utf-8"))
 except ValueError:
     sys.exit("opanel-helper: mail-sync input is not JSON")
 if not isinstance(data, dict):
@@ -5360,6 +5368,8 @@ write("dkim_domains", [f"{d}: {d}" for d in dkim], exim_gid)
 write("passwd", sorted(passwd), dovecot_gid)
 print(f"mail maps written: {len(domains)} domains, {len(mailboxes)} mailboxes, {len(aliases)} forwarders")
 PY
+  rm -f -- "$payload"
+  return "$rc"
 }
 
 mail_dkim_ensure() {
