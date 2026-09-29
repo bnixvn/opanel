@@ -463,3 +463,12 @@ def test_suspending_a_mailbox_drops_its_open_sessions():
     body = body[:body.index("\n}\n")]
     assert 'subprocess.run(["doveadm", "kick", addr]' in body
     assert "if addr not in previously_denied" in body
+
+
+def test_removal_takes_what_apt_pulled_in_with_the_mail_server():
+    """Uninstall on the first box stopped at "would also remove bsd-mailx",
+    which apt had installed with Exim as a recommendation."""
+    body = HELPER[HELPER.index("addon_mail_uninstall() {"):]
+    body = body[:body.index("\n}\n")]
+    assert 'apt-mark showauto "$name"' in body
+    assert "which was installed separately" in body

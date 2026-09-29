@@ -5628,7 +5628,11 @@ addon_mail_uninstall() {
     for name in $(apt-get -s purge "${installed[@]}" 2>/dev/null | awk '/^(Purg|Remv) /{print $2}'); do
       ok=0
       for pkg in "${MAIL_REMOVABLE_PACKAGES[@]}"; do [[ "$name" == "$pkg" ]] && ok=1; done
-      [[ $ok -eq 1 ]] || deny "removing the mail server would also remove ${name}"
+      # apt pulled it in with the mail server (bsd-mailx comes with Exim) and
+      # nobody installed it by name, so it goes too. A package the admin
+      # installed still stops the removal.
+      if [[ $ok -eq 0 && -n "$(apt-mark showauto "$name" 2>/dev/null)" ]]; then ok=1; fi
+      [[ $ok -eq 1 ]] || deny "removing the mail server would also remove ${name}, which was installed separately"
     done
     apt-get -o DPkg::Lock::Timeout=120 purge -y "${installed[@]}" >/dev/null || deny "apt could not remove the mail server"
   fi
