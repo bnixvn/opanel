@@ -565,6 +565,7 @@ function App() {
   const userMenuRef = useRef(null);
   const [panelSettings, setPanelSettings] = useState({ app_name: 'opanel', panel_url: '', panel_hostname: '', panel_port: 2222, logo_url: '', favicon_url: '/favicon.png', ssl_enabled: false });
   const [panelSettingsForm, setPanelSettingsForm] = useState({ app_name: 'opanel', panel_hostname: '', panel_port: 2222, ssl_enabled: false });
+  const [panelSettingsTab, setPanelSettingsTab] = useState('general');
   const [appVersion, setAppVersion] = useState('');
   const [panelLogoFile, setPanelLogoFile] = useState(null);
   const [panelFaviconFile, setPanelFaviconFile] = useState(null);
@@ -8261,11 +8262,24 @@ function App() {
 
   function renderPanelSettings() {
     if (!isAdmin) return <section className="section"><h2>{tr("Settings")}</h2><p className="hint">{tr("No permission.")}</p></section>;
-    return <>
-      <section className="section">
-        <div className="section-title">
-          <div><h2>{tr("Panel settings")}</h2><p className="hint">{tr("Branding and hostname.")}</p></div>
-          <button className="secondary" disabled={!!loading} onClick={loadPanelSettings}><RefreshCw size={14}/> {tr("Refresh")}</button>
+    // Tabs, one form at a time (operator, 2026-09-30): the page had grown into
+    // unrelated forms stacked up. The admin's own email and password are in
+    // Profile, in the account menu.
+    const tabs = [
+      ['general', tr("General"), SettingsIcon],
+      ['brand', tr("Brand assets"), Image],
+      ['api', tr("API Tokens"), KeyRound],
+    ];
+    const activeTab = tabs.some(([id]) => id === panelSettingsTab) ? panelSettingsTab : 'general';
+    return <section className="section panel-settings-page">
+      <div className="segmented-control backup-tabs" role="tablist" aria-label={tr("Panel settings sections")}>
+        {tabs.map(([id, label, Icon]) => <button key={id} type="button" role="tab" aria-selected={activeTab === id}
+          className={activeTab === id ? 'active' : ''} onClick={() => setPanelSettingsTab(id)}><Icon size={14}/>{label}</button>)}
+      </div>
+      {activeTab === 'general' && <div className="backup-tab-panel" role="tabpanel">
+        <div className="backup-panel-title">
+          <div><h3>{tr("General")}</h3><p className="hint">{tr("Panel name, hostname and the server's addresses.")}</p></div>
+          <button className="secondary" disabled={!!loading} onClick={() => { loadPanelSettings(); loadNetworkStatus(); }}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="panel-settings-grid panel-settings-compact">
           <label><span>{tr("Panel name")}</span><input value={panelSettingsForm.app_name} onChange={e => setPanelSettingsForm(prev => ({ ...prev, app_name: e.target.value }))} placeholder={tr("OPanel")} /></label>
@@ -8273,14 +8287,9 @@ function App() {
           <label className="check-line panel-ssl-status"><input type="checkbox" checked={!!panelSettingsForm.ssl_enabled} onChange={e => setPanelSettingsForm(prev => ({ ...prev, ssl_enabled: e.target.checked }))} /> {tr("Panel SSL")}</label>
           <button disabled={!!loading || !panelSettingsForm.app_name || !panelSettingsForm.panel_hostname} onClick={savePanelSettings}><SettingsIcon size={14}/> {tr("Save settings")}</button>
         </div>
-      </section>
-      <section className="section">
-        <div className="section-title">
-          <div>
-            <h2>{tr("Server network")}</h2>
-            <p className="hint">{tr("Addresses this server answers on. Detected live, so an IPv6 block added later shows up here.")}</p>
-          </div>
-          <button className="secondary" disabled={!!loading} onClick={loadNetworkStatus}><RefreshCw size={14}/> {tr("Refresh")}</button>
+        <div className="backup-subtitle">
+          <h3>{tr("Server network")}</h3>
+          <p className="hint">{tr("Addresses this server answers on. Detected live, so an IPv6 block added later shows up here.")}</p>
         </div>
         <div className="info-box">
           <div className="network-address-row">
@@ -8309,10 +8318,10 @@ function App() {
               : tr("No global IPv6 address is configured on this server yet. Add one at your provider, then refresh.")}
           </p>
         </div>
-      </section>
-      <section className="section">
-        <div className="section-title">
-          <div><h2>{tr("Brand assets")}</h2><p className="hint">{tr("Upload PNG, JPG, WEBP, or ICO files up to 1 MB.")}</p></div>
+      </div>}
+      {activeTab === 'brand' && <div className="backup-tab-panel" role="tabpanel">
+        <div className="backup-panel-title">
+          <div><h3>{tr("Brand assets")}</h3><p className="hint">{tr("Upload PNG, JPG, WEBP, or ICO files up to 1 MB.")}</p></div>
         </div>
         <div className="brand-asset-grid">
           <div className="brand-asset-card">
@@ -8326,10 +8335,10 @@ function App() {
             <button className="secondary" disabled={!!loading || !panelFaviconFile} onClick={() => uploadPanelAsset('favicon')}><Upload size={14}/> {tr("Upload favicon")}</button>
           </div>
         </div>
-      </section>
-      <section className="section">
-        <div className="section-title">
-          <div><h2>{tr("API Tokens")}</h2><p className="hint">{tr("Provisioning tokens for WHMCS or external billing systems.")}</p></div>
+      </div>}
+      {activeTab === 'api' && <div className="backup-tab-panel" role="tabpanel">
+        <div className="backup-panel-title">
+          <div><h3>{tr("API Tokens")}</h3><p className="hint">{tr("Provisioning tokens for WHMCS or external billing systems.")}</p></div>
           <button className="secondary" disabled={!!loading} onClick={loadApiTokens}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         {createdToken && <div className="token-created-notice">
@@ -8358,8 +8367,8 @@ function App() {
             <button className="mini danger" disabled={!!loading} onClick={() => deleteApiToken(t)}><Trash2 size={14}/> {tr("Delete")}</button>
           </div>)}
         </div>}
-      </section>
-    </>;
+      </div>}
+    </section>;
   }
 
   function renderUsers() {

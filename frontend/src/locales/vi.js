@@ -1097,6 +1097,8 @@ export default {
   "Panel hostname is required": "Hostname của panel là bắt buộc",
   "Panel hostname must be a domain name or IPv4 address": "Hostname của panel phải là tên miền hoặc địa chỉ IPv4",
   "Panel hostname must not include a scheme, port, or path": "Hostname của panel không được chứa giao thức, cổng hoặc đường dẫn",
+  "Panel name, hostname and the server's addresses.": "Tên panel, hostname và địa chỉ của máy chủ.",
+  "Panel settings sections": "Các mục cài đặt panel",
   "Panel name": "Tên panel",
   "Panel name must be 2-80 characters": "Tên panel phải dài 2-80 ký tự",
   "Panel port is invalid": "Cổng panel không hợp lệ",

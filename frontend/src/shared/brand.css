@@ -81,7 +81,7 @@ h1,h2{color:var(--brand-ink)}
 .panel-ssl-status{min-height:40px;padding:0 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-sm);white-space:nowrap}
 .panel-ssl-status input:disabled{opacity:1}
 .brand-asset-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.brand-asset-card{display:grid;grid-template-columns:76px minmax(0,1fr) max-content;gap:10px;align-items:center;padding:12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-lg);min-width:0}
+.brand-asset-card{display:grid;grid-template-columns:76px minmax(0,1fr) max-content;gap:10px;align-items:end;padding:12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-lg);min-width:0}
 .brand-preview{width:60px;height:60px;display:grid;place-items:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
 .favicon-preview img{width:32px;height:32px;object-fit:contain}
 .panel-ssl-grid{grid-template-columns:minmax(220px,.8fr) max-content}
@@ -250,7 +250,7 @@ button:disabled,.upload-button.disabled{background:var(--surface-muted);color:va
   .firewall-rule-actions>.badge{flex:1;text-align:center}
   .firewall-rule-actions>button{flex:1;width:100%}
   .brand-asset-grid{grid-template-columns:1fr}
-  .brand-asset-card{grid-template-columns:64px minmax(0,1fr);align-items:center}
+  .brand-asset-card{grid-template-columns:64px minmax(0,1fr);align-items:end}
   .brand-asset-card button{grid-column:1 / -1;width:100%}
   .brand-preview{width:54px;height:54px}
   .login-brand-mark{width:40px;height:40px}
