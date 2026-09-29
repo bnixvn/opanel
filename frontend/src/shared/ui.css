@@ -108,6 +108,13 @@ input[type="checkbox"],input[type="radio"]{height:auto;min-height:0;padding:0}
 select[multiple]{height:auto;padding:6px 8px}
 input:hover:not(:disabled):not(:focus),select:hover:not(:disabled):not(:focus){border-color:var(--border-hover)}
 label > span{font-size:12.5px;font-weight:600;color:var(--text-secondary)}
+/* A file field: its "Choose file" button sat against the top edge of the
+   40px box. Centred, and drawn like the panel's other secondary buttons. */
+input[type=file]{padding:4px 12px 4px 4px;min-height:40px;line-height:30px;cursor:pointer;color:var(--text-secondary);font-size:13px}
+input[type=file]::file-selector-button{height:30px;margin:0 10px 0 0;padding:0 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-alt);color:var(--text);font:inherit;font-size:13px;font-weight:600;cursor:pointer;vertical-align:middle}
+input[type=file]::file-selector-button:hover{background:var(--surface-hover);border-color:var(--border-hover)}
+/* Brand assets: the upload button as tall as the file field beside it. */
+.brand-asset-card > button{height:40px;min-height:40px}
 
 /* ---------- Badges ---------- */
 .badge{padding:3px 9px;font-size:11.5px;font-weight:600;line-height:1.35;border-radius:999px}
