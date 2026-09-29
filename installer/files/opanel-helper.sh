@@ -5814,14 +5814,19 @@ dns_ensure_keys() {
 dns_init_db() {
   local schema
   install -d -o pdns -g pdns -m 0750 "$DNS_DATA_DIR"
+  # Only ever created, never replaced: an existing database holds the zones.
   if [[ ! -s "$DNS_DB" ]]; then
-    schema="$(dpkg -L pdns-backend-sqlite3 2>/dev/null | grep -E 'schema\.sqlite3\.sql(\.gz)?$' | head -n 1 || true)"
+    # The full schema, not one of the N_to_M upgrade scripts beside it.
+    schema="$(dpkg -L pdns-backend-sqlite3 2>/dev/null | grep -E '/schema\.sqlite3\.sql(\.gz)?$' | sort | head -n 1 || true)"
     [[ -n "$schema" && -f "$schema" ]] || deny "the PowerDNS SQLite schema was not found"
+    rm -f "${DNS_DB}.new"
     if [[ "$schema" == *.gz ]]; then
-      zcat "$schema" | sqlite3 "$DNS_DB" || deny "could not create the DNS database"
+      zcat "$schema" | sqlite3 "${DNS_DB}.new" || deny "could not create the DNS database"
     else
-      sqlite3 "$DNS_DB" <"$schema" || deny "could not create the DNS database"
+      sqlite3 "${DNS_DB}.new" <"$schema" || deny "could not create the DNS database"
     fi
+    sqlite3 "${DNS_DB}.new" "select 1 from records limit 1" >/dev/null || deny "the DNS database has no records table"
+    mv -f "${DNS_DB}.new" "$DNS_DB"
   fi
   chown pdns:pdns "$DNS_DB"
   chmod 0640 "$DNS_DB"

@@ -380,6 +380,15 @@ def test_powerdns_listens_on_real_addresses_and_its_api_on_loopback():
     assert 'for pkg in bind9 dnsmasq; do' in HELPER
 
 
+def test_the_database_is_made_from_the_full_schema_and_never_replaced():
+    init = HELPER[HELPER.index("dns_init_db() {"):]
+    init = init[:init.index("\n}\n")]
+    # 3.4.0_to_4.0.0_schema.sqlite3.sql sorts first and is only an upgrade script.
+    assert r"grep -E '/schema\.sqlite3\.sql(\.gz)?$'" in init
+    assert 'if [[ ! -s "$DNS_DB" ]]; then' in init
+    assert 'mv -f "${DNS_DB}.new" "$DNS_DB"' in init
+
+
 def test_the_acme_hook_adds_and_removes_one_value():
     hook = HELPER[HELPER.index("dns_write_acme_hook() {"):]
     hook = hook[:hook.index("\nHOOK\n")]
