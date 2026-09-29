@@ -4279,13 +4279,13 @@ MAIL_SETTINGS_FILE="${MAIL_DIR}/settings.json"
 MAIL_MARKER="${MAIL_DIR}/installed"
 MAIL_WEBMAIL_HOSTS="${MAIL_DIR}/webmail-hosts"
 MAIL_DKIM_SELECTOR="opanel"
-MAIL_PACKAGES=(exim4-daemon-heavy dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-sieve rspamd)
+MAIL_PACKAGES=(exim4-daemon-heavy dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-sieve rspamd unbound)
 # What removal may take with it. Anything else apt wants to remove is refused.
 MAIL_REMOVABLE_PACKAGES=(exim4 exim4-base exim4-config exim4-daemon-heavy exim4-daemon-light
-  dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-sieve dovecot-managesieved rspamd)
+  dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-sieve dovecot-managesieved rspamd unbound)
 # 25, 465 and 587 are default allowances on every install already.
 MAIL_EXTRA_PORTS=(110 143 993 995 2096)
-MAIL_SERVICES=(rspamd dovecot exim4 bnix-webmail)
+MAIL_SERVICES=(unbound rspamd dovecot exim4 bnix-webmail)
 MAIL_WEBMAIL_ROOT="/opt/bnix-webmail"
 MAIL_WEBMAIL_ENV="/etc/bnix-webmail.env"
 MAIL_WEBMAIL_UNIT="/etc/systemd/system/bnix-webmail.service"
@@ -4301,6 +4301,12 @@ MAIL_SSO_SECRET_FILE="${opanel_DATA_DIR}/addons/mail-sso.secret"
 # The Dovecot master user the webmail signs in as for an SSO session
 # ("mailbox*opanel-sso"). Its passdb entry only accepts loopback.
 MAIL_SSO_MASTER="opanel-sso"
+# Rspamd's own recursive resolver. Spamhaus and the URI blocklists answer
+# "blocked" to queries arriving from public resolvers (8.8.8.8, 1.1.1.1 --
+# what a VPS usually has), which silently turns the DNS blocklists off. It
+# listens on its own port so the system's resolver is left alone.
+MAIL_UNBOUND_PORT="5335"
+MAIL_UNBOUND_CONF="/etc/unbound/unbound.conf.d/opanel-mail.conf"
 
 mail_installed() {
   [[ -f "$MAIL_MARKER" ]]
@@ -4909,6 +4915,28 @@ SIEVE
   chmod 0644 "${MAIL_DIR}/sieve/spam.svbin" 2>/dev/null || true
 }
 
+mail_write_unbound_config() {
+  install -d -o root -g root -m 0755 /etc/unbound/unbound.conf.d
+  mail_write_file "$MAIL_UNBOUND_CONF" root:root 0644 <<UNBOUND
+# Managed by OPanel (Email addon): a resolver for Rspamd only.
+server:
+  interface: 127.0.0.1
+  port: ${MAIL_UNBOUND_PORT}
+  access-control: 127.0.0.0/8 allow
+  access-control: 0.0.0.0/0 refuse
+  hide-identity: yes
+  hide-version: yes
+  prefetch: yes
+UNBOUND
+  # The package's hook would register 127.0.0.1 as the system resolver where
+  # resolvconf is installed; this resolver is Rspamd's alone.
+  systemctl disable --now unbound-resolvconf.service >/dev/null 2>&1 || true
+  systemctl mask unbound-resolvconf.service >/dev/null 2>&1 || true
+  if command -v unbound-checkconf >/dev/null 2>&1; then
+    unbound-checkconf >/dev/null 2>&1 || deny "the generated Unbound configuration is invalid"
+  fi
+}
+
 mail_write_rspamd_config() {
   local greylist="4" reject="15" header="6"
   read -r greylist header reject < <(python3 - "$MAIL_SETTINGS_FILE" <<'PY'
@@ -4970,6 +4998,12 @@ RSPAMD
 # Managed by OPanel (Email addon).
 level = "warning";
 RSPAMD
+  mail_write_file /etc/rspamd/local.d/options.inc root:root 0644 <<RSPAMD
+# Managed by OPanel (Email addon): DNS blocklists need a resolver of our own.
+dns {
+  nameserver = ["127.0.0.1:${MAIL_UNBOUND_PORT}"];
+}
+RSPAMD
 }
 
 mail_env_value() {
@@ -4980,13 +5014,16 @@ mail_env_value() {
 mail_webmail_write_env() {
   # Secrets survive a reinstall, so webmail sessions and the panel's SSO keep
   # working across one.
-  local auth_secret sso_secret master_password hash
+  local auth_secret sso_secret master_password hash fresh=0
   auth_secret="$(mail_env_value AUTH_SECRET)"
   sso_secret="$(mail_env_value SSO_SECRET)"
   master_password="$(mail_env_value SSO_MASTER_PASSWORD)"
   [[ ${#auth_secret} -ge 32 ]] || auth_secret="$(openssl rand -hex 32)"
   [[ ${#sso_secret} -ge 32 ]] || sso_secret="$(openssl rand -hex 32)"
-  [[ ${#master_password} -ge 24 ]] || master_password="$(openssl rand -hex 24)"
+  if [[ ${#master_password} -lt 24 ]]; then
+    master_password="$(openssl rand -hex 24)"
+    fresh=1
+  fi
   mail_write_file "$MAIL_WEBMAIL_ENV" root:bnix-webmail 0640 <<ENV
 # Managed by OPanel (Email addon).
 HOST=127.0.0.1
@@ -5006,6 +5043,9 @@ SSO_MASTER_PASSWORD=${master_password}
 ENV
   install -d -o opanel -g opanel -m 0750 "${opanel_DATA_DIR}/addons"
   printf '%s\n' "$sso_secret" | mail_write_file "$MAIL_SSO_SECRET_FILE" opanel:opanel 0600
+  if [[ $fresh -eq 0 && -s "${MAIL_DIR}/master-users" ]]; then
+    return 0
+  fi
   hash="$(printf '%s' "$master_password" | openssl passwd -6 -stdin)" || deny "could not hash the webmail sign-on password"
   printf '%s:{SHA512-CRYPT}%s::::::allow_nets=127.0.0.1/32,::1/128\n' "$MAIL_SSO_MASTER" "$hash" \
     | mail_write_file "${MAIL_DIR}/master-users" root:dovecot 0640
@@ -5034,8 +5074,13 @@ mail_webmail_install() {
   if [[ ! -x "${venv}/bin/python" ]]; then
     python3 -m venv "$venv" || deny "could not create the webmail's Python environment"
   fi
-  "${venv}/bin/pip" install --quiet --disable-pip-version-check -r "${src}/backend/requirements.txt" >/dev/null \
-    || deny "could not install the webmail's Python packages"
+  local wanted
+  wanted="$(sha256sum "${src}/backend/requirements.txt" | cut -d' ' -f1)"
+  if [[ "$(cat "${venv}/.opanel-requirements" 2>/dev/null || true)" != "$wanted" ]]; then
+    "${venv}/bin/pip" install --quiet --disable-pip-version-check -r "${src}/backend/requirements.txt" >/dev/null \
+      || deny "could not install the webmail's Python packages"
+    printf '%s\n' "$wanted" >"${venv}/.opanel-requirements"
+  fi
   install -d -o bnix-webmail -g bnix-webmail -m 0750 "${MAIL_WEBMAIL_ROOT}/data"
   mail_webmail_write_env
   cat >"$MAIL_WEBMAIL_UNIT" <<UNIT
@@ -5429,6 +5474,55 @@ mail_restart_services() {
   done
 }
 
+mail_config_digest() {
+  cat /etc/exim4/exim4.conf /etc/dovecot/dovecot.conf /etc/rspamd/local.d/*.conf /etc/rspamd/local.d/*.inc \
+    "$MAIL_UNBOUND_CONF" "$MAIL_WEBMAIL_ENV" "$MAIL_WEBMAIL_UNIT" 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+
+mail_refresh() {
+  # Brings an installed Email addon up to this release: packages added since
+  # it was installed, and every generated configuration. update.sh runs it
+  # through log-hygiene with the new helper, so a fix reaches a box when its
+  # admin presses Update -- nobody has to reinstall the addon.
+  mail_installed || return 0
+  export DEBIAN_FRONTEND=noninteractive
+  local -a missing=()
+  local pkg before after old_commit unit
+  for pkg in "${MAIL_PACKAGES[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+      missing+=("$pkg")
+    fi
+  done
+  if (( ${#missing[@]} )); then
+    apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+      install -y "${missing[@]}" >/dev/null 2>&1 || deny "could not install ${missing[*]}"
+  fi
+  before="$(mail_config_digest)"
+  old_commit="$(git -C "${MAIL_WEBMAIL_ROOT}/src" rev-parse HEAD 2>/dev/null || true)"
+  mail_ensure_layout
+  mail_tls_sync --no-reload
+  mail_write_exim_config
+  mail_write_relay_credentials
+  mail_write_dovecot_config
+  mail_write_sieve
+  mail_write_unbound_config
+  mail_write_rspamd_config
+  mail_webmail_install
+  mail_write_webmail_vhost
+  after="$(mail_config_digest)"
+  if [[ "$before" != "$after" || ${#missing[@]} -gt 0 ]]; then
+    systemctl daemon-reload
+    for unit in unbound rspamd dovecot exim4; do
+      systemctl enable "$unit" >/dev/null 2>&1 || true
+      systemctl restart "$unit" >/dev/null 2>&1 || echo "WARNING: ${unit} did not restart" >&2
+    done
+  fi
+  if [[ "$old_commit" != "$MAIL_WEBMAIL_COMMIT" || "$before" != "$after" ]]; then
+    systemctl restart bnix-webmail >/dev/null 2>&1 || echo "WARNING: bnix-webmail did not restart" >&2
+  fi
+  echo "Email addon configuration refreshed"
+}
+
 addon_mail_status() {
   local installed=0 running=0 enabled=0 version="" unit down=""
   if mail_installed && command -v exim4 >/dev/null 2>&1 && command -v doveconf >/dev/null 2>&1; then
@@ -5471,6 +5565,7 @@ addon_mail_install() {
   mail_write_relay_credentials
   mail_write_dovecot_config
   mail_write_sieve
+  mail_write_unbound_config
   mail_write_rspamd_config
   mail_webmail_install
   mail_write_webmail_vhost
@@ -5500,7 +5595,7 @@ addon_mail_uninstall() {
   ols_sync_main_config
   restart_openlitespeed || true
   mail_close_ports
-  systemctl disable --now exim4 dovecot rspamd >/dev/null 2>&1 || true
+  systemctl disable --now exim4 dovecot rspamd unbound >/dev/null 2>&1 || true
   for pkg in "${MAIL_REMOVABLE_PACKAGES[@]}"; do
     if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
       installed+=("$pkg")
@@ -5517,7 +5612,9 @@ addon_mail_uninstall() {
   rm -f /etc/exim4/exim4.conf "$MAIL_MARKER" "${MAIL_DIR}/relay.user" "${MAIL_DIR}/relay.pass"
   rm -rf -- "${MAIL_DIR:?}/tls"
   rm -f /etc/rspamd/local.d/actions.conf /etc/rspamd/local.d/redis.conf /etc/rspamd/local.d/classifier-bayes.conf \
-    /etc/rspamd/local.d/dkim_signing.conf /etc/rspamd/local.d/arc.conf /etc/rspamd/local.d/logging.inc
+    /etc/rspamd/local.d/dkim_signing.conf /etc/rspamd/local.d/arc.conf /etc/rspamd/local.d/logging.inc \
+    /etc/rspamd/local.d/options.inc "$MAIL_UNBOUND_CONF"
+  systemctl unmask unbound-resolvconf.service >/dev/null 2>&1 || true
   echo "Email removed. Mailboxes in ${MAIL_VMAIL_DIR} and the DKIM keys are kept."
 }
 
@@ -5529,7 +5626,7 @@ addon_mail_enable() {
 
 addon_mail_disable() {
   local unit
-  for unit in bnix-webmail exim4 dovecot rspamd; do
+  for unit in bnix-webmail exim4 dovecot rspamd unbound; do
     systemctl disable --now "$unit" >/dev/null 2>&1 || true
   done
   echo "Email stopped"
@@ -6534,6 +6631,8 @@ case "$cmd" in
     ensure_php_jit_disabled
     ensure_journal_cap
     ensure_lmd_monitor_layout
+    # A subshell: a failed mail refresh must not stop the update's other steps.
+    ( mail_refresh ) || echo "WARNING: the Email addon could not be refreshed" >&2
     echo "Log hygiene applied"
     ;;
 

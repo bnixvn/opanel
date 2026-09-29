@@ -425,3 +425,25 @@ def test_the_sync_payload_is_saved_before_the_heredoc_takes_stdin():
     assert body.index('cat >"$payload"') < body.index("python3 - ")
     assert "sys.stdin" not in body
     assert 'rm -f -- "$payload"' in body
+
+
+def test_an_update_refreshes_an_installed_mail_server():
+    """Install-only changes never reached live boxes before; update.sh runs
+    log-hygiene with the new helper, and that brings the addon up to date."""
+    hygiene = HELPER[HELPER.index("  log-hygiene)"):]
+    hygiene = hygiene[:hygiene.index(";;")]
+    assert "( mail_refresh ) ||" in hygiene
+    refresh = HELPER[HELPER.index("mail_refresh() {"):]
+    refresh = refresh[:refresh.index("\n}\n")]
+    assert "mail_installed || return 0" in refresh
+    for step in ("mail_write_exim_config", "mail_write_dovecot_config", "mail_write_unbound_config",
+                 "mail_write_rspamd_config", "mail_webmail_install", 'missing+=("$pkg")'):
+        assert step in refresh, step
+
+
+def test_rspamd_asks_its_own_resolver():
+    """Spamhaus refuses public resolvers, which quietly disables the DNS
+    blocklists; Rspamd gets a local Unbound on a port of its own."""
+    assert 'nameserver = ["127.0.0.1:${MAIL_UNBOUND_PORT}"];' in HELPER
+    assert "interface: 127.0.0.1" in HELPER and 'MAIL_UNBOUND_PORT="5335"' in HELPER
+    assert "systemctl mask unbound-resolvconf.service" in HELPER
