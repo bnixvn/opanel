@@ -872,24 +872,26 @@ def check_dns(row: MailDomain) -> list[dict]:
     return records
 
 
-def _dns_zone(row: MailDomain, actor: User) -> Optional[dict]:
-    """The DNS Manager zone that already carries these records, if any."""
+def _dns_zone(row: MailDomain, actor: User, records: list[dict]) -> Optional[dict]:
+    """The DNS Manager zone that carries these records -- the one its writer
+    uses -- and whether each record is in it."""
     from app.services import dns_manager
 
     db = object_session(row)
-    zone = dns_manager.hosts_zone(db, row.domain) if db is not None else None
+    zone = dns_manager.mail_zone(db, row) if db is not None else None
     if zone is None or not (_is_admin(actor) or zone.owner_id == actor.id):
         return None
-    return {"id": zone.id, "name": zone.name}
+    return dns_manager.mail_zone_status(zone, records)
 
 
 def dns_view(row: MailDomain, actor: User) -> dict:
     custom = _dns_custom(row)
     relay = effective_relay(row)
+    records = check_dns(row)
     return {
         "domain": row.domain,
-        "dns_zone": _dns_zone(row, actor),
-        "records": check_dns(row),
+        "dns_zone": _dns_zone(row, actor, records),
+        "records": records,
         "custom": {"spf": custom.get("spf") or "", "dmarc": custom.get("dmarc") or "",
                    "records": custom.get("records") or []},
         "can_customize": _is_admin(actor),

@@ -525,5 +525,8 @@ class DnsZone(Base):
     name: Mapped[str] = mapped_column(String(253), unique=True, index=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # JSON: the records the panel itself wrote here, per source ("mail:<domain>"),
+    # so a later change can take back its own values and leave the owner's.
+    managed: Mapped[str] = mapped_column(Text, default="", server_default="")
 
     owner: Mapped["User"] = relationship()

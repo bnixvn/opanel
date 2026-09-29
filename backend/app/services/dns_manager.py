@@ -452,17 +452,20 @@ def create_zone(db: Session, actor: User, domain: str, owner_id: Optional[int] =
 
 
 def seed_zone(db: Session, zone: DnsZone, ttl: Optional[int] = None) -> None:
-    """Glue, then the records of the owner's websites and mail in the zone."""
+    """Glue, then the records of the owner's websites and mail -- those whose
+    closest zone this is (a sub-zone of their own carries its names)."""
     try:
         _patch(zone.name, _glue(zone.name, _get_zone(zone.name)))
         for site in db.query(Website).filter(Website.owner_id == zone.owner_id).all():
             for host in [site.domain] + [a.domain for a in site.aliases or []]:
                 host = (host or "").lower()
-                if host == zone.name or host.endswith("." + zone.name):
+                closest = zone_for_name(db, host, zone.owner_id)
+                if closest is not None and closest.id == zone.id:
                     _ensure_host_records(zone.name, host)
         for mail_domain in db.query(MailDomain).filter(MailDomain.owner_id == zone.owner_id).all():
-            if mail_domain.domain == zone.name or mail_domain.domain.endswith("." + zone.name):
-                _write_mail_records(zone.name, mail_domain)
+            closest = mail_zone(db, mail_domain)
+            if closest is not None and closest.id == zone.id:
+                _write_mail_records(db, zone, mail_domain)
     except (RuntimeError, ValueError, LookupError) as exc:
         log.warning("could not add the default records of %s: %s", zone.name, exc)
 
@@ -519,6 +522,17 @@ def list_zones(db: Session, actor: User, q: str = "", page: int = 1, per_page: i
 def records(db: Session, actor: User, zone_id: int) -> dict:
     row = get_zone(db, actor, zone_id)
     data = _get_zone(row.name)
+    # Which values the Email addon keeps here, and for which mail domain.
+    by_mail: dict[tuple[str, str, str], str] = {}
+    spf_of: dict[str, str] = {}
+    for key, entry in _managed(row).items():
+        if not key.startswith("mail:") or not isinstance(entry, dict):
+            continue
+        for item in entry.get("records", []):
+            if len(item) == 3:
+                by_mail[tuple(item)] = key[5:]
+        if entry.get("spf"):
+            spf_of[key[5:]] = key[5:]
     items = []
     for rrset in sorted(data.get("rrsets", []), key=lambda r: (r["name"].count("."), r["name"], r["type"])):
         name = rrset["name"].rstrip(".")
@@ -526,9 +540,12 @@ def records(db: Session, actor: User, zone_id: int) -> dict:
         locked = rtype == "SOA" or (rtype == "NS" and name == row.name)
         for record in rrset["records"]:
             shown = from_content(rtype, record["content"])
+            mail_of = by_mail.get((name, rtype, record["content"])) or (
+                spf_of.get(name) if rtype == "TXT" and _is_spf(record["content"]) else None)
             items.append({"name": _relative(name, row.name), "fqdn": name, "type": rtype, "ttl": rrset.get("ttl"),
                           "value": shown["value"] if rtype != "SOA" else record["content"],
-                          "priority": shown["priority"], "content": record["content"], "locked": locked})
+                          "priority": shown["priority"], "content": record["content"], "locked": locked,
+                          "mail": mail_of})
     return {"zone": zone_out(row), "records": items, "nameservers": [ns.rstrip(".") for ns in _ns_records()],
             "addresses": server_addresses()}
 
@@ -729,69 +746,176 @@ def website_removed(db: Session, hosts: list[str], owner_id: int) -> None:
         log.warning("DNS records of %s were not removed: %s", ", ".join(hosts), exc)
 
 
-def _write_mail_records(zone: str, mail_domain: MailDomain) -> None:
+# ---------------------------------------------------------------------------
+# Email: a mail domain's records, kept in its zone
+# ---------------------------------------------------------------------------
+SPF_ENDINGS = ("~all", "-all", "?all", "+all", "all")
+
+
+def _managed(zone: DnsZone) -> dict:
+    try:
+        data = json.loads(zone.managed or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_managed(db: Session, zone: DnsZone, key: str, entry: Optional[dict]) -> None:
+    data = _managed(zone)
+    if entry:
+        data[key] = entry
+    else:
+        data.pop(key, None)
+    zone.managed = json.dumps(data, separators=(",", ":"), sort_keys=True) if data else ""
+    db.commit()
+
+
+def mail_zone(db: Session, mail_domain) -> Optional[DnsZone]:
+    """The zone that carries a mail domain's records: the closest zone hosted
+    here, and only if it is the mail domain's own account's. The writer and
+    the Email page both go by this."""
+    if not installed():
+        return None
+    return zone_for_name(db, mail_domain.domain, mail_domain.owner_id)
+
+
+def _spf_parts(text: str) -> tuple[list[str], str]:
+    """An SPF record's mechanisms in order, and its closing all ("" if none)."""
+    tokens = _untxt(text or "").split()[1:]
+    mechanisms = [token for token in tokens if token.lower() not in SPF_ENDINGS]
+    ending = next((token for token in tokens if token.lower() in SPF_ENDINGS), "")
+    return mechanisms, ending
+
+
+def _is_spf(content: str) -> bool:
+    return _untxt(content).lower().startswith("v=spf1")
+
+
+def _is_dmarc(content: str) -> bool:
+    return _untxt(content).lower().startswith("v=dmarc1")
+
+
+def _mail_desired(zone: str, mail_domain) -> list[dict]:
+    """The records the Email page lists for the domain, in PowerDNS form."""
     from app.services import mail
 
-    data = _get_zone(zone)
-    changes: dict[tuple[str, str], list[str]] = {}
-    ttls: dict[tuple[str, str], int] = {}
-
-    def current(name, rtype):
-        key = (_abs(name), rtype)
-        if key not in changes:
-            changes[key] = _values(data, name, rtype)
-            ttls[key] = (_rrset(data, name, rtype) or {}).get("ttl") or int(current_settings()["default_ttl"])
-        return key
-
+    out = []
     for record in mail.dns_records(mail_domain):
-        name = record["name"].lower()
+        name = record["name"].lower().rstrip(".")
         if name != zone and not name.endswith("." + zone):
             continue
-        rtype = record["type"]
-        if record["key"] == "mx":
-            key = current(name, "MX")
-            content = f"{record.get('priority') or 10} {_abs(record['value'])}"
-            if content not in changes[key]:
-                changes[key].append(content)
-        elif record["key"] in ("spf", "dmarc"):
-            key = current(name, "TXT")
-            prefix = "v=spf1" if record["key"] == "spf" else "v=dmarc1"
-            kept = [v for v in changes[key] if not _untxt(v).lower().startswith(prefix)]
-            changes[key] = kept + [_txt(record["value"])]
-        elif record["key"] == "dkim":
-            changes[(_abs(name), "TXT")] = [_txt(record["value"])]
-            ttls[(_abs(name), "TXT")] = 3600
-        elif record["key"] == "webmail":
-            if not _values(data, name, "CNAME") and not _values(data, name, "A"):
-                changes[(_abs(name), "A")] = [record["value"]]
-                ttls[(_abs(name), "A")] = 3600
-        else:
-            try:
-                content = to_content(rtype, record["value"], record.get("priority"), zone)
-            except ValueError:
-                continue
-            key = current(name, rtype)
-            if rtype == "CNAME":
-                changes[key] = [content]
-            elif content not in changes[key]:
-                changes[key].append(content)
+        rtype = record["type"].upper()
+        try:
+            content = to_content(rtype, record["value"], record.get("priority"), zone)
+        except ValueError:
+            continue
+        out.append({"key": record["key"], "name": name, "type": rtype, "content": content,
+                    "value": record["value"], "custom": bool(record.get("custom"))})
+    return out
+
+
+def _write_mail_records(db: Session, zone: DnsZone, mail_domain) -> None:
+    """Put the mail domain's records in the zone, and take out the values the
+    panel wrote here before and no longer asks for. The owner's own records
+    stay: mechanisms they added to the SPF, their own DMARC policy, another
+    MX, their own address for webmail.<domain>."""
+    key = f"mail:{mail_domain.domain}"
+    before = _managed(zone).get(key)
+    tracked = isinstance(before, dict)
+    before = before if tracked else {}
+    previous = {tuple(item) for item in before.get("records", []) if len(item) == 3}
+    desired = _mail_desired(zone.name, mail_domain)
+    data = _get_zone(zone.name)
+    default_ttl = int(current_settings()["default_ttl"])
+    work: dict[tuple[str, str], list[str]] = {}
+    original: dict[tuple[str, str], list[str]] = {}
+    ttls: dict[tuple[str, str], int] = {}
+
+    def values(name: str, rtype: str) -> list[str]:
+        slot = (name, rtype)
+        if slot not in work:
+            work[slot] = _values(data, name, rtype)
+            original[slot] = list(work[slot])
+            ttls[slot] = (_rrset(data, name, rtype) or {}).get("ttl") or default_ttl
+        return work[slot]
+
+    def peek(name: str, rtype: str) -> list[str]:
+        return work[(name, rtype)] if (name, rtype) in work else _values(data, name, rtype)
+
+    # What the panel wrote before and asks for no more: another relay's
+    # records, an extra record the administrator removed, an old MX host.
+    wanted = {(item["name"], item["type"], item["content"]) for item in desired if item["key"] != "spf"}
+    for name, rtype, content in previous - wanted:
+        current = values(name, rtype)
+        if content in current:
+            current.remove(content)
+
+    written: list[list[str]] = []
+    spf_asked = ""
+    for item in desired:
+        name, rtype, content, slot = item["name"], item["type"], item["content"], (item["name"], item["type"])
+        current = values(name, rtype)
+        if item["key"] == "spf":
+            # One SPF record: the panel's mechanisms, then whatever the owner
+            # added of their own, with their ending. An administrator's custom
+            # SPF is taken as it is.
+            spf = [value for value in current if _is_spf(value)]
+            text = item["value"]
+            if spf and tracked and not item["custom"]:
+                asked, asked_ending = _spf_parts(item["value"])
+                ours = {m.lower() for m in asked} | {m.lower() for m in _spf_parts(before.get("spf", ""))[0]}
+                have, have_ending = _spf_parts(spf[0])
+                text = " ".join(["v=spf1"] + asked + [m for m in have if m.lower() not in ours]
+                                + [have_ending or asked_ending])
+            work[slot] = [value for value in current if value not in spf] + [_txt(text)]
+            spf_asked = item["value"]
+            continue
+        if item["key"] == "dmarc":
+            dmarc = [value for value in current if _is_dmarc(value)]
+            if tracked and not item["custom"] and any((name, rtype, value) not in previous for value in dmarc):
+                continue  # the owner's own policy
+            work[slot] = [value for value in current if value not in dmarc] + [content]
+        elif item["key"] == "dkim":
+            work[slot] = [content]
+            ttls[slot] = 3600
+        elif item["key"] == "webmail":
+            if peek(name, "CNAME") or any((name, rtype, value) not in previous and value != content for value in current):
+                continue  # the owner points webmail.<domain> elsewhere
+            if content not in current:
+                current.append(content)
+        elif rtype == "CNAME":
+            work[slot] = [content]
+        elif content not in current:
+            current.append(content)
+        written.append([name, rtype, content])
+
     # One refused rrset fails the whole PATCH: leave out whatever would clash
-    # with a CNAME the owner has at that name (or the other way round).
+    # with a CNAME at that name (or the other way round).
     present: dict[str, set] = {}
     for rrset in data.get("rrsets", []):
         if rrset["records"]:
-            present.setdefault(rrset["name"], set()).add(rrset["type"])
-    for (name, rtype), values in changes.items():
-        if values:
+            present.setdefault(rrset["name"].rstrip("."), set()).add(rrset["type"])
+    for (name, rtype), contents in work.items():
+        if contents:
             present.setdefault(name, set()).add(rtype)
-    patch = []
-    for (name, rtype), values in changes.items():
-        types = present.get(name, set())
-        if values and ((rtype == "CNAME" and types - {"CNAME"}) or (rtype != "CNAME" and "CNAME" in types)):
-            log.warning("mail %s record for %s left out: the name has a CNAME", rtype, name)
+        elif rtype in present.get(name, set()):
+            present[name].discard(rtype)
+    patch, skipped = [], set()
+    for (name, rtype), contents in work.items():
+        if contents == original[(name, rtype)]:
             continue
-        patch.append(_replace(name, rtype, values, ttls.get((name, rtype), 3600)))
-    _patch(zone, patch)
+        types = present.get(name, set())
+        if contents and ((rtype == "CNAME" and types - {"CNAME"}) or (rtype != "CNAME" and "CNAME" in types)):
+            log.warning("mail %s record for %s left out: the name has a CNAME", rtype, name)
+            skipped.add((name, rtype))
+            continue
+        patch.append(_replace(name, rtype, contents, ttls.get((name, rtype), 3600)))
+    if patch:
+        _patch(zone.name, patch)
+    _save_managed(db, zone, key, {
+        "records": [item for item in written if (item[0], item[1]) not in skipped],
+        "spf": spf_asked,
+    })
 
 
 def mail_domain_changed(db: Session, mail_domains) -> None:
@@ -800,30 +924,92 @@ def mail_domain_changed(db: Session, mail_domains) -> None:
         return
     for mail_domain in mail_domains:
         try:
-            zone = zone_for_name(db, mail_domain.domain, mail_domain.owner_id)
+            zone = mail_zone(db, mail_domain)
             if zone is not None:
-                _write_mail_records(zone.name, mail_domain)
+                _write_mail_records(db, zone, mail_domain)
         except Exception as exc:  # noqa: BLE001
             log.warning("mail DNS records for %s were not written: %s", mail_domain.domain, exc)
 
 
 def mail_domain_removed(db: Session, domain: str, owner_id: int, mail_host: str) -> None:
-    """Email is off for a domain: its DKIM key and our MX go."""
+    """Email is off for a domain: the records the panel wrote for it go, and
+    its mechanisms leave the SPF (what the owner added there stays)."""
     if not installed():
         return
     try:
         zone = zone_for_name(db, domain, owner_id)
         if zone is None:
             return
+        key = f"mail:{domain}"
+        entry = _managed(zone).get(key)
         data = _get_zone(zone.name)
-        from app.services.mail import DKIM_SELECTOR
+        if not isinstance(entry, dict):
+            # Written before the panel kept track: its DKIM key and its MX.
+            from app.services.mail import DKIM_SELECTOR
 
-        changes = [_replace(f"{DKIM_SELECTOR}._domainkey.{domain}", "TXT", [], 3600)]
-        mx = [v for v in _values(data, domain, "MX") if v.split()[-1].rstrip(".") != mail_host]
-        changes.append(_replace(domain, "MX", mx, (_rrset(data, domain, "MX") or {}).get("ttl") or 3600))
-        _patch(zone.name, changes)
+            mx = [v for v in _values(data, domain, "MX") if v.split()[-1].rstrip(".") != mail_host]
+            _patch(zone.name, [_replace(f"{DKIM_SELECTOR}._domainkey.{domain}", "TXT", [], 3600),
+                               _replace(domain, "MX", mx, (_rrset(data, domain, "MX") or {}).get("ttl") or 3600)])
+            return
+        slots: dict[tuple[str, str], list[str]] = {}
+        for item in entry.get("records", []):
+            if len(item) != 3:
+                continue
+            name, rtype, content = item
+            current = slots.setdefault((name, rtype), _values(data, name, rtype))
+            if content in current:
+                current.remove(content)
+        if entry.get("spf"):
+            current = slots.setdefault((domain, "TXT"), _values(data, domain, "TXT"))
+            spf = [value for value in current if _is_spf(value)]
+            if spf:
+                ours = {m.lower() for m in _spf_parts(entry["spf"])[0]}
+                have, ending = _spf_parts(spf[0])
+                left = [m for m in have if m.lower() not in ours]
+                slots[(domain, "TXT")] = [value for value in current if value not in spf] + (
+                    [_txt(" ".join(["v=spf1"] + left + [ending or "~all"]))] if left else [])
+        _patch(zone.name, [_replace(name, rtype, contents, (_rrset(data, name, rtype) or {}).get("ttl") or 3600)
+                           for (name, rtype), contents in slots.items()])
+        _save_managed(db, zone, key, None)
     except Exception as exc:  # noqa: BLE001
         log.warning("mail DNS records for %s were not removed: %s", domain, exc)
+
+
+def mail_zone_status(zone: DnsZone, records: list[dict]) -> dict:
+    """For the Email page: is each record it lists in the zone here? The same
+    test as its public DNS check -- the panel's SPF mechanisms present, any
+    DMARC policy unless an administrator set one -- against the zone itself."""
+    try:
+        data = _get_zone(zone.name)
+    except (RuntimeError, LookupError, ValueError):
+        data = None
+    for record in records:
+        name = record["name"].lower().rstrip(".")
+        rtype = record["type"].upper()
+        if data is None or (name != zone.name and not name.endswith("." + zone.name)):
+            record["in_zone"] = None
+            continue
+        current = _values(data, name, rtype)
+        if record["key"] == "spf":
+            spf = [value for value in current if _is_spf(value)]
+            asked = {m.lower() for m in _spf_parts(record["value"])[0]}
+            ok = len(spf) == 1 and asked <= {m.lower() for m in _spf_parts(spf[0])[0]}
+        elif record["key"] == "dmarc":
+            dmarc = [_untxt(value) for value in current if _is_dmarc(value)]
+            want = "".join(record["value"].split()).lower()
+            ok = bool(dmarc) and (not record.get("custom") or any("".join(d.split()).lower() == want for d in dmarc))
+        else:
+            try:
+                content = to_content(rtype, record["value"], record.get("priority"), zone.name)
+            except ValueError:
+                ok = False
+            else:
+                if rtype == "TXT":
+                    ok = _untxt(content) in {_untxt(value) for value in current}
+                else:
+                    ok = content.lower() in {value.lower() for value in current}
+        record["in_zone"] = ok
+    return {"id": zone.id, "name": zone.name}
 
 
 def hosts_zone(db: Session, domain: str) -> Optional[DnsZone]:

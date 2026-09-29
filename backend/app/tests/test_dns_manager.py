@@ -348,6 +348,144 @@ def test_mail_records_are_written_into_the_zone(env, monkeypatch):
     assert env.pdns.values("alice.test", "opanel._domainkey.alice.test", "TXT") == []
 
 
+# ---------------------------------------------------------------------------
+# Email and DNS Manager agree over time
+# ---------------------------------------------------------------------------
+BREVO = {"id": "brevo", "name": "Brevo", "host": "smtp-relay.brevo.com", "port": 587,
+         "spf_include": "include:spf.brevo.com",
+         "dns_records": [{"type": "TXT", "name": "@", "value": "brevo-code:abc"},
+                         {"type": "CNAME", "name": "brevo1._domainkey", "value": "b1.{domain}.dkim.brevo.com"}]}
+
+
+@pytest.fixture
+def mailzone(env, monkeypatch):
+    """alice.test: a zone and a mail domain, its records written once."""
+    monkeypatch.setattr(mail, "hostname", lambda: "panel.example.net")
+    monkeypatch.setattr(mail.network, "detect_addresses", lambda: {"ipv4": ["203.0.113.7"], "ipv6": []})
+    env.store["mail"] = {"settings": {"relays": [dict(BREVO)]}}
+    zone_id = _zone(env, "alice", "alice.test")
+    row = MailDomain(domain="alice.test", owner_id=env.people["alice"].id, dkim_public="A" * 392, catch_all="",
+                     webmail_host=False, relay="", dns_custom="")
+    env.db.add(row)
+    env.db.commit()
+    dns_manager.mail_domain_changed(env.db, [row])
+
+    def change(**fields):
+        for key, value in fields.items():
+            setattr(row, key, value)
+        env.db.commit()
+        dns_manager.mail_domain_changed(env.db, [row])
+
+    def txt(name="alice.test"):
+        return sorted(dns_manager._untxt(v) for v in env.pdns.values("alice.test", name, "TXT"))
+
+    return SimpleNamespace(row=row, zone_id=zone_id, change=change, txt=txt)
+
+
+def _owner_record(env, zone_id, record):
+    res = env.as_user("alice").post(f"/api/dns/zones/{zone_id}/records", json=record)
+    assert res.status_code == 200, res.text
+
+
+def test_another_relay_takes_the_old_relays_records_away(env, mailzone):
+    _owner_record(env, mailzone.zone_id, {"name": "@", "type": "TXT", "value": "google-site-verification=keep"})
+    mailzone.change(relay="brevo")
+    assert "brevo-code:abc" in mailzone.txt()
+    assert "include:spf.brevo.com" in next(t for t in mailzone.txt() if t.startswith("v=spf1"))
+    assert env.pdns.values("alice.test", "brevo1._domainkey.alice.test", "CNAME") == ["b1.alice.test.dkim.brevo.com."]
+    mailzone.change(relay="direct")
+    assert mailzone.txt() == ["google-site-verification=keep", "v=spf1 mx a ip4:203.0.113.7 ~all"]
+    assert env.pdns.values("alice.test", "brevo1._domainkey.alice.test", "CNAME") == []
+
+
+def test_an_extra_record_the_admin_removes_leaves_the_zone(env, mailzone):
+    mailzone.change(dns_custom=json.dumps({"records": [{"type": "TXT", "name": "@", "value": "site-verify=xyz"}]}))
+    assert "site-verify=xyz" in mailzone.txt()
+    mailzone.change(dns_custom="")
+    assert "site-verify=xyz" not in mailzone.txt()
+
+
+def test_what_the_owner_adds_to_the_spf_survives_and_the_old_relay_does_not(env, mailzone):
+    mailzone.change(relay="brevo")
+    spf = next(r for r in _records(env, "alice", mailzone.zone_id) if r["type"] == "TXT" and r["value"].startswith("v=spf1"))
+    res = env.as_user("alice").put(f"/api/dns/zones/{mailzone.zone_id}/records", json={
+        "old": {"name": "@", "type": "TXT", "content": spf["content"]},
+        "new": {"name": "@", "type": "TXT", "value": spf["value"].replace(" ~all", " include:_spf.google.com -all")}})
+    assert res.status_code == 200, res.text
+    mailzone.change(relay="direct")
+    assert [t for t in mailzone.txt() if t.startswith("v=spf1")] == ["v=spf1 mx a ip4:203.0.113.7 include:_spf.google.com -all"]
+
+
+def test_the_owners_own_dmarc_policy_stays(env, mailzone):
+    records = _records(env, "alice", mailzone.zone_id)
+    dmarc = next(r for r in records if r["name"] == "_dmarc")
+    res = env.as_user("alice").put(f"/api/dns/zones/{mailzone.zone_id}/records", json={
+        "old": {"name": "_dmarc", "type": "TXT", "content": dmarc["content"]},
+        "new": {"name": "_dmarc", "type": "TXT", "value": "v=DMARC1; p=reject"}})
+    assert res.status_code == 200, res.text
+    mailzone.change(relay="brevo")
+    assert mailzone.txt("_dmarc.alice.test") == ["v=DMARC1; p=reject"]
+    # An administrator's own DMARC for the domain does replace it.
+    mailzone.change(dns_custom=json.dumps({"dmarc": "v=DMARC1; p=none"}))
+    assert mailzone.txt("_dmarc.alice.test") == ["v=DMARC1; p=none"]
+
+
+def test_a_new_mail_host_replaces_the_old_mx_and_keeps_the_owners(env, mailzone, monkeypatch):
+    _owner_record(env, mailzone.zone_id, {"name": "@", "type": "MX", "value": "backup-mx.example.org", "priority": 50})
+    monkeypatch.setattr(mail, "hostname", lambda: "mail.example.net")
+    mailzone.change()
+    assert sorted(env.pdns.values("alice.test", "alice.test", "MX")) == ["10 mail.example.net.", "50 backup-mx.example.org."]
+
+
+def test_webmail_address_the_owner_set_is_not_overwritten(env, mailzone):
+    records = _records(env, "alice", mailzone.zone_id)
+    webmail = next(r for r in records if r["name"] == "webmail")
+    env.as_user("alice").post(f"/api/dns/zones/{mailzone.zone_id}/records/delete",
+                              json={"name": "webmail", "type": "A", "content": webmail["content"]})
+    _owner_record(env, mailzone.zone_id, {"name": "webmail", "type": "A", "value": "198.51.100.20"})
+    mailzone.change(relay="brevo")
+    assert env.pdns.values("alice.test", "webmail.alice.test", "A") == ["198.51.100.20"]
+
+
+def test_turning_email_off_takes_back_what_the_panel_wrote(env, mailzone):
+    mailzone.change(relay="brevo")
+    _owner_record(env, mailzone.zone_id, {"name": "@", "type": "TXT", "value": "google-site-verification=keep"})
+    dns_manager.mail_domain_removed(env.db, "alice.test", env.people["alice"].id, "panel.example.net")
+    assert mailzone.txt() == ["google-site-verification=keep"]
+    for name, rtype in (("alice.test", "MX"), ("opanel._domainkey.alice.test", "TXT"), ("_dmarc.alice.test", "TXT"),
+                        ("webmail.alice.test", "A"), ("brevo1._domainkey.alice.test", "CNAME")):
+        assert env.pdns.values("alice.test", name, rtype) == [], (name, rtype)
+    assert env.pdns.values("alice.test", "alice.test", "A") == ["203.0.113.7"]  # the website's
+    assert dns_manager._managed(env.db.get(DnsZone, mailzone.zone_id)) == {}
+
+
+def test_the_email_page_reads_the_zone_the_writer_uses(env, mailzone):
+    res = env.as_user("alice").get(f"/api/mail/domains/{mailzone.row.id}/dns")
+    assert res.status_code == 200, res.text
+    view = res.json()
+    assert view["dns_zone"] == {"id": mailzone.zone_id, "name": "alice.test"}
+    assert {r["key"]: r["in_zone"] for r in view["records"]} == {
+        "mx": True, "spf": True, "dkim": True, "dmarc": True, "webmail": True}
+    # Records the Email addon keeps are marked on the zone page.
+    marked = {(r["name"], r["type"]) for r in _records(env, "alice", mailzone.zone_id) if r["mail"] == "alice.test"}
+    assert {("@", "MX"), ("@", "TXT"), ("opanel._domainkey", "TXT"), ("_dmarc", "TXT"), ("webmail", "A")} <= marked
+    assert ("@", "A") not in marked
+
+
+def test_a_zone_of_another_account_is_neither_written_nor_claimed(env, monkeypatch):
+    monkeypatch.setattr(mail, "hostname", lambda: "panel.example.net")
+    monkeypatch.setattr(mail.network, "detect_addresses", lambda: {"ipv4": ["203.0.113.7"], "ipv6": []})
+    res = env.as_user("root_admin").post("/api/dns/zones", json={"domain": "alice.test", "owner_id": env.people["bob"].id})
+    assert res.status_code == 200, res.text
+    row = MailDomain(domain="alice.test", owner_id=env.people["alice"].id, dkim_public="A" * 392, catch_all="",
+                     webmail_host=False, relay="", dns_custom="")
+    env.db.add(row)
+    env.db.commit()
+    dns_manager.mail_domain_changed(env.db, [row])
+    assert env.pdns.values("alice.test", "alice.test", "MX") == []
+    assert env.as_user("root_admin").get(f"/api/mail/domains/{row.id}/dns").json()["dns_zone"] is None
+
+
 def test_hooks_do_nothing_without_the_addon(env):
     dns_manager.MARKER.unlink()
     site = env.db.query(Website).filter_by(domain="alice.test").one()

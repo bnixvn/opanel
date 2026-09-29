@@ -1543,7 +1543,10 @@ function App() {
   }
 
   async function deleteDnsRecord(record) {
-    if (!confirm(tr("Delete the {0} record of {1}: {2}?", record.type, record.name, record.value))) return;
+    const question = record.mail
+      ? tr("The Email addon keeps this record for {0} and writes it again when the email settings of {0} change. Delete the {1} record of {2} anyway?", record.mail, record.type, record.name)
+      : tr("Delete the {0} record of {1}: {2}?", record.type, record.name, record.value);
+    if (!confirm(question)) return;
     const body = { name: record.name, type: record.type, content: record.content };
     const data = await request(`/dns/zones/${dnsZone.zone.id}/records/delete`, { method: 'POST', body: JSON.stringify(body) }, tr("Deleting the record..."));
     if (!data) return;
@@ -6335,7 +6338,7 @@ function App() {
       </div>}
       {mailDns.dnsZone && <div className="info-box dns-managed-box">
         <Network size={14}/>
-        <span>{tr("DNS Manager on this server holds the zone {0} and writes these records into it. Nothing to add by hand once the domain's nameservers point here.", mailDns.dnsZone.name)}</span>
+        <span>{tr("DNS Manager on this server holds the zone {0} and keeps these records in it, taking back the ones email no longer needs. \"In the zone\" is what the zone holds; the other badge is what public DNS answers, which matches once the domain's nameservers point here.", mailDns.dnsZone.name)}</span>
         <button type="button" className="mini secondary" onClick={() => openDnsZone(mailDns.dnsZone)}>{tr("Open zone")}</button>
       </div>}
       {records === null && <p className="hint">{tr("Checking DNS…")}</p>}
@@ -6345,7 +6348,9 @@ function App() {
             <strong>{titleFor(record)}</strong>
             <span className="mail-dns-type"><code>{record.type}</code>{record.priority != null && <small>{tr("priority {0}", record.priority)}</small>}</span>
             {isAdmin && (record.custom || record.source === 'custom') && <span className="badge">{tr("Custom")}</span>}
-            <span className={`badge mail-dns-status ${statusClass[record.status] || ''}`}>{statusLabel[record.status] || record.status}</span>
+            {mailDns.dnsZone && record.in_zone != null && <span className={`badge mail-dns-zone ${record.in_zone ? 'ok' : 'warn'}`}
+              title={tr("DNS Manager's zone on this server")}>{record.in_zone ? tr("In the zone") : tr("Not in the zone")}</span>}
+            <span className={`badge mail-dns-status ${statusClass[record.status] || ''}`} title={tr("What public DNS answers now")}>{statusLabel[record.status] || record.status}</span>
           </div>
           {renderCopyBlock(tr("Name"), record.name)}
           {renderCopyBlock(tr("Value"), record.value, { multiline: record.key === 'dkim' })}
@@ -6799,7 +6804,8 @@ function App() {
               <span className="dns-record-name" title={record.fqdn}>{record.name}</span>
               <span><code className="dns-type">{record.type}</code></span>
               <span className="dns-record-ttl">{dnsTtlLabel(record.ttl)}</span>
-              <span className="dns-record-value">{record.priority != null && <small title={tr("Priority")}>{record.priority}</small>}<code>{record.value}</code></span>
+              <span className="dns-record-value">{record.priority != null && <small title={tr("Priority")}>{record.priority}</small>}<code>{record.value}</code>
+                {record.mail && <span className="badge dns-mail-badge" title={tr("Kept in step with the email of {0}", record.mail)}><Mail size={11}/> {tr("Email")}</span>}</span>
               <span className="row-actions">
                 {record.locked
                   ? <span className="dns-locked" title={tr("Follows DNS Manager's nameserver settings")}><Lock size={13}/></span>
