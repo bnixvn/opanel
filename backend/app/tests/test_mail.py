@@ -644,3 +644,21 @@ def test_removal_takes_what_apt_pulled_in_with_the_mail_server():
     body = body[:body.index("\n}\n")]
     assert 'apt-mark showauto "$name"' in body
     assert "which was installed separately" in body
+
+
+def test_nothing_of_the_mail_server_exists_until_the_addon_is_installed():
+    """The Email addon is off on every new and updated box: install and update
+    put no mail software on it, and every helper path that touches mail runs
+    only once the addon's marker exists."""
+    root = PROJECT_ROOT / "installer"
+    for script in ("install.sh", "update.sh"):
+        text = (root / script).read_text(encoding="utf-8")
+        for word in ("exim", "dovecot", "rspamd", "unbound", "bnix-webmail", "mail_refresh"):
+            assert word not in text, (script, word)
+    refresh = HELPER[HELPER.index("mail_refresh() {"):]
+    assert refresh.index("mail_installed || return 0") < refresh.index("apt-get")
+    assert HELPER.count('if mail_installed; then ports+=("${MAIL_EXTRA_PORTS[@]}"); fi') == 2
+    tls = HELPER[HELPER.index("mail_tls_sync() {"):]
+    assert "! mail_installed; then" in tls[:1200]
+    assert "if webmail_conf.is_file():" in HELPER
+    assert not addons.ADDONS["mail"].get("default_on")
