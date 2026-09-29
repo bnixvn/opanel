@@ -2058,4 +2058,8 @@ export default {
   "no login": "không đăng nhập",
   "signed in as {0}": "đăng nhập dưới tên {0}",
   "{0} DNS records": "{0} bản ghi DNS",
+  "Ban rules, banned addresses and activity": "Quy tắc chặn, địa chỉ đang bị chặn và hoạt động",
+  "Fail2ban is not installed. Install it on the Addons page to ban addresses that keep failing to sign in.": "Fail2ban chưa được cài. Hãy cài ở trang Addons để chặn các địa chỉ đăng nhập sai nhiều lần.",
+  "Fail2ban is stopped: nothing is being banned. Start it to protect SSH and the panel login.": "Fail2ban đang dừng: không địa chỉ nào bị chặn. Hãy bật lại để bảo vệ SSH và trang đăng nhập panel.",
+  "Open Firewall": "Mở trang Firewall",
 };

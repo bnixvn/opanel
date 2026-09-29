@@ -568,6 +568,8 @@ function App() {
   const [f2bDraft, setF2bDraft] = useState(null);
   const [f2bBanned, setF2bBanned] = useState([]);
   const [f2bLog, setF2bLog] = useState('');
+  // The Fail2ban addon's own status, for its section on the Firewall page.
+  const [f2bAddon, setF2bAddon] = useState(null);
   const [showUpdateLog, setShowUpdateLog] = useState(false);
   const [osUpdating, setOsUpdating] = useState(false);
   const [panelUpdating, setPanelUpdating] = useState(false);
@@ -3767,6 +3769,18 @@ function App() {
     if (log) setF2bLog(log.log || '');
   }
 
+  async function loadF2bAddon() {
+    const data = await request('/addons/fail2ban', { silent: true }, '');
+    setF2bAddon(data || null);
+    if (data?.installed) loadFail2ban(true);
+    return data;
+  }
+
+  async function setF2bRunning(running) {
+    await setAddonRunning(f2bAddon, running);
+    loadF2bAddon();
+  }
+
   async function saveFail2banSettings() {
     if (!f2bDraft) return;
     const data = await request('/addons/fail2ban/settings', {
@@ -4011,7 +4025,7 @@ function App() {
     if (isAuthenticated && page === 'databases' && currentUser?.role === 'admin') loadUsers();
     if (isAuthenticated && page === 'notifications') loadNotifications();
     if (isAuthenticated && page === 'php') { loadPhpConfig(); loadPhpVersions(); loadPhpExtensions(); }
-    if (isAuthenticated && page === 'firewall') { loadFirewall(); loadFirewallBlocklists(); }
+    if (isAuthenticated && page === 'firewall') { loadFirewall(); loadFirewallBlocklists(); if (isAdmin) loadF2bAddon(); }
     if (isAuthenticated && page === 'waf') { loadWafRules(); loadBadBots(); }
     if (isAuthenticated && page === 'updates' && currentUser?.role === 'admin') loadUpdates();
     if (isAuthenticated && page === 'security') {
@@ -4128,12 +4142,6 @@ function App() {
     return () => clearInterval(timer);
   }, [page, isAdmin, addonList]);
 
-  // Fail2ban's own panels are only worth fetching once it is actually there.
-  useEffect(() => {
-    if (page !== 'addons' || !isAdmin) return;
-    const f2b = addonList.find(addon => addon.id === 'fail2ban');
-    if (f2b && f2b.installed) loadFail2ban(true);
-  }, [page, isAdmin, addonList.find(a => a.id === 'fail2ban')?.installed]);
 
   useEffect(() => { setMobileMenuOpen(false); }, [page]);
 
@@ -5612,6 +5620,37 @@ function App() {
     </section>;
   }
 
+  // Fail2ban is managed where the rest of the firewall is: its bans are
+  // firewall rules, and its Never ban list sits next to Allow IP.
+  function renderFirewallFail2ban() {
+    const addon = f2bAddon;
+    const badge = !addon ? null
+      : addon.busy ? <span className="badge warn">{addon.busy_action === 'uninstall' ? tr("Removing") : tr("Installing")}</span>
+        : !addon.installed ? <span className="badge">{tr("Not installed")}</span>
+          : addon.running ? <span className="badge ok">{tr("Running")}</span>
+            : <span className="badge warn">{tr("Stopped")}</span>;
+    return <section className="section firewall-fail2ban">
+      <div className="section-title">
+        <div><h2 className="firewall-fail2ban-title">Fail2ban {badge}</h2>
+          <p className="hint">{tr("Bans an address at the firewall after repeated failed logins.")}</p></div>
+        <div className="actions">
+          {addon?.installed && !addon.busy && (addon.running
+            ? <button className="secondary-light" disabled={!!loading} onClick={() => setF2bRunning(false)}><Square size={14}/> {tr("Stop")}</button>
+            : <button className="secondary" disabled={!!loading} onClick={() => setF2bRunning(true)}><Play size={14}/> {tr("Start")}</button>)}
+          <button className="secondary" disabled={!!loading} onClick={() => loadF2bAddon()}><RefreshCw size={14}/> {tr("Refresh")}</button>
+        </div>
+      </div>
+      {addon === null && <p className="hint">{tr("Loading…")}</p>}
+      {addon && !addon.installed && !addon.busy && <div className="info-box firewall-fail2ban-missing">
+        <AlertCircle size={14}/> <span>{tr("Fail2ban is not installed. Install it on the Addons page to ban addresses that keep failing to sign in.")}</span>
+        <button type="button" className="mini" onClick={() => navigateToPage('addons')}><PackageOpen size={13}/> {tr("Open Addons")}</button>
+      </div>}
+      {addon?.last_error && <p className="hint addon-error"><AlertCircle size={13}/> {addon.last_error}</p>}
+      {addon?.installed && !addon.running && <p className="hint">{tr("Fail2ban is stopped: nothing is being banned. Start it to protect SSH and the panel login.")}</p>}
+      {addon?.installed && renderAddonFail2ban(addon)}
+    </section>;
+  }
+
   function renderAddonFail2ban(addon) {
     const draft = f2bDraft || {};
     const dirty = f2bSettings && JSON.stringify(draft) !== JSON.stringify(f2bSettings);
@@ -6807,7 +6846,10 @@ function App() {
               {(addon.notes || []).length > 0 && <ul className="addon-notes">
                 {addon.notes.map((note, idx) => <li key={idx}>{tr(note)}</li>)}
               </ul>}
-              {addon.id === 'fail2ban' && renderAddonFail2ban(addon)}
+              {addon.id === 'fail2ban' && addon.installed && <div className="addon-panel">
+                <div className="addon-panel-head"><strong>{tr("Ban rules, banned addresses and activity")}</strong>
+                  <button className="mini" onClick={() => navigateToPage('firewall')}><Shield size={13}/> {tr("Open Firewall")}</button></div>
+              </div>}
               {addon.id === 'mcp' && renderAddonMcp(addon)}
               {addon.id === 'demo' && addon.installed && renderAddonDemo(addon)}
               {addon.id === 'mail' && addon.installed && renderAddonMail(addon)}
@@ -7082,6 +7124,7 @@ function App() {
         </div>
       </section>
       </div>
+      {renderFirewallFail2ban()}
       <section className="section">
         <div className="section-title">
           <div><h2>{tr("Blocklist URLs")}</h2><p className="hint">{tr("TXT files are fetched daily at 01:00 and enforced by ipset, so large lists do not create thousands of firewall rules.")}</p></div>

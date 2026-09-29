@@ -736,3 +736,8 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .mail-relay-row,.rspamd-row{grid-template-columns:1fr;gap:8px}
   .mail-relay-row .row-actions{justify-content:flex-start}
 }
+/* Fail2ban on the Firewall page. */
+.firewall-fail2ban-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.firewall-fail2ban-missing{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.firewall-fail2ban-missing span{flex:1 1 280px}
+.firewall-fail2ban .addon-panel + .addon-panel{margin-top:12px}

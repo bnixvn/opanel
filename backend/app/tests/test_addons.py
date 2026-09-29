@@ -567,3 +567,19 @@ def test_the_remove_prompt_accepts_the_name_it_asks_for():
     body = body[:body.index("\n  }\n")]
     assert "String(addon.name || '').trim().toLowerCase()" in body
     assert "typed.trim().toLowerCase() !== addon.id)" not in body
+
+
+def test_fail2ban_is_managed_on_the_firewall_page():
+    """Its bans are firewall rules and Never ban sits next to Allow IP, so its
+    settings, banned list and activity live on the Firewall page; the addon
+    card only points there."""
+    app_jsx = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    firewall = app_jsx[app_jsx.index("  function renderFirewall() {"):]
+    firewall = firewall[:firewall.index(chr(10) + "  function ")]
+    assert "{renderFirewallFail2ban()}" in firewall
+    section = app_jsx[app_jsx.index("  function renderFirewallFail2ban() {"):]
+    section = section[:section.index(chr(10) + "  function ")]
+    assert "renderAddonFail2ban(addon)" in section and "navigateToPage('addons')" in section
+    assert "if (isAdmin) loadF2bAddon();" in app_jsx
+    card = app_jsx[app_jsx.index("{addon.id === 'fail2ban' && addon.installed"):]
+    assert "navigateToPage('firewall')" in card[:400]
