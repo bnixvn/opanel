@@ -513,3 +513,17 @@ class MailForwarder(Base):
     @property
     def destination_list(self) -> list[str]:
         return [line.strip() for line in (self.destinations or "").splitlines() if line.strip()]
+
+
+class DnsZone(Base):
+    """A zone this server answers for (DNS Manager addon). Its records live in
+    PowerDNS; this row says which account owns it."""
+
+    __tablename__ = "dns_zones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(253), unique=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    owner: Mapped["User"] = relationship()

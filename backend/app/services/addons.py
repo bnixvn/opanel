@@ -168,6 +168,34 @@ ADDONS: dict[str, dict] = {
             "kept, so installing again brings them back.",
         ],
     },
+    "dns": {
+        "id": "dns",
+        "name": "DNS Manager",
+        "summary": "This server becomes the nameserver for your customers' domains.",
+        "description": (
+            "Installs PowerDNS. Hosting customers manage the zones of their own "
+            "domains -- A, AAAA, CNAME, MX, TXT, NS, SRV and CAA records -- and "
+            "administrators every zone. A new website gets its records "
+            "automatically, the Email addon writes MX, SPF, DKIM, DMARC and its "
+            "relay's records into the zone, and a wildcard certificate can be "
+            "issued over DNS without Cloudflare."
+        ),
+        "category": "hosting",
+        "version": "1",
+        "packages": ["pdns-server", "pdns-backend-sqlite3"],
+        "service": "pdns",
+        "features": ["dns"],
+        "notes": [
+            "Set the nameservers (default ns1 and ns2 under the panel hostname) "
+            "in DNS Manager's settings, then register them with glue records at "
+            "the registrar of their domain, pointing at this server's address.",
+            "A customer's domain is served from here once its registrar lists "
+            "these nameservers.",
+            "Opens port 53 (UDP and TCP). Refuses to install next to BIND or dnsmasq.",
+            "Removing uninstalls PowerDNS but keeps the zones in /var/lib/opanel-dns, "
+            "so installing again brings them back.",
+        ],
+    },
     "malware": {
         "id": "malware",
         "name": "Malware Scanner",

@@ -33,7 +33,7 @@ from urllib.parse import urlparse
 
 import bcrypt
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.core import secrets as secret_store
 from app.core.config import settings
@@ -293,15 +293,26 @@ def add_domain(db: Session, actor: User, domain: str, owner_id: Optional[int] = 
     db.commit()
     db.refresh(row)
     sync(db)
+    _dns_changed(db, [row])
     return row
+
+
+def _dns_changed(db: Session, rows) -> None:
+    """DNS Manager writes these domains' mail records into their zones."""
+    from app.services import dns_manager
+
+    dns_manager.mail_domain_changed(db, rows)
 
 
 def delete_domain(db: Session, actor: User, domain_id: int) -> str:
     row = get_domain(db, actor, domain_id)
-    name, webmail = row.domain, bool(row.webmail_host)
+    name, webmail, owner_id = row.domain, bool(row.webmail_host), row.owner_id
     db.delete(row)
     db.commit()
     sync(db)
+    from app.services import dns_manager
+
+    dns_manager.mail_domain_removed(db, name, owner_id, hostname())
     if webmail:
         shell.privileged("mail-webmail-host", helper_args=[name, "off"], check=False)
     # Last, once nothing routes to it any more.
@@ -353,6 +364,7 @@ def rotate_dkim(db: Session, actor: User, domain_id: int) -> MailDomain:
     row.dkim_public = _dkim_public(row.domain, rotate=True)
     db.commit()
     sync(db)
+    _dns_changed(db, [row])
     return row
 
 
@@ -376,6 +388,7 @@ def set_webmail_host(db: Session, actor: User, domain_id: int, enabled: bool) ->
         shell.privileged("mail-webmail-host", helper_args=[row.domain, "off"], check=False)
     row.webmail_host = bool(enabled)
     db.commit()
+    _dns_changed(db, [row])
     return row
 
 
@@ -730,6 +743,7 @@ def set_dns_custom(db: Session, actor: User, domain_id: int, payload: dict) -> M
     }
     row.dns_custom = json.dumps(custom, separators=(",", ":")) if any(custom.values()) else ""
     db.commit()
+    _dns_changed(db, [row])
     return row
 
 
@@ -858,11 +872,23 @@ def check_dns(row: MailDomain) -> list[dict]:
     return records
 
 
+def _dns_zone(row: MailDomain, actor: User) -> Optional[dict]:
+    """The DNS Manager zone that already carries these records, if any."""
+    from app.services import dns_manager
+
+    db = object_session(row)
+    zone = dns_manager.hosts_zone(db, row.domain) if db is not None else None
+    if zone is None or not (_is_admin(actor) or zone.owner_id == actor.id):
+        return None
+    return {"id": zone.id, "name": zone.name}
+
+
 def dns_view(row: MailDomain, actor: User) -> dict:
     custom = _dns_custom(row)
     relay = effective_relay(row)
     return {
         "domain": row.domain,
+        "dns_zone": _dns_zone(row, actor),
         "records": check_dns(row),
         "custom": {"spf": custom.get("spf") or "", "dmarc": custom.get("dmarc") or "",
                    "records": custom.get("records") or []},
@@ -1193,6 +1219,7 @@ def set_default_relay(db: Session, relay_id: str) -> str:
     stored["default_relay"] = relay_id
     _store_settings(stored)
     sync(db)
+    _dns_changed(db, db.query(MailDomain).all())
     return relay_id
 
 
@@ -1206,6 +1233,7 @@ def set_domain_relay(db: Session, actor: User, domain_id: int, choice: str) -> M
     row.relay = choice
     db.commit()
     sync(db)
+    _dns_changed(db, [row])
     return row
 
 
@@ -1213,6 +1241,8 @@ def _apply_relays(db: Session) -> None:
     if installed():
         apply_settings()
         sync(db)
+    # A relay's DNS template reaches every domain that sends through it.
+    _dns_changed(db, db.query(MailDomain).all())
 
 
 def helper_settings() -> dict:

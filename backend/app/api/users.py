@@ -19,7 +19,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import mail, mariadb, notifications, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, wordpress
+from app.services import dns_manager, mail, mariadb, notifications, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, wordpress
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -234,6 +234,7 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
         _delete_orphan_databases(db, user.id)
         _remove_user_from_backup_schedules(db, user.id)
         mail.delete_for_owner(db, user)
+        dns_manager.delete_for_owner(db, user)
         db.query(McpToken).filter(McpToken.user_id == user.id).delete(synchronize_session=False)
         site_users.delete_panel_user(user.username)
     except (RuntimeError, ValueError) as exc:

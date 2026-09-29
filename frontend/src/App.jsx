@@ -45,6 +45,13 @@ const CRON_PRESETS = [
   ['0 0 * * 0', 'Weekly, Sunday 00:00'],
   ['0 0 1 * *', 'Monthly, day 1 at 00:00'],
 ];
+const DNS_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA'];
+const DNS_TTLS = [60, 300, 900, 1800, 3600, 14400, 43200, 86400];
+const DNS_PLACEHOLDERS = {
+  A: '203.0.113.10', AAAA: '2001:db8::10', CNAME: 'target.example.com', MX: 'mail.example.com',
+  TXT: 'v=spf1 mx -all', NS: 'ns1.example.net', SRV: '5 5060 sip.example.com', CAA: 'issue letsencrypt.org',
+};
+const emptyDnsRecord = () => ({ type: 'A', name: '', value: '', priority: '', ttl: '' });
 const normalizeCron = value => String(value || '').trim().split(/\s+/).join(' ');
 const PAGE_ROUTES = {
   dashboard: '/',
@@ -68,6 +75,7 @@ const PAGE_ROUTES = {
   addons: '/addons',
   mcp: '/mcp',
   mail: '/email',
+  dns: '/dns',
   notifications: '/notifications',
   services: '/services',
 };
@@ -455,12 +463,12 @@ function App() {
   const [sslMode, setSslMode] = useState('letsencrypt');
   const [manualSslForm, setManualSslForm] = useState({ certificate: '', private_key: '', ca_bundle: '' });
   const [manualSslFiles, setManualSslFiles] = useState({ certificate: null, private_key: null, ca_bundle: null });
-  const [wildcardSslForm, setWildcardSslForm] = useState({ api_token: '', email: '' });
+  const [wildcardSslForm, setWildcardSslForm] = useState({ api_token: '', email: '', provider: '' });
   const [availableCerts, setAvailableCerts] = useState([]);   // SSL page: certs on the box covering currentSite
   const [reuseCertName, setReuseCertName] = useState('');
   // Create-website SSL section
   const [createSslMode, setCreateSslMode] = useState('letsencrypt'); // letsencrypt|wildcard|existing|manual
-  const [createSslForm, setCreateSslForm] = useState({ api_token: '', email: '', reuse_name: '', certificate: '', private_key: '', ca_bundle: '' });
+  const [createSslForm, setCreateSslForm] = useState({ api_token: '', email: '', provider: '', reuse_name: '', certificate: '', private_key: '', ca_bundle: '' });
   const [createSslCerts, setCreateSslCerts] = useState([]);
   const [cronSchedule, setCronSchedule] = useState('*/15 * * * *');
   const [cronCommand, setCronCommand] = useState('');
@@ -615,6 +623,19 @@ function App() {
   const [rspamdLogQuery, setRspamdLogQuery] = useState({ lines: 500, q: '' });
   const [eximLog, setEximLog] = useState(null);
   const [eximLogQuery, setEximLogQuery] = useState({ lines: 500, q: '' });
+  // DNS Manager addon: the zone list, one open zone (a sub-page) and settings.
+  const [dnsInfo, setDnsInfo] = useState(null);
+  const [dnsTab, setDnsTab] = useState('zones');
+  const [dnsZones, setDnsZones] = useState(null);
+  const [dnsQuery, setDnsQuery] = useState('');
+  const [dnsPage, setDnsPage] = useState(1);
+  const [dnsZoneForm, setDnsZoneForm] = useState({ domain: '', owner_id: '' });
+  const [dnsZone, setDnsZone] = useState(null);
+  const [dnsDelegation, setDnsDelegation] = useState(null);
+  const [dnsRecordForm, setDnsRecordForm] = useState(emptyDnsRecord);
+  const [dnsRecordEdit, setDnsRecordEdit] = useState(null);
+  const [dnsRecordFilter, setDnsRecordFilter] = useState('');
+  const [dnsSettingsForm, setDnsSettingsForm] = useState(null);
   const [notifySettings, setNotifySettings] = useState(null);
   const [notifyForm, setNotifyForm] = useState(null);
   const [notifyPrefs, setNotifyPrefs] = useState(null);
@@ -657,6 +678,7 @@ function App() {
     }
     // Opening Email from the sidebar leaves a DNS records sub-page.
     if (nextPage === 'mail') setMailDns(null);
+    if (nextPage === 'dns') setDnsZone(null);
     setPage(nextPage);
   }, []);
 
@@ -1441,6 +1463,122 @@ function App() {
     }
   }
 
+  // --- DNS Manager ---
+  async function loadDnsInfo() {
+    const data = await request('/dns/overview', { silent: true }, '');
+    if (data) {
+      setDnsInfo(data);
+      if (data.settings) setDnsSettingsForm(prev => prev || { ...data.settings });
+    }
+    return data;
+  }
+
+  async function loadDnsZones(page = dnsPage) {
+    const params = new URLSearchParams({ page: String(page), per_page: '50' });
+    if (dnsQuery.trim()) params.set('q', dnsQuery.trim());
+    const data = await request(`/dns/zones?${params}`, { silent: true }, '');
+    if (data) setDnsZones(data);
+  }
+
+  async function addDnsZone() {
+    const body = { domain: dnsZoneForm.domain.trim().toLowerCase() };
+    if (isAdmin && dnsZoneForm.owner_id) body.owner_id = Number(dnsZoneForm.owner_id);
+    const data = await request('/dns/zones', { method: 'POST', body: JSON.stringify(body) }, tr("Adding the zone..."));
+    if (!data) return;
+    setNotice(tr("Zone {0} added.", data.name));
+    setDnsZoneForm({ domain: '', owner_id: '' });
+    loadDnsInfo();
+    openDnsZone(data);
+  }
+
+  async function deleteDnsZone(zone) {
+    const typed = prompt(tr("Every record of {0} is deleted, and the domain stops resolving once its nameservers point here. Type the domain name to confirm.", zone.name));
+    if (typed === null) return;
+    if (typed.trim().toLowerCase().replace(/\.$/, '') !== zone.name) { setError(tr("The name did not match; nothing was deleted.")); return; }
+    const data = await request(`/dns/zones/${zone.id}?confirm=${encodeURIComponent(typed.trim())}`, { method: 'DELETE' }, tr("Deleting the zone..."));
+    if (!data) return;
+    setNotice(tr("Zone {0} deleted.", data.name));
+    setDnsZone(null);
+    loadDnsInfo();
+    loadDnsZones();
+  }
+
+  async function openDnsZone(zone) {
+    if (page !== 'dns') navigateToPage('dns');
+    setDnsZone({ zone, records: null });
+    setDnsDelegation(null);
+    setDnsRecordEdit(null);
+    setDnsRecordFilter('');
+    setDnsRecordForm(emptyDnsRecord());
+    const data = await request(`/dns/zones/${zone.id}`, {}, '');
+    if (!data) { setDnsZone(null); return; }
+    setDnsZone(data);
+    const check = await request(`/dns/zones/${zone.id}/delegation`, { silent: true }, '');
+    setDnsDelegation(check || { status: 'unknown', expected: [], found: [] });
+  }
+
+  function dnsRecordBody(form) {
+    const body = { type: form.type, name: String(form.name || '').trim() || '@', value: String(form.value || '').trim() };
+    if (['MX', 'SRV'].includes(form.type) && String(form.priority ?? '').trim() !== '') body.priority = Number(form.priority);
+    if (String(form.ttl ?? '').trim() !== '') body.ttl = Number(form.ttl);
+    return body;
+  }
+
+  async function addDnsRecord() {
+    const data = await request(`/dns/zones/${dnsZone.zone.id}/records`, { method: 'POST', body: JSON.stringify(dnsRecordBody(dnsRecordForm)) }, tr("Saving the record..."));
+    if (!data) return;
+    setDnsZone(data);
+    setDnsRecordForm(prev => ({ ...prev, name: '', value: '', priority: '' }));
+    setNotice(tr("Record added."));
+  }
+
+  async function saveDnsRecordEdit() {
+    const { old, form } = dnsRecordEdit;
+    const body = { old: { name: old.name, type: old.type, content: old.content }, new: dnsRecordBody(form) };
+    const data = await request(`/dns/zones/${dnsZone.zone.id}/records`, { method: 'PUT', body: JSON.stringify(body) }, tr("Saving the record..."));
+    if (!data) return;
+    setDnsZone(data);
+    setDnsRecordEdit(null);
+    setNotice(tr("Record saved."));
+  }
+
+  async function deleteDnsRecord(record) {
+    if (!confirm(tr("Delete the {0} record of {1}: {2}?", record.type, record.name, record.value))) return;
+    const body = { name: record.name, type: record.type, content: record.content };
+    const data = await request(`/dns/zones/${dnsZone.zone.id}/records/delete`, { method: 'POST', body: JSON.stringify(body) }, tr("Deleting the record..."));
+    if (!data) return;
+    setDnsZone(data);
+    if (dnsRecordEdit?.old?.content === record.content) setDnsRecordEdit(null);
+    setNotice(tr("Record deleted."));
+  }
+
+  async function restoreDnsDefaults() {
+    if (!confirm(tr("Put back the records the panel manages for {0}: nameservers, websites and email. Records you added are kept.", dnsZone.zone.name))) return;
+    const data = await request(`/dns/zones/${dnsZone.zone.id}/defaults`, { method: 'POST' }, tr("Restoring the panel's records..."));
+    if (!data) return;
+    setDnsZone(data);
+    setNotice(tr("The panel's records are back in {0}.", dnsZone.zone.name));
+  }
+
+  async function saveDnsSettings() {
+    const f = dnsSettingsForm;
+    const body = { ns1: f.ns1.trim(), ns2: f.ns2.trim(), hostmaster: f.hostmaster.trim(), default_ttl: Number(f.default_ttl), auto_zone: !!f.auto_zone };
+    const data = await request('/dns/settings', { method: 'PUT', body: JSON.stringify(body) }, tr("Saving DNS settings..."));
+    if (!data) return;
+    setDnsSettingsForm({ ...data });
+    setNotice(tr("DNS settings saved."));
+    loadDnsInfo();
+  }
+
+  async function createZonesForWebsites() {
+    const data = await request('/dns/zones-for-websites', { method: 'POST' }, tr("Creating zones..."));
+    if (!data) return;
+    setNotice(data.created.length ? tr("Zones created: {0}.", data.created.join(', ')) : tr("Every website domain already has a zone."));
+    loadDnsInfo();
+    setDnsPage(1);
+    loadDnsZones(1);
+  }
+
   // --- Email ---
   async function loadMailInfo() {
     const data = await request('/mail/overview', { silent: true }, '');
@@ -1607,7 +1745,7 @@ function App() {
 
   function applyMailDnsView(domain, data) {
     const custom = data?.custom || {};
-    setMailDns({ domain, records: data?.records || [], relay: data?.relay || null, canCustomize: !!data?.can_customize });
+    setMailDns({ domain, records: data?.records || [], relay: data?.relay || null, canCustomize: !!data?.can_customize, dnsZone: data?.dns_zone || null });
     setDnsCustomForm({
       spf: custom.spf || '',
       dmarc: custom.dmarc || '',
@@ -2284,8 +2422,28 @@ function App() {
     }
   }
 
+  // Wildcard certificates: over this server's zone when DNS Manager is on,
+  // else Cloudflare.
+  function wildcardProvider(chosen, site) {
+    if (chosen) return chosen;
+    if (site?.ssl_wildcard && site?.ssl_dns_provider) return site.ssl_dns_provider;
+    return dnsInfo?.installed ? 'opanel' : 'cloudflare';
+  }
+
+  function renderWildcardProvider(value, onChange) {
+    if (!dnsInfo?.installed) return null;
+    return <div className="segmented wildcard-provider" role="radiogroup" aria-label={tr("DNS for the challenge")}>
+      <button type="button" className={value === 'opanel' ? 'active' : ''} aria-pressed={value === 'opanel'} onClick={() => onChange('opanel')}><Network size={13}/> {tr("This server's DNS")}</button>
+      <button type="button" className={value === 'cloudflare' ? 'active' : ''} aria-pressed={value === 'cloudflare'} onClick={() => onChange('cloudflare')}><Globe size={13}/> Cloudflare</button>
+    </div>;
+  }
+
   async function applySslForNewSite(id, siteDomain) {
-    if (createSslMode === 'wildcard') {
+    if (createSslMode === 'wildcard' && wildcardProvider(createSslForm.provider) === 'opanel') {
+      const b = { provider: 'opanel' };
+      const em = String(createSslForm.email || '').trim(); if (em) b.email = em;
+      await request(`/websites/${id}/ssl/wildcard`, { method: 'POST', body: JSON.stringify(b) }, tr("Issuing wildcard certificate..."));
+    } else if (createSslMode === 'wildcard') {
       const token = String(createSslForm.api_token || '').trim();
       if (!token) { setError(tr("Enter a Cloudflare API token for wildcard SSL.")); return; }
       const b = { provider: 'cloudflare', api_token: token };
@@ -2332,6 +2490,14 @@ function App() {
 
   async function issueWildcardSsl() {
     if (!selectedWebsiteId) return;
+    if (wildcardProvider(wildcardSslForm.provider, currentSite) === 'opanel') {
+      const body = { provider: 'opanel' };
+      const email = String(wildcardSslForm.email || '').trim();
+      if (email) body.email = email;
+      const data = await request(`/websites/${selectedWebsiteId}/ssl/wildcard`, { method: 'POST', body: JSON.stringify(body) }, tr("Issuing wildcard certificate over this server's DNS..."));
+      if (data) { setNotice(tr("Wildcard certificate issued for {0} and *.{1}.", data.domain, data.domain)); setWildcardSslForm({ api_token: '', email: '', provider: '' }); refreshAll(); }
+      return;
+    }
     const token = String(wildcardSslForm.api_token || '').trim();
     if (!token && !currentSite?.ssl_wildcard) { setError(tr("Enter a Cloudflare API token (Zone → DNS → Edit).")); return; }
     const body = { provider: 'cloudflare' };
@@ -2339,7 +2505,7 @@ function App() {
     const email = String(wildcardSslForm.email || '').trim();
     if (email) body.email = email;
     const data = await request(`/websites/${selectedWebsiteId}/ssl/wildcard`, { method: 'POST', body: JSON.stringify(body) }, tr("Issuing wildcard certificate via Cloudflare DNS..."));
-    if (data) { setNotice(tr("Wildcard certificate issued for {0} and *.{1}.", data.domain, data.domain)); setWildcardSslForm({ api_token: '', email: '' }); refreshAll(); }
+    if (data) { setNotice(tr("Wildcard certificate issued for {0} and *.{1}.", data.domain, data.domain)); setWildcardSslForm({ api_token: '', email: '', provider: '' }); refreshAll(); }
   }
 
   async function loadAvailableCerts() {
@@ -3975,7 +4141,7 @@ function App() {
     setSslMode(m === 'manual' ? 'manual' : m === 'reuse' ? 'existing' : currentSite.ssl_wildcard ? 'wildcard' : 'letsencrypt');
     setManualSslForm({ certificate: '', private_key: '', ca_bundle: '' });
     setManualSslFiles({ certificate: null, private_key: null, ca_bundle: null });
-    setWildcardSslForm({ api_token: '', email: '' });
+    setWildcardSslForm({ api_token: '', email: '', provider: '' });
     setAvailableCerts([]);
     setReuseCertName(m === 'reuse' ? (currentSite.ssl_reuse_name || '') : '');
   }, [currentSite?.id]);
@@ -4043,6 +4209,7 @@ function App() {
     if (isAuthenticated && page === 'addons' && isAdmin) loadAddons();
     if (isAuthenticated && page === 'mcp') loadMcp();
     if (isAuthenticated && page === 'mail') { loadMailInfo(); if (isAdmin) loadUsers(); }
+    if (isAuthenticated && page === 'dns') { loadDnsInfo(); if (isAdmin) loadUsers(); }
     if (isAuthenticated && page === 'dashboard') loadDashboardSummary();
     if (isAuthenticated && page === 'sftp') { loadSftp(); if (isAdmin) loadUsers(); if (!websites.length) refreshAll(); }
     if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); loadNetworkStatus(); }
@@ -4063,6 +4230,15 @@ function App() {
   useEffect(() => {
     if (isAuthenticated) loadMailInfo();
   }, [isAuthenticated, addonList]);
+
+  // DNS Manager, likewise; its zones load page by page on the server.
+  useEffect(() => {
+    if (isAuthenticated) loadDnsInfo();
+  }, [isAuthenticated, addonList]);
+
+  useEffect(() => {
+    if (isAuthenticated && page === 'dns' && dnsInfo?.installed) loadDnsZones();
+  }, [isAuthenticated, page, dnsPage, dnsInfo?.installed]);
 
   useEffect(() => {
     if (!isAuthenticated || page !== 'mail') return;
@@ -4190,6 +4366,7 @@ function App() {
   const addonNavItems = [
     // Email is everyday work for every account, so it leads the addons.
     ...(mailInfo?.installed ? [['mail', tr("Email"), Mail]] : []),
+    ...(dnsInfo?.installed ? [['dns', tr("DNS Manager"), Network]] : []),
     ...(mcpInfo?.enabled ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
     ...(isAdmin && notifyInfo?.enabled ? [['notifications', tr("Notifications"), Bell]] : []),
     ...(isAdmin && malwareScanStatus?.enabled ? [['malware', tr("Malware Scanner"), Bug]] : []),
@@ -4693,12 +4870,18 @@ function App() {
         {installSslAfterCreate && <div className="create-ssl-box">
           <div className="segmented ssl-mode-tabs">
             <button className={createSslMode === 'letsencrypt' ? 'active' : ''} onClick={() => setCreateSslMode('letsencrypt')}><Lock size={13}/> {tr("Let's Encrypt")}</button>
-            <button className={createSslMode === 'wildcard' ? 'active' : ''} onClick={() => setCreateSslMode('wildcard')}><Globe size={13}/> {tr("Wildcard (Cloudflare)")}</button>
+            <button className={createSslMode === 'wildcard' ? 'active' : ''} onClick={() => setCreateSslMode('wildcard')}><Globe size={13}/> {dnsInfo?.installed ? tr("Wildcard") : tr("Wildcard (Cloudflare)")}</button>
             <button className={createSslMode === 'existing' ? 'active' : ''} onClick={() => { setCreateSslMode('existing'); loadCreateSslCerts(); }}><RefreshCw size={13}/> {tr("Use existing")}</button>
             <button className={createSslMode === 'manual' ? 'active' : ''} onClick={() => setCreateSslMode('manual')}><KeyRound size={13}/> {tr("Manual")}</button>
           </div>
           {createSslMode === 'letsencrypt' && <p className="hint">{tr("certbot HTTP-01 — the domain must point to this server's IP first.")}</p>}
-          {createSslMode === 'wildcard' && <div className="create-ssl-fields">
+          {createSslMode === 'wildcard' && wildcardProvider(createSslForm.provider) === 'opanel' && <div className="create-ssl-fields">
+            {renderWildcardProvider('opanel', provider => setCreateSslForm(p => ({ ...p, provider })))}
+            <input type="email" autoComplete="off" placeholder={tr("Contact email (optional)")} value={createSslForm.email} onChange={e => setCreateSslForm(p => ({ ...p, email: e.target.value }))} />
+            <p className="hint">{tr("The challenge record goes into this server's zone for the domain, created with the website. The domain's nameservers must point at this server. One cert for the domain and *.domain; renewals need nothing.")}</p>
+          </div>}
+          {createSslMode === 'wildcard' && wildcardProvider(createSslForm.provider) !== 'opanel' && <div className="create-ssl-fields">
+            {renderWildcardProvider('cloudflare', provider => setCreateSslForm(p => ({ ...p, provider })))}
             <input type="password" autoComplete="off" placeholder={tr("Cloudflare API Token")} value={createSslForm.api_token} onChange={e => setCreateSslForm(p => ({ ...p, api_token: e.target.value }))} />
             <input type="email" autoComplete="off" placeholder={tr("Contact email (optional)")} value={createSslForm.email} onChange={e => setCreateSslForm(p => ({ ...p, email: e.target.value }))} />
             <p className="hint">{tr("A scoped")} <strong>{tr("API Token")}</strong> {tr("(My Profile → API Tokens → Create Token),")} <strong>{tr("not")}</strong> {tr("the Global API Key. Permission")} <code>Zone → DNS → Edit</code> {tr("for the zone(s) you issue certs for. Stored encrypted for renewal. Issues one cert for the domain and *.domain — no DNS record or port 80 needed.")}</p>
@@ -4837,14 +5020,22 @@ function App() {
       </div>}
       <div className="segmented ssl-mode-tabs">
         <button className={sslMode === 'letsencrypt' ? 'active' : ''} onClick={() => setSslMode('letsencrypt')}><Lock size={14}/> {tr("Let's Encrypt")}</button>
-        <button className={sslMode === 'wildcard' ? 'active' : ''} onClick={() => setSslMode('wildcard')}><Globe size={14}/> {tr("Wildcard (Cloudflare)")}</button>
+        <button className={sslMode === 'wildcard' ? 'active' : ''} onClick={() => setSslMode('wildcard')}><Globe size={14}/> {dnsInfo?.installed ? tr("Wildcard") : tr("Wildcard (Cloudflare)")}</button>
         <button className={sslMode === 'existing' ? 'active' : ''} onClick={() => { setSslMode('existing'); loadAvailableCerts(); }}><RefreshCw size={14}/> {tr("Use existing")}</button>
         <button className={sslMode === 'manual' ? 'active' : ''} onClick={() => setSslMode('manual')}><KeyRound size={14}/> {tr("Manual SSL")}</button>
       </div>
       {sslMode === 'letsencrypt' ? <>
         <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={() => enableSsl(selectedWebsiteId)}><Lock size={15}/> {tr("Install / Renew SSL")}</button>
         <p className="hint">{tr("certbot HTTP-01 — the domain must point to this server's IP before issuing.")}</p>
-      </> : sslMode === 'wildcard' ? <div className="manual-ssl-grid">
+      </> : sslMode === 'wildcard' && wildcardProvider(wildcardSslForm.provider, currentSite) === 'opanel' ? <div className="manual-ssl-grid">
+        <div style={{gridColumn:'1 / -1'}}>{renderWildcardProvider('opanel', provider => setWildcardSslForm(p => ({ ...p, provider })))}</div>
+        <label style={{gridColumn:'1 / -1'}}>{tr("Contact email (optional)")}
+          <input type="email" autoComplete="off" value={wildcardSslForm.email} onChange={e => setWildcardSslForm(p => ({ ...p, email: e.target.value }))} placeholder="admin@domain.com" />
+        </label>
+        <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={issueWildcardSsl}><Globe size={15}/> {currentSite?.ssl_wildcard ? tr("Renew / re-issue wildcard") : tr("Issue wildcard certificate")}</button>
+        <p className="hint" style={{gridColumn:'1 / -1'}}>{tr("Issues one cert for {0} and *.{1} with a DNS challenge in this server's zone for the domain (DNS Manager). The domain's nameservers must point at this server; no token, and renewals need nothing. Other websites can then pick this cert under \"Use existing\".", currentSite?.domain || tr("the domain"), currentSite?.domain || tr("domain"))}</p>
+      </div> : sslMode === 'wildcard' ? <div className="manual-ssl-grid">
+        {dnsInfo?.installed && <div style={{gridColumn:'1 / -1'}}>{renderWildcardProvider('cloudflare', provider => setWildcardSslForm(p => ({ ...p, provider })))}</div>}
         <label style={{gridColumn:'1 / -1'}}>{tr("Cloudflare API Token")}
           <input type="password" autoComplete="off" value={wildcardSslForm.api_token} onChange={e => setWildcardSslForm(p => ({ ...p, api_token: e.target.value }))} placeholder={currentSite?.ssl_wildcard ? tr("Stored — leave blank to reuse") : tr("Scoped API Token (not the Global API Key)")} />
         </label>
@@ -6142,6 +6333,11 @@ function App() {
           ? tr("Mail from {0} leaves through the relay {1}; the records it asks for are listed below.", domain.domain, relay.effective_name)
           : tr("Mail from {0} is delivered directly from this server.", domain.domain)}</p>
       </div>}
+      {mailDns.dnsZone && <div className="info-box dns-managed-box">
+        <Network size={14}/>
+        <span>{tr("DNS Manager on this server holds the zone {0} and writes these records into it. Nothing to add by hand once the domain's nameservers point here.", mailDns.dnsZone.name)}</span>
+        <button type="button" className="mini secondary" onClick={() => openDnsZone(mailDns.dnsZone)}>{tr("Open zone")}</button>
+      </div>}
       {records === null && <p className="hint">{tr("Checking DNS…")}</p>}
       {records && <div className="mail-dns-list">
         {records.map(record => <div className="mail-dns-record" key={record.key}>
@@ -6379,6 +6575,271 @@ function App() {
         <li><strong>POP3</strong> {tr("port {0}, SSL/TLS", client.pop3_port || 995)}</li>
         <li><strong>SMTP</strong> {tr("port {0}, SSL/TLS — or {1} with STARTTLS", client.smtp_port || 465, client.submission_port || 587)}</li>
       </ul>
+    </section>;
+  }
+
+  function dnsTtlLabel(seconds) {
+    const n = Number(seconds) || 0;
+    if (n >= 86400 && n % 86400 === 0) return tr("{0} d", n / 86400);
+    if (n >= 3600 && n % 3600 === 0) return tr("{0} h", n / 3600);
+    if (n >= 60 && n % 60 === 0) return tr("{0} min", n / 60);
+    return tr("{0} s", n);
+  }
+
+  function dnsTypeHint(type) {
+    const ip4 = dnsZone?.addresses?.ipv4?.[0] || dnsInfo?.addresses?.ipv4?.[0];
+    const ip6 = dnsZone?.addresses?.ipv6?.[0] || dnsInfo?.addresses?.ipv6?.[0];
+    return {
+      A: ip4 ? tr("The IPv4 address the name points to. This server: {0}.", ip4) : tr("The IPv4 address the name points to."),
+      AAAA: ip6 ? tr("The IPv6 address the name points to. This server: {0}.", ip6) : tr("The IPv6 address the name points to."),
+      CNAME: tr("Makes the name an alias of another host. A name with a CNAME can have no other record."),
+      MX: tr("A mail server for the domain; the lowest priority is tried first."),
+      TXT: tr("Text such as SPF, DKIM or a site verification. A long value is split into strings for you."),
+      NS: tr("Hands a subdomain to other nameservers."),
+      SRV: tr("Where a service runs: weight port target, with the priority in its own field. The name is like _sip._tcp."),
+      CAA: tr("Which certificate authorities may issue for the domain, for example issue letsencrypt.org."),
+    }[type] || '';
+  }
+
+  function renderDnsRecordFields(form, set, { lockType = false } = {}) {
+    const hasPriority = ['MX', 'SRV'].includes(form.type);
+    const current = Number(form.ttl) || 0;
+    const ttls = !current || DNS_TTLS.includes(current) ? DNS_TTLS : [...DNS_TTLS, current].sort((a, b) => a - b);
+    return <div className={`dns-record-fields${hasPriority ? ' with-priority' : ''}`}>
+      <label className="field"><span className="field-label">{tr("Type")}</span>
+        <select value={form.type} disabled={lockType} onChange={e => set({ type: e.target.value })}>
+          {DNS_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
+        </select></label>
+      <label className="field"><span className="field-label">{tr("Name")}</span>
+        <input value={form.name} placeholder="@" spellCheck={false} autoCapitalize="off" onChange={e => set({ name: e.target.value })} /></label>
+      {hasPriority && <label className="field"><span className="field-label">{tr("Priority")}</span>
+        <input type="number" min="0" max="65535" value={form.priority} placeholder="10" onChange={e => set({ priority: e.target.value })} /></label>}
+      <label className="field dns-value-field"><span className="field-label">{tr("Value")}</span>
+        {form.type === 'TXT'
+          ? <textarea rows={2} value={form.value} placeholder={DNS_PLACEHOLDERS.TXT} spellCheck={false} onChange={e => set({ value: e.target.value.replace(/[\r\n]+/g, ' ') })} />
+          : <input value={form.value} placeholder={DNS_PLACEHOLDERS[form.type]} spellCheck={false} autoCapitalize="off" onChange={e => set({ value: e.target.value })} />}</label>
+      <label className="field"><span className="field-label">TTL</span>
+        <select value={form.ttl} onChange={e => set({ ttl: e.target.value })}>
+          <option value="">{tr("Default ({0})", dnsTtlLabel(dnsInfo?.default_ttl || 3600))}</option>
+          {ttls.map(ttl => <option key={ttl} value={String(ttl)}>{dnsTtlLabel(ttl)}</option>)}
+        </select></label>
+    </div>;
+  }
+
+  function renderDnsNameservers() {
+    const info = dnsInfo;
+    const names = info.nameservers || [];
+    const address = [info.addresses?.ipv4?.[0], info.addresses?.ipv6?.[0]].filter(Boolean).join(' / ');
+    return <div className="dns-ns-card">
+      <div className="dns-ns-head"><Network size={15}/><strong>{tr("Nameservers")}</strong></div>
+      {names.length > 0
+        ? <div className="dns-ns-list">{names.map((name, index) => <React.Fragment key={name}>{renderCopyBlock(tr("Nameserver {0}", index + 1), name)}</React.Fragment>)}</div>
+        : <p className="hint">{isAdmin ? tr("No nameservers yet: set them in the Settings tab.") : tr("The administrator has not set the nameservers yet.")}</p>}
+      <p className="hint">{tr("At the registrar of each domain, set these as its nameservers; the domain is then served by the records here. The change can take up to a day to be seen everywhere.")}</p>
+      {isAdmin && names.length > 0 && <p className="hint">{tr("The nameservers need glue (child nameserver) records at the registrar of their own domain, pointing at {0}.", address || '—')}</p>}
+    </div>;
+  }
+
+  function renderDnsPager() {
+    const list = dnsZones;
+    const pages = Math.max(1, Math.ceil((list?.total || 0) / (list?.per_page || 50)));
+    if (pages <= 1) return null;
+    return <div className="firewall-ip-pager">
+      <button className="mini secondary" disabled={dnsPage <= 1} onClick={() => setDnsPage(p => Math.max(1, p - 1))}>{tr("Previous")}</button>
+      <span className="hint">{tr("Page {0} of {1}", dnsPage, pages)}</span>
+      <button className="mini secondary" disabled={dnsPage >= pages} onClick={() => setDnsPage(p => p + 1)}>{tr("Next")}</button>
+    </div>;
+  }
+
+  function renderDnsZones() {
+    const info = dnsInfo;
+    const list = dnsZones;
+    const items = list?.items || [];
+    const candidates = info.candidates || [];
+    return <div className="mail-tab">
+      {renderDnsNameservers()}
+      <div className="create-inline">
+        <div className="create-inline-head"><strong>{tr("Add a zone")}</strong></div>
+        <div className="mail-create-grid">
+          {isAdmin
+            ? <div className="field"><span className="field-label">{tr("Domain")}</span>
+                <input list="dns-zone-candidates" value={dnsZoneForm.domain} placeholder="example.com" spellCheck={false}
+                  onChange={e => setDnsZoneForm(prev => ({ ...prev, domain: e.target.value.trim().toLowerCase() }))} />
+                <datalist id="dns-zone-candidates">{candidates.map(name => <option key={name} value={name} />)}</datalist>
+              </div>
+            : <div className="field"><span className="field-label">{tr("Domain")}</span>
+                <select value={dnsZoneForm.domain} onChange={e => setDnsZoneForm(prev => ({ ...prev, domain: e.target.value }))}>
+                  <option value="">{tr("Choose one of your websites")}</option>
+                  {candidates.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>}
+          {isAdmin && <div className="field"><span className="field-label">{tr("Account")}</span>
+            <select value={dnsZoneForm.owner_id} onChange={e => setDnsZoneForm(prev => ({ ...prev, owner_id: e.target.value }))}>
+              <option value="">{tr("The website's owner")}</option>
+              {users.map(user => <option key={user.id} value={user.id}>{user.username}</option>)}
+            </select>
+          </div>}
+          <button disabled={!dnsZoneForm.domain.trim() || !!loading} onClick={addDnsZone}><Plus size={14}/> {tr("Add zone")}</button>
+        </div>
+        {!isAdmin && candidates.length === 0 && <p className="hint">{tr("Every domain of your websites already has a zone. Add a website or a domain alias to use another one.")}</p>}
+        <p className="hint">{tr("A new zone starts with the records of the websites and email on the domain.")}</p>
+      </div>
+      <div className="mail-toolbar">
+        <span className="hint">{tr("{0} zones", list?.total ?? info.zone_count ?? 0)}</span>
+        <form className="mail-search" onSubmit={e => { e.preventDefault(); setDnsPage(1); loadDnsZones(1); }}>
+          <input value={dnsQuery} placeholder={tr("Search")} aria-label={tr("Search")} onChange={e => setDnsQuery(e.target.value)} />
+          <button type="submit" className="secondary icon-only" aria-label={tr("Search")} title={tr("Search")}><Search size={14}/></button>
+        </form>
+      </div>
+      {list === null && <p className="hint">{tr("Loading…")}</p>}
+      {list && items.length === 0 && <EmptyState icon={Network} message={dnsQuery.trim() ? tr("No zone matches the search.") : tr("No zones yet.")} />}
+      {items.length > 0 && <div className="table">
+        {items.map(zone => <div className="row dns-zone-row" key={zone.id}>
+          <span className="mail-row-name">
+            <strong>{zone.name}</strong>
+            <small>{[isAdmin && zone.owner ? `${tr("Account")}: ${zone.owner}` : '', zone.created_at ? `${tr("Added")} ${new Date(zone.created_at).toLocaleDateString()}` : ''].filter(Boolean).join(' · ')}</small>
+          </span>
+          <span className="row-actions">
+            <button className="mini secondary" disabled={!!loading} onClick={() => openDnsZone(zone)}><Pencil size={13}/> {tr("Records")}</button>
+            <button className="mini danger" disabled={!!loading} onClick={() => deleteDnsZone(zone)} aria-label={tr("Delete {0}", zone.name)} title={tr("Delete")}><Trash2 size={13}/></button>
+          </span>
+        </div>)}
+      </div>}
+      {renderDnsPager()}
+    </div>;
+  }
+
+  function renderDnsSettings() {
+    const f = dnsSettingsForm;
+    if (!f) return <p className="hint">{tr("Loading…")}</p>;
+    const set = patch => setDnsSettingsForm(prev => ({ ...prev, ...patch }));
+    return <div className="mail-tab">
+      <div className="create-inline">
+        <div className="create-inline-head"><strong>{tr("Nameservers")}</strong></div>
+        <div className="mail-settings-grid">
+          <label className="field"><span className="field-label">{tr("Nameserver {0}", 1)}</span>
+            <input value={f.ns1} placeholder="ns1.example.com" spellCheck={false} onChange={e => set({ ns1: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Nameserver {0}", 2)}</span>
+            <input value={f.ns2} placeholder="ns2.example.com" spellCheck={false} onChange={e => set({ ns2: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Zone contact (hostmaster)")}</span>
+            <input value={f.hostmaster} placeholder="hostmaster@example.com" spellCheck={false} onChange={e => set({ hostmaster: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Default TTL")}</span>
+            <select value={String(f.default_ttl)} onChange={e => set({ default_ttl: e.target.value })}>
+              {DNS_TTLS.map(ttl => <option key={ttl} value={String(ttl)}>{dnsTtlLabel(ttl)}</option>)}
+            </select></label>
+        </div>
+        <label className="check-line"><input type="checkbox" checked={!!f.auto_zone} onChange={e => set({ auto_zone: e.target.checked })} /> {tr("Create a zone for every new website")}</label>
+        <p className="hint">{tr("A changed nameserver is written into the NS and SOA records of every zone. Register both names as glue (child nameserver) records at the registrar of their domain, pointing at this server.")}</p>
+        <div className="actions"><button type="button" disabled={!f.ns1.trim() || !f.ns2.trim() || !!loading} onClick={saveDnsSettings}><Save size={14}/> {tr("Save settings")}</button></div>
+      </div>
+      <div className="create-inline">
+        <div className="create-inline-head"><strong>{tr("Existing websites")}</strong></div>
+        <p className="hint">{tr("Websites added before DNS Manager have no zone. This creates one for every website domain without one, owned by the website's account.")}</p>
+        <div className="actions"><button type="button" className="secondary" disabled={!!loading} onClick={createZonesForWebsites}><Plus size={14}/> {tr("Create missing zones")}</button></div>
+      </div>
+    </div>;
+  }
+
+  function renderDnsZone() {
+    const { zone, records } = dnsZone;
+    const delegation = dnsDelegation;
+    const statusLabel = { ok: tr("Served from here"), missing: tr("Not delegated"), different: tr("Other nameservers"), unknown: tr("Not checked") };
+    const statusClass = { ok: 'ok', missing: 'bad', different: 'warn', unknown: '' };
+    const term = dnsRecordFilter.trim().toLowerCase();
+    const shown = (records || []).filter(r => !term || `${r.name} ${r.type} ${r.value}`.toLowerCase().includes(term));
+    const form = dnsRecordForm;
+    const edit = dnsRecordEdit;
+    const isEditing = record => edit && edit.old.name === record.name && edit.old.type === record.type && edit.old.content === record.content;
+    const delegationText = !delegation ? tr("Checking the nameservers…")
+      : delegation.status === 'ok' ? tr("{0} is answered by this server.", zone.name)
+      : delegation.status === 'different' ? tr("{0} uses other nameservers now ({1}). Set {2} at its registrar.", zone.name, delegation.found.join(', '), delegation.expected.join(', '))
+      : delegation.status === 'missing' ? tr("Set {0} as the nameservers of {1} at its registrar. Until then these records are not used.", delegation.expected.join(', '), zone.name)
+      : tr("The nameservers of {0} could not be looked up.", zone.name);
+    return <section className="section dns-zone-page">
+      <div className="section-title">
+        <div className="waf-detail-title">
+          <button className="secondary" onClick={() => { setDnsZone(null); loadDnsZones(); }}><ArrowLeft size={14}/> {tr("DNS Manager")}</button>
+          <div><h2>{zone.name}</h2>
+            <p className="hint">{[isAdmin && zone.owner ? `${tr("Account")}: ${zone.owner}` : '', records ? tr("{0} records", records.length) : ''].filter(Boolean).join(' · ')}</p></div>
+        </div>
+        <div className="actions">
+          <button className="secondary" disabled={!!loading} onClick={() => openDnsZone(zone)}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <button className="secondary-light" disabled={!!loading || records === null} onClick={restoreDnsDefaults}><RotateCcw size={14}/> {tr("Restore panel records")}</button>
+          <button className="danger" disabled={!!loading} onClick={() => deleteDnsZone(zone)}><Trash2 size={14}/> {tr("Delete zone")}</button>
+        </div>
+      </div>
+      <div className="dns-delegation">
+        <span className={`badge ${statusClass[delegation?.status] || ''}`}>{delegation ? statusLabel[delegation.status] || delegation.status : '…'}</span>
+        <span className="hint">{delegationText}</span>
+      </div>
+      <div className="create-inline dns-record-form">
+        <div className="create-inline-head"><strong>{tr("Add a record")}</strong></div>
+        {renderDnsRecordFields(form, patch => setDnsRecordForm(prev => ({ ...prev, ...patch })))}
+        <p className="hint">{dnsTypeHint(form.type)} {tr("Names are relative to {0}: @ is the domain itself.", zone.name)}</p>
+        <div className="actions"><button type="button" disabled={!form.value.trim() || !!loading || records === null} onClick={addDnsRecord}><Plus size={14}/> {tr("Add record")}</button></div>
+      </div>
+      <div className="mail-toolbar">
+        <strong>{tr("Records")}</strong>
+        <div className="mail-search"><input value={dnsRecordFilter} placeholder={tr("Filter records")} aria-label={tr("Filter records")} onChange={e => setDnsRecordFilter(e.target.value)} /></div>
+      </div>
+      {records === null && <p className="hint">{tr("Loading…")}</p>}
+      {records && <div className="table dns-records">
+        <div className="row dns-record-row dns-record-head" aria-hidden="true">
+          <span>{tr("Name")}</span><span>{tr("Type")}</span><span>TTL</span><span>{tr("Value")}</span><span/>
+        </div>
+        {shown.map(record => isEditing(record)
+          ? <div className="row dns-record-edit" key={`${record.name}|${record.type}|${record.content}`}>
+              {renderDnsRecordFields(edit.form, patch => setDnsRecordEdit(prev => ({ ...prev, form: { ...prev.form, ...patch } })), { lockType: true })}
+              <div className="actions">
+                <button type="button" className="secondary-light" onClick={() => setDnsRecordEdit(null)}>{tr("Cancel")}</button>
+                <button type="button" disabled={!String(edit.form.value).trim() || !!loading} onClick={saveDnsRecordEdit}><Save size={14}/> {tr("Save")}</button>
+              </div>
+            </div>
+          : <div className="row dns-record-row" key={`${record.name}|${record.type}|${record.content}`}>
+              <span className="dns-record-name" title={record.fqdn}>{record.name}</span>
+              <span><code className="dns-type">{record.type}</code></span>
+              <span className="dns-record-ttl">{dnsTtlLabel(record.ttl)}</span>
+              <span className="dns-record-value">{record.priority != null && <small title={tr("Priority")}>{record.priority}</small>}<code>{record.value}</code></span>
+              <span className="row-actions">
+                {record.locked
+                  ? <span className="dns-locked" title={tr("Follows DNS Manager's nameserver settings")}><Lock size={13}/></span>
+                  : <>
+                    <button type="button" className="mini secondary icon-only" disabled={!!loading} aria-label={tr("Edit")} title={tr("Edit")}
+                      onClick={() => setDnsRecordEdit({ old: record, form: { type: record.type, name: record.name, value: record.value, priority: record.priority ?? '', ttl: String(record.ttl || '') } })}><Pencil size={13}/></button>
+                    <button type="button" className="mini danger-light icon-only" disabled={!!loading} aria-label={tr("Delete")} title={tr("Delete")} onClick={() => deleteDnsRecord(record)}><Trash2 size={13}/></button>
+                  </>}
+              </span>
+            </div>)}
+        {shown.length === 0 && <p className="hint">{tr("No record matches the filter.")}</p>}
+      </div>}
+    </section>;
+  }
+
+  function renderDns() {
+    const info = dnsInfo;
+    if (!info) return <section className="section"><h2>{tr("DNS Manager")}</h2><p className="hint">{tr("Loading…")}</p></section>;
+    if (!info.installed) return <section className="section">
+      <h2>{tr("DNS Manager")}</h2>
+      <div className="info-box"><AlertCircle size={14}/> {isAdmin ? tr("The DNS Manager addon is not installed. Install it on the Addons page.") : tr("DNS Manager is not available on this server.")}</div>
+      {isAdmin && <div className="actions"><button onClick={() => navigateToPage('addons')}><PackageOpen size={14}/> {tr("Open Addons")}</button></div>}
+    </section>;
+    if (dnsZone) return renderDnsZone();
+    const tabs = [['zones', tr("Zones"), Globe], ...(isAdmin ? [['settings', tr("Settings"), SettingsIcon]] : [])];
+    const activeTab = isAdmin ? dnsTab : 'zones';
+    return <section className="section dns-page">
+      <div className="section-title">
+        <div><h2>{tr("DNS Manager")}</h2>
+          <p className="hint">{isAdmin ? tr("The zones of every domain this server answers for.") : tr("The DNS records of your domains, answered by this server.")}</p></div>
+        <div className="actions">
+          <button type="button" className="secondary" disabled={!!loading} onClick={() => { loadDnsInfo(); loadDnsZones(); }}><RefreshCw size={14}/> {tr("Refresh")}</button>
+        </div>
+      </div>
+      {tabs.length > 1 && <div className="segmented-control backup-tabs" role="tablist" aria-label={tr("DNS Manager sections")}>
+        {tabs.map(([id, label, Icon]) => <button key={id} type="button" role="tab" aria-selected={activeTab === id}
+          className={activeTab === id ? 'active' : ''} onClick={() => setDnsTab(id)}><Icon size={14}/>{label}</button>)}
+      </div>}
+      {activeTab === 'zones' && renderDnsZones()}
+      {activeTab === 'settings' && renderDnsSettings()}
     </section>;
   }
 
@@ -6857,6 +7318,11 @@ function App() {
               {addon.id === 'mcp' && renderAddonMcp(addon)}
               {addon.id === 'demo' && addon.installed && renderAddonDemo(addon)}
               {addon.id === 'mail' && addon.installed && renderAddonMail(addon)}
+              {addon.id === 'dns' && addon.installed && <div className="addon-panel">
+                <div className="addon-panel-head"><strong>{tr("Zones, records and nameservers")}</strong>
+                  <button className="mini" disabled={!addon.running} onClick={() => navigateToPage('dns')}><Network size={13}/> {tr("Open DNS Manager")}</button></div>
+                {!addon.running && <p className="hint">{tr("PowerDNS is stopped: the domains hosted here do not resolve.")}</p>}
+              </div>}
               {addon.id === 'malware' && addon.installed && <div className="addon-panel">
                 <div className="addon-panel-head"><strong>{tr("Scans, schedules, real-time protection and quarantine")}</strong>
                   <button className="mini" disabled={!addon.running} onClick={() => navigateToPage('malware')}><Bug size={13}/> {tr("Open Malware Scanner")}</button></div>
@@ -8157,6 +8623,7 @@ function App() {
     if (page === 'addons') return isAdmin ? renderAddons() : renderDashboard();
     if (page === 'mcp') return renderMcp();
     if (page === 'mail') return renderMail();
+    if (page === 'dns') return renderDns();
     if (page === 'notifications') return isAdmin ? renderNotificationCenter() : renderDashboard();
     if (page === 'config') return renderSettingsHub();
     if (page === 'sftp') return renderSftp();

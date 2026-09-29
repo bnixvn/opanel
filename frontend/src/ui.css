@@ -739,6 +739,48 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .mail-relay-row,.rspamd-row{grid-template-columns:1fr;gap:8px}
   .mail-relay-row .row-actions{justify-content:flex-start}
 }
+/* DNS Manager addon. */
+.dns-ns-card{display:grid;gap:10px;padding:14px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);min-width:0}
+.dns-ns-head{display:flex;align-items:center;gap:8px;color:var(--text)}
+.dns-ns-head svg{color:var(--primary-ink)}
+.dns-ns-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.dns-ns-card .hint{margin:0}
+.dns-zone-row{grid-template-columns:minmax(0,1fr) auto}
+.dns-delegation{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 14px}
+.dns-delegation .hint{margin:0;flex:1 1 280px}
+.dns-record-form{margin-bottom:14px}
+.dns-record-fields{display:grid;grid-template-columns:96px minmax(120px,1fr) minmax(200px,2.4fr) 130px;gap:10px;align-items:end;min-width:0}
+.dns-record-fields.with-priority{grid-template-columns:96px minmax(120px,1fr) 90px minmax(200px,2.4fr) 130px}
+.dns-record-fields .field{display:grid;gap:4px;min-width:0}
+.dns-record-fields input,.dns-record-fields select,.dns-record-fields textarea{width:100%;min-width:0}
+.dns-record-fields input,.dns-record-fields textarea{font-family:var(--font-mono,monospace);font-size:12.5px}
+.dns-record-fields textarea{min-height:40px;resize:vertical}
+.dns-records{gap:6px}
+.dns-record-row{grid-template-columns:minmax(90px,1fr) 70px 70px minmax(0,3fr) auto;padding:8px 12px}
+.dns-record-head{background:transparent;border-color:transparent;padding-top:0;padding-bottom:0;font-size:12px;font-weight:600;color:var(--text-secondary)}
+.dns-record-name{font-family:var(--font-mono,monospace);font-size:12.5px;overflow-wrap:anywhere;min-width:0}
+.dns-type{font-family:var(--font-mono,monospace);font-size:12px;font-weight:600;padding:2px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-alt)}
+.dns-record-ttl{font-size:12.5px;color:var(--text-secondary)}
+.dns-record-value{display:flex;align-items:baseline;gap:8px;min-width:0}
+.dns-record-value code{font-family:var(--font-mono,monospace);font-size:12.5px;overflow-wrap:anywhere;word-break:break-all;min-width:0}
+.dns-record-value small{font-size:12px;font-weight:600;color:var(--text-secondary)}
+.dns-record-row .row-actions{justify-content:flex-end;min-width:64px}
+.dns-locked{display:inline-flex;align-items:center;justify-content:center;width:28px;color:var(--text-secondary)}
+.dns-record-edit{grid-template-columns:1fr;gap:10px;border-color:var(--primary-ink)}
+.dns-record-edit .actions{justify-content:flex-end}
+.dns-managed-box{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.dns-managed-box span{flex:1 1 280px}
+.dns-managed-box svg{color:var(--primary-ink)}
+.wildcard-provider{margin-bottom:4px;justify-self:start}
+@media(max-width:760px){
+  .dns-record-fields,.dns-record-fields.with-priority{grid-template-columns:1fr 1fr}
+  .dns-record-fields .dns-value-field{grid-column:1 / -1}
+  .dns-record-row{grid-template-columns:minmax(0,1fr) auto auto auto;gap:6px 10px}
+  .dns-record-row .dns-record-value{grid-column:1 / -1;order:5}
+  .dns-record-head{display:none}
+  .dns-zone-row{grid-template-columns:1fr;gap:8px}
+  .dns-zone-row .row-actions{justify-content:flex-start}
+}
 /* Fail2ban on the Firewall page. */
 .firewall-fail2ban-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .firewall-fail2ban-missing{display:flex;align-items:center;gap:10px;flex-wrap:wrap}

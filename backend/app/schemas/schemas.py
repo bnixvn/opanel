@@ -337,7 +337,8 @@ class WebsiteCreate(BaseModel):
 
 
 class WildcardSslRequest(BaseModel):
-    provider: Literal["cloudflare"] = "cloudflare"
+    # "opanel": this server's DNS Manager holds the domain's zone.
+    provider: Literal["cloudflare", "opanel"] = "cloudflare"
     api_token: Optional[str] = Field(default=None, max_length=400)
     email: Optional[EmailStr] = None
 

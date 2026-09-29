@@ -15,7 +15,7 @@ from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCreate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
-from app.services import file_manager, mail, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress
+from app.services import dns_manager, file_manager, mail, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress
 from app.services.audit import log_action
 
 _PLACEHOLDER_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "openlitespeed"
@@ -381,6 +381,8 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
     website.status = "active"
     db.commit()
     db.refresh(website)
+    # DNS Manager: records for the new site (a no-op without the addon).
+    dns_manager.website_created(db, website)
     if db_info:
         # Store password encrypted; phpMyAdmin SSO decrypts on demand.
         db.add(DatabaseAccount(
@@ -456,6 +458,7 @@ def create_website_alias(
         raise HTTPException(status_code=400, detail=f"Cannot write webserver config: {exc}") from exc
     db.commit()
     db.refresh(alias)
+    dns_manager.website_created(db, website, hosts=[payload.domain])
     log_action(db, current_user.id, "create_website_alias", website.domain, payload.domain, request=request)
     return alias
 
@@ -924,9 +927,21 @@ def enable_wildcard_ssl(
     if website.owner_id != current_user.id:
         ensure_role(current_user.role, Role.admin)
 
-    token = payload.api_token or (decrypt(website.ssl_dns_api_token) if website.ssl_dns_api_token else "")
-    if not token:
-        raise HTTPException(status_code=400, detail="A Cloudflare API token is required to issue a wildcard certificate")
+    local_dns = payload.provider == "opanel"
+    token = ""
+    if local_dns:
+        # DNS Manager answers for the domain: the challenge goes in its zone.
+        zone = dns_manager.hosts_zone(db, website.domain)
+        if zone is None:
+            raise HTTPException(status_code=400, detail="This server's DNS Manager has no zone for this domain")
+        # The challenge is written into the zone: another account's zone is not
+        # the website owner's to write in.
+        if zone.owner_id != website.owner_id and not is_admin_role(current_user.role):
+            raise HTTPException(status_code=403, detail=f"The zone {zone.name} belongs to another account")
+    else:
+        token = payload.api_token or (decrypt(website.ssl_dns_api_token) if website.ssl_dns_api_token else "")
+        if not token:
+            raise HTTPException(status_code=400, detail="A Cloudflare API token is required to issue a wildcard certificate")
 
     previous_manual_paths = (website.ssl_cert_path, website.ssl_key_path, website.ssl_ca_path)
     previous_snapshot = ssl.snapshot_manual_ssl_domain(website.domain)
@@ -936,7 +951,8 @@ def enable_wildcard_ssl(
         raise HTTPException(status_code=400, detail=f"Cannot prepare vhost config for the DNS challenge: {exc}") from exc
 
     email = payload.email or settings.ssl_email or None
-    result = ssl.issue_wildcard_ssl(website.domain, token, email=email)
+    result = ssl.issue_wildcard_local(website.domain, email=email) if local_dns \
+        else ssl.issue_wildcard_ssl(website.domain, token, email=email)
     if result.returncode != 0:
         if getattr(website, "ssl_mode", "none") == "manual":
             ssl.restore_manual_ssl(previous_snapshot)
@@ -951,7 +967,7 @@ def enable_wildcard_ssl(
     website.ssl_wildcard = True
     website.ssl_reuse_name = None
     website.ssl_dns_provider = payload.provider
-    website.ssl_dns_api_token = encrypt(token)
+    website.ssl_dns_api_token = encrypt(token) if token else None
     website.ssl_updated_at = datetime.utcnow()
     website.ssl_cert_path = None
     website.ssl_key_path = None

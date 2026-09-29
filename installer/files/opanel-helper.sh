@@ -543,6 +543,7 @@ iptables_refresh_standard_ports() {
   for p in "${ports[@]}"; do
     iptables_panel_allow_port "$p" 2>/dev/null || true
   done
+  if dns_installed; then dns_open_ports; fi
 }
 
 iptables_panel_delete_port_rules() {
@@ -633,6 +634,7 @@ iptables_add_default_allowances() {
   port="${port:-$DEFAULT_PANEL_PORT}"
   local -a ports=(22 25 80 443 465 587 "$port")
   if mail_installed; then ports+=("${MAIL_EXTRA_PORTS[@]}"); fi
+  if dns_installed; then dns_open_ports; fi
   for p in "${ports[@]}"; do
     require_port "$p"
     iptables -A OPANEL_INPUT -p tcp --dport "$p" -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null \
@@ -4017,7 +4019,7 @@ audit_log "$@"
 # panel that has been talked into asking for something outside it gets nothing.
 # Two lists that must agree is a real cost, and the alternative -- letting the
 # caller say what to install -- is handing root to whoever can reach the API.
-ADDON_IDS=("fail2ban" "mail")
+ADDON_IDS=("fail2ban" "mail" "dns")
 
 require_addon_id() {
   local id="${1:-}" known
@@ -5749,6 +5751,349 @@ addon_mail_disable() {
   echo "Email stopped"
 }
 
+# --- DNS Manager: PowerDNS ---------------------------------------------------
+#
+# An authoritative nameserver for the customers' zones. The panel owns who
+# owns which zone; the records themselves live in PowerDNS, which the panel
+# edits through its HTTP API on 127.0.0.1 (the key is in a file only the
+# panel user and root can read). Nothing here runs until the addon is
+# installed: every path is guarded by the marker.
+DNS_DIR="/etc/opanel-dns"
+DNS_MARKER="${DNS_DIR}/installed"
+DNS_DATA_DIR="/var/lib/opanel-dns"
+DNS_DB="${DNS_DATA_DIR}/pdns.sqlite3"
+DNS_CONF="/etc/powerdns/pdns.conf"
+DNS_PACKAGES=(pdns-server pdns-backend-sqlite3 sqlite3)
+DNS_REMOVABLE_PACKAGES=(pdns-server pdns-backend-sqlite3 pdns-backend-bind)
+DNS_API_PORT="8081"
+DNS_ROOT_KEY_FILE="${DNS_DIR}/api.key"
+DNS_PANEL_KEY_FILE="${opanel_DATA_DIR}/addons/dns-api.key"
+DNS_ACME_HOOK="/usr/local/sbin/opanel-dns-acme-hook"
+
+dns_installed() {
+  [[ -f "$DNS_MARKER" ]]
+}
+
+require_dns_installed() {
+  dns_installed || deny "the DNS Manager addon is not installed"
+}
+
+dns_listen_addresses() {
+  # Every global address, never the wildcard: systemd-resolved already holds
+  # 127.0.0.53:53, and a bind to 0.0.0.0:53 fails beside it.
+  python3 - <<'PY'
+import ipaddress
+import subprocess
+
+found = []
+text = subprocess.run(["ip", "-o", "addr", "show", "scope", "global"], capture_output=True, text=True).stdout
+for line in text.splitlines():
+    parts = line.split()
+    for family in ("inet", "inet6"):
+        if family in parts:
+            address = parts[parts.index(family) + 1].split("/")[0]
+            try:
+                ip = ipaddress.ip_address(address)
+            except ValueError:
+                continue
+            if not (ip.is_loopback or ip.is_link_local) and address not in found:
+                found.append(address)
+print(", ".join(found))
+PY
+}
+
+dns_ensure_keys() {
+  install -d -o root -g root -m 0755 "$DNS_DIR"
+  if [[ ! -s "$DNS_ROOT_KEY_FILE" ]]; then
+    openssl rand -hex 32 | mail_write_file "$DNS_ROOT_KEY_FILE" root:root 0600
+  fi
+  install -d -o opanel -g opanel -m 0750 "${opanel_DATA_DIR}/addons"
+  mail_write_file "$DNS_PANEL_KEY_FILE" opanel:opanel 0600 <"$DNS_ROOT_KEY_FILE"
+}
+
+dns_init_db() {
+  local schema
+  install -d -o pdns -g pdns -m 0750 "$DNS_DATA_DIR"
+  if [[ ! -s "$DNS_DB" ]]; then
+    schema="$(dpkg -L pdns-backend-sqlite3 2>/dev/null | grep -E 'schema\.sqlite3\.sql(\.gz)?$' | head -n 1 || true)"
+    [[ -n "$schema" && -f "$schema" ]] || deny "the PowerDNS SQLite schema was not found"
+    if [[ "$schema" == *.gz ]]; then
+      zcat "$schema" | sqlite3 "$DNS_DB" || deny "could not create the DNS database"
+    else
+      sqlite3 "$DNS_DB" <"$schema" || deny "could not create the DNS database"
+    fi
+  fi
+  chown pdns:pdns "$DNS_DB"
+  chmod 0640 "$DNS_DB"
+}
+
+dns_write_config() {
+  local key addresses
+  key="$(cat "$DNS_ROOT_KEY_FILE")"
+  addresses="$(dns_listen_addresses)"
+  [[ -n "$addresses" ]] || deny "this server has no public address to answer DNS on"
+  install -d -o root -g root -m 0755 /etc/powerdns
+  mail_write_file "${DNS_CONF}.new" root:pdns 0640 <<CONF
+# Managed by OPanel (DNS Manager addon). Rewritten on install and on every
+# panel update; the package's pdns.d is not read.
+launch=gsqlite3
+gsqlite3-database=${DNS_DB}
+gsqlite3-dnssec=no
+local-address=${addresses}
+local-port=53
+api=yes
+api-key=${key}
+webserver=yes
+webserver-address=127.0.0.1
+webserver-port=${DNS_API_PORT}
+webserver-allow-from=127.0.0.1,::1
+disable-axfr=yes
+version-string=anonymous
+default-ttl=3600
+setuid=pdns
+setgid=pdns
+security-poll-suffix=
+CONF
+  mv -f "${DNS_CONF}.new" "$DNS_CONF"
+}
+
+dns_write_acme_hook() {
+  # certbot --manual hooks: publish the DNS-01 challenge in this server's own
+  # zone, and take it away again. Both challenges of a domain + *.domain
+  # certificate sit at the same name, so values are added, not replaced.
+  mail_write_file "$DNS_ACME_HOOK" root:root 0700 <<'HOOK'
+#!/usr/bin/env python3
+# Managed by OPanel (DNS Manager addon).
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+KEY = open("/etc/opanel-dns/api.key", encoding="utf-8").read().strip()
+BASE = "http://127.0.0.1:8081/api/v1/servers/localhost/zones/"
+
+
+def call(method, path, body=None):
+    request = urllib.request.Request(BASE + path, method=method,
+                                     data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"X-API-Key": KEY, "Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        text = response.read()
+        return json.loads(text) if text else None
+
+
+def zone_for(name):
+    labels = name.rstrip(".").split(".")
+    for index in range(len(labels) - 1):
+        candidate = ".".join(labels[index:]) + "."
+        try:
+            return candidate, call("GET", candidate)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (404, 422):
+                raise
+    sys.exit(f"no zone on this server for {name}")
+
+
+def main():
+    action = sys.argv[1]
+    domain = os.environ["CERTBOT_DOMAIN"].rstrip(".").lower()
+    value = '"%s"' % os.environ["CERTBOT_VALIDATION"]
+    name = f"_acme-challenge.{domain}."
+    zone, data = zone_for(domain)
+    current = [record["content"] for rrset in data.get("rrsets", [])
+               if rrset["name"] == name and rrset["type"] == "TXT" for record in rrset["records"]]
+    values = [v for v in current if v != value] + ([value] if action == "auth" else [])
+    rrset = {"name": name, "type": "TXT", "ttl": 60}
+    if values:
+        rrset.update(changetype="REPLACE", records=[{"content": v, "disabled": False} for v in values])
+    else:
+        rrset.update(changetype="DELETE", records=[])
+    call("PATCH", zone, {"rrsets": [rrset]})
+    if action == "auth":
+        time.sleep(3)
+
+
+main()
+HOOK
+}
+
+dns_open_ports() {
+  # UDP and TCP 53, both families, as panel rules.
+  local binary proto
+  iptables_ensure_opanel_chains 2>/dev/null || true
+  for binary in iptables ip6tables; do
+    for proto in udp tcp; do
+      while "$binary" -D OPANEL_INPUT -p "$proto" --dport 53 -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null; do :; done
+      "$binary" -I OPANEL_INPUT 1 -p "$proto" --dport 53 -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null || true
+    done
+  done
+}
+
+dns_close_ports() {
+  local binary proto
+  for binary in iptables ip6tables; do
+    for proto in udp tcp; do
+      while "$binary" -D OPANEL_INPUT -p "$proto" --dport 53 -j ACCEPT -m comment --comment "opanel:PanelZone" 2>/dev/null; do :; done
+    done
+  done
+}
+
+dns_wait_for_api() {
+  local attempt
+  for attempt in $(seq 1 20); do
+    if curl -fsS -m 2 -H "X-API-Key: $(cat "$DNS_ROOT_KEY_FILE")" \
+        "http://127.0.0.1:${DNS_API_PORT}/api/v1/servers/localhost" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  deny "PowerDNS did not answer on its API -- check: journalctl -u pdns"
+}
+
+addon_dns_status() {
+  local installed=0 running=0 enabled=0 version=""
+  if dns_installed && command -v pdns_server >/dev/null 2>&1; then
+    installed=1
+    systemctl is-active --quiet pdns 2>/dev/null && running=1
+    systemctl is-enabled --quiet pdns 2>/dev/null && enabled=1
+    version="$(dpkg-query -W -f='${Version}' pdns-server 2>/dev/null | sed 's/-.*//' || true)"
+  fi
+  echo "installed=${installed} running=${running} enabled=${enabled} version=${version}"
+}
+
+addon_dns_install() {
+  export DEBIAN_FRONTEND=noninteractive
+  local pkg
+  # Another DNS server on this box would fight over port 53.
+  for pkg in bind9 dnsmasq; do
+    if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+      deny "${pkg} is installed. Remove it first -- DNS Manager runs its own nameserver (PowerDNS)."
+    fi
+  done
+  apt-get update --allow-releaseinfo-change >/dev/null 2>&1 || true
+  # The package would start PowerDNS on its own config (BIND backend, every
+  # address), which can fail beside systemd-resolved and fail the install:
+  # keep it stopped until ours is written.
+  local guard="/usr/sbin/policy-rc.d" guarded=0 rc=0
+  if [[ ! -e "$guard" ]]; then
+    printf '#!/bin/sh\nexit 101\n' >"$guard"
+    chmod 0755 "$guard"
+    guarded=1
+  fi
+  if apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+      install -y "${DNS_PACKAGES[@]}" >/dev/null; then rc=0; else rc=$?; fi
+  [[ $guarded -eq 1 ]] && rm -f "$guard"
+  [[ $rc -eq 0 ]] || deny "apt-get install of PowerDNS failed"
+  systemctl stop pdns >/dev/null 2>&1 || true
+  dns_ensure_keys
+  dns_init_db
+  dns_write_config
+  dns_write_acme_hook
+  touch "$DNS_MARKER"
+  chmod 0644 "$DNS_MARKER"
+  systemctl enable pdns >/dev/null 2>&1 || true
+  systemctl restart pdns || deny "PowerDNS failed to start -- check: journalctl -u pdns"
+  dns_wait_for_api
+  dns_open_ports
+  iptables_restore_addon_precedence 2>/dev/null || true
+  firewall_persist_rules
+  echo "DNS Manager installed: PowerDNS answers on port 53"
+}
+
+addon_dns_uninstall() {
+  export DEBIAN_FRONTEND=noninteractive
+  local installed=() pkg name ok
+  systemctl disable --now pdns >/dev/null 2>&1 || true
+  dns_close_ports
+  firewall_persist_rules
+  for pkg in "${DNS_REMOVABLE_PACKAGES[@]}"; do
+    if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+      installed+=("$pkg")
+    fi
+  done
+  if (( ${#installed[@]} )); then
+    for name in $(apt-get -s purge "${installed[@]}" 2>/dev/null | awk '/^(Purg|Remv) /{print $2}'); do
+      ok=0
+      for pkg in "${DNS_REMOVABLE_PACKAGES[@]}"; do [[ "$name" == "$pkg" ]] && ok=1; done
+      if [[ $ok -eq 0 && -n "$(apt-mark showauto "$name" 2>/dev/null)" ]]; then ok=1; fi
+      [[ $ok -eq 1 ]] || deny "removing PowerDNS would also remove ${name}, which was installed separately"
+    done
+    apt-get -o DPkg::Lock::Timeout=120 purge -y "${installed[@]}" >/dev/null || deny "apt could not remove PowerDNS"
+  fi
+  rm -f "$DNS_MARKER" "$DNS_ACME_HOOK" "$DNS_PANEL_KEY_FILE" "$DNS_CONF" "${DNS_CONF}.new"
+  rmdir /etc/powerdns/pdns.d /etc/powerdns 2>/dev/null || true
+  echo "DNS Manager removed. The zones in ${DNS_DATA_DIR} are kept."
+}
+
+addon_dns_enable() {
+  require_dns_installed
+  systemctl enable pdns >/dev/null 2>&1 || true
+  systemctl restart pdns || deny "PowerDNS failed to start -- check: journalctl -u pdns"
+  dns_wait_for_api
+  echo "DNS Manager started"
+}
+
+addon_dns_disable() {
+  systemctl disable --now pdns >/dev/null 2>&1 || true
+  echo "DNS Manager stopped"
+}
+
+dns_refresh() {
+  # Brings an installed DNS Manager up to this release (run by log-hygiene on
+  # every update): new packages, the configuration -- the server's addresses
+  # may have changed -- and the ACME hook. Restarts only if something did.
+  dns_installed || return 0
+  export DEBIAN_FRONTEND=noninteractive
+  local -a missing=()
+  local pkg before after
+  for pkg in "${DNS_PACKAGES[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+      missing+=("$pkg")
+    fi
+  done
+  if (( ${#missing[@]} )); then
+    apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+      install -y "${missing[@]}" >/dev/null 2>&1 || deny "could not install ${missing[*]}"
+  fi
+  before="$(sha256sum "$DNS_CONF" 2>/dev/null | cut -d' ' -f1 || true)"
+  dns_ensure_keys
+  dns_init_db
+  dns_write_config
+  dns_write_acme_hook
+  after="$(sha256sum "$DNS_CONF" | cut -d' ' -f1)"
+  if [[ "$before" != "$after" ]] && systemctl is-enabled --quiet pdns 2>/dev/null; then
+    systemctl restart pdns >/dev/null 2>&1 || echo "WARNING: pdns did not restart" >&2
+  fi
+  echo "DNS Manager configuration refreshed"
+}
+
+issue_local_dns_wildcard() {
+  # A wildcard certificate over DNS-01 in this server's own zone (see
+  # dns_write_acme_hook). certbot keeps the hooks for its renewals.
+  local domain="$1" email="${2:-}"
+  require_dns_installed
+  require_domain "$domain"
+  [[ -x "$DNS_ACME_HOOK" ]] || deny "the DNS challenge hook is missing; update the panel"
+  local args=(certonly --manual --preferred-challenges dns
+    --manual-auth-hook "$DNS_ACME_HOOK auth" --manual-cleanup-hook "$DNS_ACME_HOOK cleanup"
+    --cert-name "$domain" --non-interactive --agree-tos --expand
+    --deploy-hook "systemctl restart lshttpd.service 2>/dev/null || /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true; systemctl restart opanel-api 2>/dev/null || true"
+    -d "$domain" -d "*.${domain}")
+  if [[ -n "$email" ]]; then
+    require_email "$email"
+    args+=(--email "$email")
+  else
+    args+=(--register-unsafely-without-email)
+  fi
+  certbot "${args[@]}" || deny "Let's Encrypt could not complete the DNS challenge for ${domain}. Its nameservers must be this server's."
+  restart_openlitespeed
+  copy_panel_live_certificate "$domain"
+  panel_cert_store_sync
+  echo "Wildcard SSL certificate issued for ${domain} (and *.${domain}) with this server's DNS"
+}
+
 # --- Keeping addon firewall rules effective ---------------------------------
 addon_fail2ban_wait_for_chains() {
   # systemctl returns once the server is up, which is before its jails have
@@ -6355,6 +6700,7 @@ case "$cmd" in
     case "$1" in
       fail2ban) addon_fail2ban_status ;;
       mail) addon_mail_status ;;
+      dns) addon_dns_status ;;
     esac
     ;;
 
@@ -6363,6 +6709,7 @@ case "$cmd" in
     case "$1" in
       fail2ban) addon_fail2ban_install ;;
       mail) addon_mail_install ;;
+      dns) addon_dns_install ;;
     esac
     ;;
 
@@ -6371,6 +6718,7 @@ case "$cmd" in
     case "$1" in
       fail2ban) addon_fail2ban_uninstall ;;
       mail) addon_mail_uninstall ;;
+      dns) addon_dns_uninstall ;;
     esac
     ;;
 
@@ -6385,6 +6733,7 @@ case "$cmd" in
         echo "fail2ban started"
         ;;
       mail) addon_mail_enable ;;
+      dns) addon_dns_enable ;;
     esac
     ;;
 
@@ -6396,6 +6745,7 @@ case "$cmd" in
         echo "fail2ban stopped"
         ;;
       mail) addon_mail_disable ;;
+      dns) addon_dns_disable ;;
     esac
     ;;
 
@@ -6778,6 +7128,7 @@ PY
     ensure_lmd_monitor_layout
     # A subshell: a failed mail refresh must not stop the update's other steps.
     ( mail_refresh ) || echo "WARNING: the Email addon could not be refreshed" >&2
+    ( dns_refresh ) || echo "WARNING: DNS Manager could not be refreshed" >&2
     echo "Log hygiene applied"
     ;;
 
@@ -6852,6 +7203,10 @@ PY
   certbot-dns-cloudflare)
     [[ $# -ge 1 && $# -le 2 ]] || deny "usage: certbot-dns-cloudflare <domain> [email]   (token on stdin)"
     issue_cloudflare_wildcard "$1" "${2:-}"
+    ;;
+  certbot-dns-local)
+    [[ $# -ge 1 && $# -le 2 ]] || deny "usage: certbot-dns-local <domain> [email]"
+    issue_local_dns_wildcard "$1" "${2:-}"
     ;;
   certbot-dns-cloudflare-remove)
     [[ $# -eq 1 ]] || deny "usage: certbot-dns-cloudflare-remove <domain>"

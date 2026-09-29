@@ -125,6 +125,14 @@ def issue_wildcard_ssl(domain: str, cf_token: str, *, email: str | None = None) 
     )
 
 
+def issue_wildcard_local(domain: str, *, email: str | None = None) -> CommandResult:
+    """Issue ``domain`` + ``*.domain`` over DNS-01 in this server's own zone
+    (DNS Manager addon). certbot keeps the hooks, so renewals need nothing."""
+    safe_domain = _safe_domain(domain)
+    helper_args = [safe_domain] + ([email] if email else [])
+    return shell.privileged("certbot-dns-local", helper_args=helper_args, check=False)
+
+
 def remove_wildcard_ssl(domain: str) -> CommandResult:
     """Delete a DNS-01 cert and its stored Cloudflare credentials file."""
     safe_domain = _safe_domain(domain)

@@ -550,9 +550,19 @@ def _mail_addon_ports() -> set[int]:
         return set()
 
 
+DNS_ADDON_MARKER = Path("/etc/opanel-dns/installed")
+
+
+def _dns_addon_ports() -> set[int]:
+    try:
+        return {53} if DNS_ADDON_MARKER.exists() else set()
+    except OSError:
+        return set()
+
+
 def default_allowed_ports() -> set[int]:
     """Ports every install already accepts, panel port included."""
-    ports = set(DEFAULT_PROTECTED_PORTS) | _mail_addon_ports()
+    ports = set(DEFAULT_PROTECTED_PORTS) | _mail_addon_ports() | _dns_addon_ports()
     try:
         ports.add(int(settings.panel_port or 2222))
     except (TypeError, ValueError):
