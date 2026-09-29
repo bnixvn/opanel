@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -25,6 +25,8 @@ class User(Base):
     # Databases were the one tenant resource with no cap at all. 0 = unlimited,
     # matching storage_limit_mb.
     database_limit: Mapped[int] = mapped_column(Integer, default=10)
+    # Mailboxes across all of the account's mail domains (Email addon). 0 = unlimited.
+    mailbox_limit: Mapped[int] = mapped_column(Integer, default=10, server_default=text("10"))
     # Bumped to invalidate previously-issued JWTs (logout-everywhere, role
     # change, password reset by admin, account disable, etc).
     token_version: Mapped[int] = mapped_column(Integer, default=0)
@@ -428,3 +430,80 @@ class NotificationMessage(Base):
     next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str] = mapped_column(Text, default="")
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class MailDomain(Base):
+    """A domain the Email addon receives mail for.
+
+    It belongs to the account that owns the website (or alias) with that name
+    when it was added; the mail stays if the website is later removed, so
+    rebuilding a site never costs anyone their mailboxes.
+    """
+
+    __tablename__ = "mail_domains"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    domain: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # Where mail for an address with no mailbox or forwarder goes; "" rejects it.
+    catch_all: Mapped[str] = mapped_column(String(255), default="")
+    # The DKIM public key (base64) for the opanel._domainkey record. The private
+    # key never leaves /etc/opanel-mail/dkim.
+    dkim_public: Mapped[str] = mapped_column(Text, default="")
+    # webmail.<domain> is served with its own certificate.
+    webmail_host: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    owner: Mapped["User"] = relationship()
+    mailboxes: Mapped[List["Mailbox"]] = relationship(
+        back_populates="mail_domain", cascade="all, delete-orphan", order_by="Mailbox.local_part")
+    forwarders: Mapped[List["MailForwarder"]] = relationship(
+        back_populates="mail_domain", cascade="all, delete-orphan", order_by="MailForwarder.local_part")
+
+
+class Mailbox(Base):
+    """One IMAP/POP3 mailbox. The password is kept only as a Dovecot hash."""
+
+    __tablename__ = "mailboxes"
+    __table_args__ = (UniqueConstraint("domain_id", "local_part", name="uq_mailboxes_domain_local"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("mail_domains.id", ondelete="CASCADE"), index=True)
+    local_part: Mapped[str] = mapped_column(String(64))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    # 0 = unlimited (administrators only).
+    quota_mb: Mapped[int] = mapped_column(Integer, default=1024)
+    # A suspended mailbox still receives mail but cannot sign in or send.
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    mail_domain: Mapped[MailDomain] = relationship(back_populates="mailboxes")
+
+    @property
+    def address(self) -> str:
+        return f"{self.local_part}@{self.mail_domain.domain}"
+
+
+class MailForwarder(Base):
+    """An address that passes its mail on. It may share its name with a
+    mailbox, which then keeps a copy."""
+
+    __tablename__ = "mail_forwarders"
+    __table_args__ = (UniqueConstraint("domain_id", "local_part", name="uq_mail_forwarders_domain_local"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("mail_domains.id", ondelete="CASCADE"), index=True)
+    local_part: Mapped[str] = mapped_column(String(64))
+    # One destination address per line.
+    destinations: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    mail_domain: Mapped[MailDomain] = relationship(back_populates="forwarders")
+
+    @property
+    def address(self) -> str:
+        return f"{self.local_part}@{self.mail_domain.domain}"
+
+    @property
+    def destination_list(self) -> list[str]:
+        return [line.strip() for line in (self.destinations or "").splitlines() if line.strip()]

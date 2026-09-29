@@ -19,7 +19,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import mariadb, notifications, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, wordpress
+from app.services import mail, mariadb, notifications, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, wordpress
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -111,6 +111,7 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         website_limit=payload.website_limit,
         storage_limit_mb=payload.storage_limit_mb,
         database_limit=payload.database_limit,
+        mailbox_limit=payload.mailbox_limit,
     )
     db.add(user)
     db.commit()
@@ -197,6 +198,8 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         user.storage_limit_mb = payload.storage_limit_mb
     if payload.database_limit is not None:
         user.database_limit = payload.database_limit
+    if payload.mailbox_limit is not None:
+        user.mailbox_limit = payload.mailbox_limit
 
     if role_changed:
         # New role -> existing tokens with old role claim should be invalidated.
@@ -230,6 +233,7 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
         # Anything owned but not attached to one of those websites.
         _delete_orphan_databases(db, user.id)
         _remove_user_from_backup_schedules(db, user.id)
+        mail.delete_for_owner(db, user)
         db.query(McpToken).filter(McpToken.user_id == user.id).delete(synchronize_session=False)
         site_users.delete_panel_user(user.username)
     except (RuntimeError, ValueError) as exc:

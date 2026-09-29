@@ -134,6 +134,40 @@ ADDONS: dict[str, dict] = {
             "the demo on a server holding only sample data.",
         ],
     },
+    "mail": {
+        "id": "mail",
+        "name": "Email",
+        "summary": "Mail server with webmail: every hosting account manages its own mailboxes.",
+        "description": (
+            "Installs Exim, Dovecot and Rspamd, and the BNIX webmail. Hosting "
+            "customers turn email on for their own domains and manage their "
+            "mailboxes, forwarders and catch-all; each domain gets a DKIM key "
+            "and the SPF, DKIM, DMARC and MX records to publish. Rspamd filters "
+            "spam (SPF, DKIM, DMARC, DNS blocklists, greylisting, a learning "
+            "filter) and sending is rate-limited per mailbox. Webmail opens "
+            "from the panel without a password, on port 2096 of the panel "
+            "hostname or on webmail.<domain>."
+        ),
+        "category": "hosting",
+        "version": "1",
+        "packages": ["exim4-daemon-heavy", "dovecot-imapd", "dovecot-pop3d", "dovecot-lmtpd", "rspamd"],
+        "service": "exim4",
+        "features": ["mail"],
+        "notes": [
+            "The panel hostname is the mail server's name: MX records point at "
+            "it and mail clients connect to it, so it needs a real certificate. "
+            "Set the server's reverse DNS (PTR) to the same name.",
+            "Many providers block outgoing port 25. If yours does, set a relay "
+            "(smarthost) in the addon's settings or ask the provider to open it.",
+            "Opens ports 110, 143, 993, 995 and 2096; 25, 465 and 587 are open "
+            "on every install already. Websites' PHP mail() goes through Exim "
+            "too, signed with DKIM for the account's own domains.",
+            "Expect about 300-400 MB of RAM for Exim, Dovecot, Rspamd and the webmail.",
+            "Removing uninstalls the mail server and the webmail. Mailboxes in "
+            "/var/vmail, the DKIM keys and the panel's list of mailboxes are "
+            "kept, so installing again brings them back.",
+        ],
+    },
     "malware": {
         "id": "malware",
         "name": "Malware Scanner",
@@ -361,6 +395,9 @@ def _helper_status(addon_id: str, live: dict) -> str:
             live["running"] = parsed.get("running") == "1"
             live["enabled"] = parsed.get("enabled") == "1"
             live["version"] = parsed.get("version", "")
+            down = [name for name in parsed.get("down", "").split(",") if name]
+            if down and live["installed"]:
+                detail = "Not running: " + ", ".join(down)
         else:
             detail = (result.stderr or result.stdout or "").strip()
     except Exception as exc:  # noqa: BLE001 - a status read must not raise
@@ -428,10 +465,27 @@ def _background(addon_id: str, action: str, command: str) -> None:
                 fields["installed_at"] = ""
                 fields["installed_by"] = ""
             _update_state(addon_id, **fields)
+            _after_lifecycle(addon_id, action)
         finally:
             _update_state(addon_id, busy=False, busy_action="")
 
     threading.Thread(target=worker, daemon=True).start()
+
+
+def _after_lifecycle(addon_id: str, action: str) -> None:
+    """Panel-side work once the helper has installed or removed an addon.
+
+    The Email addon's mailboxes live in the panel's database; a fresh install
+    gets them written out, with the relay and limits the admin had set.
+    """
+    if addon_id != "mail":
+        return
+    try:
+        from app.services import mail
+
+        mail.after_lifecycle(action)
+    except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
+        _update_state(addon_id, last_error=f"Installed, but the mailboxes could not be written out: {exc}")
 
 
 def _background_call(addon_id: str, action: str, work) -> None:

@@ -13,7 +13,7 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye, Mail, Inbox, Forward } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
 import './style.css';
@@ -67,6 +67,7 @@ const PAGE_ROUTES = {
   updates: '/updates',
   addons: '/addons',
   mcp: '/mcp',
+  mail: '/email',
   notifications: '/notifications',
   services: '/services',
 };
@@ -583,6 +584,24 @@ function App() {
   // Notifications addon: whether it is on, the admin's channel settings (and an
   // editable copy whose secret fields start blank), and this account's choices.
   const [notifyInfo, setNotifyInfo] = useState(null);
+  // Email addon
+  const [mailInfo, setMailInfo] = useState(null);
+  const [mailTab, setMailTab] = useState('mailboxes');
+  const [mailFilter, setMailFilter] = useState({ domain_id: '', q: '' });
+  const [mailPage, setMailPage] = useState(1);
+  const [mailboxList, setMailboxList] = useState(null);
+  const [forwarderList, setForwarderList] = useState(null);
+  const [showCreateMailbox, setShowCreateMailbox] = useState(false);
+  const [mailboxForm, setMailboxForm] = useState({ domain_id: '', local_part: '', password: '', quota_mb: '' });
+  const [showCreateForwarder, setShowCreateForwarder] = useState(false);
+  const [forwarderForm, setForwarderForm] = useState({ domain_id: '', local_part: '', destinations: '' });
+  const [mailDomainForm, setMailDomainForm] = useState({ domain: '', owner_id: '' });
+  const [mailDns, setMailDns] = useState(null);
+  const [mailboxEdit, setMailboxEdit] = useState(null);
+  const [forwarderEdit, setForwarderEdit] = useState(null);
+  const [catchAllDraft, setCatchAllDraft] = useState({});
+  const [mailSettings, setMailSettings] = useState(null);
+  const [mailSettingsForm, setMailSettingsForm] = useState(null);
   const [notifySettings, setNotifySettings] = useState(null);
   const [notifyForm, setNotifyForm] = useState(null);
   const [notifyPrefs, setNotifyPrefs] = useState(null);
@@ -1177,6 +1196,7 @@ function App() {
       role: user.role || 'end_user',
       website_limit: user.website_limit ?? 5,
       storage_limit_mb: user.storage_limit_mb ?? 1024,
+      mailbox_limit: user.mailbox_limit ?? 10,
       _password: '',
       _planId: matchedPlan ? String(matchedPlan.id) : '',
     });
@@ -1205,6 +1225,10 @@ function App() {
       website_limit: websiteLimit,
       storage_limit_mb: storageLimitMb,
     };
+    const mailboxLimit = Number(editingUserForm.mailbox_limit);
+    if (editingUserForm.mailbox_limit !== undefined && Number.isInteger(mailboxLimit) && mailboxLimit >= 0 && mailboxLimit <= 10000) {
+      payload.mailbox_limit = mailboxLimit;
+    }
     if (editingUser.id !== currentUser?.id) payload.role = editingUserForm.role;
     const data = await request(`/users/${editingUser.id}`, {
       method: 'PATCH',
@@ -1400,6 +1424,206 @@ function App() {
       applyDemoSettings(data);
       setNotice(tr("Demo accounts saved."));
     }
+  }
+
+  // --- Email ---
+  async function loadMailInfo() {
+    const data = await request('/mail/overview', { silent: true }, '');
+    if (data) setMailInfo(data);
+    return data;
+  }
+
+  function mailQuery(page) {
+    const params = new URLSearchParams({ page: String(page), per_page: '50' });
+    if (mailFilter.domain_id) params.set('domain_id', mailFilter.domain_id);
+    if (mailFilter.q.trim()) params.set('q', mailFilter.q.trim());
+    return params.toString();
+  }
+
+  async function loadMailboxes(page = mailPage) {
+    const data = await request(`/mail/mailboxes?${mailQuery(page)}`, { silent: true }, '');
+    if (data) setMailboxList(data);
+  }
+
+  async function loadForwarders(page = mailPage) {
+    const data = await request(`/mail/forwarders?${mailQuery(page)}`, { silent: true }, '');
+    if (data) setForwarderList(data);
+  }
+
+  function refreshMail() {
+    loadMailInfo();
+    if (mailTab === 'mailboxes') loadMailboxes();
+    if (mailTab === 'forwarders') loadForwarders();
+  }
+
+  function mailPassword() {
+    // The server wants at least one letter and one digit.
+    let value = '';
+    do { value = generateRandomPassword(16); } while (!/[A-Za-z]/.test(value) || !/\d/.test(value));
+    return value;
+  }
+
+  function splitAddresses(text) {
+    return String(text || '').split(/[\s,;]+/).map(item => item.trim()).filter(Boolean);
+  }
+
+  async function addMailDomain() {
+    const domain = mailDomainForm.domain.trim().toLowerCase();
+    if (!domain) return;
+    const body = { domain };
+    if (isAdmin && mailDomainForm.owner_id) body.owner_id = Number(mailDomainForm.owner_id);
+    const data = await request('/mail/domains', { method: 'POST', body: JSON.stringify(body) }, tr("Turning on email..."));
+    if (data) {
+      setMailDomainForm({ domain: '', owner_id: '' });
+      setNotice(tr("Email is on for {0}. Publish its DNS records next.", data.domain));
+      await loadMailInfo();
+      openMailDns(data);
+    }
+  }
+
+  async function deleteMailDomain(domain) {
+    const typed = prompt(tr("This deletes every mailbox of {0} with all its mail, and its forwarders. It cannot be undone.\n\nType the domain name to confirm:", domain.domain));
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== domain.domain) { setError(tr("The name did not match; nothing was deleted.")); return; }
+    const data = await request(`/mail/domains/${domain.id}?confirm=${encodeURIComponent(domain.domain)}`, { method: 'DELETE' }, tr("Deleting..."));
+    if (data) {
+      setNotice(tr("Email for {0} deleted.", domain.domain));
+      if (mailFilter.domain_id === String(domain.id)) setMailFilter(prev => ({ ...prev, domain_id: '' }));
+      refreshMail();
+    }
+  }
+
+  async function saveCatchAll(domain) {
+    const value = String(catchAllDraft[domain.id] ?? domain.catch_all ?? '').trim();
+    const data = await request(`/mail/domains/${domain.id}`, { method: 'PUT', body: JSON.stringify({ catch_all: value }) }, tr("Saving..."));
+    if (data) {
+      setNotice(value ? tr("Mail to unknown addresses at {0} now goes to {1}.", domain.domain, value) : tr("Mail to unknown addresses at {0} is now refused.", domain.domain));
+      setCatchAllDraft(prev => { const next = { ...prev }; delete next[domain.id]; return next; });
+      loadMailInfo();
+    }
+  }
+
+  async function openMailDns(domain) {
+    setMailDns({ domain, records: null });
+    const data = await request(`/mail/domains/${domain.id}/dns`, { silent: true }, '');
+    setMailDns({ domain, records: data?.records || [] });
+  }
+
+  async function rotateMailDkim(domain) {
+    if (!confirm(tr("Make a new DKIM key for {0}?\n\nMail is signed with the new key at once, so update the DKIM record in DNS right away: until you do, receivers cannot verify the signature.", domain.domain))) return;
+    const data = await request(`/mail/domains/${domain.id}/dkim/rotate`, { method: 'POST' }, tr("Creating a new key..."));
+    if (data) { setNotice(tr("New DKIM key created. Update the DKIM record.")); openMailDns(domain); }
+  }
+
+  async function toggleWebmailHost(domain, enabled) {
+    if (enabled && !confirm(tr("Serve webmail at webmail.{0}?\n\nIts A record must already point at this server: a Let's Encrypt certificate is issued for it now.", domain.domain))) return;
+    if (!enabled && !confirm(tr("Stop serving webmail at webmail.{0}? Webmail stays available on the server's own address.", domain.domain))) return;
+    const data = await request(`/mail/domains/${domain.id}/webmail-host`, { method: 'POST', body: JSON.stringify({ enabled }) },
+      enabled ? tr("Issuing a certificate for webmail.{0}...", domain.domain) : tr("Removing..."));
+    if (data) {
+      setNotice(enabled ? tr("Webmail is now at https://webmail.{0}/", domain.domain) : tr("webmail.{0} removed.", domain.domain));
+      loadMailInfo();
+    }
+  }
+
+  async function createMailbox() {
+    const body = { domain_id: Number(mailboxForm.domain_id), local_part: mailboxForm.local_part.trim().toLowerCase(), password: mailboxForm.password };
+    if (String(mailboxForm.quota_mb).trim() !== '') body.quota_mb = Number(mailboxForm.quota_mb);
+    const data = await request('/mail/mailboxes', { method: 'POST', body: JSON.stringify(body) }, tr("Creating mailbox..."));
+    if (data) {
+      setNotice(tr("{0} created.", data.address));
+      setMailboxForm(prev => ({ ...prev, local_part: '', password: '' }));
+      setShowCreateMailbox(false);
+      loadMailboxes();
+      loadMailInfo();
+    }
+  }
+
+  async function saveMailboxEdit() {
+    const edit = mailboxEdit;
+    const body = {};
+    if (edit.password) body.password = edit.password;
+    if (String(edit.quota_mb) !== String(edit.box.quota_mb)) body.quota_mb = Number(edit.quota_mb);
+    if (!Object.keys(body).length) { setMailboxEdit(null); return; }
+    const data = await request(`/mail/mailboxes/${edit.box.id}`, { method: 'PUT', body: JSON.stringify(body) }, tr("Saving..."));
+    if (data) { setNotice(tr("{0} saved.", data.address)); setMailboxEdit(null); loadMailboxes(); }
+  }
+
+  async function setMailboxEnabled(box, enabled) {
+    if (!enabled && !confirm(tr("Suspend {0}?\n\nIt keeps receiving mail, but nobody can sign in to it or send from it until it is resumed.", box.address))) return;
+    const data = await request(`/mail/mailboxes/${box.id}`, { method: 'PUT', body: JSON.stringify({ enabled }) }, tr("Saving..."));
+    if (data) { setNotice(enabled ? tr("{0} resumed.", box.address) : tr("{0} suspended.", box.address)); loadMailboxes(); }
+  }
+
+  async function deleteMailbox(box) {
+    if (!confirm(tr("Delete {0} and all of its mail?\n\nThis cannot be undone.", box.address))) return;
+    const data = await request(`/mail/mailboxes/${box.id}`, { method: 'DELETE' }, tr("Deleting..."));
+    if (data) { setNotice(tr("{0} deleted.", box.address)); loadMailboxes(); loadMailInfo(); }
+  }
+
+  async function openWebmail(box) {
+    // Opened inside the click so no popup blocker stops it; the signed link
+    // arrives a moment later.
+    const win = window.open('about:blank', '_blank');
+    const data = await request(`/mail/mailboxes/${box.id}/webmail`, { method: 'POST' }, tr("Opening webmail..."));
+    if (data?.url) {
+      if (win) { win.opener = null; win.location.href = data.url; } else window.location.href = data.url;
+    } else if (win) {
+      win.close();
+    }
+  }
+
+  async function createForwarder() {
+    const body = { domain_id: Number(forwarderForm.domain_id), local_part: forwarderForm.local_part.trim().toLowerCase(), destinations: splitAddresses(forwarderForm.destinations) };
+    const data = await request('/mail/forwarders', { method: 'POST', body: JSON.stringify(body) }, tr("Creating forwarder..."));
+    if (data) {
+      setNotice(tr("{0} now forwards to {1}.", data.address, data.destinations.join(', ')));
+      setForwarderForm(prev => ({ ...prev, local_part: '', destinations: '' }));
+      setShowCreateForwarder(false);
+      loadForwarders();
+      loadMailInfo();
+    }
+  }
+
+  async function saveForwarderEdit() {
+    const data = await request(`/mail/forwarders/${forwarderEdit.item.id}`, { method: 'PUT', body: JSON.stringify({ destinations: splitAddresses(forwarderEdit.destinations) }) }, tr("Saving..."));
+    if (data) { setNotice(tr("{0} saved.", data.address)); setForwarderEdit(null); loadForwarders(); }
+  }
+
+  async function deleteForwarder(item) {
+    if (!confirm(tr("Delete the forwarder {0}?", item.address))) return;
+    const data = await request(`/mail/forwarders/${item.id}`, { method: 'DELETE' }, tr("Deleting..."));
+    if (data) { setNotice(tr("{0} deleted.", item.address)); loadForwarders(); loadMailInfo(); }
+  }
+
+  function applyMailSettings(data) {
+    setMailSettings(data);
+    setMailSettingsForm({ ...data.settings, smarthost_password: '' });
+  }
+
+  async function loadMailSettings() {
+    const data = await request('/mail/settings', { silent: true }, '');
+    if (data) applyMailSettings(data);
+  }
+
+  async function saveMailSettings() {
+    const f = mailSettingsForm;
+    const body = {
+      smarthost_enabled: !!f.smarthost_enabled,
+      smarthost_host: String(f.smarthost_host || '').trim(),
+      smarthost_port: Number(f.smarthost_port) || 587,
+      smarthost_username: String(f.smarthost_username || '').trim(),
+      auth_rate_per_hour: Number(f.auth_rate_per_hour) || 0,
+      local_rate_per_hour: Number(f.local_rate_per_hour) || 0,
+      max_message_mb: Number(f.max_message_mb) || 50,
+      spam_header_score: Number(f.spam_header_score) || 6,
+      spam_reject_score: Number(f.spam_reject_score) || 15,
+      greylisting: !!f.greylisting,
+      default_quota_mb: Number(f.default_quota_mb) || 1024,
+    };
+    if (f.smarthost_password) body.smarthost_password = f.smarthost_password;
+    const data = await request('/mail/settings', { method: 'PUT', body: JSON.stringify(body) }, tr("Applying mail settings..."));
+    if (data) { setNotice(tr("Mail settings applied.")); loadMailSettings(); }
   }
 
   async function loadNotifyInfo() {
@@ -3695,6 +3919,7 @@ function App() {
     }
     if (isAuthenticated && page === 'addons' && isAdmin) loadAddons();
     if (isAuthenticated && page === 'mcp') loadMcp();
+    if (isAuthenticated && page === 'mail') { loadMailInfo(); if (isAdmin) loadUsers(); }
     if (isAuthenticated && page === 'dashboard') loadDashboardSummary();
     if (isAuthenticated && page === 'sftp') { loadSftp(); if (isAdmin) loadUsers(); if (!websites.length) refreshAll(); }
     if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); loadNetworkStatus(); }
@@ -3710,6 +3935,22 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated) loadDemoInfo();
   }, [isAuthenticated]);
+
+  // Email: offered in the sidebar once the addon is installed.
+  useEffect(() => {
+    if (isAuthenticated) loadMailInfo();
+  }, [isAuthenticated, addonList]);
+
+  useEffect(() => {
+    if (!isAuthenticated || page !== 'mail') return;
+    if (mailTab === 'mailboxes') loadMailboxes();
+    if (mailTab === 'forwarders') loadForwarders();
+  }, [isAuthenticated, page, mailTab, mailPage, mailFilter.domain_id]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isAdmin || page !== 'addons') return;
+    if (addonList.some(a => a.id === 'mail' && a.installed)) loadMailSettings();
+  }, [isAuthenticated, isAdmin, page, addonList]);
 
   useEffect(() => {
     if (!isAuthenticated || !isAdmin || page !== 'addons') return;
@@ -3828,6 +4069,8 @@ function App() {
 
   // An addon earns a sidebar entry only while it is turned on.
   const addonNavItems = [
+    // Email is everyday work for every account, so it leads the addons.
+    ...(mailInfo?.installed ? [['mail', tr("Email"), Mail]] : []),
     ...(mcpInfo?.enabled ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
     ...(isAdmin && notifyInfo?.enabled ? [['notifications', tr("Notifications"), Bell]] : []),
     ...(isAdmin && malwareScanStatus?.enabled ? [['malware', tr("Malware Scanner"), Bug]] : []),
@@ -4078,6 +4321,7 @@ function App() {
       { key: 'ssl', icon: Lock, label: tr("Set up SSL"), run: () => navigateToPage('ssl') },
       { key: 'backup', icon: Archive, label: tr("Back up a website"), run: () => navigateToPage('backups') },
       { key: 'sftp', icon: KeyRound, label: tr("New SFTP account"), run: () => { setShowCreateSftp(true); navigateToPage('sftp'); } },
+      ...(mailInfo?.installed ? [{ key: 'mail', icon: Mail, label: tr("New mailbox"), run: () => { setMailTab('mailboxes'); navigateToPage('mail'); } }] : []),
       ...(isAdmin ? [{ key: 'user', icon: Users, label: tr("Panel users"), run: () => navigateToPage('users') }] : []),
     ];
 
@@ -5467,6 +5711,363 @@ function App() {
     </>;
   }
 
+  // --- Email page ---
+  function mailDomainOptions(placeholder) {
+    return <>
+      {placeholder && <option value="">{placeholder}</option>}
+      {(mailInfo?.domains || []).map(d => <option key={d.id} value={String(d.id)}>{d.domain}{isAdmin && d.owner ? ` (${d.owner})` : ''}</option>)}
+    </>;
+  }
+
+  function renderMailFilter(onSearch) {
+    return <div className="mail-filter">
+      <select value={mailFilter.domain_id} aria-label={tr("Domain")} onChange={e => { setMailFilter(prev => ({ ...prev, domain_id: e.target.value })); setMailPage(1); }}>
+        {mailDomainOptions(tr("All domains"))}
+      </select>
+      <form className="mail-search" onSubmit={e => { e.preventDefault(); setMailPage(1); onSearch(); }}>
+        <input value={mailFilter.q} placeholder={tr("Search")} aria-label={tr("Search")} onChange={e => setMailFilter(prev => ({ ...prev, q: e.target.value }))} />
+        <button type="submit" className="secondary icon-only" aria-label={tr("Search")} title={tr("Search")}><Search size={14}/></button>
+      </form>
+    </div>;
+  }
+
+  function renderMailPager(list) {
+    const pages = Math.max(1, Math.ceil((list?.total || 0) / (list?.per_page || 50)));
+    if (pages <= 1) return null;
+    return <div className="firewall-ip-pager">
+      <button className="mini secondary" disabled={mailPage <= 1} onClick={() => setMailPage(p => Math.max(1, p - 1))}>{tr("Previous")}</button>
+      <span className="hint">{tr("Page {0} of {1}", mailPage, pages)}</span>
+      <button className="mini secondary" disabled={mailPage >= pages} onClick={() => setMailPage(p => p + 1)}>{tr("Next")}</button>
+    </div>;
+  }
+
+  function renderMailboxes() {
+    const info = mailInfo;
+    const list = mailboxList;
+    const items = list?.items || [];
+    const limit = Number(info.mailbox_limit) || 0;
+    const atLimit = !isAdmin && limit > 0 && info.mailbox_count >= limit;
+    const local = mailboxForm.local_part.trim().toLowerCase();
+    const canCreate = !!mailboxForm.domain_id && /^[a-z0-9]([a-z0-9._+-]{0,62}[a-z0-9_+-])?$/.test(local) && !local.includes('..')
+      && mailboxForm.password.length >= 8 && /[A-Za-z]/.test(mailboxForm.password) && /\d/.test(mailboxForm.password);
+    const openCreate = () => {
+      setShowCreateMailbox(true);
+      setMailboxForm(prev => ({
+        ...prev,
+        domain_id: prev.domain_id || mailFilter.domain_id || String(info.domains[0]?.id || ''),
+        password: prev.password || mailPassword(),
+        quota_mb: prev.quota_mb === '' ? String(info.default_quota_mb || 1024) : prev.quota_mb,
+      }));
+    };
+    return <div className="mail-tab">
+      <div className="mail-toolbar">
+        {renderMailFilter(() => loadMailboxes(1))}
+        {!showCreateMailbox && <button type="button" disabled={atLimit} title={atLimit ? tr("Mailbox limit reached") : ''} onClick={openCreate}><Plus size={15}/> {tr("New mailbox")}</button>}
+      </div>
+      {atLimit && <p className="hint">{tr("You have used all {0} of your mailboxes. Delete one, or ask your provider for more.", limit)}</p>}
+      {showCreateMailbox && <div className="create-inline">
+        <div className="create-inline-head">
+          <strong>{tr("New mailbox")}</strong>
+          <button type="button" className="secondary icon-only mini" onClick={() => setShowCreateMailbox(false)} aria-label={tr("Close")} title={tr("Close")}><X size={15}/></button>
+        </div>
+        <div className="mail-create-grid">
+          <div className="field mail-address-field"><span className="field-label">{tr("Address")}</span>
+            <div className="mail-address-input">
+              <input value={mailboxForm.local_part} placeholder="info" autoComplete="off" spellCheck={false} aria-label={tr("Mailbox name")}
+                onChange={e => setMailboxForm(prev => ({ ...prev, local_part: e.target.value.toLowerCase().replace(/[^a-z0-9._+-]/g, '') }))} />
+              <span>@</span>
+              <select value={mailboxForm.domain_id} aria-label={tr("Domain")} onChange={e => setMailboxForm(prev => ({ ...prev, domain_id: e.target.value }))}>{mailDomainOptions(tr("Choose a domain"))}</select>
+            </div>
+          </div>
+          <div className="field"><span className="field-label">{tr("Password")}</span>
+            <div className="password-with-generate">
+              <input value={mailboxForm.password} autoComplete="new-password" spellCheck={false} placeholder={tr("8+ characters, letters and digits")} onChange={e => setMailboxForm(prev => ({ ...prev, password: e.target.value }))} />
+              <button type="button" className="secondary icon-only" title={tr("Generate random password")} aria-label={tr("Generate random password")} onClick={() => setMailboxForm(prev => ({ ...prev, password: mailPassword() }))}><Dices size={15}/></button>
+              <button type="button" className="secondary icon-only" title={tr("Copy")} aria-label={tr("Copy")} onClick={() => { copyToClipboard(mailboxForm.password); setNotice(tr("Copied to clipboard.")); }}><Copy size={15}/></button>
+            </div>
+          </div>
+          <div className="field mail-quota-field"><span className="field-label">{tr("Size (MB)")}{isAdmin && <em> {tr("0 = unlimited")}</em>}</span>
+            <input type="number" min={isAdmin ? 0 : 1} max={isAdmin ? 1048576 : info.max_user_quota_mb} value={mailboxForm.quota_mb} onChange={e => setMailboxForm(prev => ({ ...prev, quota_mb: e.target.value }))} />
+          </div>
+          <button disabled={!canCreate || !!loading} onClick={createMailbox}><Plus size={14}/> {tr("Create")}</button>
+        </div>
+        <p className="hint">{tr("Copy the password now — it is not shown again. It signs in to webmail and to any mail app, with the full address as the username.")}</p>
+      </div>}
+      {list === null && <p className="hint">{tr("Loading…")}</p>}
+      {list && items.length === 0 && <EmptyState icon={Inbox} message={mailFilter.q || mailFilter.domain_id ? tr("No mailbox matches.") : tr("No mailboxes yet.")} />}
+      {items.length > 0 && <div className="table">
+        {items.map(box => {
+          const percent = box.quota_mb && box.used_mb != null ? Math.min(100, Math.round(box.used_mb / box.quota_mb * 100)) : null;
+          return <div className="row mail-row" key={box.id}>
+            <span className="mail-row-name">
+              <strong>{box.address}</strong>
+              <small>
+                {!box.enabled && <span className="badge warn">{tr("Suspended")}</span>}
+                {isAdmin && box.owner ? <span>{tr("Account")}: {box.owner}</span> : null}
+              </small>
+            </span>
+            <span className="mail-row-usage">
+              <small>{box.used_mb != null ? tr("{0} MB", box.used_mb) : '—'} / {box.quota_mb ? tr("{0} MB", box.quota_mb) : tr("unlimited")}</small>
+              {percent != null && <span className={`mail-meter ${percent >= 90 ? 'bad' : percent >= 75 ? 'warn' : ''}`}><span style={{ width: `${percent}%` }} /></span>}
+            </span>
+            <span className="row-actions">
+              <button className="mini" disabled={!!loading || !box.enabled} onClick={() => openWebmail(box)} title={tr("Open this mailbox in webmail, no password needed")}><Mail size={13}/> {tr("Webmail")}</button>
+              <button className="mini secondary" disabled={!!loading} onClick={() => setMailboxEdit({ box, password: '', quota_mb: String(box.quota_mb) })}><Pencil size={13}/> {tr("Edit")}</button>
+              <button className="mini secondary" disabled={!!loading} onClick={() => setMailboxEnabled(box, !box.enabled)}>{box.enabled ? <><Ban size={13}/> {tr("Suspend")}</> : <><Play size={13}/> {tr("Resume")}</>}</button>
+              <button className="mini danger" disabled={!!loading} onClick={() => deleteMailbox(box)} aria-label={tr("Delete {0}", box.address)} title={tr("Delete")}><Trash2 size={13}/></button>
+            </span>
+          </div>;
+        })}
+      </div>}
+      {renderMailPager(list)}
+    </div>;
+  }
+
+  function renderForwarders() {
+    const info = mailInfo;
+    const list = forwarderList;
+    const items = list?.items || [];
+    const local = forwarderForm.local_part.trim().toLowerCase();
+    const canCreate = !!forwarderForm.domain_id && /^[a-z0-9]([a-z0-9._+-]{0,62}[a-z0-9_+-])?$/.test(local) && splitAddresses(forwarderForm.destinations).length > 0;
+    return <div className="mail-tab">
+      <div className="mail-toolbar">
+        {renderMailFilter(() => loadForwarders(1))}
+        {!showCreateForwarder && <button type="button" onClick={() => { setShowCreateForwarder(true); setForwarderForm(prev => ({ ...prev, domain_id: prev.domain_id || mailFilter.domain_id || String(info.domains[0]?.id || '') })); }}><Plus size={15}/> {tr("New forwarder")}</button>}
+      </div>
+      {showCreateForwarder && <div className="create-inline">
+        <div className="create-inline-head">
+          <strong>{tr("New forwarder")}</strong>
+          <button type="button" className="secondary icon-only mini" onClick={() => setShowCreateForwarder(false)} aria-label={tr("Close")} title={tr("Close")}><X size={15}/></button>
+        </div>
+        <div className="mail-create-grid">
+          <div className="field mail-address-field"><span className="field-label">{tr("Address")}</span>
+            <div className="mail-address-input">
+              <input value={forwarderForm.local_part} placeholder="sales" autoComplete="off" spellCheck={false} aria-label={tr("Forwarder name")}
+                onChange={e => setForwarderForm(prev => ({ ...prev, local_part: e.target.value.toLowerCase().replace(/[^a-z0-9._+-]/g, '') }))} />
+              <span>@</span>
+              <select value={forwarderForm.domain_id} aria-label={tr("Domain")} onChange={e => setForwarderForm(prev => ({ ...prev, domain_id: e.target.value }))}>{mailDomainOptions(tr("Choose a domain"))}</select>
+            </div>
+          </div>
+          <div className="field mail-destinations-field"><span className="field-label">{tr("Forward to")}</span>
+            <textarea rows={2} value={forwarderForm.destinations} spellCheck={false} placeholder={tr("one or more addresses, separated by commas")} onChange={e => setForwarderForm(prev => ({ ...prev, destinations: e.target.value }))} />
+          </div>
+          <button disabled={!canCreate || !!loading} onClick={createForwarder}><Plus size={14}/> {tr("Create")}</button>
+        </div>
+        <p className="hint">{tr("If a mailbox has the same address, it keeps a copy of each message as well.")}</p>
+      </div>}
+      {list === null && <p className="hint">{tr("Loading…")}</p>}
+      {list && items.length === 0 && <EmptyState icon={Forward} message={mailFilter.q || mailFilter.domain_id ? tr("No forwarder matches.") : tr("No forwarders yet.")} />}
+      {items.length > 0 && <div className="table">
+        {items.map(item => <div className="row mail-row" key={item.id}>
+          <span className="mail-row-name"><strong>{item.address}</strong>{item.keeps_copy && <small><span className="badge">{tr("Keeps a copy")}</span></small>}</span>
+          <span className="mail-row-destinations"><MoveRight size={13}/> <span>{item.destinations.join(', ')}</span></span>
+          <span className="row-actions">
+            <button className="mini secondary" disabled={!!loading} onClick={() => setForwarderEdit({ item, destinations: item.destinations.join(', ') })}><Pencil size={13}/> {tr("Edit")}</button>
+            <button className="mini danger" disabled={!!loading} onClick={() => deleteForwarder(item)} aria-label={tr("Delete {0}", item.address)} title={tr("Delete")}><Trash2 size={13}/></button>
+          </span>
+        </div>)}
+      </div>}
+      {renderMailPager(list)}
+    </div>;
+  }
+
+  function renderMailDomains() {
+    const info = mailInfo;
+    const domains = info.domains || [];
+    const candidates = info.candidates || [];
+    return <div className="mail-tab">
+      <div className="create-inline">
+        <div className="create-inline-head"><strong>{tr("Turn on email for a domain")}</strong></div>
+        <div className="mail-create-grid">
+          {isAdmin
+            ? <div className="field"><span className="field-label">{tr("Domain")}</span>
+                <input list="mail-domain-candidates" value={mailDomainForm.domain} placeholder="example.com" spellCheck={false}
+                  onChange={e => setMailDomainForm(prev => ({ ...prev, domain: e.target.value.trim().toLowerCase() }))} />
+                <datalist id="mail-domain-candidates">{candidates.map(name => <option key={name} value={name} />)}</datalist>
+              </div>
+            : <div className="field"><span className="field-label">{tr("Domain")}</span>
+                <select value={mailDomainForm.domain} onChange={e => setMailDomainForm(prev => ({ ...prev, domain: e.target.value }))}>
+                  <option value="">{tr("Choose one of your websites")}</option>
+                  {candidates.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>}
+          {isAdmin && <div className="field"><span className="field-label">{tr("Account")}</span>
+            <select value={mailDomainForm.owner_id} onChange={e => setMailDomainForm(prev => ({ ...prev, owner_id: e.target.value }))}>
+              <option value="">{tr("The website's owner")}</option>
+              {users.map(user => <option key={user.id} value={user.id}>{user.username}</option>)}
+            </select>
+          </div>}
+          <button disabled={!mailDomainForm.domain.trim() || !!loading} onClick={addMailDomain}><Plus size={14}/> {tr("Turn on email")}</button>
+        </div>
+        {!isAdmin && candidates.length === 0 && <p className="hint">{tr("Every domain of your websites already has email. Add a website or a domain alias to use another one.")}</p>}
+        <p className="hint">{tr("Mail for a domain arrives here once its MX record points at {0}; the DNS records to add are shown next.", info.hostname || '—')}</p>
+      </div>
+      {domains.length === 0 && <EmptyState icon={Mail} message={tr("No mail domains yet.")} />}
+      {domains.length > 0 && <div className="table">
+        {domains.map(d => {
+          const draft = String(catchAllDraft[d.id] ?? d.catch_all ?? '');
+          return <div className="row mail-domain-row" key={d.id}>
+            <span className="mail-row-name">
+              <strong>{d.domain}</strong>
+              <small>{tr("{0} mailboxes · {1} forwarders", d.mailboxes, d.forwarders)}{isAdmin && d.owner ? ` · ${tr("Account")}: ${d.owner}` : ''}</small>
+            </span>
+            <span className="mail-catchall">
+              <span className="field-label">{tr("Catch-all")}</span>
+              <span className="mail-catchall-input">
+                <input value={draft} placeholder={tr("Off: unknown addresses are refused")} spellCheck={false} aria-label={tr("Catch-all for {0}", d.domain)}
+                  onChange={e => setCatchAllDraft(prev => ({ ...prev, [d.id]: e.target.value }))} />
+                {draft.trim() !== (d.catch_all || '') && <button className="mini" disabled={!!loading} onClick={() => saveCatchAll(d)} aria-label={tr("Save")} title={tr("Save")}><Save size={13}/></button>}
+              </span>
+            </span>
+            <label className="check-line mail-webmail-host" title={tr("Serve webmail at webmail.{0} with its own certificate", d.domain)}>
+              <input type="checkbox" checked={!!d.webmail_host} disabled={!!loading} onChange={e => toggleWebmailHost(d, e.target.checked)} />
+              <span>webmail.{d.domain}</span>
+            </label>
+            <span className="row-actions">
+              <button className="mini secondary" disabled={!!loading} onClick={() => openMailDns(d)}><Globe size={13}/> {tr("DNS records")}</button>
+              <button className="mini danger" disabled={!!loading} onClick={() => deleteMailDomain(d)} aria-label={tr("Delete {0}", d.domain)} title={tr("Delete")}><Trash2 size={13}/></button>
+            </span>
+          </div>;
+        })}
+      </div>}
+    </div>;
+  }
+
+  function renderMailDns() {
+    const { domain, records } = mailDns;
+    const statusLabel = { ok: tr("Found"), missing: tr("Missing"), different: tr("Different"), unknown: tr("Not checked") };
+    const statusClass = { ok: 'ok', missing: 'bad', different: 'warn', unknown: '' };
+    const titles = {
+      mx: tr("Receiving mail (MX)"),
+      spf: tr("Allowed senders (SPF)"),
+      dkim: tr("Signature key (DKIM)"),
+      dmarc: tr("Policy (DMARC)"),
+      webmail: tr("Webmail address (optional)"),
+    };
+    return <section className="section mail-dns-page">
+      <div className="section-title">
+        <div className="waf-detail-title">
+          <button className="secondary" onClick={() => setMailDns(null)}><ArrowLeft size={14}/> {tr("Email")}</button>
+          <div><h2>{tr("DNS records for {0}", domain.domain)}</h2>
+            <p className="hint">{tr("Add these at the DNS provider of {0}. A change can take a few hours to be seen everywhere.", domain.domain)}</p></div>
+        </div>
+        <div className="actions">
+          <button className="secondary" disabled={!!loading || records === null} onClick={() => openMailDns(domain)}><RefreshCw size={14}/> {tr("Check again")}</button>
+          <button className="secondary-light" disabled={!!loading} onClick={() => rotateMailDkim(domain)}><KeyRound size={14}/> {tr("New DKIM key")}</button>
+        </div>
+      </div>
+      {records === null && <p className="hint">{tr("Checking DNS…")}</p>}
+      {records && <div className="mail-dns-list">
+        {records.map(record => <div className="mail-dns-record" key={record.key}>
+          <div className="mail-dns-head">
+            <strong>{titles[record.key] || record.type}</strong>
+            <span className={`badge ${statusClass[record.status] || ''}`}>{statusLabel[record.status] || record.status}</span>
+          </div>
+          <div className="mail-dns-fields">
+            {renderCopyBlock(tr("Type"), record.type)}
+            {renderCopyBlock(tr("Name"), record.name)}
+            {record.priority != null && renderCopyBlock(tr("Priority"), String(record.priority))}
+          </div>
+          {renderCopyBlock(tr("Value"), record.value, { multiline: record.key === 'dkim' })}
+          {record.status === 'different' && (record.found || []).length > 0 && <p className="hint">{tr("Found now:")} <code>{record.found.join(' | ')}</code></p>}
+          {record.key === 'webmail' && <p className="hint">{tr("Only needed for webmail.{0}; turn that on in the Domains tab once this record is in place.", domain.domain)}</p>}
+          {record.note && <p className="hint">{tr(record.note)}</p>}
+        </div>)}
+      </div>}
+    </section>;
+  }
+
+  function renderMailClientHelp() {
+    const client = mailInfo?.client || {};
+    return <section className="section">
+      <div className="section-title">
+        <div><h2>{tr("Mail app settings")}</h2>
+          <p className="hint">{tr("For Outlook, Thunderbird, Apple Mail or a phone. The username is the full email address, the password the mailbox's own.")}</p></div>
+      </div>
+      <div className="sftp-connect-grid">
+        {renderCopyBlock(tr("Server (IMAP, POP3 and SMTP)"), client.host || '—')}
+      </div>
+      <ul className="mail-client-ports">
+        <li><strong>IMAP</strong> {tr("port {0}, SSL/TLS", client.imap_port || 993)}</li>
+        <li><strong>POP3</strong> {tr("port {0}, SSL/TLS", client.pop3_port || 995)}</li>
+        <li><strong>SMTP</strong> {tr("port {0}, SSL/TLS — or {1} with STARTTLS", client.smtp_port || 465, client.submission_port || 587)}</li>
+      </ul>
+    </section>;
+  }
+
+  function renderMail() {
+    const info = mailInfo;
+    if (!info) return <section className="section"><h2>{tr("Email")}</h2><p className="hint">{tr("Loading…")}</p></section>;
+    if (!info.installed) return <section className="section">
+      <h2>{tr("Email")}</h2>
+      <div className="info-box"><AlertCircle size={14}/> {isAdmin ? tr("The Email addon is not installed. Install it on the Addons page.") : tr("Email is not available on this server.")}</div>
+      {isAdmin && <div className="actions"><button onClick={() => navigateToPage('addons')}><PackageOpen size={14}/> {tr("Open Addons")}</button></div>}
+    </section>;
+    if (mailDns) return renderMailDns();
+    const domains = info.domains || [];
+    const limit = Number(info.mailbox_limit) || 0;
+    const tabs = [['mailboxes', tr("Mailboxes"), Inbox], ['forwarders', tr("Forwarders"), Forward], ['domains', tr("Domains"), Globe]];
+    const activeTab = domains.length ? mailTab : 'domains';
+    return <>
+      <section className="section mail-page">
+        <div className="section-title">
+          <div><h2>{tr("Email")}</h2>
+            <p className="hint">{isAdmin
+              ? tr("Mailboxes, forwarders and DNS records of every mail domain on this server.")
+              : limit ? tr("{0} of {1} mailboxes used.", info.mailbox_count, limit) : tr("{0} mailboxes.", info.mailbox_count)}</p></div>
+          <div className="actions">
+            <button type="button" className="secondary" onClick={() => window.open(info.webmail_url, '_blank', 'noopener')}><ExternalLink size={14}/> {tr("Webmail")}</button>
+            <button type="button" className="secondary" disabled={!!loading} onClick={refreshMail}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          </div>
+        </div>
+        <div className="segmented-control backup-tabs" role="tablist" aria-label={tr("Email sections")}>
+          {tabs.map(([id, label, Icon]) => <button key={id} type="button" role="tab" aria-selected={activeTab === id}
+            className={activeTab === id ? 'active' : ''} disabled={!domains.length && id !== 'domains'}
+            onClick={() => { setMailTab(id); setMailPage(1); }}><Icon size={14}/>{label}</button>)}
+        </div>
+        {activeTab === 'mailboxes' && renderMailboxes()}
+        {activeTab === 'forwarders' && renderForwarders()}
+        {activeTab === 'domains' && renderMailDomains()}
+      </section>
+      {domains.length > 0 && renderMailClientHelp()}
+    </>;
+  }
+
+  function renderAddonMail(addon) {
+    const f = mailSettingsForm;
+    if (!f) return <p className="hint">{tr("Loading…")}</p>;
+    const set = patch => setMailSettingsForm(prev => ({ ...prev, ...patch }));
+    return <div className="addon-panel mail-settings">
+      <div className="addon-panel-head"><strong>{tr("Mail server")}</strong>
+        <button className="mini" onClick={() => navigateToPage('mail')}><Mail size={13}/> {tr("Open Email")}</button></div>
+      <p className="hint">{tr("Server name: {0}. Messages waiting to be sent: {1}.", mailSettings?.hostname || '—', mailSettings?.queue ?? '—')}</p>
+      {!addon.running && <p className="hint">{tr("The mail server is stopped: no mail is received or sent, and webmail is off.")}</p>}
+      <label className="check-line"><input type="checkbox" checked={!!f.smarthost_enabled} onChange={e => set({ smarthost_enabled: e.target.checked })} />
+        {tr("Send outgoing mail through a relay (smarthost)")}</label>
+      {f.smarthost_enabled && <div className="mail-settings-grid">
+        <label className="field"><span className="field-label">{tr("Relay host")}</span><input value={f.smarthost_host || ''} placeholder="smtp.example.com" spellCheck={false} onChange={e => set({ smarthost_host: e.target.value })} /></label>
+        <label className="field"><span className="field-label">{tr("Port")}</span><input type="number" min="1" max="65535" value={f.smarthost_port ?? 587} onChange={e => set({ smarthost_port: e.target.value })} /></label>
+        <label className="field"><span className="field-label">{tr("Username")}</span><input value={f.smarthost_username || ''} autoComplete="off" spellCheck={false} onChange={e => set({ smarthost_username: e.target.value })} /></label>
+        <label className="field"><span className="field-label">{tr("Password")}</span><input type="password" value={f.smarthost_password || ''} autoComplete="new-password"
+          placeholder={f.smarthost_password_set ? tr("Saved — leave empty to keep") : ''} onChange={e => set({ smarthost_password: e.target.value })} /></label>
+      </div>}
+      {f.smarthost_enabled && <p className="hint">{tr("Port 587 uses STARTTLS and 465 SSL/TLS; the relay's certificate must be valid.")}</p>}
+      <div className="mail-settings-grid">
+        <label className="field"><span className="field-label">{tr("Recipients per mailbox per hour")} <em>{tr("0 = no limit")}</em></span><input type="number" min="0" value={f.auth_rate_per_hour ?? 300} onChange={e => set({ auth_rate_per_hour: e.target.value })} /></label>
+        <label className="field"><span className="field-label">{tr("Messages per website account per hour")} <em>{tr("0 = no limit")}</em></span><input type="number" min="0" value={f.local_rate_per_hour ?? 300} onChange={e => set({ local_rate_per_hour: e.target.value })} /></label>
+        <label className="field"><span className="field-label">{tr("Largest message (MB)")}</span><input type="number" min="1" max="200" value={f.max_message_mb ?? 50} onChange={e => set({ max_message_mb: e.target.value })} /></label>
+        <label className="field"><span className="field-label">{tr("New mailbox size (MB)")}</span><input type="number" min="1" value={f.default_quota_mb ?? 1024} onChange={e => set({ default_quota_mb: e.target.value })} /></label>
+        <label className="field"><span className="field-label">{tr("Spam score: move to Junk")}</span><input type="number" min="1" max="100" step="0.5" value={f.spam_header_score ?? 6} onChange={e => set({ spam_header_score: e.target.value })} /></label>
+        <label className="field"><span className="field-label">{tr("Spam score: refuse")}</span><input type="number" min="1" max="100" step="0.5" value={f.spam_reject_score ?? 15} onChange={e => set({ spam_reject_score: e.target.value })} /></label>
+      </div>
+      <label className="check-line"><input type="checkbox" checked={!!f.greylisting} onChange={e => set({ greylisting: e.target.checked })} />
+        {tr("Greylisting: doubtful senders are asked to retry a few minutes later")}</label>
+      <div className="actions">
+        <button type="button" disabled={!!loading} onClick={saveMailSettings}><Save size={14}/> {tr("Apply mail settings")}</button>
+      </div>
+    </div>;
+  }
+
   function renderSettingsHub() {
     return <section className="section settings-hub">
       <div className="section-title">
@@ -5878,6 +6479,7 @@ function App() {
               {addon.id === 'fail2ban' && renderAddonFail2ban(addon)}
               {addon.id === 'mcp' && renderAddonMcp(addon)}
               {addon.id === 'demo' && addon.installed && renderAddonDemo(addon)}
+              {addon.id === 'mail' && addon.installed && renderAddonMail(addon)}
               {addon.id === 'malware' && addon.installed && <div className="addon-panel">
                 <div className="addon-panel-head"><strong>{tr("Scans, schedules, real-time protection and quarantine")}</strong>
                   <button className="mini" disabled={!addon.running} onClick={() => navigateToPage('malware')}><Bug size={13}/> {tr("Open Malware Scanner")}</button></div>
@@ -7016,6 +7618,7 @@ function App() {
               </select></label>
               <label><span>{tr("Site limit")}</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
               <label><span>{tr("Disk limit (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
+              {mailInfo?.installed && <label><span>{tr("Mailbox limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" max="10000" value={editingUserForm.mailbox_limit ?? 10} onChange={e => setEditingUserForm(prev => ({ ...prev, mailbox_limit: e.target.value }))} /></label>}
               <label><span>{tr("New password")} <small>{tr("(leave empty to keep)")}</small></span><input type="password" value={editingUserForm._password || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, _password: e.target.value }))} placeholder={tr("Min 12 characters")} /></label>
             </div>
             <div className="user-edit-actions">
@@ -7175,6 +7778,7 @@ function App() {
     // paint a page whose every request will 403.
     if (page === 'addons') return isAdmin ? renderAddons() : renderDashboard();
     if (page === 'mcp') return renderMcp();
+    if (page === 'mail') return renderMail();
     if (page === 'notifications') return isAdmin ? renderNotificationCenter() : renderDashboard();
     if (page === 'config') return renderSettingsHub();
     if (page === 'sftp') return renderSftp();
@@ -7350,6 +7954,49 @@ function App() {
             <button className="secondary-light" onClick={() => setDbOwnerModal(null)}>{tr("Cancel")}</button>
             <button disabled={!!loading || !dbOwnerModal.ownerId} onClick={submitDbOwnerChange}><MoveRight size={14}/> {tr("Move database")}</button>
           </div>
+        </div>
+      </div>
+    </div>}
+    {mailboxEdit && <div className="modal-overlay" onClick={() => setMailboxEdit(null)}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{mailboxEdit.box.address}</h3>
+          <button className="secondary-light" onClick={() => setMailboxEdit(null)} aria-label={tr("Close")}><X size={16}/></button>
+        </div>
+        <div className="modal-body">
+          <label className="field"><span className="field-label">{tr("New password")} <small>{tr("(leave empty to keep)")}</small></span>
+            <div className="password-with-generate">
+              <input value={mailboxEdit.password} autoComplete="new-password" spellCheck={false} onChange={e => setMailboxEdit(prev => ({ ...prev, password: e.target.value }))} />
+              <button type="button" className="secondary icon-only" title={tr("Generate random password")} aria-label={tr("Generate random password")} onClick={() => setMailboxEdit(prev => ({ ...prev, password: mailPassword() }))}><Dices size={15}/></button>
+              <button type="button" className="secondary icon-only" title={tr("Copy")} aria-label={tr("Copy")} onClick={() => { copyToClipboard(mailboxEdit.password); setNotice(tr("Copied to clipboard.")); }}><Copy size={15}/></button>
+            </div>
+          </label>
+          <label className="field"><span className="field-label">{tr("Size (MB)")}{isAdmin && <em> {tr("0 = unlimited")}</em>}</span>
+            <input type="number" min={isAdmin ? 0 : 1} value={mailboxEdit.quota_mb} onChange={e => setMailboxEdit(prev => ({ ...prev, quota_mb: e.target.value }))} />
+          </label>
+          <p className="hint">{tr("A new password takes effect at once: mail apps using the old one must be updated.")}</p>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-light" onClick={() => setMailboxEdit(null)}>{tr("Cancel")}</button>
+          <button disabled={!!loading || (mailboxEdit.password !== '' && (mailboxEdit.password.length < 8 || !/[A-Za-z]/.test(mailboxEdit.password) || !/\d/.test(mailboxEdit.password)))} onClick={saveMailboxEdit}><Save size={14}/> {tr("Save")}</button>
+        </div>
+      </div>
+    </div>}
+    {forwarderEdit && <div className="modal-overlay" onClick={() => setForwarderEdit(null)}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{forwarderEdit.item.address}</h3>
+          <button className="secondary-light" onClick={() => setForwarderEdit(null)} aria-label={tr("Close")}><X size={16}/></button>
+        </div>
+        <div className="modal-body">
+          <label className="field"><span className="field-label">{tr("Forward to")}</span>
+            <textarea rows={3} value={forwarderEdit.destinations} spellCheck={false} onChange={e => setForwarderEdit(prev => ({ ...prev, destinations: e.target.value }))} />
+          </label>
+          <p className="hint">{tr("One or more addresses, separated by commas.")}</p>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-light" onClick={() => setForwarderEdit(null)}>{tr("Cancel")}</button>
+          <button disabled={!!loading || splitAddresses(forwarderEdit.destinations).length === 0} onClick={saveForwarderEdit}><Save size={14}/> {tr("Save")}</button>
         </div>
       </div>
     </div>}

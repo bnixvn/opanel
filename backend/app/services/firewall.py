@@ -538,9 +538,21 @@ def _remove_rule_from_iptables(rule: dict) -> None:
         cmd_fn(*argv, check=False)
 
 
+# Opened by the Email addon while it is installed (see MAIL_EXTRA_PORTS in opanel-helper).
+MAIL_ADDON_PORTS = {110, 143, 993, 995, 2096}
+MAIL_ADDON_MARKER = Path("/etc/opanel-mail/installed")
+
+
+def _mail_addon_ports() -> set[int]:
+    try:
+        return set(MAIL_ADDON_PORTS) if MAIL_ADDON_MARKER.exists() else set()
+    except OSError:
+        return set()
+
+
 def default_allowed_ports() -> set[int]:
     """Ports every install already accepts, panel port included."""
-    ports = set(DEFAULT_PROTECTED_PORTS)
+    ports = set(DEFAULT_PROTECTED_PORTS) | _mail_addon_ports()
     try:
         ports.add(int(settings.panel_port or 2222))
     except (TypeError, ValueError):

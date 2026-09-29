@@ -35,6 +35,7 @@ def test_everything_else_is_on_the_settings_page():
 
 def test_addons_appear_only_while_turned_on():
     addons = _block("  const addonNavItems = [", "  ];")
+    assert "...(mailInfo?.installed ? [['mail'" in addons
     assert "...(mcpInfo?.enabled ? [['mcp'" in addons
     assert "...(isAdmin && notifyInfo?.enabled ? [['notifications'" in addons
     assert "...(isAdmin && malwareScanStatus?.enabled ? [['malware'" in addons

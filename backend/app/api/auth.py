@@ -569,6 +569,7 @@ def session_status(
         "website_limit": current_user.website_limit,
         "storage_limit_mb": current_user.storage_limit_mb,
         "database_limit": current_user.database_limit,
+        "mailbox_limit": current_user.mailbox_limit,
         "totp_enabled": current_user.totp_enabled,
         # Read-only demo account: the panel shows a banner and hides nothing.
         "demo": demo_mode.is_demo_account(current_user),

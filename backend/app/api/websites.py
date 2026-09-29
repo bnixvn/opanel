@@ -15,7 +15,7 @@ from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCreate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
-from app.services import file_manager, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress
+from app.services import file_manager, mail, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress
 from app.services.audit import log_action
 
 _PLACEHOLDER_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "openlitespeed"
@@ -171,6 +171,9 @@ def _reserved_hostnames(db: Session, exclude_website_id: int | None = None, excl
 def _hostname_conflicts(db: Session, domain: str, *, exclude_website_id: int | None = None, exclude_alias_id: int | None = None) -> bool:
     safe_domain = (domain or "").strip().lower()
     if not safe_domain:
+        return True
+    # webmail.<domain> of a mail domain is served by the Email addon's own vhost.
+    if mail.webmail_host_taken(db, safe_domain):
         return True
     return bool({safe_domain, f"www.{safe_domain}"} & _reserved_hostnames(db, exclude_website_id=exclude_website_id, exclude_alias_id=exclude_alias_id))
 
