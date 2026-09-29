@@ -5419,8 +5419,20 @@ write("catchall", [f"{d}: {t}" for d, t in sorted(catchall.items())], exim_gid)
 write("senders", [f"{a}: {' : '.join(d)}" for a, d in sorted(senders.items()) if d], exim_gid)
 write("local_senders", [f"{u}: {' : '.join(d)}" for u, d in sorted(local_senders.items()) if d], exim_gid)
 write("dkim_domains", [f"{d}: {d}" for d in dkim], exim_gid)
+previously_denied = set()
+try:
+    previously_denied = {line.split(":", 1)[0] for line in (mail_dir / "denied").read_text(encoding="utf-8").splitlines() if line}
+except OSError:
+    pass
 write("passwd", sorted(passwd), dovecot_gid)
 write("denied", sorted(denied), dovecot_gid)
+# A mailbox suspended just now loses the IMAP and POP3 sessions it still has
+# open; new sign-ins are refused by the deny passdb.
+import subprocess
+for line in denied:
+    addr = line.split(":", 1)[0]
+    if addr not in previously_denied:
+        subprocess.run(["doveadm", "kick", addr], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 print(f"mail maps written: {len(domains)} domains, {len(mailboxes)} mailboxes, {len(aliases)} forwarders")
 PY
   rm -f -- "$payload"

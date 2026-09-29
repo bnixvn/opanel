@@ -456,3 +456,10 @@ def test_a_suspended_mailbox_is_refused_by_a_deny_passdb():
     assert "deny = yes" in HELPER and "${MAIL_DIR}/denied" in HELPER
     assert 'denied.append(f"{addr}:")' in HELPER
     assert "nologin=y" not in HELPER
+
+
+def test_suspending_a_mailbox_drops_its_open_sessions():
+    body = HELPER[HELPER.index("mail_sync_from_stdin() {"):]
+    body = body[:body.index("\n}\n")]
+    assert 'subprocess.run(["doveadm", "kick", addr]' in body
+    assert "if addr not in previously_denied" in body
