@@ -9,10 +9,10 @@
    ========================================================================== */
 
 /* Type: "Open Sans", sans-serif -- the face cPanel uses. Served from the panel
-   itself (variable 300-800, latin/latin-ext/vietnamese, OFL -- src/fonts/
+   itself (variable 300-800, latin/latin-ext/vietnamese, OFL -- src/shared/fonts/
    OpenSans-OFL.txt), never from Google: Windows does not ship Open Sans, and
    the CSP (`font-src 'self' data:`, backend/app/main.py) blocks a CDN anyway.
-   Files live in src/fonts/ so Vite emits them under /assets. Code, logs and
+   Files live in src/shared/fonts/ so Vite emits them under /assets. Code, logs and
    the terminal keep the monospace stack in --font-mono. */
 @font-face{
   font-family:'Open Sans';

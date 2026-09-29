@@ -474,5 +474,5 @@ def test_the_listing_carries_each_entrys_modification_time(tmp_path):
 def test_the_file_list_shows_the_modified_date():
     app = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     assert '<span className="file-date"' in app and "formatFileTime(item.modified)" in app
-    css = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "file-manager.css").read_text(encoding="utf-8")
+    css = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "shared" / "file-manager.css").read_text(encoding="utf-8")
     assert "grid-template-columns: 20px minmax(200px, 1fr) 52px 72px 112px auto;" in css
