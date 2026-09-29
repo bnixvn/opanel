@@ -642,6 +642,8 @@ function App() {
     } else if (options.replace && window.location.pathname !== route) {
       window.history.replaceState({}, '', nextUrl);
     }
+    // Opening Email from the sidebar leaves a DNS records sub-page.
+    if (nextPage === 'mail') setMailDns(null);
     setPage(nextPage);
   }, []);
 

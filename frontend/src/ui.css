@@ -632,10 +632,10 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 /* Email addon: mailboxes, forwarders, domains, DNS records, server settings. */
 .mail-tab{display:grid;gap:12px;margin-top:14px;min-width:0}
 .mail-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
-.mail-filter{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0}
-.mail-filter select{width:auto;flex:0 1 260px;min-width:180px;max-width:100%}
-.mail-search{display:flex;gap:6px;align-items:center;flex:0 1 280px;min-width:0}
-.mail-search input{width:100%;min-width:0}
+.mail-filter{display:grid;grid-template-columns:minmax(180px,260px) minmax(200px,300px);gap:8px;align-items:center;min-width:0}
+.mail-filter select{width:100%;min-width:0}
+.mail-search{display:flex;gap:6px;align-items:center;min-width:0;margin:0}
+.mail-search input{flex:1;width:100%;min-width:0}
 .mail-create-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 14px;align-items:end}
 .mail-create-grid .mail-address-field,.mail-create-grid .mail-destinations-field{grid-column:span 2}
 .mail-create-grid > button{justify-self:start}
@@ -684,6 +684,6 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .mail-row,.mail-domain-row{grid-template-columns:1fr;gap:8px}
   .mail-row .row-actions,.mail-domain-row .row-actions{justify-content:flex-start}
   .mail-create-grid .mail-address-field,.mail-create-grid .mail-destinations-field{grid-column:auto}
-  .mail-search input{width:100%}
+  .mail-filter{grid-template-columns:1fr;width:100%}
   .mail-webmail-host span{max-width:none}
 }

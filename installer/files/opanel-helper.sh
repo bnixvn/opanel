@@ -4290,9 +4290,10 @@ MAIL_WEBMAIL_ROOT="/opt/bnix-webmail"
 MAIL_WEBMAIL_ENV="/etc/bnix-webmail.env"
 MAIL_WEBMAIL_UNIT="/etc/systemd/system/bnix-webmail.service"
 MAIL_WEBMAIL_REPO="https://github.com/bnixvn/webmail.git"
-# A commit, not a branch: what runs here is what was reviewed. The webmail's
-# /sso endpoint (single sign-on from this panel) first appears in it.
-MAIL_WEBMAIL_COMMIT="9c0f31dcc2632dc83806a295a512833ff13842c6"
+# A commit, not a branch: what runs here is what was reviewed. It carries the
+# webmail's /sso endpoint (single sign-on from this panel) and the UID SEARCH
+# fix for aioimaplib 2 (draft autosave, search).
+MAIL_WEBMAIL_COMMIT="ea68b22fd0d2af84a249dd049a8411e5e016f0db"
 MAIL_WEBMAIL_PORT="18096"
 MAIL_WEBMAIL_PUBLIC_PORT="2096"
 MAIL_WEBMAIL_VHOST="${OLS_VHOSTS_DIR}/00-opanel-webmail.conf"
