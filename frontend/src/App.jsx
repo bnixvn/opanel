@@ -5961,13 +5961,10 @@ function App() {
         {records.map(record => <div className="mail-dns-record" key={record.key}>
           <div className="mail-dns-head">
             <strong>{titles[record.key] || record.type}</strong>
+            <span className="mail-dns-type"><code>{record.type}</code>{record.priority != null && <small>{tr("priority {0}", record.priority)}</small>}</span>
             <span className={`badge ${statusClass[record.status] || ''}`}>{statusLabel[record.status] || record.status}</span>
           </div>
-          <div className="mail-dns-fields">
-            {renderCopyBlock(tr("Type"), record.type)}
-            {renderCopyBlock(tr("Name"), record.name)}
-            {record.priority != null && renderCopyBlock(tr("Priority"), String(record.priority))}
-          </div>
+          {renderCopyBlock(tr("Name"), record.name)}
           {renderCopyBlock(tr("Value"), record.value, { multiline: record.key === 'dkim' })}
           {record.status === 'different' && (record.found || []).length > 0 && <p className="hint">{tr("Found now:")} <code>{record.found.join(' | ')}</code></p>}
           {record.key === 'webmail' && <p className="hint">{tr("Only needed for webmail.{0}; turn that on in the Domains tab once this record is in place.", domain.domain)}</p>}

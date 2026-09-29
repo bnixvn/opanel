@@ -1989,4 +1989,5 @@ export default {
   "Opens ports 110, 143, 993, 995 and 2096; 25, 465 and 587 are open on every install already. Websites' PHP mail() goes through Exim too, signed with DKIM for the account's own domains.": "Mở các cổng 110, 143, 993, 995 và 2096; cổng 25, 465 và 587 vốn đã mở sẵn. Hàm mail() của PHP trên các website cũng gửi qua Exim, được ký DKIM cho các tên miền của chính tài khoản đó.",
   "Expect about 300-400 MB of RAM for Exim, Dovecot, Rspamd and the webmail.": "Exim, Dovecot, Rspamd và webmail dùng khoảng 300-400 MB RAM.",
   "Removing uninstalls the mail server and the webmail. Mailboxes in /var/vmail, the DKIM keys and the panel's list of mailboxes are kept, so installing again brings them back.": "Gỡ addon sẽ gỡ máy chủ mail và webmail. Thư trong /var/vmail, khoá DKIM và danh sách hộp thư trong panel được giữ lại, nên cài lại sẽ khôi phục đầy đủ.",
+  "priority {0}": "độ ưu tiên {0}",
 };
