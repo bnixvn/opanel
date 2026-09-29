@@ -5568,7 +5568,11 @@ addon_mail_status() {
 
 addon_mail_install() {
   export DEBIAN_FRONTEND=noninteractive
-  local pkg
+  local pkg created_aliases=0 created_mailname=0
+  # Exim's package writes these when they are missing; Remove takes them away
+  # again only if this install is what created them.
+  [[ -e /etc/aliases ]] || created_aliases=1
+  [[ -e /etc/mailname ]] || created_mailname=1
   # Exim replaces any other mail server apt knows about, silently. Refuse
   # instead: whatever the admin set up is theirs to remove.
   for pkg in postfix sendmail-bin opensmtpd; do
@@ -5582,6 +5586,8 @@ addon_mail_install() {
   command -v git >/dev/null 2>&1 || apt-get -o DPkg::Lock::Timeout=300 install -y git >/dev/null \
     || deny "apt-get install git failed"
   mail_ensure_layout
+  if [[ $created_aliases -eq 1 ]]; then touch "${MAIL_DIR}/.created-aliases"; fi
+  if [[ $created_mailname -eq 1 ]]; then touch "${MAIL_DIR}/.created-mailname"; fi
   mail_tls_sync --force --no-reload
   mail_write_exim_config
   mail_write_relay_credentials
@@ -5637,6 +5643,13 @@ addon_mail_uninstall() {
     apt-get -o DPkg::Lock::Timeout=120 purge -y "${installed[@]}" >/dev/null || deny "apt could not remove the mail server"
   fi
   rm -f /etc/exim4/exim4.conf "$MAIL_MARKER" "${MAIL_DIR}/relay.user" "${MAIL_DIR}/relay.pass"
+  if [[ -f "${MAIL_DIR}/.created-aliases" ]]; then rm -f /etc/aliases "${MAIL_DIR}/.created-aliases"; fi
+  if [[ -f "${MAIL_DIR}/.created-mailname" ]]; then rm -f /etc/mailname "${MAIL_DIR}/.created-mailname"; fi
+  rm -rf -- "${MAIL_WEBMAIL_DOCROOT:?}"
+  rmdir /etc/dovecot/conf.d /etc/dovecot /etc/exim4 2>/dev/null || true
+  # The webmail's user owns nothing any more; vmail stays with the mailboxes.
+  if id bnix-webmail >/dev/null 2>&1; then userdel bnix-webmail >/dev/null 2>&1 || true; fi
+  if getent group bnix-webmail >/dev/null 2>&1; then groupdel bnix-webmail >/dev/null 2>&1 || true; fi
   rm -rf -- "${MAIL_DIR:?}/tls"
   rm -f /etc/rspamd/local.d/actions.conf /etc/rspamd/local.d/redis.conf /etc/rspamd/local.d/classifier-bayes.conf \
     /etc/rspamd/local.d/dkim_signing.conf /etc/rspamd/local.d/arc.conf /etc/rspamd/local.d/logging.inc \
