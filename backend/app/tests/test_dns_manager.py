@@ -159,6 +159,20 @@ def test_customers_see_and_change_only_their_own_zones(env):
     assert env.as_user("root_admin").get(f"/api/dns/zones/{own}").status_code == 200
 
 
+def test_candidates_leave_out_names_already_in_the_owners_zone(env):
+    assert env.as_user("alice").get("/api/dns/overview").json()["candidates"] == ["alice.test", "shop.alice.test"]
+    _zone(env, "alice", "alice.test")
+    assert env.as_user("alice").get("/api/dns/overview").json()["candidates"] == []
+
+
+def test_zones_for_existing_websites_put_subdomains_in_the_parent_zone(env):
+    res = env.as_user("root_admin").post("/api/dns/zones-for-websites")
+    assert res.status_code == 200, res.text
+    assert sorted(res.json()["created"]) == ["alice.test", "bob.test"]
+    assert env.pdns.values("alice.test", "shop.alice.test", "A") == ["203.0.113.7"]
+    assert env.as_user("alice").post("/api/dns/zones-for-websites").status_code == 403
+
+
 def test_deleting_a_zone_needs_its_name(env):
     zone_id = _zone(env, "alice", "alice.test")
     assert env.as_user("alice").delete(f"/api/dns/zones/{zone_id}").status_code == 400

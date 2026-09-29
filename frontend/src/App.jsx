@@ -6734,7 +6734,7 @@ function App() {
       </div>
       <div className="create-inline">
         <div className="create-inline-head"><strong>{tr("Existing websites")}</strong></div>
-        <p className="hint">{tr("Websites added before DNS Manager have no zone. This creates one for every website domain without one, owned by the website's account.")}</p>
+        <p className="hint">{tr("Websites added before DNS Manager have no zone. This creates one for every website domain not yet in a zone, owned by the website's account; a website on a subdomain of a hosted domain gets its records in that zone. To keep the subdomain websites of a domain together, add that domain's zone first.")}</p>
         <div className="actions"><button type="button" className="secondary" disabled={!!loading} onClick={createZonesForWebsites}><Plus size={14}/> {tr("Create missing zones")}</button></div>
       </div>
     </div>;

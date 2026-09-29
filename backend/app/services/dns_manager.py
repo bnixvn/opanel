@@ -354,9 +354,18 @@ def _owned_names(db: Session, owner_id: Optional[int] = None) -> dict[str, int]:
 
 
 def candidate_domains(db: Session, actor: User) -> list[str]:
+    """Domains a zone can be added for: not one already, and not a name
+    whose records already sit in a zone of its owner's."""
     names = _owned_names(db, None if _is_admin(actor) else actor.id)
-    taken = {row[0] for row in db.query(DnsZone.name).all()}
-    return sorted({n[4:] if n.startswith("www.") else n for n in names} - taken)
+    zones = {name: owner for name, owner in db.query(DnsZone.name, DnsZone.owner_id).all()}
+    out = set()
+    for name, owner in names.items():
+        name = name[4:] if name.startswith("www.") else name
+        labels = name.split(".")
+        covered = any(zones.get(".".join(labels[i:])) == owner for i in range(1, len(labels) - 1))
+        if name not in zones and not covered:
+            out.add(name)
+    return sorted(out)
 
 
 def zone_for_name(db: Session, name: str, owner_id: Optional[int] = None) -> Optional[DnsZone]:
@@ -815,7 +824,9 @@ def create_missing_zones(db: Session, actor: User) -> list[str]:
     """Administrators: a zone for every website domain that has none."""
     require_installed()
     created = []
-    for site in db.query(Website).order_by(Website.domain).all():
+    # Parents first, so a website on a subdomain lands in its domain's zone.
+    sites = sorted(db.query(Website).all(), key=lambda s: ((s.domain or "").count("."), s.domain or ""))
+    for site in sites:
         name = (site.domain or "").lower()
         name = name[4:] if name.startswith("www.") else name
         if zone_for_name(db, name) is not None:
