@@ -1621,7 +1621,7 @@ clamav_detached_signatures() {
 # clamscan accepted without them was refused by clamd.
 clamd_matching_scan_options() {
   if grep -qiE '^FIPSCryptoHashLimits[[:space:]]+(yes|true)' "$CLAMD_CONF" 2>/dev/null \
-      && clamscan --help 2>&1 | grep -q -- '--fips-limits'; then
+      && [[ "$(clamscan --help 2>&1)" == *--fips-limits* ]]; then
     echo "--fips-limits"
   fi
   if grep -qiE '^OfficialDatabaseOnly[[:space:]]+(yes|true)' "$CLAMD_CONF" 2>/dev/null; then
@@ -1758,7 +1758,9 @@ clamd_wait_ready() {
   local i ping=0
   # --ping is newer than some ClamAV builds; without it, still running after
   # 20 s is the test.
-  if clamdscan --help 2>&1 | grep -q -- '--ping'; then ping=1; fi
+  # Captured, not piped into grep -q: under pipefail an early exit of grep
+  # makes the writer fail, and the answer reads as no.
+  if [[ "$(clamdscan --help 2>&1)" == *--ping* ]]; then ping=1; fi
   for i in $(seq 1 60); do
     sleep 2
     systemctl is-active --quiet clamav-daemon 2>/dev/null || return 1
