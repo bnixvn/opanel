@@ -531,6 +531,88 @@ firewall_persist_rules() {
   ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
 }
 
+ensure_firewall_restorable() {
+  # The saved rules match on the blocklist ipsets, and ipsets are not saved:
+  # at boot iptables-restore refused the whole file ("Set opanel_blocklist4
+  # doesn't exist") and the box came up with no OPanel firewall at all -- no
+  # admin rule, no ban -- until the daily blocklist run (seen on a fresh VPS,
+  # 2026-09-30). The sets are created, empty, before the rules load; the
+  # blocklist timer's boot run fills them.
+  local dropin_dir=/etc/systemd/system/netfilter-persistent.service.d dropin ipset_bin content
+  systemctl cat netfilter-persistent.service >/dev/null 2>&1 || return 0
+  ipset_bin="$(command -v ipset 2>/dev/null || echo /usr/sbin/ipset)"
+  dropin="${dropin_dir}/opanel-ipsets.conf"
+  content="# Managed by opanel: the saved rules need these sets to exist.
+[Service]
+ExecStartPre=-${ipset_bin} create ${BLOCKLIST_IPSET_V4} hash:net family inet hashsize 32768 maxelem 65536 -exist
+ExecStartPre=-${ipset_bin} create ${BLOCKLIST_IPSET_V6} hash:net family inet6 hashsize 32768 maxelem 65536 -exist"
+  if [[ -f "$dropin" && "$(cat "$dropin")" == "$content" ]]; then
+    return 0
+  fi
+  install -d -m 0755 "$dropin_dir"
+  printf '%s\n' "$content" >"$dropin"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  echo "netfilter-persistent: blocklist sets created before the saved rules load"
+}
+
+# New installs block every incoming connection the panel's chains did not
+# accept (operator, 2026-09-30). The installer writes this file; an existing
+# box has none and its firewall stays as it was. firewall-default-deny on|off
+# switches it by hand.
+FIREWALL_DENY_MARKER="${opanel_DATA_DIR}/firewall-default-deny"
+
+firewall_ssh_ports() {
+  # Every port sshd answers on -- configured, and actually listening -- so the
+  # default deny cannot lock an admin out of a box whose SSH was moved off 22.
+  local sshd_bin
+  sshd_bin="$(command -v sshd 2>/dev/null || echo /usr/sbin/sshd)"
+  {
+    echo 22
+    "$sshd_bin" -T 2>/dev/null | awk '$1 == "port" {print $2}' || true
+    ss -Hltnp 2>/dev/null | awk '/"sshd"/ {n = split($4, part, ":"); print part[n]}' || true
+  } | awk '$1 ~ /^[0-9]+$/ && $1 >= 1 && $1 <= 65535 {print $1}' | sort -nu
+}
+
+_deny_rule() {
+  # One rule, with its comment where the kernel has the module. Fails loudly:
+  # an ACCEPT that did not land must stop the DROP that follows it.
+  local binary="$1" comment="$2"
+  shift 2
+  "$binary" -A OPANEL_DENY "$@" -m comment --comment "$comment" 2>/dev/null \
+    || "$binary" -A OPANEL_DENY "$@"
+}
+
+firewall_apply_default_deny() {
+  # OPANEL_DENY is the last rule of INPUT: the blocklist, admin rules,
+  # fail2ban, the default ports and addon ports (OPANEL_INPUT) all come
+  # first. It accepts what a box needs to stay reachable and on the network
+  # -- established traffic, loopback, SSH, ICMP, DHCP, HTTP/3 -- then drops.
+  # Rebuilt from scratch each time, so a second run changes nothing.
+  local binary port
+  for binary in iptables ip6tables; do
+    while "$binary" -D INPUT -j OPANEL_DENY 2>/dev/null; do :; done
+  done
+  [[ -f "$FIREWALL_DENY_MARKER" ]] || return 0
+  for binary in iptables ip6tables; do
+    "$binary" -N OPANEL_DENY 2>/dev/null || "$binary" -F OPANEL_DENY
+    _deny_rule "$binary" "opanel:established" -m state --state ESTABLISHED,RELATED -j ACCEPT
+    _deny_rule "$binary" "opanel:loopback" -i lo -j ACCEPT
+    for port in $(firewall_ssh_ports); do
+      _deny_rule "$binary" "opanel:ssh" -p tcp --dport "$port" -j ACCEPT
+    done
+    _deny_rule "$binary" "opanel:http3" -p udp --dport 443 -j ACCEPT
+    if [[ "$binary" == "iptables" ]]; then
+      _deny_rule "$binary" "opanel:icmp" -p icmp -j ACCEPT
+      _deny_rule "$binary" "opanel:dhcp" -p udp --dport 68 -j ACCEPT
+    else
+      _deny_rule "$binary" "opanel:icmp" -p ipv6-icmp -j ACCEPT
+      _deny_rule "$binary" "opanel:dhcp" -p udp --dport 546 -j ACCEPT
+    fi
+    _deny_rule "$binary" "opanel:default-deny" -j DROP
+    "$binary" -A INPUT -j OPANEL_DENY
+  done
+}
+
 iptables_refresh_standard_ports() {
   # SSH, web, and the three mail ports. Re-applied whenever IPv6 is switched
   # on, because a chain built before the box had IPv6 only ever got the IPv4
@@ -544,6 +626,7 @@ iptables_refresh_standard_ports() {
     iptables_panel_allow_port "$p" 2>/dev/null || true
   done
   if dns_installed; then dns_open_ports; fi
+  firewall_apply_default_deny
 }
 
 iptables_panel_delete_port_rules() {
@@ -987,6 +1070,8 @@ Description=Run opanel auto update daily
 
 [Timer]
 OnCalendar=*-*-* ${time_value}:00
+# Also after a boot: the saved rules come back with empty blocklist sets.
+OnBootSec=1min
 Persistent=true
 RandomizedDelaySec=15m
 
@@ -7244,6 +7329,7 @@ PY
     ensure_journal_cap
     ensure_lmd_monitor_layout
     ensure_ols_defaults_private
+    ensure_firewall_restorable
     # A subshell: a failed mail refresh must not stop the update's other steps.
     ( mail_refresh ) || echo "WARNING: the Email addon could not be refreshed" >&2
     ( dns_refresh ) || echo "WARNING: DNS Manager could not be refreshed" >&2
@@ -7382,6 +7468,7 @@ PY
     # addon chain below the blanket port allowances and silently disabling every
     # ban it holds. Put them back on top of OPANEL_INPUT.
     iptables_restore_addon_precedence 2>/dev/null || true
+    firewall_apply_default_deny
     # Without this the chains live only in memory. A box that reboots comes
     # back with whatever netfilter-persistent last saved -- which on one live
     # server meant OPANEL_INPUT and OPANEL_USER at zero references and an
@@ -7389,13 +7476,45 @@ PY
     firewall_persist_rules
     echo "opanel iptables chains enabled"
     ;;
+  firewall-default-deny)
+    [[ $# -eq 1 ]] || deny "usage: firewall-default-deny <on|off|status>"
+    case "$1" in
+      on)
+        install -d -m 0755 "$opanel_DATA_DIR"
+        touch "$FIREWALL_DENY_MARKER"
+        if iptables -C INPUT -j OPANEL_INPUT 2>/dev/null; then
+          firewall_apply_default_deny
+          firewall_persist_rules
+          echo "Default deny on: only the ports the firewall lists are reachable"
+        else
+          echo "Default deny will apply when the firewall is enabled"
+        fi
+        ;;
+      off)
+        rm -f "$FIREWALL_DENY_MARKER"
+        firewall_apply_default_deny
+        firewall_persist_rules
+        echo "Default deny off"
+        ;;
+      status)
+        if [[ -f "$FIREWALL_DENY_MARKER" ]]; then echo "default_deny=on"; else echo "default_deny=off"; fi
+        ;;
+      *) deny "usage: firewall-default-deny <on|off|status>" ;;
+    esac
+    ;;
+
   iptables-persist)
     [[ $# -eq 0 ]] || deny "usage: iptables-persist"
     firewall_persist_rules
     echo "opanel firewall rules persisted"
     ;;
   iptables-disable)
-    # Remove chain references from INPUT (rules inside chains are preserved)
+    # Remove chain references from INPUT (rules inside chains are preserved).
+    # The default deny first: left behind without the chains that accept the
+    # panel's ports, it would lock every service -- and SSH's new sessions
+    # outside what it lists -- off the box.
+    while iptables -D INPUT -j OPANEL_DENY 2>/dev/null; do :; done
+    while ip6tables -D INPUT -j OPANEL_DENY 2>/dev/null; do :; done
     iptables -D INPUT -j OPANEL_BLOCKLIST 2>/dev/null || true
     iptables -D INPUT -j OPANEL_INPUT 2>/dev/null || true
     iptables -D INPUT -j OPANEL_USER 2>/dev/null || true

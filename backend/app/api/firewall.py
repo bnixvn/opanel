@@ -28,6 +28,7 @@ def _status_result(result):
     # page fetches a page at a time from /ip-rules when the list is opened.
     data["ip_rule_counts"] = firewall.ip_rule_counts()
     data["enabled"] = firewall.is_enabled()
+    data["default_deny"] = firewall.default_deny_enabled()
     return data
 
 

@@ -598,6 +598,8 @@ export default {
   "Every minute": "Mỗi phút",
   "Every record of {0} is deleted, and the domain stops resolving once its nameservers point here. Type the domain name to confirm.": "Mọi bản ghi của {0} sẽ bị xoá, và tên miền sẽ không phân giải được nếu nameserver đang trỏ về đây. Gõ tên miền để xác nhận.",
   "Every user creates their own tokens on the MCP page. A token is read-only unless it was created with actions allowed.": "Mỗi người dùng tự tạo token của mình trên trang MCP. Token chỉ có quyền đọc, trừ khi được tạo với tùy chọn cho phép thao tác.",
+  "Every other incoming port is closed. Open a port below to make another service reachable.": "Mọi cổng khác đều bị chặn chiều vào. Mở thêm cổng bên dưới nếu cần cho một dịch vụ khác truy cập được.",
+  "Ports not listed here are not blocked: this firewall blocks the addresses and rules you add.": "Các cổng không có ở đây vẫn không bị chặn: tường lửa này chỉ chặn địa chỉ và các luật bạn thêm.",
   "Every website domain already has a zone.": "Mọi tên miền website đều đã có zone.",
   "Everything looks fine.": "Mọi thứ đều ổn.",
   "Execute": "Thực thi",

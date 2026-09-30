@@ -7510,6 +7510,9 @@ function App() {
               <small>{item.zone || tr("UserZone")}{item.source && item.source !== 'Anywhere' ? tr(" from {0}", item.source) : ''}</small>
             </span>)}
           </div> : <p className="hint">{tr("No open port rules found in OPANEL chains.")}</p>}
+          {firewallStatus && <p className="hint">{firewallStatus.default_deny
+            ? tr("Every other incoming port is closed. Open a port below to make another service reachable.")
+            : tr("Ports not listed here are not blocked: this firewall blocks the addresses and rules you add.")}</p>}
         </div>
         <div className="firewall-ip-summary">
           <span><strong>{tr("Addresses")}</strong> {tr("{0} blocked · {1} allowed", ipCounts.blocked || 0, ipCounts.allowed || 0)}</span>

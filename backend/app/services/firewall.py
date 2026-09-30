@@ -327,6 +327,18 @@ def status() -> CommandResult:
     )
 
 
+# Written by the installer on new servers (operator, 2026-09-30): the helper
+# then drops every incoming connection the panel's chains did not accept.
+DEFAULT_DENY_MARKER = Path("/var/lib/opanel/firewall-default-deny")
+
+
+def default_deny_enabled() -> bool:
+    try:
+        return DEFAULT_DENY_MARKER.exists()
+    except OSError:
+        return False
+
+
 def is_enabled() -> bool:
     result = shell.privileged(
         "iptables-check-enabled",

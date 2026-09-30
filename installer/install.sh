@@ -1254,6 +1254,18 @@ setup_firewall() {
   systemctl enable netfilter-persistent >/dev/null 2>&1 || true
   systemctl enable opanel-firewall-blocklist.timer >/dev/null 2>&1 || true
   remove_ufw_legacy
+
+  # A new install starts with the firewall on and every incoming connection
+  # it does not list blocked -- SSH, web, the panel, mail submission, and
+  # whatever an addon or the admin opens (operator, 2026-09-30). Existing
+  # servers are not changed. FIREWALL_DEFAULT_DENY=no keeps the old default.
+  if [[ "${FIREWALL_DEFAULT_DENY:-yes}" != "no" ]]; then
+    touch /var/lib/opanel/firewall-default-deny
+  fi
+  if id -u opanel >/dev/null 2>&1; then
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-enable >/dev/null \
+      || echo "WARNING: the firewall could not be enabled; enable it on the Firewall page" >&2
+  fi
 }
 
 setup_ssl() {
