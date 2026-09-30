@@ -53,16 +53,52 @@ def test_the_filtered_set_lives_where_clamd_may_read_and_scans_do_not_look():
 
 def test_a_new_set_is_test_scanned_before_clamd_is_pointed_at_it():
     body = _function("clamav_filter_build")
-    assert body.index('clamscan -d "$gen"') < body.index('mv -Tf "${CLAMAV_FILTERED_DIR}/current.new"')
+    assert body.index('-d "$gen" "${work}/eicar.txt"') < body.index('mv -Tf "${CLAMAV_FILTERED_DIR}/current.new"')
     assert '[[ "$rc" -ne 1' in body  # it must detect the test file
     # Diffs and their signatures inside the .cld are not databases.
     assert 'rm -f -- "$gen"/*.cdiff "$gen"/*.sign' in body
     # Bytecode and LMD's signatures go across unfiltered.
-    assert 'clamav_official_db bytecode' in body and "done < <(clamav_extra_dbs)" in body
+    assert 'clamav_official_db bytecode' in body and "done < <(clamav_extra_dbs;" in body
     # Unpacked on disk, not in a /tmp that may be a tmpfs.
     assert 'TMPDIR="$work"' in body
     # The set before stays for a reload that started on it.
     assert "if (( n > 2 )); then rm -rf" in body
+
+
+def test_a_copied_cvd_keeps_its_detached_signature_and_the_test_is_as_strict_as_clamd():
+    """ClamAV 1.5 with FIPSCryptoHashLimits (Ubuntu's default) refused the copied
+    bytecode.cvd without bytecode-339.cvd.sign, and clamd did not start; clamscan
+    without --fips-limits had passed the same set (.41, 2026-09-30)."""
+    build = _function("clamav_filter_build")
+    assert "done < <(clamav_extra_dbs; clamav_detached_signatures)" in build
+    # The .cld's own diff signatures go first, the real ones are copied after.
+    assert build.index('rm -f -- "$gen"/*.cdiff "$gen"/*.sign') < build.index("clamav_detached_signatures")
+    assert "main-*|daily-*) ;;" in _function("clamav_detached_signatures")
+    options = _function("clamd_matching_scan_options")
+    assert "FIPSCryptoHashLimits" in options and 'echo "--fips-limits"' in options
+    assert "--official-db-only=yes" in options
+    assert 'clamscan "${scan_opts[@]}" -d "$gen"' in build
+    # A rebuild on every box that holds a set made before this.
+    assert _value("CLAMAV_FILTER_FORMAT") == "2"
+    assert "${CLAMAV_FILTER_FORMAT}" in _function("clamav_filter_fingerprint")
+    assert "clamav_detached_signatures" in _function("clamav_filter_fingerprint")
+
+
+def test_clamd_goes_back_to_the_full_databases_when_it_does_not_come_up():
+    run = _function("clamav_filter_run")
+    fallback = run.split("# A scanner that does not run", 1)[1]
+    assert 'clamd_set_database_dir "$CLAMAV_DB_DIR"' in fallback
+    assert "systemctl restart clamav-daemon" in fallback
+    assert '"${CLAMAV_FILTERED_DIR}/failed"' in fallback
+    # That set is not tried again on every freshclam check; `on` retries.
+    refused = run.split('"${CLAMAV_FILTERED_DIR}/failed"', 1)[1].split("\n  fi\n", 1)[0]
+    assert "return 0" in refused
+    assert '"${CLAMAV_FILTERED_DIR}/failed"' in _command("clamav-filter").split("off)", 1)[0]
+    ready = _function("clamd_wait_ready")
+    # Active first: clamav-daemon.socket would start a dead clamd on the ping.
+    assert ready.index("systemctl is-active") < ready.index("clamdscan --ping 1")
+    assert "clamd_wait_ready" in _function("clamd_apply")
+    assert "state=failed" in _function("clamav_filter_status")
 
 
 def test_this_script_is_not_a_test_file_to_the_scanners_that_read_it():
@@ -90,8 +126,8 @@ def test_the_totals_are_read_from_clam_juices_report():
 
 def test_clamd_restarts_for_a_new_directory_and_reloads_for_new_files():
     body = _function("clamav_filter_run")
-    assert 'clamd_set_database_dir "$CLAMAV_FILTERED_CURRENT"; then\n    clamd_apply restart' in body
-    assert "elif (( changed )); then\n    clamd_apply reload" in body
+    assert 'clamd_set_database_dir "$CLAMAV_FILTERED_CURRENT"; then\n    if clamd_apply restart; then' in body
+    assert "elif (( changed )); then\n    if clamd_apply reload; then" in body
     # A stopped addon is not started by it.
     assert "systemctl is-active --quiet clamav-daemon 2>/dev/null || return 0" in _function("clamd_apply")
 

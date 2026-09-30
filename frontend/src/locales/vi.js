@@ -1197,6 +1197,7 @@ export default {
   "Real-time on": "Thời gian thực: bật",
   "Signatures: {0} of {1} (clam-juice)": "Chữ ký: {0} / {1} (clam-juice)",
   "Filtering signatures...": "Đang lọc chữ ký...",
+  "Signature filter failed: full databases in use": "Lọc chữ ký lỗi: đang dùng bộ chữ ký đầy đủ",
   "clam-juice keeps the signatures a Linux web server needs and drops Windows, macOS and Office malware, so clamd uses far less memory.": "clam-juice giữ các chữ ký mà máy chủ web Linux cần và bỏ mã độc Windows, macOS và Office, nhờ đó clamd tốn ít bộ nhớ hơn nhiều.",
   "Real-time protection": "Bảo vệ thời gian thực",
   "Real-time protection {0}.": "Bảo vệ thời gian thực: {0}.",

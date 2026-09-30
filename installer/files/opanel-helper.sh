@@ -1546,6 +1546,9 @@ CLAMAV_FILTER_SERVICE_UNIT="/etc/systemd/system/opanel-clamav-filter.service"
 CLAMAV_FILTER_PATH_UNIT="/etc/systemd/system/opanel-clamav-filter.path"
 # Set by clamav_filter_build when it put a new set in place.
 CLAMAV_FILTER_CHANGED=0
+# Part of the fingerprint: a change in what a set holds rebuilds every box's.
+# 2: the detached .sign files ClamAV 1.5 needs beside a .cvd.
+CLAMAV_FILTER_FORMAT=2
 
 clamjuice_installed() {
   [[ -f "$CLAMJUICE_BIN" ]] \
@@ -1599,16 +1602,46 @@ clamav_extra_dbs() {
   done
 }
 
+# ClamAV 1.5 verifies a .cvd by its detached signature, <name>-<version>.cvd.sign
+# beside it, when FIPSCryptoHashLimits is on -- Ubuntu's default. Without it
+# clamd refused the copied bytecode.cvd and did not start (.41, 2026-09-30).
+# main and daily are unpacked, so theirs are not needed.
+clamav_detached_signatures() {
+  local f
+  for f in "$CLAMAV_DB_DIR"/*.sign; do
+    [[ -f "$f" ]] || continue
+    case "${f##*/}" in
+      main-*|daily-*) ;;
+      *) echo "$f" ;;
+    esac
+  done
+}
+
+# The clamscan options that make a test load as strict as clamd's: a set that
+# clamscan accepted without them was refused by clamd.
+clamd_matching_scan_options() {
+  if grep -qiE '^FIPSCryptoHashLimits[[:space:]]+(yes|true)' "$CLAMD_CONF" 2>/dev/null \
+      && clamscan --help 2>&1 | grep -q -- '--fips-limits'; then
+    echo "--fips-limits"
+  fi
+  if grep -qiE '^OfficialDatabaseOnly[[:space:]]+(yes|true)' "$CLAMD_CONF" 2>/dev/null; then
+    echo "--official-db-only=yes"
+  fi
+}
+
 # Size and time for the official files; content for the rest, because LMD
 # copies its signatures in again before every scan without changing them.
 clamav_filter_fingerprint() {
   local f
   {
-    echo "${CLAMJUICE_SHA256} ${CLAMJUICE_ARGS[*]}"
+    echo "${CLAMAV_FILTER_FORMAT} ${CLAMJUICE_SHA256} ${CLAMJUICE_ARGS[*]}"
     for f in main daily bytecode; do
       f="$(clamav_official_db "$f")" || continue
       stat -c '%n %s %Y' "$f"
     done
+    while IFS= read -r f; do
+      stat -c '%n %s %Y' "$f"
+    done < <(clamav_detached_signatures)
     while IFS= read -r f; do
       printf '%s %s\n' "${f##*/}" "$(sha256sum <"$f" | cut -d' ' -f1)"
     done < <(clamav_extra_dbs)
@@ -1626,6 +1659,7 @@ clamjuice_totals() {
 
 clamav_filter_build() {
   local main daily bytecode fp work gen out f d rc known o k total=0 kept=0 n=0
+  local -a scan_opts=()
   CLAMAV_FILTER_CHANGED=0
   if ! main="$(clamav_official_db main)" || ! daily="$(clamav_official_db daily)"; then
     echo "No ClamAV databases yet; they are filtered once freshclam has downloaded them"
@@ -1667,13 +1701,14 @@ clamav_filter_build() {
   fi
   while IFS= read -r f; do
     cp -- "$f" "$gen/" || { rm -rf -- "$work" "$gen"; return 1; }
-  done < <(clamav_extra_dbs)
+  done < <(clamav_extra_dbs; clamav_detached_signatures)
   # Load the set the way clamd will and have it detect the EICAR test file
   # before clamd is pointed at it. The string is split so that this script is
   # not a test file itself to every scanner that reads it.
   printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-' 'ANTIVIRUS-TEST-FILE!$H+H*' >"${work}/eicar.txt"
+  mapfile -t scan_opts < <(clamd_matching_scan_options)
   rc=0
-  out="$(nice -n 19 clamscan -d "$gen" "${work}/eicar.txt" 2>&1)" || rc=$?
+  out="$(nice -n 19 clamscan "${scan_opts[@]}" -d "$gen" "${work}/eicar.txt" 2>&1)" || rc=$?
   known="$(printf '%s\n' "$out" | awk -F': *' '/^Known viruses/ {print $2}')"
   if [[ "$rc" -ne 1 || ! "$known" =~ ^[0-9]+$ ]] || (( known < 1000 )); then
     rm -rf -- "$work" "$gen"
@@ -1716,14 +1751,37 @@ clamd_set_database_dir() {
   return 0
 }
 
+# clamd answers once its databases are loaded, and exits when a load fails.
+# Checked for being active before every ping: clamav-daemon.socket starts a
+# dead clamd again on the first connection.
+clamd_wait_ready() {
+  local i ping=0
+  # --ping is newer than some ClamAV builds; without it, still running after
+  # 20 s is the test.
+  if clamdscan --help 2>&1 | grep -q -- '--ping'; then ping=1; fi
+  for i in $(seq 1 60); do
+    sleep 2
+    systemctl is-active --quiet clamav-daemon 2>/dev/null || return 1
+    if (( i >= 3 )) && (( ping )) && clamdscan --ping 1 >/dev/null 2>&1; then
+      return 0
+    fi
+    if (( i >= 10 && ! ping )); then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Only a running clamd: a stopped addon picks the setting up when it starts.
+# Returns 1 when clamd did not come back.
 clamd_apply() {
   systemctl is-active --quiet clamav-daemon 2>/dev/null || return 0
   if [[ "$1" == "restart" ]]; then
-    systemctl restart clamav-daemon
+    systemctl restart clamav-daemon || return 1
   else
-    systemctl reload clamav-daemon
+    systemctl reload clamav-daemon || return 1
   fi
+  clamd_wait_ready
 }
 
 clamav_filter_run() {
@@ -1739,13 +1797,34 @@ clamav_filter_run() {
     fi
   done
   [[ -d "$CLAMAV_FILTERED_CURRENT" ]] || return 0
+  # A set clamd refused is not tried again -- every freshclam check would
+  # restart it for nothing. The next set is (or `clamav-filter on`).
+  if [[ "$(cat "${CLAMAV_FILTERED_DIR}/failed" 2>/dev/null)" == "$(cat "${CLAMAV_FILTERED_DIR}/fingerprint" 2>/dev/null)" ]]; then
+    echo "clamd refused this filtered set; it stays on the full databases until the next one"
+    return 0
+  fi
   # A new directory needs a restart; new files in it, a reload (clamd builds
   # the new engine beside the old one and swaps).
   if clamd_set_database_dir "$CLAMAV_FILTERED_CURRENT"; then
-    clamd_apply restart
+    if clamd_apply restart; then
+      rm -f "${CLAMAV_FILTERED_DIR}/failed"
+      return 0
+    fi
   elif (( changed )); then
-    clamd_apply reload
+    if clamd_apply reload; then
+      rm -f "${CLAMAV_FILTERED_DIR}/failed"
+      return 0
+    fi
+  else
+    return 0
   fi
+  # A scanner that does not run is worse than one that needs more memory.
+  cp -f -- "${CLAMAV_FILTERED_DIR}/fingerprint" "${CLAMAV_FILTERED_DIR}/failed"
+  clamd_set_database_dir "$CLAMAV_DB_DIR" || true
+  systemctl reset-failed clamav-daemon >/dev/null 2>&1 || true
+  systemctl restart clamav-daemon || true
+  echo "clamd did not start on the filtered signatures; it is back on the full databases"
+  return 1
 }
 
 # One run at a time: the path unit, an install and `clamav-filter on` can
@@ -1840,6 +1919,8 @@ clamav_filter_status() {
     line="$(cat "${CLAMAV_FILTERED_DIR}/stats" 2>/dev/null || true)"
     [[ "$line" =~ kept=([0-9]+) ]] && kept="${BASH_REMATCH[1]}"
     [[ "$line" =~ total=([0-9]+) ]] && total="${BASH_REMATCH[1]}"
+  elif [[ -f "${CLAMAV_FILTERED_DIR}/failed" ]]; then
+    state=failed
   elif [[ -f "$CLAMAV_FILTER_PATH_UNIT" ]]; then
     state=pending
   fi
@@ -7360,7 +7441,7 @@ case "$cmd" in
     case "$1" in
       on)
         dpkg -s clamav-daemon >/dev/null 2>&1 || deny "ClamAV is not installed"
-        rm -f "$CLAMAV_FULL_DB_MARKER"
+        rm -f "$CLAMAV_FULL_DB_MARKER" "${CLAMAV_FILTERED_DIR}/failed"
         install_clamjuice || deny "clam-juice could not be installed"
         clamav_filter_enable
         clamav_filter_run_locked
