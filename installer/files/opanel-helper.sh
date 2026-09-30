@@ -3321,9 +3321,8 @@ host_trim() {
   # -- ssl-cert stays: its snakeoil certificate serves the tools port.
   if dpkg-query -W -f='${Status}' apache2 2>/dev/null | grep -q "install ok installed" \
       && ! systemctl is-active --quiet apache2 2>/dev/null; then
-    for pkg in $(dpkg-query -W -f='${Package} ${Status}\n' 'apache2' 'apache2-bin' 'apache2-data' 'apache2-utils' 'libapache2-mod-php*' 2>/dev/null \
-        | awk '$NF == "installed" {print $1}'); do
-      purge+=("$pkg")
+    for pkg in apache2 apache2-bin apache2-data apache2-utils $(dpkg-query -W 'libapache2-mod-php*' 2>/dev/null | awk '{print $1}'); do
+      dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" && purge+=("$pkg")
     done
     simulated="$(apt-get -s purge "${purge[@]}" 2>/dev/null | awk '/^(Purg|Remv) /{print $2}')" || simulated="phpmyadmin"
     if ! grep -qx "phpmyadmin" <<<"$simulated"; then
