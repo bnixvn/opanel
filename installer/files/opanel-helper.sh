@@ -1070,8 +1070,6 @@ Description=Run opanel auto update daily
 
 [Timer]
 OnCalendar=*-*-* ${time_value}:00
-# Also after a boot: the saved rules come back with empty blocklist sets.
-OnBootSec=1min
 Persistent=true
 RandomizedDelaySec=15m
 
@@ -2294,6 +2292,8 @@ Description=Refresh opanel IP blocklists daily
 
 [Timer]
 OnCalendar=*-*-* 01:00:00
+# Also after a boot: the saved rules come back with empty blocklist sets.
+OnBootSec=1min
 Persistent=true
 
 [Install]

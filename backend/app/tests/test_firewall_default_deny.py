@@ -29,8 +29,14 @@ def test_the_saved_rules_can_load_at_boot():
     assert "ExecStartPre=-${ipset_bin} create ${BLOCKLIST_IPSET_V6} hash:net family inet6 " in body
     assert "ensure_firewall_restorable" in _command("log-hygiene")
     # The sets are filled again soon after a boot, not at the next 01:00.
-    timer = HELPER.split("[Timer]\nOnCalendar=*-*-* ${time_value}:00", 1)[1].split("[Install]", 1)[0]
+    blocklist = _function(HELPER, "firewall_blocklist_write_timer")
+    timer = blocklist.split("opanel-firewall-blocklist.timer <<TIMER", 1)[1].split("TIMER", 1)[0]
     assert "OnBootSec=1min" in timer
+    # And nowhere else: a first version put it in the panel auto-update timer,
+    # which would have updated the panel after every reboot.
+    assert HELPER.count("OnBootSec=") == 1
+    auto_update = _function(HELPER, "write_panel_auto_update_timer")
+    assert "OnBootSec" not in auto_update
 
 
 def test_default_deny_is_last_accepts_what_keeps_the_box_reachable_then_drops():
