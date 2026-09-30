@@ -19,18 +19,48 @@ def _function(source: str, name: str) -> str:
 
 def test_the_ols_demo_site_and_webadmin_are_closed_on_every_update():
     body = _function(HELPER, "ensure_ols_defaults_private")
-    assert r"^virtualhost Example\s*\{" in body
-    assert "127.0.0.1:8088" in body and "map[ \\t]+Example" in body
-    assert "127.0.0.1:7080" in body and "admin_config.conf" in body
+    assert "127.0.0.1:8088" in body and "127.0.0.1:7080" in body and "admin_config.conf" in body
     hygiene = HELPER.split("  log-hygiene)", 1)[1].split(";;", 1)[0]
     assert "ensure_ols_defaults_private" in hygiene
+
+
+def test_the_demo_site_edit_works_on_openlitespeeds_own_spelling(tmp_path):
+    """OLS writes "virtualHost Example{" (capital H, no space); a first version
+    matched "virtualhost Example {" and left the vhost behind on a real box."""
+    import subprocess
+    import sys
+
+    script = _function(HELPER, "ensure_ols_defaults_private").split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    httpd = tmp_path / "httpd_config.conf"
+    httpd.write_text(
+        "extProcessor lsphp{\n    type lsapi\n}\n\n"
+        "virtualHost Example{\n    vhRoot                   Example/\n"
+        "    configFile               conf/vhosts/Example/vhconf.conf\n}\n\n"
+        "listener Default{\n    address                  *:8088\n    secure                   0\n"
+        "    map                      Example *\n}\n\n"
+        "vhTemplate centralConfigLog{\n    listeners                Default\n}\n", encoding="utf-8")
+    admin = tmp_path / "admin_config.conf"
+    admin.write_text("listener adminListener{\n  address                 *:7080\n  secure                  1\n}\n", encoding="utf-8")
+    out = subprocess.run([sys.executable, "-", str(httpd), str(admin)], input=script, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "demo site, WebAdmin"
+    conf = httpd.read_text(encoding="utf-8")
+    assert "Example" not in conf
+    assert "address                  127.0.0.1:8088" in conf and "listeners                Default" in conf
+    assert "extProcessor lsphp{" in conf
+    assert "127.0.0.1:7080" in admin.read_text(encoding="utf-8")
+    # A second run changes nothing.
+    again = subprocess.run([sys.executable, "-", str(httpd), str(admin)], input=script, capture_output=True, text=True)
+    assert again.stdout.strip() == ""
 
 
 def test_phpmyadmins_php_starts_on_demand_and_idles_out():
     for source in (HELPER, INSTALL):
         tools = source.split("extprocessor lsphp${default_ver_no_dot} {", 1)[1].split("\n}", 1)[0]
         assert "runOnStartUp            0" in tools and "runOnStartUp            1" not in tools
-        assert "maxIdleTime             300" in tools
+        # OLS's name for it; "maxIdleTime" was ignored and the process stayed
+        # (seen on the test VPS, 2026-09-30).
+        assert "extMaxIdleTime          300" in tools and "\n  maxIdleTime" not in tools
 
 
 def test_host_trim_masks_only_what_a_vps_does_not_use_and_records_it():
@@ -58,7 +88,9 @@ def test_apache_is_purged_only_when_phpmyadmin_stays():
 
 def test_the_installer_trims_the_host_unless_told_not_to():
     assert '"${KEEP_SYSTEM_SERVICES:-no}" != "yes"' in INSTALL
-    assert "/usr/local/sbin/opanel-helper host-trim || true" in INSTALL
+    # Through sudo as opanel, like every other helper call: run as root directly
+    # the helper refuses (SUDO_USER check) and "|| true" would hide it.
+    assert 'sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper host-trim || true' in INSTALL
     assert '  host-trim)\n    [[ $# -eq 0 ]] || deny "usage: host-trim"\n    host_trim' in HELPER
     # An update does not touch the host's services: that stays an install-time choice.
     update = (ROOT / "installer" / "update.sh").read_text(encoding="utf-8")

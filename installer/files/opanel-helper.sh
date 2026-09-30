@@ -808,7 +808,7 @@ extprocessor lsphp${default_ver_no_dot} {
   # minutes: resident from boot it held ~39 MB on a server nobody had opened
   # phpMyAdmin on (measured on a fresh 2 GB VPS, 2026-09-30).
   runOnStartUp            0
-  maxIdleTime             300
+  extMaxIdleTime          300
 }
 
 scripthandler {
@@ -3259,7 +3259,8 @@ import sys
 changed = []
 conf = pathlib.Path(sys.argv[1])
 text = conf.read_text(encoding="utf-8")
-new = re.sub(r"(?ms)^virtualhost Example\s*\{.*?^\}[ \t]*\n?", "", text)
+# OLS writes it "virtualHost Example{" -- any case, any spacing.
+new = re.sub(r"(?msi)^virtualhost[ \t]+Example[ \t]*\{.*?^\}[ \t]*\n?", "", text)
 
 
 def listener(match):
@@ -3268,7 +3269,7 @@ def listener(match):
     return re.sub(r"(?m)^[ \t]*map[ \t]+Example[ \t]+\*[ \t]*\n", "", block)
 
 
-new = re.sub(r"(?ms)^listener Default\s*\{.*?^\}", listener, new)
+new = re.sub(r"(?msi)^listener[ \t]+Default[ \t]*\{.*?^\}", listener, new)
 if new != text:
     conf.write_text(new, encoding="utf-8")
     changed.append("demo site")
