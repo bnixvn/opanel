@@ -3292,8 +3292,13 @@ PY
 # Units a hosting VPS never uses, masked by host-trim at install time. Each
 # was measured on a fresh Ubuntu 24.04 VPS (2 GB, 2026-09-30): multipathd
 # 22 MB resident, fwupd 33 MB once apt starts it, ModemManager 7 MB, udisks2
-# 6 MB, upower 3 MB.
-HOST_TRIM_UNITS=(ModemManager.service udisks2.service upower.service fwupd.service fwupd-refresh.service fwupd-refresh.timer)
+# 6 MB, upower 3 MB. Performance Co-Pilot (pcp), which some provider images
+# ship: ~41 MB across pmcd/pmproxy/pmlogger/pmie, listening to the internet on
+# 4330 and 44321-44323; the operator does not use it (2026-09-30).
+HOST_TRIM_UNITS=(ModemManager.service udisks2.service upower.service fwupd.service fwupd-refresh.service fwupd-refresh.timer
+  pmcd.service pmproxy.service pmlogger.service pmie.service pmlogger_farm.service pmie_farm.service
+  pmlogger_check.timer pmlogger_daily.timer pmlogger_farm_check.timer pmie_check.timer pmie_daily.timer
+  pmie_farm_check.timer pmfind.timer pmfind.service)
 
 host_trim() {
   local record="${opanel_DATA_DIR}/host-trim.txt" unit pkg removed=() purge=() simulated

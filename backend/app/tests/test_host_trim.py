@@ -66,10 +66,14 @@ def test_phpmyadmins_php_starts_on_demand_and_idles_out():
 def test_host_trim_masks_only_what_a_vps_does_not_use_and_records_it():
     body = _function(HELPER, "host_trim")
     units = HELPER.split("HOST_TRIM_UNITS=(", 1)[1].split(")", 1)[0].split()
-    assert units == ["ModemManager.service", "udisks2.service", "upower.service", "fwupd.service",
-                     "fwupd-refresh.service", "fwupd-refresh.timer"]
+    assert units[:6] == ["ModemManager.service", "udisks2.service", "upower.service", "fwupd.service",
+                         "fwupd-refresh.service", "fwupd-refresh.timer"]
+    # Performance Co-Pilot from provider images: services and timers (2026-09-30).
+    pcp = [unit for unit in units if unit.startswith("pm")]
+    assert {"pmcd.service", "pmproxy.service", "pmlogger.service", "pmie.service"} <= set(pcp)
+    assert len(pcp) == len(units) - 6
     # Never the things a server needs.
-    for kept in ("unattended-upgrades", "ssh", "systemd-", "cron", "snapd", "pmcd"):
+    for kept in ("unattended-upgrades", "ssh", "systemd-", "cron", "snapd", "qemu-guest-agent"):
         assert kept not in " ".join(units)
     assert 'systemctl mask "$1"' in body and 'echo "$1" >>"$record"' in body
     # multipath only when no multipath device exists.
