@@ -919,6 +919,11 @@ SERVICE
   systemctl enable --now opanel-malware-scheduler.timer
   if id -u opanel >/dev/null 2>&1; then
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper log-hygiene >/dev/null 2>&1 || true
+    # Services a hosting VPS never uses, and the Apache that came with
+    # phpMyAdmin (KEEP_SYSTEM_SERVICES=yes leaves the host as it is).
+    if [[ "${KEEP_SYSTEM_SERVICES:-no}" != "yes" ]]; then
+      /usr/local/sbin/opanel-helper host-trim || true
+    fi
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper certbot-auto-renew-install >/dev/null 2>&1 || true
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper blocklist-timer-install >/dev/null 2>&1 || true
   fi
@@ -973,7 +978,11 @@ extprocessor lsphp${default_ver_no_dot} {
   instances               1
   extUser                 www-data
   extGroup                www-data
-  runOnStartUp            1
+  # phpMyAdmin's PHP starts with the first request and stops after 5 idle
+  # minutes: resident from boot it held ~39 MB on a server nobody had opened
+  # phpMyAdmin on (measured on a fresh 2 GB VPS, 2026-09-30).
+  runOnStartUp            0
+  maxIdleTime             300
 }
 
 scripthandler {

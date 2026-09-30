@@ -804,7 +804,11 @@ extprocessor lsphp${default_ver_no_dot} {
   instances               1
   extUser                 www-data
   extGroup                www-data
-  runOnStartUp            1
+  # phpMyAdmin's PHP starts with the first request and stops after 5 idle
+  # minutes: resident from boot it held ~39 MB on a server nobody had opened
+  # phpMyAdmin on (measured on a fresh 2 GB VPS, 2026-09-30).
+  runOnStartUp            0
+  maxIdleTime             300
 }
 
 scripthandler {
@@ -3239,6 +3243,104 @@ ensure_php_jit_disabled() {
 }
 
 # journald defaults to 10% of the filesystem, which is 50 GB on a 500 GB disk.
+ensure_ols_defaults_private() {
+  # OpenLiteSpeed ships a demo site ("Example", with phpinfo.php and an
+  # upload.php that writes into /tmp) on *:8088 and its WebAdmin console on
+  # *:7080. OPanel uses neither, and with the panel firewall off -- its default
+  # -- both answered from the internet on a fresh install. The demo site goes;
+  # WebAdmin listens on 127.0.0.1 (an SSH tunnel reaches it if ever needed).
+  local changed
+  [[ -f "$OLS_HTTPD_CONF" ]] || return 0
+  changed="$(python3 - "$OLS_HTTPD_CONF" /usr/local/lsws/admin/conf/admin_config.conf <<'PY'
+import pathlib
+import re
+import sys
+
+changed = []
+conf = pathlib.Path(sys.argv[1])
+text = conf.read_text(encoding="utf-8")
+new = re.sub(r"(?ms)^virtualhost Example\s*\{.*?^\}[ \t]*\n?", "", text)
+
+
+def listener(match):
+    block = match.group(0)
+    block = re.sub(r"(?m)^([ \t]*address[ \t]+)\*:8088[ \t]*$", r"\g<1>127.0.0.1:8088", block)
+    return re.sub(r"(?m)^[ \t]*map[ \t]+Example[ \t]+\*[ \t]*\n", "", block)
+
+
+new = re.sub(r"(?ms)^listener Default\s*\{.*?^\}", listener, new)
+if new != text:
+    conf.write_text(new, encoding="utf-8")
+    changed.append("demo site")
+admin = pathlib.Path(sys.argv[2])
+if admin.is_file():
+    current = admin.read_text(encoding="utf-8")
+    private = re.sub(r"(?m)^([ \t]*address[ \t]+)\*:7080[ \t]*$", r"\g<1>127.0.0.1:7080", current)
+    if private != current:
+        admin.write_text(private, encoding="utf-8")
+        changed.append("WebAdmin")
+print(", ".join(changed))
+PY
+)" || return 0
+  if [[ -n "$changed" ]]; then
+    restart_openlitespeed >/dev/null 2>&1 || true
+    echo "OpenLiteSpeed: closed to the internet: ${changed}"
+  fi
+}
+
+# Units a hosting VPS never uses, masked by host-trim at install time. Each
+# was measured on a fresh Ubuntu 24.04 VPS (2 GB, 2026-09-30): multipathd
+# 22 MB resident, fwupd 33 MB once apt starts it, ModemManager 7 MB, udisks2
+# 6 MB, upower 3 MB.
+HOST_TRIM_UNITS=(ModemManager.service udisks2.service upower.service fwupd.service fwupd-refresh.service fwupd-refresh.timer)
+
+host_trim() {
+  local record="${opanel_DATA_DIR}/host-trim.txt" unit pkg removed=() purge=() simulated
+  install -d -m 0755 "$opanel_DATA_DIR"
+  touch "$record"
+  _trim_unit() {
+    systemctl list-unit-files "$1" --no-legend 2>/dev/null | grep -q . || return 0
+    [[ "$(systemctl is-enabled "$1" 2>/dev/null)" == "masked" ]] && return 0
+    systemctl disable --now "$1" >/dev/null 2>&1 || true
+    systemctl mask "$1" >/dev/null 2>&1 || return 0
+    grep -qx "$1" "$record" || echo "$1" >>"$record"
+    removed+=("$1")
+  }
+  for unit in "${HOST_TRIM_UNITS[@]}"; do
+    _trim_unit "$unit"
+  done
+  # multipath only matters for SAN storage with several paths to one disk.
+  if command -v multipath >/dev/null 2>&1 && ! multipath -l 2>/dev/null | grep -q .; then
+    _trim_unit multipathd.service
+    _trim_unit multipathd.socket
+  fi
+
+  # phpMyAdmin needs a provider of php-json, and apt picks libapache2-mod-php,
+  # which brings Apache; OpenLiteSpeed serves phpMyAdmin, so Apache never runs.
+  # Purged only when apt confirms phpMyAdmin stays (php-cli provides php-json)
+  # -- ssl-cert stays: its snakeoil certificate serves the tools port.
+  if dpkg-query -W -f='${Status}' apache2 2>/dev/null | grep -q "install ok installed" \
+      && ! systemctl is-active --quiet apache2 2>/dev/null; then
+    for pkg in $(dpkg-query -W -f='${Package} ${Status}\n' 'apache2' 'apache2-bin' 'apache2-data' 'apache2-utils' 'libapache2-mod-php*' 2>/dev/null \
+        | awk '$NF == "installed" {print $1}'); do
+      purge+=("$pkg")
+    done
+    simulated="$(apt-get -s purge "${purge[@]}" 2>/dev/null | awk '/^(Purg|Remv) /{print $2}')" || simulated="phpmyadmin"
+    if ! grep -qx "phpmyadmin" <<<"$simulated"; then
+      apt-mark manual ssl-cert >/dev/null 2>&1 || true
+      if DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 purge -y "${purge[@]}" >/dev/null 2>&1; then
+        removed+=("apache2 (${#purge[@]} packages)")
+        grep -qx "apache2 purged" "$record" || echo "apache2 purged" >>"$record"
+      fi
+    fi
+  fi
+  if (( ${#removed[@]} )); then
+    echo "Host trimmed: ${removed[*]} (undo a unit with: systemctl unmask <unit>)"
+  else
+    echo "Host trim: nothing to do"
+  fi
+}
+
 ensure_journal_cap() {
   local conf=/etc/systemd/journald.conf
   [[ -f "$conf" ]] || return 0
@@ -7123,6 +7225,11 @@ PY
     exim4 -bpc 2>/dev/null || echo 0
     ;;
 
+  host-trim)
+    [[ $# -eq 0 ]] || deny "usage: host-trim"
+    host_trim
+    ;;
+
   log-hygiene)
     [[ $# -eq 0 ]] || deny "usage: log-hygiene"
     ensure_site_log_rotation
@@ -7131,6 +7238,7 @@ PY
     ensure_php_jit_disabled
     ensure_journal_cap
     ensure_lmd_monitor_layout
+    ensure_ols_defaults_private
     # A subshell: a failed mail refresh must not stop the update's other steps.
     ( mail_refresh ) || echo "WARNING: the Email addon could not be refreshed" >&2
     ( dns_refresh ) || echo "WARNING: DNS Manager could not be refreshed" >&2
