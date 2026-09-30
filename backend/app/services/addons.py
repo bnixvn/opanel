@@ -206,7 +206,9 @@ ADDONS: dict[str, dict] = {
             "ClamAV misses. Scan one website, every website or the whole "
             "server, now or on a schedule; turn on real-time protection to "
             "scan files as they are written; move a threat to quarantine and "
-            "put it back if it was a false positive."
+            "put it back if it was a false positive. clam-juice trims "
+            "ClamAV's signatures to what a Linux web server needs, dropping "
+            "Windows, macOS and Office malware."
         ),
         "category": "security",
         "version": "1",
@@ -218,8 +220,8 @@ ADDONS: dict[str, dict] = {
         "service": "clamav-daemon",
         "features": ["malware"],
         "notes": [
-            "ClamAV holds its signatures in memory: expect about 1-1.5 GB of "
-            "RAM while it runs.",
+            "ClamAV holds its signatures in memory: about 200 MB with "
+            "clam-juice's filtered set (1-1.5 GB with the full databases).",
             "Installing downloads ClamAV, its signature database and Linux "
             "Malware Detect, which takes a few minutes.",
             "Stopping turns scanning and real-time protection off and gives "

@@ -87,7 +87,7 @@ Các tính năng tuỳ chọn, cài và gỡ ở **Settings › Addons**. Addon 
 
 | Addon | Chức năng |
 |---|---|
-| **Malware Scanner** | ClamAV + Linux Malware Detect: quét một website, mọi website hoặc toàn server, theo lịch hoặc thời gian thực; tự cách ly file độc hại và khôi phục nếu báo nhầm. ClamAV cần khoảng 1–1,5 GB RAM. |
+| **Malware Scanner** | ClamAV + Linux Malware Detect: quét một website, mọi website hoặc toàn server, theo lịch hoặc thời gian thực; tự cách ly file độc hại và khôi phục nếu báo nhầm. Bộ chữ ký ClamAV được lọc bằng [clam-juice](https://github.com/swelljoe/clam-juice), chỉ giữ những gì máy chủ web Linux cần, nên clamd chỉ tốn khoảng 200 MB RAM thay vì 1–1,5 GB. |
 | **Fail2ban** | Chặn IP ở firewall sau nhiều lần đăng nhập SSH hoặc panel thất bại. |
 | **MCP server** | Cho trợ lý AI (Claude Code, Cursor, VS Code…) đọc và thao tác panel qua Model Context Protocol, mỗi người dùng một token riêng. |
 | **Notifications** | Gửi cảnh báo qua email (SMTP) và Telegram cho quản trị viên: backup lỗi, dịch vụ dừng, ổ đĩa đầy, SSL sắp hết hạn, phát hiện mã độc, có bản cập nhật… |
@@ -96,7 +96,7 @@ Các tính năng tuỳ chọn, cài và gỡ ở **Settings › Addons**. Addon 
 
 - Ubuntu 24.04 LTS, nên là máy mới cài
 - Quyền root
-- Tối thiểu 1 vCPU / 1 GB RAM; khuyến nghị 2 vCPU / 2 GB RAM (cộng thêm khoảng 1,5 GB nếu dùng Malware Scanner)
+- Tối thiểu 1 vCPU / 1 GB RAM; khuyến nghị 2 vCPU / 2 GB RAM (cộng thêm khoảng 0,5 GB nếu dùng Malware Scanner)
 - Không bắt buộc: một tên miền trỏ về IP của server để panel có SSL
 
 ## Cài đặt
