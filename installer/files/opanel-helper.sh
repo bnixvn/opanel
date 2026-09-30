@@ -1297,6 +1297,16 @@ install_clamav_engine() {
   # the PHP shells / injections ClamAV's general signatures miss, and it uses the
   # resident clamd as its scan engine (both signature sets, one fast scanner).
   install_lmd_engine || echo "NOTE: Linux Malware Detect not installed; ClamAV scanning still works."
+  # Before anything starts clamd on the full databases: a first install has
+  # no signatures until the freshclam above, so clamd is not running yet.
+  if [[ ! -f "$CLAMAV_FULL_DB_MARKER" ]]; then
+    if install_clamjuice; then
+      clamav_filter_enable
+      clamav_filter_run_locked || echo "NOTE: signatures not filtered yet; the filter runs again when freshclam updates them."
+    else
+      echo "NOTE: clam-juice not installed; clamd loads the full signature databases."
+    fi
+  fi
 }
 
 # github.com/rfxn/linux-malware-detect. Pinned tag; update deliberately.
@@ -1504,6 +1514,338 @@ ensure_lmd_monitor_layout() {
   return 0
 }
 
+# --- ClamAV signature filter (clam-juice) -------------------------------------
+# ClamAV's official databases are almost all Windows, macOS and Office malware:
+# of the 3.6 million signatures in main and daily on .41 (2026-09-30), 131
+# thousand were anything else. clamd held every one of them in memory to scan
+# Linux web servers -- 1.06 GB, 24 s to load.
+# clam-juice (github.com/swelljoe/clam-juice, GPL-3.0) drops those families
+# from a copy and clamd loads the copy: 180 MB, under 2 s. freshclam keeps
+# updating the originals in /var/lib/clamav; a path unit filters again
+# whenever they change. Fetched at a pinned commit and checked against its
+# checksum, like LMD; update deliberately.
+CLAMJUICE_COMMIT="7e7392863e2ab19699509d5028af958e38ee34e6"
+CLAMJUICE_SHA256="f4d6f60cc1d8b71ceb59a2ba277e7c02bbe207af709ebb07a6e98437914eeb55"
+CLAMJUICE_BIN="/usr/local/lib/opanel/clam-juice/clam_juice.py"
+# clam-juice's linux-only profile, keeping the HTML signatures (ndb target 3:
+# injected scripts, iframes, phishing pages) that profile drops -- this is a
+# web server. What stays: Linux/Unix, PHP, JS, HTML, PDF, Java, Android,
+# scripts, archives, generic signatures and EICAR. Bytecode and LMD's own
+# signatures go across untouched.
+CLAMJUICE_ARGS=(--exclude-platforms Win,Osx,Doc,Xls,Ppt,Rtf --exclude-types mdb,msb --ndb-types 0,3,5,6,7,10,12)
+CLAMAV_DB_DIR="/var/lib/clamav"
+# Inside ClamAV's own directory: its AppArmor profile lets clamd read only
+# /var/lib/clamav/**, and full-server scans already skip that tree.
+CLAMAV_FILTERED_DIR="${CLAMAV_DB_DIR}/opanel-filtered"
+CLAMAV_FILTERED_CURRENT="${CLAMAV_FILTERED_DIR}/current"
+CLAMD_CONF="/etc/clamav/clamd.conf"
+# Written by `clamav-filter off`: clamd loads the full databases and updates
+# leave the box that way.
+CLAMAV_FULL_DB_MARKER="${opanel_DATA_DIR}/clamav-full-db"
+CLAMAV_FILTER_SERVICE_UNIT="/etc/systemd/system/opanel-clamav-filter.service"
+CLAMAV_FILTER_PATH_UNIT="/etc/systemd/system/opanel-clamav-filter.path"
+# Set by clamav_filter_build when it put a new set in place.
+CLAMAV_FILTER_CHANGED=0
+
+clamjuice_installed() {
+  [[ -f "$CLAMJUICE_BIN" ]] \
+    && [[ "$(sha256sum "$CLAMJUICE_BIN" | cut -d' ' -f1)" == "$CLAMJUICE_SHA256" ]]
+}
+
+install_clamjuice() {
+  local tmp
+  clamjuice_installed && return 0
+  tmp="$(mktemp)" || return 1
+  if ! curl -fsSL --max-time 120 -o "$tmp" \
+      "https://raw.githubusercontent.com/swelljoe/clam-juice/${CLAMJUICE_COMMIT}/clam_juice.py"; then
+    rm -f "$tmp"
+    echo "could not download clam-juice"
+    return 1
+  fi
+  if [[ "$(sha256sum "$tmp" | cut -d' ' -f1)" != "$CLAMJUICE_SHA256" ]]; then
+    rm -f "$tmp"
+    echo "the clam-juice download does not match its pinned checksum"
+    return 1
+  fi
+  install -d -o root -g root -m 0755 "${CLAMJUICE_BIN%/*}"
+  install -o root -g root -m 0755 "$tmp" "$CLAMJUICE_BIN"
+  rm -f "$tmp"
+}
+
+# freshclam keeps a .cld once it has applied a diff, the .cvd before that.
+clamav_official_db() {
+  local f
+  for f in "${CLAMAV_DB_DIR}/$1.cld" "${CLAMAV_DB_DIR}/$1.cvd"; do
+    if [[ -f "$f" ]]; then
+      echo "$f"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Everything else clamd would load from its directory -- LMD's rfxn.* and
+# lmd.user.*, an unofficial set -- goes across as it is.
+clamav_extra_dbs() {
+  local f
+  for f in "$CLAMAV_DB_DIR"/*; do
+    [[ -f "$f" ]] || continue
+    case "${f##*/}" in
+      main.*|daily.*|bytecode.*) ;;
+      *.ndb|*.ndu|*.hdb|*.hdu|*.hsb|*.hsu|*.mdb|*.mdu|*.msb|*.msu|*.ldb|*.ldu|*.cdb|*.cbc|*.ftm|*.fp|*.sfp|*.ign|*.ign2|*.idb|*.pdb|*.gdb|*.wdb|*.crb|*.cat|*.imp|*.yar|*.yara|*.cvd|*.cld|*.cud)
+        echo "$f"
+        ;;
+    esac
+  done
+}
+
+# Size and time for the official files; content for the rest, because LMD
+# copies its signatures in again before every scan without changing them.
+clamav_filter_fingerprint() {
+  local f
+  {
+    echo "${CLAMJUICE_SHA256} ${CLAMJUICE_ARGS[*]}"
+    for f in main daily bytecode; do
+      f="$(clamav_official_db "$f")" || continue
+      stat -c '%n %s %Y' "$f"
+    done
+    while IFS= read -r f; do
+      printf '%s %s\n' "${f##*/}" "$(sha256sum <"$f" | cut -d' ' -f1)"
+    done < <(clamav_extra_dbs)
+  } | sha256sum | cut -d' ' -f1
+}
+
+# clam-juice's report ends with "TOTAL:", then "Original: 3,286,543 signatures"
+# and "Filtered: 88,356 signatures (2.7%)". Prints "<original> <kept>".
+clamjuice_totals() {
+  awk '/^TOTAL:/ {t = 1}
+       t && $1 == "Original:" {gsub(",", "", $2); o = $2}
+       t && $1 == "Filtered:" {gsub(",", "", $2); k = $2}
+       END {print o + 0, k + 0}'
+}
+
+clamav_filter_build() {
+  local main daily bytecode fp work gen out f d rc known o k total=0 kept=0 n=0
+  CLAMAV_FILTER_CHANGED=0
+  if ! main="$(clamav_official_db main)" || ! daily="$(clamav_official_db daily)"; then
+    echo "No ClamAV databases yet; they are filtered once freshclam has downloaded them"
+    return 0
+  fi
+  install_clamjuice || return 1
+  command -v sigtool >/dev/null 2>&1 || { echo "sigtool is missing (package clamav)"; return 1; }
+  # Created once, not re-applied: a chmod of an entry in /var/lib/clamav is an
+  # event for the path unit, which would start this again, for ever.
+  if [[ ! -d "$CLAMAV_FILTERED_DIR" ]]; then
+    install -d -o clamav -g clamav -m 0755 "$CLAMAV_FILTERED_DIR"
+  fi
+  rm -rf -- "$CLAMAV_FILTERED_DIR"/.work.*
+  fp="$(clamav_filter_fingerprint)"
+  if [[ -d "$CLAMAV_FILTERED_CURRENT" && "$(cat "${CLAMAV_FILTERED_DIR}/fingerprint" 2>/dev/null)" == "$fp" ]]; then
+    echo "Filtered signatures are up to date"
+    return 0
+  fi
+  # Failures are handled by hand below: an install calls this in an
+  # `a || b` list, where set -e does not stop anything.
+  work="$(mktemp -d "${CLAMAV_FILTERED_DIR}/.work.XXXXXX")" || return 1
+  gen="$(mktemp -d "${CLAMAV_FILTERED_DIR}/gen.XXXXXX")" || { rm -rf -- "$work"; return 1; }
+  for f in "$main" "$daily"; do
+    # clam-juice unpacks into a temp dir, ~450 MB for main: on disk here,
+    # not in a /tmp that may be a tmpfs.
+    if ! out="$(TMPDIR="$work" nice -n 19 python3 "$CLAMJUICE_BIN" --input "$f" --output "$gen" "${CLAMJUICE_ARGS[@]}" 2>&1)"; then
+      rm -rf -- "$work" "$gen"
+      echo "clam-juice failed on ${f##*/}: $(printf '%s\n' "$out" | tail -n 1)"
+      return 1
+    fi
+    read -r o k < <(printf '%s\n' "$out" | clamjuice_totals)
+    total=$(( total + o ))
+    kept=$(( kept + k ))
+  done
+  # The diffs, their signatures and the licence the .cld carries; clamd reads none.
+  rm -f -- "$gen"/*.cdiff "$gen"/*.sign "$gen"/COPYING
+  if bytecode="$(clamav_official_db bytecode)"; then
+    cp -- "$bytecode" "$gen/" || { rm -rf -- "$work" "$gen"; return 1; }
+  fi
+  while IFS= read -r f; do
+    cp -- "$f" "$gen/" || { rm -rf -- "$work" "$gen"; return 1; }
+  done < <(clamav_extra_dbs)
+  # Load the set the way clamd will and have it detect the EICAR test file
+  # before clamd is pointed at it. The string is split so that this script is
+  # not a test file itself to every scanner that reads it.
+  printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-' 'ANTIVIRUS-TEST-FILE!$H+H*' >"${work}/eicar.txt"
+  rc=0
+  out="$(nice -n 19 clamscan -d "$gen" "${work}/eicar.txt" 2>&1)" || rc=$?
+  known="$(printf '%s\n' "$out" | awk -F': *' '/^Known viruses/ {print $2}')"
+  if [[ "$rc" -ne 1 || ! "$known" =~ ^[0-9]+$ ]] || (( known < 1000 )); then
+    rm -rf -- "$work" "$gen"
+    echo "the filtered signatures failed a test scan (clamscan exit ${rc}); clamd keeps the ones it has"
+    return 1
+  fi
+  chown -R clamav:clamav "$gen"
+  chmod 0755 "$gen"
+  find "$gen" -type f -exec chmod 0644 {} +
+  if ! ln -sfn "${gen##*/}" "${CLAMAV_FILTERED_DIR}/current.new" \
+      || ! mv -Tf "${CLAMAV_FILTERED_DIR}/current.new" "$CLAMAV_FILTERED_CURRENT"; then
+    rm -rf -- "$work" "$gen"
+    return 1
+  fi
+  printf '%s\n' "$fp" >"${CLAMAV_FILTERED_DIR}/fingerprint"
+  printf 'kept=%s total=%s loaded=%s\n' "$kept" "$total" "$known" >"${CLAMAV_FILTERED_DIR}/stats"
+  rm -rf -- "$work"
+  # The set before this one stays, so a reload that started on it can finish.
+  while IFS= read -r d; do
+    n=$(( n + 1 ))
+    if (( n > 2 )); then rm -rf -- "$d"; fi
+  done < <(ls -1dt "$CLAMAV_FILTERED_DIR"/gen.* 2>/dev/null)
+  CLAMAV_FILTER_CHANGED=1
+  echo "Signatures filtered: ${kept} of ${total} kept (${known} loaded with bytecode and LMD's)"
+}
+
+# Returns 0 when clamd.conf changed.
+clamd_set_database_dir() {
+  local dir="$1"
+  [[ -f "$CLAMD_CONF" ]] || return 1
+  if grep -qxF "DatabaseDirectory ${dir}" "$CLAMD_CONF"; then
+    return 1
+  fi
+  # The package's postinst reads this file back on upgrade, so the change stays.
+  if grep -q '^DatabaseDirectory[[:space:]]' "$CLAMD_CONF"; then
+    sed -i -E "s|^DatabaseDirectory[[:space:]].*|DatabaseDirectory ${dir}|" "$CLAMD_CONF"
+  else
+    printf 'DatabaseDirectory %s\n' "$dir" >>"$CLAMD_CONF"
+  fi
+  return 0
+}
+
+# Only a running clamd: a stopped addon picks the setting up when it starts.
+clamd_apply() {
+  systemctl is-active --quiet clamav-daemon 2>/dev/null || return 0
+  if [[ "$1" == "restart" ]]; then
+    systemctl restart clamav-daemon
+  else
+    systemctl reload clamav-daemon
+  fi
+}
+
+clamav_filter_run() {
+  local attempt changed=0
+  # Again while it changes: freshclam or LMD may write during a run, and the
+  # path unit does not start a unit that is still running.
+  for attempt in 1 2 3; do
+    clamav_filter_build || return 1
+    if (( CLAMAV_FILTER_CHANGED )); then
+      changed=1
+    else
+      break
+    fi
+  done
+  [[ -d "$CLAMAV_FILTERED_CURRENT" ]] || return 0
+  # A new directory needs a restart; new files in it, a reload (clamd builds
+  # the new engine beside the old one and swaps).
+  if clamd_set_database_dir "$CLAMAV_FILTERED_CURRENT"; then
+    clamd_apply restart
+  elif (( changed )); then
+    clamd_apply reload
+  fi
+}
+
+# One run at a time: the path unit, an install and `clamav-filter on` can
+# overlap, and a run clears the work directories it finds.
+clamav_filter_run_locked() {
+  (
+    flock -w 900 9 || { echo "another signature filter run is still going"; exit 1; }
+    clamav_filter_run
+  ) 9>/run/opanel-clamav-filter.lock
+}
+
+# Returns 0 when a unit file changed.
+write_clamav_filter_units() {
+  local tmp changed=1
+  tmp="$(mktemp)"
+  cat >"$tmp" <<'UNIT'
+[Unit]
+Description=Filter ClamAV signatures for clamd (clam-juice)
+
+[Service]
+Type=oneshot
+Environment=SUDO_USER=opanel
+# freshclam and LMD write several files at a time; let a batch land first.
+ExecStartPre=/bin/sleep 20
+ExecStart=/usr/local/sbin/opanel-helper clamav-filter run
+Nice=19
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=20min
+UNIT
+  if ! cmp -s "$tmp" "$CLAMAV_FILTER_SERVICE_UNIT"; then
+    install -m 0644 "$tmp" "$CLAMAV_FILTER_SERVICE_UNIT"
+    changed=0
+  fi
+  cat >"$tmp" <<'UNIT'
+[Unit]
+Description=Filter ClamAV signatures again when freshclam or LMD changes them
+
+[Path]
+# Not recursive: the filtered sets in opanel-filtered/ do not trigger it.
+PathChanged=/var/lib/clamav
+Unit=opanel-clamav-filter.service
+
+[Install]
+WantedBy=paths.target
+UNIT
+  if ! cmp -s "$tmp" "$CLAMAV_FILTER_PATH_UNIT"; then
+    install -m 0644 "$tmp" "$CLAMAV_FILTER_PATH_UNIT"
+    changed=0
+  fi
+  rm -f "$tmp"
+  return "$changed"
+}
+
+clamav_filter_enable() {
+  if write_clamav_filter_units; then
+    systemctl daemon-reload
+  fi
+  systemctl enable --now opanel-clamav-filter.path >/dev/null 2>&1 || true
+}
+
+# clamd back on the full databases before the filtered sets go.
+clamav_filter_disable() {
+  systemctl disable --now opanel-clamav-filter.path opanel-clamav-filter.service >/dev/null 2>&1 || true
+  rm -f "$CLAMAV_FILTER_PATH_UNIT" "$CLAMAV_FILTER_SERVICE_UNIT"
+  systemctl daemon-reload
+  if clamd_set_database_dir "$CLAMAV_DB_DIR"; then
+    clamd_apply restart
+  fi
+  rm -rf -- "$CLAMAV_FILTERED_DIR"
+}
+
+# On every update: a box with ClamAV gets the filter, unless an admin chose
+# the full databases.
+ensure_clamav_filter() {
+  dpkg -s clamav-daemon >/dev/null 2>&1 || return 0
+  [[ ! -f "$CLAMAV_FULL_DB_MARKER" ]] || return 0
+  if ! install_clamjuice >/dev/null; then
+    echo "WARNING: clam-juice could not be installed; clamd keeps the full signature databases" >&2
+    return 0
+  fi
+  clamav_filter_enable
+  # In the background: the first run restarts clamd, which an update need not wait for.
+  systemctl start --no-block opanel-clamav-filter.service >/dev/null 2>&1 || true
+}
+
+clamav_filter_status() {
+  local state=off kept=0 total=0 line
+  if [[ -d "$CLAMAV_FILTERED_CURRENT" ]] \
+      && grep -qxF "DatabaseDirectory ${CLAMAV_FILTERED_CURRENT}" "$CLAMD_CONF" 2>/dev/null; then
+    state=on
+    line="$(cat "${CLAMAV_FILTERED_DIR}/stats" 2>/dev/null || true)"
+    [[ "$line" =~ kept=([0-9]+) ]] && kept="${BASH_REMATCH[1]}"
+    [[ "$line" =~ total=([0-9]+) ]] && total="${BASH_REMATCH[1]}"
+  elif [[ -f "$CLAMAV_FILTER_PATH_UNIT" ]]; then
+    state=pending
+  fi
+  echo "filter=${state} filter_kept=${kept} filter_total=${total}"
+}
+
 # The ClamAV packages the Malware Scanner addon installs, directly or as their
 # dependencies. libclamav stays: a library another package may link against.
 CLAMAV_PACKAGES=(clamav clamav-daemon clamav-freshclam clamav-base clamdscan)
@@ -1515,6 +1857,10 @@ remove_clamav_engine() {
   local installed=() pkg name ok
   export DEBIAN_FRONTEND=noninteractive
   disable_lmd_monitor >/dev/null 2>&1 || true
+  systemctl disable --now opanel-clamav-filter.path opanel-clamav-filter.service >/dev/null 2>&1 || true
+  rm -f "$CLAMAV_FILTER_PATH_UNIT" "$CLAMAV_FILTER_SERVICE_UNIT" "$CLAMAV_FULL_DB_MARKER"
+  rm -rf -- "$CLAMAV_FILTERED_DIR" "${CLAMJUICE_BIN%/*}"
+  systemctl daemon-reload
   if [[ -d "$LMD_DIR" ]] || command -v maldet >/dev/null 2>&1; then
     systemctl disable --now maldet.service >/dev/null 2>&1 || true
     systemctl unmask maldet.service >/dev/null 2>&1 || true
@@ -7006,7 +7352,33 @@ case "$cmd" in
     if lmd_installed; then lmd=1; else lmd=0; fi
     lmd_ver="$( [[ -f /usr/local/maldetect/VERSION ]] && tr -d '[:space:]' </usr/local/maldetect/VERSION || echo '' )"
     if systemctl is-active --quiet opanel-maldet-monitor.service 2>/dev/null; then monitor=1; else monitor=0; fi
-    echo "installed=${installed} running=${running} lmd=${lmd} lmd_version=${lmd_ver} monitor=${monitor}"
+    echo "installed=${installed} running=${running} lmd=${lmd} lmd_version=${lmd_ver} monitor=${monitor} $(clamav_filter_status)"
+    ;;
+
+  clamav-filter)
+    [[ $# -eq 1 ]] || deny "usage: clamav-filter <on|off|run|status>"
+    case "$1" in
+      on)
+        dpkg -s clamav-daemon >/dev/null 2>&1 || deny "ClamAV is not installed"
+        rm -f "$CLAMAV_FULL_DB_MARKER"
+        install_clamjuice || deny "clam-juice could not be installed"
+        clamav_filter_enable
+        clamav_filter_run_locked
+        ;;
+      off)
+        install -d -m 0755 "$opanel_DATA_DIR"
+        touch "$CLAMAV_FULL_DB_MARKER"
+        clamav_filter_disable
+        echo "clamd loads the full signature databases"
+        ;;
+      # opanel-clamav-filter.service
+      run)
+        [[ ! -f "$CLAMAV_FULL_DB_MARKER" ]] || { echo "Signature filter is off"; exit 0; }
+        clamav_filter_run_locked
+        ;;
+      status) clamav_filter_status ;;
+      *) deny "usage: clamav-filter <on|off|run|status>" ;;
+    esac
     ;;
 
   maldet-ensure)
@@ -7330,6 +7702,7 @@ PY
     ensure_lmd_monitor_layout
     ensure_ols_defaults_private
     ensure_firewall_restorable
+    ensure_clamav_filter
     # A subshell: a failed mail refresh must not stop the update's other steps.
     ( mail_refresh ) || echo "WARNING: the Email addon could not be refreshed" >&2
     ( dns_refresh ) || echo "WARNING: DNS Manager could not be refreshed" >&2

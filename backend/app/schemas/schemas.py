@@ -781,6 +781,11 @@ class MalwareScanStatus(BaseModel):
     engine: str = "ClamAV"
     lmd_installed: bool = False
     lmd_version: str = ""
+    # The clam-juice filter: "on" when clamd loads the filtered signatures,
+    # "pending" while the first filtered set is being built.
+    signature_filter: str = "off"
+    signatures_kept: int = 0
+    signatures_total: int = 0
     realtime_enabled: bool = False
     realtime_active: bool = False
     auto_quarantine: bool = True

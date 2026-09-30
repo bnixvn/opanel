@@ -8037,6 +8037,8 @@ function App() {
                 : mwInstalled && !mwEnabled ? <span className="badge">{tr("Installed — scanning disabled")}</span>
                 : <span className="badge">{tr("Not installed")}</span>}
               {mwInstalled && <span className="badge">{tr("Engine:")} {mw.engine || tr("ClamAV")}{mw.lmd_version ? tr(" (LMD {0})", mw.lmd_version) : ''}</span>}
+              {mwInstalled && mw.signature_filter === 'on' && mw.signatures_total > 0 && <span className="badge" title={tr("clam-juice keeps the signatures a Linux web server needs and drops Windows, macOS and Office malware, so clamd uses far less memory.")}>{tr("Signatures: {0} of {1} (clam-juice)", Number(mw.signatures_kept).toLocaleString(), Number(mw.signatures_total).toLocaleString())}</span>}
+              {mwInstalled && mw.signature_filter === 'pending' && <span className="badge">{tr("Filtering signatures...")}</span>}
               {mw.realtime_active && <span className="badge ok">{tr("Real-time on")}</span>}
             </p>
           </div>
