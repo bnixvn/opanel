@@ -5454,6 +5454,166 @@ print(f"{len(hosts)} relays written")
 PY
 }
 
+# Dovecot 2.4 (Ubuntu 26.04) has a new configuration language: it refuses a
+# file that does not start with dovecot_config_version, renamed most settings,
+# dropped plugin {} and replaced the %L/%n variables. 2.3 (Ubuntu 24.04) only
+# understands the old one, so the file is written for whichever is installed.
+mail_dovecot_is_24() {
+  local version
+  version="$(dovecot --version 2>/dev/null | awk '{print $1}')"
+  [[ -n "$version" ]] && dpkg --compare-versions "$version" ge 2.4
+}
+
+mail_dovecot_config_24() {
+  local host="$1" vmail_uid="$2" listen="$3" dh=""
+  if [[ -f /usr/share/dovecot/dh.pem ]]; then dh="ssl_server_dh_file = /usr/share/dovecot/dh.pem"; fi
+  cat <<DOVECOT
+dovecot_config_version = 2.4.0
+dovecot_storage_version = 2.4.0
+
+# Managed by OPanel (Email addon). Rewritten when the addon is installed or
+# updated; conf.d is not read. Dovecot 2.4 syntax.
+protocols = imap pop3 lmtp
+listen = ${listen}
+login_greeting = Mail server ready.
+
+mail_home = ${MAIL_VMAIL_DIR}/%{user | domain | lower}/%{user | username | lower}
+mail_driver = maildir
+mail_path = ~/Maildir
+mail_uid = vmail
+mail_gid = vmail
+first_valid_uid = ${vmail_uid}
+last_valid_uid = ${vmail_uid}
+mail_privileged_group = mail
+
+ssl = yes
+ssl_server_cert_file = ${MAIL_DIR}/tls/fullchain.pem
+ssl_server_key_file = ${MAIL_DIR}/tls/privkey.pem
+ssl_min_protocol = TLSv1.2
+ssl_server_prefer_ciphers = server
+${dh}
+
+# Passwords only inside TLS -- loopback, where the webmail connects, counts as
+# secure.
+auth_allow_cleartext = no
+auth_mechanisms = plain login
+auth_username_format = %{user | lower}
+auth_master_user_separator = *
+
+# The webmail's single sign-on: "mailbox*${MAIL_SSO_MASTER}" with the master
+# password, accepted from loopback only (allow_nets in the file).
+# result_success = continue (2.3's pass = yes) still looks the mailbox up
+# below, so a suspended one stays shut.
+passdb master {
+  driver = passwd-file
+  passwd_file_path = ${MAIL_DIR}/master-users
+  master = yes
+  result_success = continue
+}
+# Suspended mailboxes: listed here, refused before any password is checked.
+passdb denied {
+  driver = passwd-file
+  passwd_file_path = ${MAIL_DIR}/denied
+  deny = yes
+}
+passdb mailboxes {
+  driver = passwd-file
+  passwd_file_path = ${MAIL_DIR}/passwd
+}
+userdb mailboxes {
+  driver = passwd-file
+  passwd_file_path = ${MAIL_DIR}/passwd
+}
+
+namespace inbox {
+  inbox = yes
+  mailbox Drafts {
+    auto = subscribe
+    special_use = \Drafts
+  }
+  mailbox Sent {
+    auto = subscribe
+    special_use = \Sent
+  }
+  mailbox Junk {
+    auto = subscribe
+    special_use = \Junk
+  }
+  mailbox Trash {
+    auto = subscribe
+    special_use = \Trash
+  }
+}
+
+mail_plugins {
+  quota = yes
+}
+protocol imap {
+  mail_plugins {
+    imap_quota = yes
+  }
+  mail_max_userip_connections = 50
+}
+protocol lmtp {
+  mail_plugins {
+    sieve = yes
+  }
+  postmaster_address = postmaster@${host}
+}
+lmtp_rcpt_check_quota = yes
+
+# Each mailbox's limit comes from its userdb_quota_storage_size field.
+quota "User quota" {
+  driver = count
+}
+quota_storage_grace = 10M
+quota_exceeded_message = The mailbox is full.
+
+sieve_script spam {
+  type = before
+  path = ${MAIL_DIR}/sieve/spam.sieve
+}
+sieve_script personal {
+  driver = file
+  path = ~/sieve
+  active_path = ~/.dovecot.sieve
+}
+
+service lmtp {
+  unix_listener exim-lmtp {
+    mode = 0660
+    user = Debian-exim
+    group = Debian-exim
+  }
+}
+service auth {
+  unix_listener exim-auth {
+    mode = 0660
+    user = Debian-exim
+    group = Debian-exim
+  }
+}
+service imap-login {
+  inet_listener imap {
+    port = 143
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+service pop3-login {
+  inet_listener pop3 {
+    port = 110
+  }
+  inet_listener pop3s {
+    port = 995
+    ssl = yes
+  }
+}
+DOVECOT
+}
+
 mail_write_dovecot_config() {
   local host vmail_uid listen="*" dh="" target="/etc/dovecot/dovecot.conf" check
   host="$(mail_hostname)"
@@ -5461,6 +5621,14 @@ mail_write_dovecot_config() {
   if [[ -f /proc/net/if_inet6 ]]; then listen="*, ::"; fi
   if [[ -f /usr/share/dovecot/dh.pem ]]; then dh="ssl_dh = </usr/share/dovecot/dh.pem"; fi
   install -d -o root -g root -m 0755 /etc/dovecot
+  if mail_dovecot_is_24; then
+    mail_dovecot_config_24 "$host" "$vmail_uid" "$listen" >"${target}.new"
+    # A box upgraded from 24.04 still has 2.3's quota field in the passwd
+    # file, which mail-sync only rewrites when a mailbox changes.
+    if [[ -f "${MAIL_DIR}/passwd" ]] && grep -q 'userdb_quota_rule=' "${MAIL_DIR}/passwd"; then
+      sed -i 's/userdb_quota_rule=\*:storage=\([0-9]*M\)/userdb_quota_storage_size=\1/g' "${MAIL_DIR}/passwd"
+    fi
+  else
   cat >"${target}.new" <<DOVECOT
 # Managed by OPanel (Email addon). Rewritten when the addon is installed or
 # updated; conf.d is not read.
@@ -5587,6 +5755,7 @@ service pop3-login {
   }
 }
 DOVECOT
+  fi
   chmod 0644 "${target}.new"
   if ! check="$(doveconf -n -c "${target}.new" 2>&1 >/dev/null)"; then
     rm -f "${target}.new"
@@ -5966,7 +6135,9 @@ mail_sync_from_stdin() {
   payload="$(mktemp "${MAIL_DIR}/.sync.XXXXXX")"
   chmod 0600 "$payload"
   cat >"$payload"
-  python3 - "$MAIL_DIR" "$payload" <<'PY' || rc=$?
+  local dovecot_syntax=2.3
+  if mail_dovecot_is_24; then dovecot_syntax=2.4; fi
+  python3 - "$MAIL_DIR" "$payload" "$dovecot_syntax" <<'PY' || rc=$?
 import grp
 import json
 import os
@@ -5976,6 +6147,7 @@ from pathlib import Path
 
 mail_dir = Path(sys.argv[1])
 payload_path = Path(sys.argv[2])
+dovecot_24 = len(sys.argv) > 3 and sys.argv[3] == "2.4"
 DOMAIN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 LOCAL = re.compile(r"^[a-z0-9](?:[a-z0-9._+-]{0,62}[a-z0-9_+-])?$")
 REMOTE = re.compile(r"^[A-Za-z0-9._%+=-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
@@ -6045,7 +6217,8 @@ for item in data.get("mailboxes") or []:
         fail(f"invalid quota for {addr}")
     extra = []
     if quota:
-        extra.append(f"userdb_quota_rule=*:storage={quota}M")
+        # Dovecot 2.4 renamed the per-user limit (see mail_dovecot_config_24).
+        extra.append(f"userdb_quota_storage_size={quota}M" if dovecot_24 else f"userdb_quota_rule=*:storage={quota}M")
     if not item.get("enabled", True):
         denied.append(f"{addr}:")
     mailboxes[addr] = True
