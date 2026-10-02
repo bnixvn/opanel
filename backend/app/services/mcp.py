@@ -1009,7 +1009,8 @@ def _check_arguments(tool: Tool, args: Any) -> dict:
 
 
 def _result(data: Any, is_error: bool = False) -> dict:
-    text = data if isinstance(data, str) else json.dumps(data, indent=2, default=str, ensure_ascii=False)
+    # ASCII with \u escapes, like the reply around it (api/mcp.py McpJSONResponse).
+    text = data if isinstance(data, str) else json.dumps(data, indent=2, default=str, ensure_ascii=True)
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 

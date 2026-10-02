@@ -248,6 +248,22 @@ def test_an_action_runs_as_the_token_owner_and_is_audited(env, monkeypatch):
     assert audit.target == "set_website_waf" and audit.user_id == env.alice.id
 
 
+def test_the_reply_reads_the_same_whatever_charset_the_client_assumes(env, monkeypatch):
+    # A client on BPanel decoded the raw UTF-8 reply as Latin-1 and wrote a
+    # file back with its Vietnamese mangled (2026-10-02).
+    from app.api import websites as websites_api
+
+    monkeypatch.setattr(websites_api, "set_website_waf",
+                        lambda **kwargs: SimpleNamespace(domain="Máy chủ Việt Nam", waf_enabled=False))
+    response = rpc(env, env.token(env.alice, can_write=True), "tools/call",
+                   {"name": "set_website_waf", "arguments": {"domain": "alice.test", "enabled": False}})
+    assert response.headers["content-type"] == "application/json; charset=utf-8"
+    assert max(response.content) < 0x80
+    for charset in ("utf-8", "latin-1", "cp1252"):
+        reply = json.loads(response.content.decode(charset))
+        assert payload(reply)["domain"] == "Máy chủ Việt Nam"
+
+
 def test_a_failing_tool_is_an_error_result_not_a_500(env, monkeypatch):
     from app.api import websites as websites_api
 

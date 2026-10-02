@@ -34,6 +34,23 @@ def _enabled() -> bool:
 # ---------------------------------------------------------------------------
 # The protocol endpoint
 # ---------------------------------------------------------------------------
+class McpJSONResponse(JSONResponse):
+    """JSON in plain ASCII, with the charset said out loud.
+
+    Starlette sends raw UTF-8 under a bare "application/json". That is correct
+    - JSON is UTF-8 by definition - but a customer's MCP client on BPanel read
+    it as Latin-1: "Máy chủ" reached the assistant as "MÃ¡y chá»§", and a file
+    it then wrote back had every Vietnamese string mangled the same way
+    (2026-10-02). With \\u escapes there is no byte above 0x7f left to misread.
+    """
+
+    media_type = "application/json; charset=utf-8"
+
+    def render(self, content) -> bytes:
+        return json.dumps(content, ensure_ascii=True, allow_nan=False,
+                          separators=(",", ":")).encode("ascii")
+
+
 def _unauthorized(message: str) -> JSONResponse:
     return JSONResponse(status_code=401, content={"detail": message},
                         headers={"WWW-Authenticate": 'Bearer realm="opanel-mcp"'})
@@ -74,7 +91,7 @@ async def mcp_endpoint(request: Request, db: Session = Depends(get_db)):
     try:
         body = json.loads(await request.body() or b"null")
     except (ValueError, UnicodeDecodeError):
-        return JSONResponse(status_code=400, content=mcp._error(None, mcp.PARSE_ERROR, "Invalid JSON"))
+        return McpJSONResponse(status_code=400, content=mcp._error(None, mcp.PARSE_ERROR, "Invalid JSON"))
 
     found = await run_in_threadpool(mcp.authenticate, db, raw_token.strip())
     if found is None:
@@ -87,7 +104,7 @@ async def mcp_endpoint(request: Request, db: Session = Depends(get_db)):
     if reply is None or reply == []:
         # Only notifications or responses came in: accepted, nothing to say.
         return Response(status_code=202)
-    return JSONResponse(content=reply)
+    return McpJSONResponse(content=reply)
 
 
 @router.get("")
