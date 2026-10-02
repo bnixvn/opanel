@@ -5936,9 +5936,13 @@ mail_webmail_install() {
   chown -R root:root "$src"
   # A venv belongs to the Python that made it. After do-release-upgrade to
   # 26.04 (3.12 -> 3.14) its packages sit where the new Python never looks.
-  local pyver venv_pyver
+  # On a first install there is no venv, and sed failing on the missing
+  # pyvenv.cfg must not end the helper (pipefail + set -e).
+  local pyver venv_pyver=""
   pyver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-  venv_pyver="$(sed -n 's/^version\(_info\)\{0,1\} *= *\([0-9]*\.[0-9]*\).*/\2/p' "${venv}/pyvenv.cfg" 2>/dev/null | head -n1)"
+  if [[ -f "${venv}/pyvenv.cfg" ]]; then
+    venv_pyver="$(sed -n 's/^version\(_info\)\{0,1\} *= *\([0-9]*\.[0-9]*\).*/\2/p' "${venv}/pyvenv.cfg" | head -n1)"
+  fi
   if [[ -x "${venv}/bin/python" && "$venv_pyver" != "$pyver" ]]; then
     rm -rf "$venv"
   fi
