@@ -2,6 +2,9 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
+import ctypes
+import ctypes.util
+
 try:
     import crypt as unix_crypt
 except ImportError:  # pragma: no cover - crypt is Unix-only and removed in Python 3.13
@@ -42,12 +45,42 @@ def is_shadow_password_hash(hashed_password: str) -> bool:
     return bool(hashed_password) and hashed_password.startswith(SHADOW_HASH_PREFIXES)
 
 
+# libxcrypt's crypt_rn: the library the crypt module wrapped. Python 3.13
+# removed that module, and Ubuntu 26.04 ships Python 3.14, so without this a
+# root-synced admin password ($y$ yescrypt from /etc/shadow) could not log in.
+CRYPT_DATA_SIZE = 32768  # sizeof(struct crypt_data) in libxcrypt
+
+
+def _load_crypt_rn():
+    try:
+        library = ctypes.CDLL(ctypes.util.find_library("crypt") or "libcrypt.so.1")
+        crypt_rn = library.crypt_rn
+    except (OSError, AttributeError):
+        return None
+    crypt_rn.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_int]
+    crypt_rn.restype = ctypes.c_char_p
+    return crypt_rn
+
+
+_crypt_rn = _load_crypt_rn()
+
+
+def _crypt(password: str, setting: str) -> Optional[str]:
+    if unix_crypt is not None:
+        return unix_crypt.crypt(password, setting)
+    if _crypt_rn is None:
+        return None
+    data = ctypes.create_string_buffer(CRYPT_DATA_SIZE)
+    result = _crypt_rn(password.encode("utf-8"), setting.encode("utf-8"), data, CRYPT_DATA_SIZE)
+    return result.decode("utf-8") if result else None
+
+
 def verify_shadow_password(password: str, hashed_password: str) -> bool:
-    if unix_crypt is None or not is_shadow_password_hash(hashed_password):
+    if not is_shadow_password_hash(hashed_password):
         return False
     try:
-        candidate = unix_crypt.crypt(password, hashed_password)
-    except (OSError, ValueError, TypeError):
+        candidate = _crypt(password, hashed_password)
+    except (OSError, ValueError, TypeError, UnicodeError):
         return False
     return bool(candidate) and secrets.compare_digest(candidate, hashed_password)
 

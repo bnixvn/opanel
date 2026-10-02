@@ -14,8 +14,11 @@
 #   `installer/install.sh` enforces those perms; do not loosen them.
 # - Adding a new subcommand requires editing only opanel-helper.sh; this
 #   sudoers file does not need to enumerate subcommands.
+# - Only settings both sudo implementations know. Ubuntu 26.04's default sudo
+#   is sudo-rs, which has no `requiretty`: a `!requiretty` line here made its
+#   visudo reject the file (aborting install and update) and every sudo call
+#   print an error. Neither sudo requires a tty on Ubuntu by default.
 
-Defaults:opanel !requiretty
 Defaults:opanel env_reset
 Defaults:opanel secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 

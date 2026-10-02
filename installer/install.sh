@@ -12,8 +12,8 @@ if [[ ! -f /etc/os-release ]]; then
 fi
 
 source /etc/os-release
-if [[ "${ID}" != "ubuntu" || "${VERSION_ID}" != "24.04" ]]; then
-  echo "This installer only supports Ubuntu 24.04"
+if [[ "${ID}" != "ubuntu" || ( "${VERSION_ID}" != "24.04" && "${VERSION_ID}" != "26.04" ) ]]; then
+  echo "This installer only supports Ubuntu 24.04 and 26.04"
   echo "Current OS: ${PRETTY_NAME:-unknown}"
   exit 1
 fi

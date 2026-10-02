@@ -5765,6 +5765,14 @@ mail_webmail_install() {
   fi
   [[ "$(git -C "$src" rev-parse HEAD)" == "$MAIL_WEBMAIL_COMMIT" ]] || deny "the webmail checkout does not match the pinned version"
   chown -R root:root "$src"
+  # A venv belongs to the Python that made it. After do-release-upgrade to
+  # 26.04 (3.12 -> 3.14) its packages sit where the new Python never looks.
+  local pyver venv_pyver
+  pyver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+  venv_pyver="$(sed -n 's/^version\(_info\)\{0,1\} *= *\([0-9]*\.[0-9]*\).*/\2/p' "${venv}/pyvenv.cfg" 2>/dev/null | head -n1)"
+  if [[ -x "${venv}/bin/python" && "$venv_pyver" != "$pyver" ]]; then
+    rm -rf "$venv"
+  fi
   if [[ ! -x "${venv}/bin/python" ]]; then
     python3 -m venv "$venv" || deny "could not create the webmail's Python environment"
   fi

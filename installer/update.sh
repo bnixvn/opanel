@@ -1162,14 +1162,27 @@ log "Configuring legacy FastCGI cache compatibility"
 configure_fastcgi_cache
 ensure_terminal_tools
 ensure_dns_ssl_plugin
+# A venv belongs to the Python minor version that made it. do-release-upgrade
+# to 26.04 moves python3 from 3.12 to 3.14: the venv still has uvicorn and the
+# right paths, but its packages sit in lib/python3.12, where 3.14 never looks,
+# and the API cannot import anything.
+venv_python_mismatch() {
+  local cfg="$1/pyvenv.cfg" want have
+  [[ -f "$cfg" ]] || return 0
+  want="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')" || return 1
+  have="$(sed -n 's/^version\(_info\)\{0,1\} *= *\([0-9]*\.[0-9]*\).*/\2/p' "$cfg" | head -n1)"
+  [[ "$have" != "$want" ]]
+}
 venv_needs_recreate=false
 if [[ ! -x "$APP_DIR/backend/.venv/bin/uvicorn" ]]; then
   venv_needs_recreate=true
 elif ! head -n1 "$APP_DIR/backend/.venv/bin/uvicorn" 2>/dev/null | grep -Fq "$APP_DIR/backend/.venv"; then
   venv_needs_recreate=true
+elif venv_python_mismatch "$APP_DIR/backend/.venv"; then
+  venv_needs_recreate=true
 fi
 if [[ "$venv_needs_recreate" == "true" ]]; then
-  log "Recreating Python virtualenv (missing or stale path)"
+  log "Recreating Python virtualenv (missing, stale path or another Python version)"
   rm -rf "$APP_DIR/backend/.venv"
   python3 -m venv "$APP_DIR/backend/.venv"
 fi
