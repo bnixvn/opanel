@@ -39,6 +39,8 @@ READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 # POSTs that only read, or end the visitor's own session.
 READ_ONLY_POSTS = {
     "/api/auth/logout",
+    # An admin logged in as a demo account going back to their own session.
+    "/api/auth/impersonation/return",
     "/api/maintenance/user-restore-backups/describe",
     # Listing is allowed for this server only; the route refuses another
     # server or a destination for a demo session (see is_demo_request).

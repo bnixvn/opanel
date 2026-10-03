@@ -18,10 +18,10 @@ from redis import Redis
 from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_current_user_optional
+from app.api.deps import _user_from_token, get_current_user, get_current_user_optional
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.permissions import Role, ensure_role
+from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.security import create_access_token, hash_password, needs_rehash, verify_password
 from app.core.secrets import decrypt, encrypt
 from app.core.step_up import require_current_password, require_sensitive_action_step_up, verify_totp
@@ -57,6 +57,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # (double-submit cookie pattern).
 SESSION_COOKIE = "opanel_session"
 CSRF_COOKIE = "opanel_csrf"
+# While an admin is logged in as someone else, their own session waits here so
+# "Back to admin" can restore it without a new login. HttpOnly, and sent only
+# to /api/auth: nothing else ever sees it.
+IMPERSONATOR_COOKIE = "opanel_impersonator"
+IMPERSONATOR_COOKIE_PATH = "/api/auth"
 CSRF_HEADER = "X-CSRF-Token"
 
 
@@ -157,6 +162,7 @@ def _set_session_cookies(response: Response, request: Request, token: str) -> st
 def _clear_session_cookies(response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE, path="/")
     response.delete_cookie(CSRF_COOKIE, path="/")
+    response.delete_cookie(IMPERSONATOR_COOKIE, path=IMPERSONATOR_COOKIE_PATH)
 
 
 def _rate_limit_backend() -> str:
@@ -368,11 +374,31 @@ def _notify_lockout(request: Request, username: str) -> None:
     notifications.notify_admin("login_lockout", {"ip": _client_key(request), "username": _safe_log_name(username)})
 
 
-def _issue_login_session(response: Response, request: Request, user: User) -> str:
+def _issue_login_session(response: Response, request: Request, user: User,
+                         impersonator: Optional[str] = None) -> str:
     token_extra = {"role": user.role, "tv": user.token_version or 0}
+    if impersonator:
+        # Who is really behind this session: the panel shows "Back to admin"
+        # and the return path checks it against the saved session.
+        token_extra["imp"] = impersonator
     token = create_access_token(user.username, token_extra)
     _set_session_cookies(response, request, token)
+    if not impersonator:
+        # A normal login ends any impersonation that was left half done.
+        response.delete_cookie(IMPERSONATOR_COOKIE, path=IMPERSONATOR_COOKIE_PATH)
     return token
+
+
+def _set_impersonator_cookie(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        IMPERSONATOR_COOKIE,
+        token,
+        max_age=settings.access_token_expire_minutes * 60,
+        httponly=True,
+        secure=_is_secure_request(request),
+        samesite="strict",
+        path=IMPERSONATOR_COOKIE_PATH,
+    )
 
 
 def _jwt_expiry_from_payload(payload: dict) -> datetime:
@@ -543,16 +569,27 @@ def logout(
 
     The current JWT's jti is stored server-side, and bumping token_version
     forces all other devices/tabs holding a JWT for this user to re-authenticate.
+
+    Not while an admin is logged in as this user: that would sign the real
+    customer out of every device of theirs. Only the borrowed session ends.
     """
     _revoke_request_token(db, request, current_user)
-    current_user.token_version = (current_user.token_version or 0) + 1
+    if not _impersonator(request):
+        current_user.token_version = (current_user.token_version or 0) + 1
     db.commit()
     _clear_session_cookies(response)
     return {"ok": True}
 
 
+def _impersonator(request: Request) -> str:
+    """The admin behind this session, when it is a "Login as" session."""
+    payload = getattr(request.state, "jwt_payload", {}) or {}
+    return str(payload.get("imp") or "")
+
+
 @router.get("/session")
 def session_status(
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
@@ -573,9 +610,59 @@ def session_status(
         "totp_enabled": current_user.totp_enabled,
         # Read-only demo account: the panel shows a banner and hides nothing.
         "demo": demo_mode.is_demo_account(current_user),
+        # Set while an admin is logged in as this user: the panel offers the
+        # way back.
+        "impersonator": _impersonator(request) or None,
     }
     user_data.update(storage_quota.storage_usage_summary(db, current_user))
     return {"authenticated": True, "user": user_data}
+
+
+@router.post("/impersonation/return", response_model=LoginResponse)
+def return_from_impersonation(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """End a "Login as" session and give the admin their own session back.
+
+    The admin's session was put aside when the impersonation started. It is
+    taken back only if it is still valid - unexpired, not revoked, the same
+    account the impersonation names, and still an admin; otherwise the admin
+    logs in again, as before this existed. The borrowed session is revoked,
+    and the customer's own sessions are left alone.
+    """
+    impersonator = _impersonator(request)
+    saved = request.cookies.get(IMPERSONATOR_COOKIE, "")
+    if not impersonator:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This session is not a Login as session")
+    try:
+        actor, actor_payload = _user_from_token(saved, db) if saved else (None, {})
+    except HTTPException:
+        actor, actor_payload = None, {}
+    if (actor is None or actor.username != impersonator or actor_payload.get("imp")
+            or not actor.is_active or not is_admin_role(actor.role)):
+        _revoke_request_token(db, request, current_user)
+        db.commit()
+        _clear_session_cookies(response)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Your own session has expired. Log in again.")
+
+    _revoke_request_token(db, request, current_user)
+    db.commit()
+    log_action(
+        db,
+        actor.id,
+        "auth.impersonate_return",
+        current_user.username,
+        detail=f"target_user_id={current_user.id}",
+        request=request,
+    )
+    _set_session_cookies(response, request, saved)
+    response.delete_cookie(IMPERSONATOR_COOKIE, path=IMPERSONATOR_COOKIE_PATH)
+    return LoginResponse(access_token=saved)
 
 
 @router.post("/impersonate/{user_id}", response_model=LoginResponse)
@@ -595,6 +682,10 @@ def impersonate_user(
     impersonation with the actor and target identities.
     """
     ensure_role(current_user.role, Role.admin)
+    if _impersonator(request):
+        # One level only: the way back restores one saved session.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Go back to your own account before logging in as someone else.")
 
     # Rate-limit impersonation attempts to prevent enumeration of user IDs.
     _enforce_rate_limit(_client_key(request))
@@ -633,7 +724,10 @@ def impersonate_user(
         detail=f"target_user_id={target_user.id} target_role={target_user.role}",
         request=request,
     )
-    token = _issue_login_session(response, request, target_user)
+    own_session = getattr(request.state, "jwt_token", "") or ""
+    token = _issue_login_session(response, request, target_user, impersonator=current_user.username)
+    if own_session:
+        _set_impersonator_cookie(response, request, own_session)
     return LoginResponse(access_token=token)
 
 

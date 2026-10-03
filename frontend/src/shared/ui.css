@@ -627,6 +627,9 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .demo-login-row button{flex:none;height:32px;min-height:32px;padding:0 12px}
 .demo-banner{display:flex;align-items:center;gap:8px;margin:0 0 14px;padding:10px 14px;border:1px solid var(--primary-soft);background:var(--primary-light);color:var(--text);border-radius:var(--radius-md);font-size:13px;font-weight:600}
 .demo-banner svg{flex:none;color:var(--primary-ink)}
+.impersonation-banner{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 14px;padding:10px 14px;border:1px solid var(--primary-soft);background:var(--primary-light);color:var(--text);border-radius:var(--radius-md);font-size:13px;font-weight:600}
+.impersonation-banner svg{flex:none;color:var(--primary-ink)}
+.impersonation-banner span{flex:1;min-width:180px}
 .demo-settings{display:grid;gap:10px}
 /* An addon card is narrow: the account on its own line, the password and its
    buttons under it. */

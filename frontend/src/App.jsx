@@ -1386,6 +1386,20 @@ function App() {
     }
   }
 
+  // Ends a "Login as" session and restores the admin's own one, which the
+  // server kept aside: no second login.
+  async function returnToImpersonator() {
+    const admin = currentUser?.impersonator;
+    if (!admin) return;
+    const data = await request('/auth/impersonation/return', { method: 'POST' }, tr("Going back to {0}...", admin));
+    if (data?.access_token) {
+      setNotice(tr("Back to {0}.", admin));
+      await loadCurrentUser();
+      navigateToPage('users');
+      await refreshAll();
+    }
+  }
+
   async function changeMyPassword() { if (!currentUser) return; await changeUserPassword(currentUser); }
 
   // --- API Tokens ---
@@ -8709,6 +8723,7 @@ function App() {
                 </div>
                 <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); openProfileModal(); }}><KeyRound size={15}/>{tr("Profile")}</button>
                 <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); navigateToPage('security'); }}><LockKeyhole size={15}/>{tr("Account security")}</button>
+                {currentUser?.impersonator && <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); returnToImpersonator(); }}><ArrowLeft size={15}/>{tr("Back to {0}", currentUser.impersonator)}</button>}
                 <button type="button" role="menuitem" className="user-menu-logout" onClick={() => { setUserMenuOpen(false); logout(); }}><LogOut size={15}/>{tr("Logout")}</button>
               </div>}
             </div>
@@ -8716,6 +8731,10 @@ function App() {
         </section>
         <div className="content-body">
           {currentUser?.demo && <div className="demo-banner" role="status"><Eye size={15}/> <span>{tr("You are viewing a read-only demo: you can open every page, and nothing you change is saved.")}</span></div>}
+          {currentUser?.impersonator && <div className="impersonation-banner" role="status">
+            <LogIn size={15}/> <span>{tr("You are logged in as {0}.", currentUser.username)}</span>
+            <button type="button" className="mini" disabled={!!loading} onClick={returnToImpersonator}><ArrowLeft size={14}/> {tr("Back to {0}", currentUser.impersonator)}</button>
+          </div>}
           {renderPage()}
           {loading && <div className="loading"><span></span>{loading}</div>}
         </div>
