@@ -99,6 +99,7 @@ CONTEXTS = {
     "service_status": {"service": "mariadb", "state": "down", "when": "x"},
     "disk_low": {"percent": 92, "free_gb": 8.1},
     "storage_quota": {"percent": 100, "used": "10.0 GB", "limit": "10.0 GB", "username": "alice"},
+    "resource_limit": {"username": "alice", "count": 3, "memory": 512},
     "update_available": {"current": "1.20.0", "latest": "1.21.0"},
     "update_result": {"status": "failed", "version": "1.20.0", "when": "x", "message": "npm ci failed"},
     "login_lockout": {"ip": "203.0.113.9", "username": "root"},
@@ -117,7 +118,7 @@ def test_every_event_renders_in_both_languages(env, event, lang):
     assert subject.startswith("[OPanel panel.example.net] ")
     assert body and "panel.example.net" in body and len(subject) <= 250
     fact = {"backup_failed": "S3 unreachable", "malware_found": "shop.vn", "ssl_expiring": "shop.vn",
-            "service_status": "mariadb", "disk_low": "92", "storage_quota": "10.0 GB", "update_available": "1.21.0",
+            "service_status": "mariadb", "disk_low": "92", "storage_quota": "10.0 GB", "resource_limit": "512 MB", "update_available": "1.21.0",
             "update_result": "npm ci failed", "login_lockout": "203.0.113.9", "da_import_done": "30 accounts",
             "login_new_ip": "198.51.100.4", "account_security": "198.51.100.4", "backup_job": "disk full",
             "account_status": "Overdue invoice"}[event]

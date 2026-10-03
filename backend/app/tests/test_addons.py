@@ -96,7 +96,7 @@ def test_the_id_is_all_that_crosses_the_boundary(calls):
 # --------------------------------------------------------------------------
 def test_the_helper_validates_the_id_itself():
     assert "require_addon_id()" in HELPER
-    assert 'ADDON_IDS=("fail2ban" "mail" "dns")' in HELPER, (
+    assert 'ADDON_IDS=("fail2ban" "mail" "dns" "limits")' in HELPER, (
         "the helper must not take the panel's word for which addons exist"
     )
 

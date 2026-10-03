@@ -231,6 +231,38 @@ ADDONS: dict[str, dict] = {
             "history and quarantined files are kept.",
         ],
     },
+    "limits": {
+        "id": "limits",
+        "name": "Resource limits",
+        "summary": "CPU, memory, processes and disk I/O limits for each hosting account.",
+        "description": (
+            "Gives every hosting account its own share of the server, the way "
+            "CloudLinux does but with what Ubuntu's kernel already has (cgroup "
+            "v2). Set CPU (100% = one core), memory, the number of processes "
+            "and disk read/write speed on a package or an account; one busy "
+            "website then slows down or fails on its own instead of taking the "
+            "whole server with it. A reseller gets a cap on its whole group "
+            "and sets each customer's limits within it. Every account's "
+            "current use is shown next to its limits."
+        ),
+        "category": "hosting",
+        "version": "1",
+        "packages": [],
+        "service": "opanel-limits",
+        "features": ["resource_limits"],
+        "notes": [
+            "Needs cgroup v2: Ubuntu 22.04 or later, on a virtual machine or a "
+            "dedicated server. A container (LXC, OpenVZ) cannot run it.",
+            "Limits cover the account's PHP, cron jobs, SFTP and the panel's "
+            "work on its files. Database queries run inside MariaDB and are "
+            "not counted against the account.",
+            "0 means unlimited, and every account starts unlimited: nothing "
+            "changes until you set a limit.",
+            "A process over its memory limit is stopped, which shows as an "
+            "error on that website only. Set memory with some room to spare.",
+            "Stopping or removing the addon lifts every limit at once.",
+        ],
+    },
     "notifications": {
         "id": "notifications",
         "name": "Notifications",
@@ -468,6 +500,12 @@ def catalog() -> list[dict]:
 # ---------------------------------------------------------------------------
 def _run_addon_command(command: str, addon_id: str) -> str:
     _require_known(addon_id)
+    if addon_id == "limits" and command in {"addon-install", "addon-enable"}:
+        # The agent comes from the panel's own tree, which the panel user can
+        # write; the helper installs it only if it matches the hash it ships.
+        from app.services import resource_limits
+
+        resource_limits.install_agent()
     result = shell.privileged(command, helper_args=[addon_id], check=False)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or f"{command} failed").strip())
@@ -521,6 +559,14 @@ def _after_lifecycle(addon_id: str, action: str) -> None:
                 db.close()
         except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
             _update_state(addon_id, last_error=f"Installed, but the zones could not all be made: {exc}")
+        return
+    if addon_id == "limits" and action == "install":
+        try:
+            from app.services import resource_limits
+
+            resource_limits.sync_quietly()
+        except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
+            _update_state(addon_id, last_error=f"Installed, but the accounts could not be added: {exc}")
         return
     if addon_id != "mail":
         return

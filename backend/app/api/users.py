@@ -12,6 +12,8 @@ from app.core.security import hash_password
 from app.core.step_up import require_sensitive_action_step_up
 from app.models.entities import AuditLog, BackupSchedule, DatabaseAccount, HostingPlan, McpToken, User, Website, WebsiteAlias
 from app.schemas.schemas import (
+    GROUP_LIMIT_FIELDS,
+    RESOURCE_LIMIT_FIELDS,
     AuditLogOut,
     UserCreate,
     UserOut,
@@ -20,7 +22,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import dns_manager, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, sftp_accounts, site_users, ssl, storage_quota, wordpress
+from app.services import dns_manager, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, resource_limits, sftp_accounts, site_users, ssl, storage_quota, wordpress
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -146,6 +148,11 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    # Resource limits: the account's own from whoever creates it; a group cap
+    # only on a reseller, and only from the administrator.
+    resources = {field: getattr(payload, field) for field in RESOURCE_LIMIT_FIELDS}
+    groups = {field: (getattr(payload, field) if role == "reseller" and is_admin_role(current_user.role) else 0)
+              for field in GROUP_LIMIT_FIELDS}
     user = User(
         username=payload.username,
         email=payload.email,
@@ -154,11 +161,14 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         reseller_id=reseller_id,
         **limits,
         **pools,
+        **resources,
+        **groups,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
     log_action(db, current_user.id, "create_user", user.username, request=request)
+    resource_limits.sync_in_background()
     return _user_out(user, db)
 
 
@@ -249,6 +259,8 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         if payload.role is not None or payload.reseller_id is not None or any(
                 getattr(payload, field) is not None for field in reseller_pool.SETTINGS):
             raise HTTPException(status_code=403, detail="Only the administrator can change roles or resellers")
+        if any(getattr(payload, field) is not None for field in GROUP_LIMIT_FIELDS):
+            raise HTTPException(status_code=403, detail="A reseller's group limits are set by the administrator")
 
     limit_changes = {field: getattr(payload, field) for field in ACCOUNT_LIMIT_FIELDS
                      if getattr(payload, field) is not None}
@@ -296,6 +308,16 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
             user.token_version = (user.token_version or 0) + 1
     for field, value in limit_changes.items():
         setattr(user, field, value)
+    for field in RESOURCE_LIMIT_FIELDS:
+        if getattr(payload, field) is not None:
+            setattr(user, field, getattr(payload, field))
+    if new_role == "reseller":
+        for field in GROUP_LIMIT_FIELDS:
+            if getattr(payload, field) is not None:
+                setattr(user, field, getattr(payload, field))
+    else:
+        for field in GROUP_LIMIT_FIELDS:
+            setattr(user, field, 0)
 
     if role_changed:
         # New role -> existing tokens with old role claim should be invalidated.
@@ -304,6 +326,8 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
     db.commit()
     db.refresh(user)
     log_action(db, current_user.id, "update_user", user.username, request=request)
+    # Its limits, its reseller or its role may have moved its slice.
+    resource_limits.sync_in_background()
     return _user_out(user, db)
 
 
@@ -342,6 +366,7 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
     db.delete(user)
     db.commit()
     log_action(db, current_user.id, "delete_user", username, ",".join(deleted_domains), request=request)
+    resource_limits.sync_in_background()
     return {"ok": True, "deleted_websites": deleted_domains}
 
 

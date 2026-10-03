@@ -67,6 +67,7 @@ EVENTS: dict[str, dict] = {
     "service_status": {"admin": True, "user": False},
     "disk_low": {"admin": True, "user": False},
     "storage_quota": {"admin": True, "user": False},
+    "resource_limit": {"admin": True, "user": False},
     "update_available": {"admin": True, "user": False},
     "update_result": {"admin": True, "user": False},
     "login_lockout": {"admin": True, "user": False},
@@ -358,6 +359,16 @@ def render(event: str, ctx: dict, lang: str = "vi") -> tuple[str, str]:
                  + (" Upload file, backup và cập nhật website sẽ bị từ chối." if full else "")) if vi
                 else (f"Account {c['username']} uses {c['used']} of {c['limit']} ({c['percent']}%)."
                       + (" Uploads, backups and website updates will be refused." if full else "")))
+    elif event == "resource_limit":
+        limit = f"{c['memory']} MB" if c.get("memory") else ("không giới hạn" if vi else "unlimited")
+        subject = (f"Tài khoản {c['username']} chạm giới hạn RAM" if vi
+                   else f"Account {c['username']} hit its memory limit")
+        body = ((f"{c['count']} tiến trình của tài khoản {c['username']} bị dừng vì vượt giới hạn RAM ({limit}) "
+                 "trong 10 phút qua. Website của tài khoản đó có thể đã báo lỗi.\n\n"
+                 "Tăng RAM của tài khoản hoặc kiểm tra website nào đang dùng nhiều bộ nhớ.") if vi
+                else (f"{c['count']} process(es) of account {c['username']} were stopped for going over its memory "
+                      f"limit ({limit}) in the last 10 minutes. Its websites may have shown errors.\n\n"
+                      "Raise the account's memory or find the website using it."))
     elif event == "update_available":
         subject = (f"Có bản OPanel {c['latest']}" if vi else f"OPanel {c['latest']} is available")
         body = (f"Máy chủ đang chạy {c['current']}. Bản {c['latest']} đã phát hành; cập nhật trong trang Cập nhật." if vi
@@ -1024,6 +1035,37 @@ def check_storage(state: dict) -> None:
         db.close()
 
 
+def check_resource_limits(state: dict) -> None:
+    """Resource limits addon: tell the administrators when an account's
+    processes were stopped for going over its memory limit. The agent keeps
+    the kernel's running count per slice; a rise since the last check is news."""
+    from app.core.permissions import is_admin_role
+    from app.services import resource_limits
+
+    if not resource_limits.installed():
+        return
+    slices = resource_limits._read_json(resource_limits.USAGE_FILE).get("slices") or {}
+    seen = state.setdefault("resource_oom", {})
+    db = SessionLocal()
+    try:
+        for user in db.query(User).all():
+            if is_admin_role(user.role):
+                continue
+            entry = slices.get(resource_limits.account_slice(user))
+            if not isinstance(entry, dict):
+                continue
+            kills = int(entry.get("oom_kills") or 0)
+            previous = seen.get(str(user.id))
+            seen[str(user.id)] = kills
+            # First sight, or the slice was made again and counts from 0.
+            if previous is None or kills <= int(previous):
+                continue
+            notify_admin("resource_limit", {"username": user.username, "count": kills - int(previous),
+                                            "memory": int(user.memory_mb or 0)}, deliver=False)
+    finally:
+        db.close()
+
+
 def _size(value) -> str:
     try:
         size = float(value)
@@ -1057,6 +1099,7 @@ def tick(now: Optional[datetime] = None) -> None:
         ("disk", 10, check_disk),
         ("ssl", 24 * 60, check_ssl_expiry),
         ("storage", 6 * 60, check_storage),
+        ("resources", 10, check_resource_limits),
     )
     for key, minutes, check in checks:
         if _due(state, key, minutes, now):

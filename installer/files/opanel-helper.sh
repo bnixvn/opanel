@@ -4640,7 +4640,7 @@ audit_log "$@"
 # panel that has been talked into asking for something outside it gets nothing.
 # Two lists that must agree is a real cost, and the alternative -- letting the
 # caller say what to install -- is handing root to whoever can reach the API.
-ADDON_IDS=("fail2ban" "mail" "dns")
+ADDON_IDS=("fail2ban" "mail" "dns" "limits")
 
 require_addon_id() {
   local id="${1:-}" known
@@ -6666,6 +6666,147 @@ addon_dns_disable() {
   echo "DNS Manager stopped"
 }
 
+# --- Resource limits: CPU, memory, processes and disk I/O per account ----------
+#
+# The work is done by a root agent (backend/app/agents/opanel_limits_agent.py)
+# that keeps every hosting account's processes in a systemd slice carrying its
+# limits. The panel hands the agent its source on stdin and this helper
+# installs it only if it hashes to the value below, which ships with this
+# helper: the copy under /opt/opanel belongs to the panel user, and root must
+# never run something that user could have edited. A test keeps the two in
+# step (test_resource_limits.py).
+LIMITS_AGENT="/usr/local/sbin/opanel-limits-agent"
+LIMITS_AGENT_SHA256="5ae815c02a1375af7202d3f6adfd2678c62a87aafca533f445b9220a951b8e3e"
+LIMITS_UNIT="/etc/systemd/system/opanel-limits.service"
+LIMITS_DIR="/etc/opanel-limits"
+LIMITS_STATE_DIR="/var/lib/opanel-limits"
+
+limits_agent_install() {
+  local tmp sum
+  tmp="$(mktemp /usr/local/sbin/.opanel-limits-agent.XXXXXX)"
+  head -c 1048576 >"$tmp"
+  sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
+  if [[ "$sum" != "$LIMITS_AGENT_SHA256" ]]; then
+    rm -f "$tmp"
+    deny "the resource limits agent does not match this panel release"
+  fi
+  chown root:root "$tmp"
+  chmod 0755 "$tmp"
+  mv -f "$tmp" "$LIMITS_AGENT"
+  if systemctl is-active --quiet opanel-limits 2>/dev/null; then
+    systemctl restart opanel-limits || true
+  fi
+  echo "resource limits agent installed"
+}
+
+addon_limits_status() {
+  local installed=0 running=0 enabled=0 version=""
+  if [[ -f "$LIMITS_UNIT" ]]; then installed=1; fi
+  if [[ -x "$LIMITS_AGENT" ]]; then
+    version="$(python3 "$LIMITS_AGENT" --version 2>/dev/null || true)"
+  fi
+  if systemctl is-active --quiet opanel-limits 2>/dev/null; then running=1; fi
+  if systemctl is-enabled --quiet opanel-limits 2>/dev/null; then enabled=1; fi
+  echo "installed=${installed} running=${running} enabled=${enabled} version=${version}"
+}
+
+addon_limits_supported() {
+  [[ "$(stat -fc %T /sys/fs/cgroup 2>/dev/null)" == "cgroup2fs" ]] \
+    || deny "Resource limits need cgroup v2 (Ubuntu 22.04 or later); this server still uses cgroup v1"
+  if systemd-detect-virt --container --quiet 2>/dev/null; then
+    deny "Resource limits need a virtual machine or a dedicated server; this server is a $(systemd-detect-virt --container) container"
+  fi
+  grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null \
+    || deny "the kernel's memory controller is not available"
+  command -v busctl >/dev/null 2>&1 || deny "busctl (systemd) is missing"
+  command -v python3 >/dev/null 2>&1 || deny "python3 is missing"
+  [[ -x "$LIMITS_AGENT" ]] || deny "the resource limits agent is not installed"
+}
+
+addon_limits_install() {
+  addon_limits_supported
+  install -d -o root -g root -m 0755 "$LIMITS_DIR" "$LIMITS_STATE_DIR"
+  if [[ ! -f "$LIMITS_DIR/config.json" ]]; then
+    printf '{"version": 1, "groups": [], "accounts": []}\n' >"$LIMITS_DIR/config.json"
+  fi
+  chmod 0644 "$LIMITS_DIR/config.json"
+  cat >"$LIMITS_UNIT" <<'UNIT'
+# Managed by opanel (Resource limits addon).
+[Unit]
+Description=OPanel resource limits (CPU, memory, processes and disk I/O per hosting account)
+After=systemd-logind.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/opanel-limits-agent
+Restart=always
+RestartSec=5
+# A limited account must never starve or OOM-kill the agent that limits it.
+OOMScoreAdjust=-500
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable --now opanel-limits >/dev/null 2>&1 \
+    || deny "the resource limits agent failed to start -- check: journalctl -u opanel-limits"
+  echo "Resource limits installed"
+}
+
+addon_limits_release() {
+  # Every limit goes; processes stay where they are, and an unlimited slice is
+  # no different from none.
+  if [[ -x "$LIMITS_AGENT" ]]; then
+    python3 "$LIMITS_AGENT" --release >/dev/null 2>&1 || true
+  fi
+}
+
+addon_limits_uninstall() {
+  systemctl disable --now opanel-limits >/dev/null 2>&1 || true
+  addon_limits_release
+  rm -f "$LIMITS_UNIT"
+  systemctl daemon-reload
+  rm -rf "$LIMITS_DIR" "$LIMITS_STATE_DIR" /run/opanel-limits
+  echo "Resource limits removed"
+}
+
+addon_limits_enable() {
+  [[ -f "$LIMITS_UNIT" ]] || deny "Resource limits are not installed"
+  systemctl enable --now opanel-limits >/dev/null 2>&1 \
+    || deny "the resource limits agent failed to start -- check: journalctl -u opanel-limits"
+  echo "Resource limits started"
+}
+
+addon_limits_disable() {
+  # Stopped means not enforced: the agent re-applies everything when started.
+  systemctl disable --now opanel-limits >/dev/null 2>&1 || true
+  addon_limits_release
+  echo "Resource limits stopped"
+}
+
+limits_apply() {
+  # The configuration arrives as JSON on stdin; the agent itself validates it
+  # (slice names, uids, bounds) before it replaces the old one, and the file
+  # is only rewritten when it changed, so the minute tick costs nothing.
+  [[ -f "$LIMITS_UNIT" ]] || deny "Resource limits are not installed"
+  local tmp err
+  tmp="$(mktemp "$LIMITS_DIR/.config.XXXXXX")"
+  head -c 4194304 >"$tmp"
+  if ! err="$(python3 "$LIMITS_AGENT" --check "$tmp" 2>&1)"; then
+    rm -f "$tmp"
+    deny "invalid resource limits configuration: $err"
+  fi
+  if cmp -s "$tmp" "$LIMITS_DIR/config.json"; then
+    rm -f "$tmp"
+    echo "unchanged"
+    return 0
+  fi
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$LIMITS_DIR/config.json"
+  echo "applied"
+}
+
 dns_refresh() {
   # Brings an installed DNS Manager up to this release (run by log-hygiene on
   # every update): new packages, the configuration -- the server's addresses
@@ -7327,6 +7468,7 @@ case "$cmd" in
       fail2ban) addon_fail2ban_status ;;
       mail) addon_mail_status ;;
       dns) addon_dns_status ;;
+      limits) addon_limits_status ;;
     esac
     ;;
 
@@ -7336,6 +7478,7 @@ case "$cmd" in
       fail2ban) addon_fail2ban_install ;;
       mail) addon_mail_install ;;
       dns) addon_dns_install ;;
+      limits) addon_limits_install ;;
     esac
     ;;
 
@@ -7345,6 +7488,7 @@ case "$cmd" in
       fail2ban) addon_fail2ban_uninstall ;;
       mail) addon_mail_uninstall ;;
       dns) addon_dns_uninstall ;;
+      limits) addon_limits_uninstall ;;
     esac
     ;;
 
@@ -7360,6 +7504,7 @@ case "$cmd" in
         ;;
       mail) addon_mail_enable ;;
       dns) addon_dns_enable ;;
+      limits) addon_limits_enable ;;
     esac
     ;;
 
@@ -7372,7 +7517,16 @@ case "$cmd" in
         ;;
       mail) addon_mail_disable ;;
       dns) addon_dns_disable ;;
+      limits) addon_limits_disable ;;
     esac
+    ;;
+
+  limits-agent-install)
+    limits_agent_install
+    ;;
+
+  limits-apply)
+    limits_apply
     ;;
 
   addon-fail2ban-configure)

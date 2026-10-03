@@ -54,7 +54,8 @@ def create_plan(db: Session, *, slug: str, name: str, website_limit: int = 1,
                 storage_limit_mb: int = 1024, php_version: str = "8.4",
                 app_type: str = "php", auto_ssl: bool = False,
                 database_limit: int = 10, mailbox_limit: int = 10,
-                owner_id: Optional[int] = None) -> HostingPlan:
+                owner_id: Optional[int] = None, cpu_percent: int = 0, memory_mb: int = 0,
+                process_limit: int = 0, io_read_mbps: int = 0, io_write_mbps: int = 0) -> HostingPlan:
     if db.query(HostingPlan).filter(HostingPlan.slug == slug).first():
         raise ValueError(f"Plan slug '{slug}' already exists")
     plan = HostingPlan(
@@ -62,6 +63,8 @@ def create_plan(db: Session, *, slug: str, name: str, website_limit: int = 1,
         storage_limit_mb=storage_limit_mb, php_version=php_version,
         app_type=app_type, auto_ssl=auto_ssl,
         database_limit=database_limit, mailbox_limit=mailbox_limit, owner_id=owner_id,
+        cpu_percent=cpu_percent, memory_mb=memory_mb, process_limit=process_limit,
+        io_read_mbps=io_read_mbps, io_write_mbps=io_write_mbps,
     )
     db.add(plan)
     db.commit()
@@ -251,6 +254,11 @@ def create_account(
         is_active=True,
         website_limit=plan.website_limit,
         storage_limit_mb=plan.storage_limit_mb,
+        cpu_percent=plan.cpu_percent or 0,
+        memory_mb=plan.memory_mb or 0,
+        process_limit=plan.process_limit or 0,
+        io_read_mbps=plan.io_read_mbps or 0,
+        io_write_mbps=plan.io_write_mbps or 0,
     )
     db.add(user)
     db.commit()
@@ -621,6 +629,8 @@ def change_package(db: Session, external_id: str, package_id: int) -> HostingAcc
     # Update user limits from plan
     user.website_limit = plan.website_limit
     user.storage_limit_mb = plan.storage_limit_mb
+    for field in ("cpu_percent", "memory_mb", "process_limit", "io_read_mbps", "io_write_mbps"):
+        setattr(user, field, getattr(plan, field) or 0)
     account.plan_id = plan.id
     account.updated_at = datetime.utcnow()
 

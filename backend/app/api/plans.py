@@ -11,30 +11,42 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_reseller_role
 from app.models.entities import User
+from app.schemas.schemas import RESOURCE_LIMIT_FIELDS, ResourceLimitsIn
 from app.services import provisioning
 
 router = APIRouter(prefix="/plans", tags=["plans"])
 
 
-class PlanCreate(BaseModel):
+class PlanCreate(ResourceLimitsIn):
     slug: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
     name: str = Field(min_length=1, max_length=128)
     website_limit: int = Field(default=1, ge=0, le=10000)
     storage_limit_mb: int = Field(default=1024, ge=0, le=1048576)
     database_limit: int = Field(default=10, ge=0, le=1000)
     mailbox_limit: int = Field(default=10, ge=0, le=10000)
+    # Resource limits addon (0 = unlimited); copied to an account made from it.
+    cpu_percent: int = 0
+    memory_mb: int = 0
+    process_limit: int = 0
+    io_read_mbps: int = 0
+    io_write_mbps: int = 0
     php_version: str = "8.4"
     app_type: str = "php"
     auto_ssl: bool = False
     active: bool = True
 
 
-class PlanUpdate(BaseModel):
+class PlanUpdate(ResourceLimitsIn):
     name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     website_limit: Optional[int] = Field(default=None, ge=0, le=10000)
     storage_limit_mb: Optional[int] = Field(default=None, ge=0, le=1048576)
     database_limit: Optional[int] = Field(default=None, ge=0, le=1000)
     mailbox_limit: Optional[int] = Field(default=None, ge=0, le=10000)
+    cpu_percent: Optional[int] = None
+    memory_mb: Optional[int] = None
+    process_limit: Optional[int] = None
+    io_read_mbps: Optional[int] = None
+    io_write_mbps: Optional[int] = None
     php_version: Optional[str] = None
     app_type: Optional[str] = None
     auto_ssl: Optional[bool] = None
@@ -50,6 +62,7 @@ def _plan_dict(plan) -> dict:
         "storage_limit_mb": plan.storage_limit_mb,
         "database_limit": plan.database_limit,
         "mailbox_limit": plan.mailbox_limit,
+        **{field: int(getattr(plan, field) or 0) for field in RESOURCE_LIMIT_FIELDS},
         "php_version": plan.php_version,
         "app_type": plan.app_type,
         "auto_ssl": plan.auto_ssl,
@@ -82,7 +95,7 @@ def create_plan(payload: PlanCreate, db: Session = Depends(get_db), current_user
             website_limit=payload.website_limit, storage_limit_mb=payload.storage_limit_mb,
             database_limit=payload.database_limit, mailbox_limit=payload.mailbox_limit,
             php_version=payload.php_version, app_type=payload.app_type, auto_ssl=payload.auto_ssl,
-            owner_id=owner_id,
+            owner_id=owner_id, **{field: getattr(payload, field) for field in RESOURCE_LIMIT_FIELDS},
         )
         if not payload.active:
             provisioning.update_plan(db, plan.id, owner_id, active=False)

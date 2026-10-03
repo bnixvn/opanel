@@ -317,3 +317,12 @@ if __name__ == "__main__":
         dns_manager.tick()
     except Exception as exc:  # noqa: BLE001
         print(f"opanel DNS Manager tick failed: {exc}")
+    # Resource limits: every account is in its slice, including ones made
+    # outside the users page - WHMCS, a restore, a DirectAdmin import. The
+    # helper only rewrites the agent's configuration when it changed.
+    try:
+        from app.services import resource_limits
+
+        resource_limits.sync_quietly()
+    except Exception as exc:  # noqa: BLE001
+        print(f"opanel resource limits tick failed: {exc}")

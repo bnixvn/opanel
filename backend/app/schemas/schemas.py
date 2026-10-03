@@ -188,7 +188,47 @@ class PasskeyDeleteRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=72)
 
 
-class UserCreate(BaseModel):
+# --- Resource limits addon -------------------------------------------------------------
+# 0 is unlimited. Anything else has a floor, because a limit below it does not
+# limit a website, it breaks it: PHP needs a few processes and some memory to
+# answer a single request.
+RESOURCE_LIMIT_RULES = {
+    "cpu_percent": (10, 100000),       # 100 = one core
+    "memory_mb": (128, 16 * 1024 * 1024),
+    "process_limit": (10, 1000000),
+    "io_read_mbps": (1, 1000000),
+    "io_write_mbps": (1, 1000000),
+}
+RESOURCE_LIMIT_FIELDS = tuple(RESOURCE_LIMIT_RULES)
+GROUP_LIMIT_FIELDS = tuple(f"group_{name}" for name in RESOURCE_LIMIT_FIELDS)
+
+
+def check_resource_limit(name: str, value):
+    if value is None or value == 0:
+        return value
+    low, high = RESOURCE_LIMIT_RULES[name.removeprefix("group_")]
+    if not low <= value <= high:
+        raise ValueError(f"must be 0 (unlimited) or from {low} to {high}")
+    return value
+
+
+class ResourceLimitsIn(BaseModel):
+    """Mixed into the account and plan models that carry resource limits."""
+
+    @field_validator(*RESOURCE_LIMIT_FIELDS, check_fields=False)
+    @classmethod
+    def _limits_in_range(cls, value, info):
+        return check_resource_limit(info.field_name, value)
+
+
+class GroupLimitsIn(BaseModel):
+    @field_validator(*GROUP_LIMIT_FIELDS, check_fields=False)
+    @classmethod
+    def _group_limits_in_range(cls, value, info):
+        return check_resource_limit(info.field_name, value)
+
+
+class UserCreate(ResourceLimitsIn, GroupLimitsIn):
     username: str = Field(min_length=3, max_length=32, pattern=r"^[a-z_][a-z0-9_-]{2,31}$")
     email: EmailStr
     password: str = Field(min_length=12, max_length=72)  # bcrypt 72-byte limit
@@ -204,6 +244,18 @@ class UserCreate(BaseModel):
     pool_user_limit: int = Field(default=0, ge=0, le=100000)
     pool_storage_limit_mb: int = Field(default=0, ge=0, le=1024 * 1024 * 1024)
     pool_oversell: bool = False
+    # Resource limits addon (0 = unlimited). group_* are a reseller's caps on
+    # its whole group, the administrator's to set.
+    cpu_percent: int = 0
+    memory_mb: int = 0
+    process_limit: int = 0
+    io_read_mbps: int = 0
+    io_write_mbps: int = 0
+    group_cpu_percent: int = 0
+    group_memory_mb: int = 0
+    group_process_limit: int = 0
+    group_io_read_mbps: int = 0
+    group_io_write_mbps: int = 0
 
     @field_validator("username")
     @classmethod
@@ -218,7 +270,7 @@ class UserCreate(BaseModel):
         return _validate_linux_login_password(value)
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(ResourceLimitsIn, GroupLimitsIn):
     email: Optional[EmailStr] = None
     role: Optional[Literal["admin", "reseller", "end_user"]] = None
     is_active: Optional[bool] = None
@@ -233,6 +285,16 @@ class UserUpdate(BaseModel):
     pool_user_limit: Optional[int] = Field(default=None, ge=0, le=100000)
     pool_storage_limit_mb: Optional[int] = Field(default=None, ge=0, le=1024 * 1024 * 1024)
     pool_oversell: Optional[bool] = None
+    cpu_percent: Optional[int] = None
+    memory_mb: Optional[int] = None
+    process_limit: Optional[int] = None
+    io_read_mbps: Optional[int] = None
+    io_write_mbps: Optional[int] = None
+    group_cpu_percent: Optional[int] = None
+    group_memory_mb: Optional[int] = None
+    group_process_limit: Optional[int] = None
+    group_io_read_mbps: Optional[int] = None
+    group_io_write_mbps: Optional[int] = None
 
 
 class UserPasswordUpdate(BaseModel):
@@ -260,6 +322,16 @@ class UserOut(BaseModel):
     pool_user_limit: int = 0
     pool_storage_limit_mb: int = 0
     pool_oversell: bool = False
+    cpu_percent: int = 0
+    memory_mb: int = 0
+    process_limit: int = 0
+    io_read_mbps: int = 0
+    io_write_mbps: int = 0
+    group_cpu_percent: int = 0
+    group_memory_mb: int = 0
+    group_process_limit: int = 0
+    group_io_read_mbps: int = 0
+    group_io_write_mbps: int = 0
     # None means "not measured yet" -- the accounts list leaves these out so it
     # can paint without waiting on a du of every site. 0 would read as "uses
     # nothing", which is a different claim.

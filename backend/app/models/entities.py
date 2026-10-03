@@ -39,6 +39,20 @@ class User(Base):
     # Off: the disk limits handed out must fit the share. On (overselling, as
     # cPanel and DirectAdmin do): what the accounts hold on disk must.
     pool_oversell: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    # Resource limits addon (0 = unlimited): this account's own CPU (100 = one
+    # core), memory, processes and disk I/O. See services/resource_limits.py.
+    cpu_percent: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    memory_mb: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    process_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    io_read_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    io_write_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    # A reseller's caps on its whole group: its own account and every
+    # customer's, together. The administrator's to set.
+    group_cpu_percent: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    group_memory_mb: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    group_process_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    group_io_read_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    group_io_write_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     # Bumped to invalidate previously-issued JWTs (logout-everywhere, role
     # change, password reset by admin, account disable, etc).
     token_version: Mapped[int] = mapped_column(Integer, default=0)
@@ -318,6 +332,12 @@ class HostingPlan(Base):
     storage_limit_mb: Mapped[int] = mapped_column(Integer, default=1024)
     database_limit: Mapped[int] = mapped_column(Integer, default=10)
     mailbox_limit: Mapped[int] = mapped_column(Integer, default=10, server_default=text("10"))
+    # Resource limits addon; copied to an account made from the plan.
+    cpu_percent: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    memory_mb: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    process_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    io_read_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    io_write_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
     app_type: Mapped[str] = mapped_column(String(32), default="php")
     auto_ssl: Mapped[bool] = mapped_column(Boolean, default=False)
