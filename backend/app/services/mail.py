@@ -421,11 +421,6 @@ def create_mailbox(db: Session, actor: User, domain_id: int, local_part: str, pa
     if not _is_admin(actor) and not is_admin_role(owner.role) and limit and \
             owner_mailbox_count(db, owner.id) >= limit:
         raise ValueError(f"Mailbox limit reached ({limit}). Ask your provider for more.")
-    if not _is_admin(actor):
-        # Like the account's own limit, an administrator's own action is not held to it.
-        from app.services import reseller as reseller_pool
-
-        reseller_pool.ensure_room(db, owner, "mailbox")
     check_password(password, address)
     row = Mailbox(domain_id=domain.id, local_part=local, password_hash=hash_password(password),
                   quota_mb=_quota(actor, quota_mb), enabled=True)

@@ -1,8 +1,9 @@
 """reseller oversell switch: users.pool_oversell
 
-Off, a reseller's share bounds the limits it hands out. On, as cPanel and
-DirectAdmin oversell, the limits are not added up and the share bounds what
-its accounts actually hold instead.
+A reseller's share is now customers and disk only. Off, the disk limits it
+hands out must fit the share. On, as cPanel and DirectAdmin oversell, they
+are not added up and the share bounds what its accounts hold on disk instead.
+The website, database and mailbox share columns 0037 added stay, unread.
 
 Revision ID: 0038_reseller_oversell
 Revises: 0037_reseller

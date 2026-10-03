@@ -202,10 +202,7 @@ class UserCreate(BaseModel):
     reseller_id: Optional[int] = Field(default=None, ge=1)
     # A reseller's share of the server (role "reseller" only; 0 = unlimited).
     pool_user_limit: int = Field(default=0, ge=0, le=100000)
-    pool_website_limit: int = Field(default=0, ge=0, le=100000)
     pool_storage_limit_mb: int = Field(default=0, ge=0, le=1024 * 1024 * 1024)
-    pool_database_limit: int = Field(default=0, ge=0, le=100000)
-    pool_mailbox_limit: int = Field(default=0, ge=0, le=1000000)
     pool_oversell: bool = False
 
     @field_validator("username")
@@ -234,10 +231,7 @@ class UserUpdate(BaseModel):
     reseller_id: Optional[int] = Field(default=None, ge=0)
     # A reseller's share of the server (role "reseller" only; 0 = unlimited).
     pool_user_limit: Optional[int] = Field(default=None, ge=0, le=100000)
-    pool_website_limit: Optional[int] = Field(default=None, ge=0, le=100000)
     pool_storage_limit_mb: Optional[int] = Field(default=None, ge=0, le=1024 * 1024 * 1024)
-    pool_database_limit: Optional[int] = Field(default=None, ge=0, le=100000)
-    pool_mailbox_limit: Optional[int] = Field(default=None, ge=0, le=1000000)
     pool_oversell: Optional[bool] = None
 
 
@@ -264,10 +258,7 @@ class UserOut(BaseModel):
     mailbox_limit: int = 10
     reseller_id: Optional[int] = None
     pool_user_limit: int = 0
-    pool_website_limit: int = 0
     pool_storage_limit_mb: int = 0
-    pool_database_limit: int = 0
-    pool_mailbox_limit: int = 0
     pool_oversell: bool = False
     # None means "not measured yet" -- the accounts list leaves these out so it
     # can paint without waiting on a du of every site. 0 would read as "uses

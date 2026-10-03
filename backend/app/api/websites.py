@@ -16,7 +16,7 @@ from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCreate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
-from app.services import dns_manager, file_manager, mail, mariadb, openlitespeed, reseller as reseller_pool, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress
+from app.services import dns_manager, file_manager, mail, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress
 from app.services.audit import log_action
 
 _PLACEHOLDER_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "openlitespeed"
@@ -281,13 +281,6 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
 
     install_wp = payload.install_wordpress and payload.app_type == "wordpress"
     app_type_value = "wordpress" if install_wp else ("php" if payload.app_type == "wordpress" else payload.app_type)
-    try:
-        # An overselling reseller's share holds what its accounts actually have.
-        reseller_pool.ensure_room(db, owner, "website")
-        if install_wp:
-            reseller_pool.ensure_room(db, owner, "database")
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
     create_estimate_bytes = storage_quota.WORDPRESS_SITE_ESTIMATE_BYTES if install_wp else storage_quota.STATIC_SITE_ESTIMATE_BYTES
     try:
         storage_quota.enforce_user_storage_quota(db, owner, incoming_bytes=create_estimate_bytes)

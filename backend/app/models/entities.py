@@ -30,16 +30,14 @@ class User(Base):
     # The reseller this account was created by and is managed by; NULL for the
     # admin's own accounts. Only end users have one.
     reseller_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    # A reseller's share of the server (role "reseller" only; 0 = unlimited).
-    # Its own account limits above plus every customer's must fit inside these,
-    # so the per-account limits stay what is enforced day to day.
+    # A reseller's share of the server (role "reseller" only; 0 = unlimited):
+    # how many customers, and how much disk - nothing else (operator,
+    # 2026-10-03). 0037 also added pool_website_limit, pool_database_limit and
+    # pool_mailbox_limit; nothing reads them any more. See services/reseller.py.
     pool_user_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    pool_website_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     pool_storage_limit_mb: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    pool_database_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    pool_mailbox_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    # Overselling (admin's choice): the limits above are not added up; what the
-    # accounts actually hold is checked against the pool instead.
+    # Off: the disk limits handed out must fit the share. On (overselling, as
+    # cPanel and DirectAdmin do): what the accounts hold on disk must.
     pool_oversell: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # Bumped to invalidate previously-issued JWTs (logout-everywhere, role
     # change, password reset by admin, account disable, etc).
