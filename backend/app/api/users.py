@@ -91,8 +91,14 @@ def _delete_orphan_databases(db: Session, owner_id: int) -> list[str]:
     return dropped
 
 
+# Every limit an account carries. Not reseller_pool.LIMIT_FIELDS: that is the
+# few a reseller's share bounds (disk, since 1.29.0), and taking it for this
+# list is what made 1.29.0 drop every other limit on create and on edit.
+ACCOUNT_LIMIT_FIELDS = ("website_limit", "storage_limit_mb", "database_limit", "mailbox_limit")
+
+
 def _account_limits(source) -> dict:
-    return {field: getattr(source, field) for field in reseller_pool.LIMIT_FIELDS}
+    return {field: getattr(source, field) for field in ACCOUNT_LIMIT_FIELDS}
 
 
 def _reseller(db: Session, reseller_id: int) -> User:
@@ -244,7 +250,7 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
                 getattr(payload, field) is not None for field in reseller_pool.SETTINGS):
             raise HTTPException(status_code=403, detail="Only the administrator can change roles or resellers")
 
-    limit_changes = {field: getattr(payload, field) for field in reseller_pool.LIMIT_FIELDS
+    limit_changes = {field: getattr(payload, field) for field in ACCOUNT_LIMIT_FIELDS
                      if getattr(payload, field) is not None}
     pool_changes = {field: getattr(payload, field) for field in reseller_pool.SETTINGS
                     if getattr(payload, field) is not None}

@@ -294,3 +294,21 @@ def test_without_oversell_disk_in_use_is_the_accounts_own_business(env, monkeypa
     # Far past the share in use, but the limits handed out fit it: no share check.
     reseller_pool.ensure_storage_room(db, _user(db, "cust1"), incoming_bytes=1024 * 1024)
     assert cust["storage_limit_mb"] == 1000
+
+
+def test_every_account_limit_is_saved_on_create_and_on_edit(env):
+    """1.29.0 took the share's field list (disk only) for this one and kept
+    the website, database and mailbox limits at their defaults: create used
+    the defaults, edit ignored the change, and both still answered 200."""
+    db, client = env
+    _login(client, "root_admin")
+    limits = {"website_limit": 7, "storage_limit_mb": 2048, "database_limit": 3, "mailbox_limit": 4}
+    made = _call(client, "POST", "/api/users", json={"username": "plain1", **ACCOUNT, **limits})
+    assert made.status_code == 200, made.text
+    saved = _user(db, "plain1")
+    assert {k: getattr(saved, k) for k in limits} == limits
+
+    changed = {"website_limit": 9, "storage_limit_mb": 4096, "database_limit": 0, "mailbox_limit": 6}
+    assert _call(client, "PATCH", f"/api/users/{saved.id}", json=changed).status_code == 200
+    saved = _user(db, "plain1")
+    assert {k: getattr(saved, k) for k in changed} == changed
