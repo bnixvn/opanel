@@ -190,3 +190,44 @@ def test_an_end_user_has_no_reseller_powers(env):
     assert _call(client, "POST", "/api/users", json={"username": "sneaky", **ACCOUNT}).status_code == 403
     assert _call(client, "GET", "/api/plans").status_code == 403
     assert _call(client, "POST", f"/api/auth/impersonate/{_user(db, 'root_admin').id}").status_code == 403
+
+
+def _site(db, owner, domain):
+    from app.models.entities import DatabaseAccount, Website
+
+    site = Website(domain=domain, owner_id=owner.id, root_path=f"/home/{owner.username}/{domain}",
+                   document_root="public_html", linux_user=owner.username, php_version="8.4",
+                   app_type="php", status="active")
+    db.add(site)
+    db.flush()
+    db.add(DatabaseAccount(owner_id=owner.id, website_id=site.id, db_name=domain.split(".")[0],
+                           db_user=domain.split(".")[0], db_password="x"))
+    db.commit()
+    return site
+
+
+def test_a_reseller_sees_its_own_and_its_customers_sites_and_nobody_elses(env, monkeypatch):
+    from app.api import websites as websites_api
+
+    db, client = env
+    _reseller(client)
+    _call(client, "POST", "/api/users", json={"username": "cust1", **ACCOUNT, **SMALL})
+    own = _site(db, _user(db, "shop"), "shopsite.com")
+    theirs = _site(db, _user(db, "cust1"), "custsite.com")
+    other = _site(db, _user(db, "direct"), "othersite.com")
+    monkeypatch.setattr(websites_api.openlitespeed, "read_site_log", lambda domain, kind, lines: {"domain": domain, "kind": kind, "path": "/x", "lines": lines})
+
+    domains = sorted(w["domain"] for w in _call(client, "GET", "/api/websites").json())
+    assert domains == ["custsite.com", "shopsite.com"]
+    names = sorted(d["db_name"] for d in _call(client, "GET", "/api/databases").json())
+    assert names == ["custsite", "shopsite"]
+    assert _call(client, "GET", f"/api/websites/{theirs.id}/logs").status_code == 200
+    assert _call(client, "GET", f"/api/websites/{other.id}/logs").status_code == 403
+
+    # It may suspend a customer's site, not its own, and nobody else's.
+    assert _call(client, "PATCH", f"/api/websites/{own.id}", json={"status": "suspended"}).status_code == 403
+    assert _call(client, "PATCH", f"/api/websites/{other.id}", json={"status": "suspended"}).status_code == 403
+
+    # The customer still sees only its own.
+    _login(client, "cust1")
+    assert [w["domain"] for w in _call(client, "GET", "/api/websites").json()] == ["custsite.com"]

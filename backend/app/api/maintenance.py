@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import SessionLocal, get_db
+from app.core.access import can_access_owner, ensure_owner_access, managed_user
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import BackupSchedule, BackupTarget, DatabaseAccount, User, Website
@@ -309,7 +310,7 @@ def _run_extract_job(job_id: str, user_id: int, website_id: int, archive_path: s
             raise ValueError("User not found")
         if not website:
             raise ValueError("Website not found")
-        if website.owner_id != user.id and not is_admin_role(user.role):
+        if not can_access_owner(db, user, website.owner_id):
             raise ValueError("Access denied")
         target = file_manager.extract_archive(
             website,
@@ -375,18 +376,13 @@ def get_owned_website(db: Session, current_user: User, website_id: int) -> Websi
     website = db.query(Website).filter(Website.id == website_id).first()
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
-    if website.owner_id != current_user.id:
-        ensure_role(current_user.role, Role.admin)
+    ensure_owner_access(db, current_user, website.owner_id)
     return website
 
 
 def get_backup_user(db: Session, current_user: User, user_id: int) -> User:
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.id != current_user.id:
-        ensure_role(current_user.role, Role.admin)
-    return user
+    # An admin backs up anyone; a reseller itself and its customers.
+    return managed_user(db, current_user, user_id)
 
 
 def _decrypted(value, label: str):

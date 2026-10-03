@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.core.access import can_access_owner, scope_owner
 from app.core.permissions import is_admin_role
 from app.models.entities import SftpAccount, User, Website
 from app.services import sftp_accounts
@@ -32,7 +33,7 @@ class SftpPassword(BaseModel):
 
 def _account_for(db: Session, account_id: int, current_user: User) -> SftpAccount:
     account = db.query(SftpAccount).filter(SftpAccount.id == account_id).first()
-    if not account or (account.owner_id != current_user.id and not is_admin_role(current_user.role)):
+    if not account or not can_access_owner(db, current_user, account.owner_id):
         raise HTTPException(status_code=404, detail="SFTP account not found")
     return account
 
@@ -44,9 +45,7 @@ def _fail(exc: Exception) -> HTTPException:
 @router.get("")
 def sftp_overview(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     admin = is_admin_role(current_user.role)
-    query = db.query(SftpAccount)
-    if not admin:
-        query = query.filter(SftpAccount.owner_id == current_user.id)
+    query = scope_owner(db.query(SftpAccount), SftpAccount.owner_id, db, current_user)
     accounts = query.order_by(SftpAccount.username.asc()).all()
     website_ids = {a.website_id for a in accounts if a.website_id}
     websites = {w.id: w for w in db.query(Website).filter(Website.id.in_(website_ids)).all()} if website_ids else {}

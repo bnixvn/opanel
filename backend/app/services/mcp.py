@@ -33,7 +33,8 @@ from typing import Any, Callable, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.permissions import is_admin_role
+from app.core.access import can_access_owner, can_manage_user, scope_owner
+from app.core.permissions import is_reseller_role, is_admin_role
 from app.core.version import APP_VERSION
 from app.models.entities import (
     AuditLog,
@@ -219,19 +220,20 @@ DOMAIN_ARG = {"type": "string", "description": "The website's domain, e.g. examp
 def _website(ctx: Context, domain: str) -> Website:
     """A website the caller may act on, by domain. Someone else's is 'not found'."""
     website = ctx.db.query(Website).filter(Website.domain == (domain or "").strip().lower()).first()
-    if website is None or (website.owner_id != ctx.user.id and not ctx.is_admin):
+    if website is None or not can_access_owner(ctx.db, ctx.user, website.owner_id):
         raise ToolError(f"No website {domain!r} on this account")
     return website
 
 
 def _account(ctx: Context, username: Optional[str]) -> User:
-    """The caller, or -- for an administrator -- the named account."""
+    """The caller, or another account it manages: any for an administrator,
+    its customers for a reseller."""
     if not username or username == ctx.user.username:
         return ctx.user
-    if not ctx.is_admin:
-        raise ToolError("Only an administrator can act on another account")
     user = ctx.db.query(User).filter(User.username == username).first()
-    if user is None:
+    if user is None or not can_manage_user(ctx.db, ctx.user, user):
+        if not (ctx.is_admin or is_reseller_role(ctx.user.role)):
+            raise ToolError("Only an administrator or a reseller can act on another account")
         raise ToolError(f"No account {username!r}")
     return user
 
@@ -260,7 +262,7 @@ def _whoami(ctx: Context, args: dict):
     return {
         "username": user.username,
         "email": user.email,
-        "role": "admin" if ctx.is_admin else "user",
+        "role": "admin" if ctx.is_admin else ("reseller" if is_reseller_role(ctx.user.role) else "user"),
         "website_limit": user.website_limit,
         "database_limit": getattr(user, "database_limit", None),
         "storage_limit_mb": user.storage_limit_mb,
@@ -274,9 +276,8 @@ def _whoami(ctx: Context, args: dict):
        {"owner": {"type": "string", "description": "Administrators only: an account's username"}})
 def _list_websites(ctx: Context, args: dict):
     query = ctx.db.query(Website)
-    if not ctx.is_admin:
-        query = query.filter(Website.owner_id == ctx.user.id)
-    elif args.get("owner"):
+    query = scope_owner(query, Website.owner_id, ctx.db, ctx.user)
+    if args.get("owner"):
         query = query.filter(Website.owner_id == _account(ctx, args["owner"]).id)
     owners = {u.id: u.username for u in ctx.db.query(User).all()}
     return [_website_summary(ctx, w, owners) for w in query.order_by(Website.domain).all()]
@@ -318,9 +319,8 @@ def _get_website(ctx: Context, args: dict):
        {"owner": {"type": "string", "description": "Administrators only: an account's username"}})
 def _list_databases(ctx: Context, args: dict):
     query = ctx.db.query(DatabaseAccount)
-    if not ctx.is_admin:
-        query = query.filter(DatabaseAccount.owner_id == ctx.user.id)
-    elif args.get("owner"):
+    query = scope_owner(query, DatabaseAccount.owner_id, ctx.db, ctx.user)
+    if args.get("owner"):
         query = query.filter(DatabaseAccount.owner_id == _account(ctx, args["owner"]).id)
     domains = {w.id: w.domain for w in ctx.db.query(Website).all()}
     owners = {u.id: u.username for u in ctx.db.query(User).all()}

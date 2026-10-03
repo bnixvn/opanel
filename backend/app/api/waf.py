@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.core.access import ensure_owner_access, scope_owner
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.models.entities import User, Website
 from app.services import openlitespeed, waf
@@ -47,17 +48,14 @@ def _website_or_404(db: Session, website_id: int) -> Website:
 def _authorized_website(db: Session, website_id: int, current_user: User) -> Website:
     """A site the caller may configure: their own, or anything for an admin."""
     website = _website_or_404(db, website_id)
-    if website.owner_id != current_user.id:
-        ensure_role(current_user.role, Role.admin)
+    ensure_owner_access(db, current_user, website.owner_id)
     return website
 
 
 def _readable_domains(db: Session, current_user: User) -> list[str]:
     """The domains whose logs this caller may read. Also the allow-list that
     stops a `domain=` parameter reaching someone else's site."""
-    query = db.query(Website)
-    if not _is_admin(current_user):
-        query = query.filter(Website.owner_id == current_user.id)
+    query = scope_owner(db.query(Website), Website.owner_id, db, current_user)
     return [website.domain for website in query.order_by(Website.domain.asc()).all()]
 
 

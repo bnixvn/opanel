@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.access import can_access_owner, ensure_owner_access
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.security import ALGORITHM
 from app.models.entities import RevokedToken, User, Website
@@ -67,8 +68,7 @@ async def get_user_website(
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
     # Check ownership or admin role
-    if website.owner_id != current_user.id:
-        ensure_role(current_user.role, Role.admin)
+    ensure_owner_access(db, current_user, website.owner_id)
     return website
 
 
@@ -203,7 +203,7 @@ async def terminal_websocket(
         return
 
     # Check ownership
-    if website.owner_id != current_user.id and not is_admin_role(current_user.role):
+    if not can_access_owner(db, current_user, website.owner_id):
         await websocket.close(code=4003, reason="Access denied")
         return
 

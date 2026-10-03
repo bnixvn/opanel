@@ -29,6 +29,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.access import can_access_owner, scope_owner
 from app.core.permissions import is_admin_role
 from app.models.entities import DnsZone, MailDomain, User, Website
 from app.services import addons, network, panel_settings
@@ -334,7 +335,7 @@ def normalize_domain(value: str) -> str:
 
 def get_zone(db: Session, actor: User, zone_id: int) -> DnsZone:
     row = db.get(DnsZone, zone_id)
-    if row is None or (not _is_admin(actor) and row.owner_id != actor.id):
+    if row is None or not can_access_owner(db, actor, row.owner_id):
         raise LookupError("Zone not found")
     return row
 
@@ -505,8 +506,7 @@ def zone_out(row: DnsZone, panel_names: Optional[set[str]] = None) -> dict:
 
 def list_zones(db: Session, actor: User, q: str = "", page: int = 1, per_page: int = 50) -> dict:
     query = db.query(DnsZone)
-    if not _is_admin(actor):
-        query = query.filter(DnsZone.owner_id == actor.id)
+    query = scope_owner(query, DnsZone.owner_id, db, actor)
     term = (q or "").strip().lower()
     if term:
         query = query.filter(DnsZone.name.like(f"%{term}%"))
@@ -1029,8 +1029,7 @@ def overview(db: Session, actor: User) -> dict:
     is_installed = installed()
     values = current_settings()
     zones = db.query(DnsZone)
-    if not _is_admin(actor):
-        zones = zones.filter(DnsZone.owner_id == actor.id)
+    zones = scope_owner(zones, DnsZone.owner_id, db, actor)
     return {
         "installed": is_installed,
         "is_admin": _is_admin(actor),

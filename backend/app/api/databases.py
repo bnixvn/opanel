@@ -13,6 +13,7 @@ import logging
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.access import ensure_owner_access, scope_owner
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website
@@ -45,16 +46,13 @@ def get_accessible_database(database_id: int, db: Session, current_user: User) -
     item = db.query(DatabaseAccount).filter(DatabaseAccount.id == database_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Database not found")
-    if item.owner_id != current_user.id:
-        ensure_role(current_user.role, Role.admin)
+    ensure_owner_access(db, current_user, item.owner_id)
     return item
 
 
 @router.get("", response_model=List[DatabaseOut])
 def list_databases(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    query = db.query(DatabaseAccount)
-    if not is_admin_role(current_user.role):
-        query = query.filter(DatabaseAccount.owner_id == current_user.id)
+    query = scope_owner(db.query(DatabaseAccount), DatabaseAccount.owner_id, db, current_user)
     return query.order_by(DatabaseAccount.id.desc()).all()
 
 

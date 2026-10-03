@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.core.access import scope_owner
 from app.core.permissions import is_admin_role
 from app.models.entities import BackupSchedule, DatabaseAccount, User, Website
 from app.services import firewall, malware_scan, panel_settings, updates, waf
@@ -84,11 +85,8 @@ def _backups(db: Session) -> dict:
 @router.get("/summary")
 def dashboard_summary(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     admin = is_admin_role(current_user.role)
-    site_query = db.query(Website)
-    db_query = db.query(DatabaseAccount)
-    if not admin:
-        site_query = site_query.filter(Website.owner_id == current_user.id)
-        db_query = db_query.filter(DatabaseAccount.owner_id == current_user.id)
+    site_query = scope_owner(db.query(Website), Website.owner_id, db, current_user)
+    db_query = scope_owner(db.query(DatabaseAccount), DatabaseAccount.owner_id, db, current_user)
     sites = site_query.all()
     unsecured = sorted(site.domain for site in sites if not site.ssl_enabled)
     summary: dict[str, Any] = {

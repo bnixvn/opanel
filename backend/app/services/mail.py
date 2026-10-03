@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session, object_session
 
 from app.core import secrets as secret_store
 from app.core.config import settings
+from app.core.access import can_access_owner, scope_owner
 from app.core.permissions import is_admin_role
 from app.models.entities import MailDomain, Mailbox, MailForwarder, User, Website, WebsiteAlias
 from app.services import addons, network, panel_settings
@@ -217,21 +218,21 @@ def _is_admin(user: User) -> bool:
 
 def get_domain(db: Session, actor: User, domain_id: int) -> MailDomain:
     row = db.get(MailDomain, domain_id)
-    if row is None or (not _is_admin(actor) and row.owner_id != actor.id):
+    if row is None or not can_access_owner(db, actor, row.owner_id):
         raise LookupError("Mail domain not found")
     return row
 
 
 def get_mailbox(db: Session, actor: User, mailbox_id: int) -> Mailbox:
     row = db.get(Mailbox, mailbox_id)
-    if row is None or (not _is_admin(actor) and row.mail_domain.owner_id != actor.id):
+    if row is None or not can_access_owner(db, actor, row.mail_domain.owner_id):
         raise LookupError("Mailbox not found")
     return row
 
 
 def get_forwarder(db: Session, actor: User, forwarder_id: int) -> MailForwarder:
     row = db.get(MailForwarder, forwarder_id)
-    if row is None or (not _is_admin(actor) and row.mail_domain.owner_id != actor.id):
+    if row is None or not can_access_owner(db, actor, row.mail_domain.owner_id):
         raise LookupError("Forwarder not found")
     return row
 
@@ -249,8 +250,7 @@ def _website_owner(db: Session, name: str) -> Optional[User]:
 def candidate_domains(db: Session, actor: User) -> list[str]:
     """Website and alias names mail could be turned on for."""
     sites = db.query(Website)
-    if not _is_admin(actor):
-        sites = sites.filter(Website.owner_id == actor.id)
+    sites = scope_owner(sites, Website.owner_id, db, actor)
     names: set[str] = set()
     for site in sites.all():
         names.add((site.domain or "").lower())
@@ -462,8 +462,7 @@ def delete_mailbox(db: Session, actor: User, mailbox_id: int) -> str:
 def list_mailboxes(db: Session, actor: User, domain_id: Optional[int] = None, q: str = "",
                    page: int = 1, per_page: int = 50) -> dict:
     query = db.query(Mailbox).join(MailDomain)
-    if not _is_admin(actor):
-        query = query.filter(MailDomain.owner_id == actor.id)
+    query = scope_owner(query, MailDomain.owner_id, db, actor)
     if domain_id:
         query = query.filter(Mailbox.domain_id == domain_id)
     term = (q or "").strip().lower()
@@ -535,8 +534,7 @@ def delete_forwarder(db: Session, actor: User, forwarder_id: int) -> str:
 def list_forwarders(db: Session, actor: User, domain_id: Optional[int] = None, q: str = "",
                     page: int = 1, per_page: int = 50) -> dict:
     query = db.query(MailForwarder).join(MailDomain)
-    if not _is_admin(actor):
-        query = query.filter(MailDomain.owner_id == actor.id)
+    query = scope_owner(query, MailDomain.owner_id, db, actor)
     if domain_id:
         query = query.filter(MailForwarder.domain_id == domain_id)
     term = (q or "").strip().lower()
@@ -586,8 +584,7 @@ def domain_out(row: MailDomain) -> dict:
 def overview(db: Session, actor: User) -> dict:
     is_installed = installed()
     domains = db.query(MailDomain)
-    if not _is_admin(actor):
-        domains = domains.filter(MailDomain.owner_id == actor.id)
+    domains = scope_owner(domains, MailDomain.owner_id, db, actor)
     host = hostname()
     return {
         "installed": is_installed,
@@ -879,7 +876,7 @@ def _dns_zone(row: MailDomain, actor: User, records: list[dict]) -> Optional[dic
 
     db = object_session(row)
     zone = dns_manager.mail_zone(db, row) if db is not None else None
-    if zone is None or not (_is_admin(actor) or zone.owner_id == actor.id):
+    if zone is None or not can_access_owner(db, actor, zone.owner_id):
         return None
     return dns_manager.mail_zone_status(zone, records)
 
