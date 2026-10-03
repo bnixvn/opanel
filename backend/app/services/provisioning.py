@@ -33,23 +33,35 @@ from app.services.shell import shell
 # Plans
 # ---------------------------------------------------------------------------
 
-def list_plans(db: Session) -> list[HostingPlan]:
-    return db.query(HostingPlan).order_by(HostingPlan.id).all()
+def _plans(db: Session, owner_id: Optional[int]):
+    # The admin's packages are the ones with no owner: they are what WHMCS and
+    # the provisioning API see. A reseller's own packages never reach them.
+    query = db.query(HostingPlan)
+    if owner_id is None:
+        return query.filter(HostingPlan.owner_id.is_(None))
+    return query.filter(HostingPlan.owner_id == owner_id)
 
 
-def get_plan(db: Session, plan_id: int) -> Optional[HostingPlan]:
-    return db.query(HostingPlan).filter(HostingPlan.id == plan_id).first()
+def list_plans(db: Session, owner_id: Optional[int] = None) -> list[HostingPlan]:
+    return _plans(db, owner_id).order_by(HostingPlan.id).all()
+
+
+def get_plan(db: Session, plan_id: int, owner_id: Optional[int] = None) -> Optional[HostingPlan]:
+    return _plans(db, owner_id).filter(HostingPlan.id == plan_id).first()
 
 
 def create_plan(db: Session, *, slug: str, name: str, website_limit: int = 1,
                 storage_limit_mb: int = 1024, php_version: str = "8.4",
-                app_type: str = "php", auto_ssl: bool = False) -> HostingPlan:
+                app_type: str = "php", auto_ssl: bool = False,
+                database_limit: int = 10, mailbox_limit: int = 10,
+                owner_id: Optional[int] = None) -> HostingPlan:
     if db.query(HostingPlan).filter(HostingPlan.slug == slug).first():
         raise ValueError(f"Plan slug '{slug}' already exists")
     plan = HostingPlan(
         slug=slug, name=name, website_limit=website_limit,
         storage_limit_mb=storage_limit_mb, php_version=php_version,
         app_type=app_type, auto_ssl=auto_ssl,
+        database_limit=database_limit, mailbox_limit=mailbox_limit, owner_id=owner_id,
     )
     db.add(plan)
     db.commit()
@@ -57,11 +69,13 @@ def create_plan(db: Session, *, slug: str, name: str, website_limit: int = 1,
     return plan
 
 
-def update_plan(db: Session, plan_id: int, **kwargs) -> HostingPlan:
-    plan = db.query(HostingPlan).filter(HostingPlan.id == plan_id).first()
+def update_plan(db: Session, plan_id: int, owner_id: Optional[int] = None, **kwargs) -> HostingPlan:
+    plan = get_plan(db, plan_id, owner_id)
     if plan is None:
         raise ValueError(f"Plan {plan_id} not found")
     for key, value in kwargs.items():
+        if key in {"id", "slug", "owner_id", "created_at"}:
+            continue
         if value is not None and hasattr(plan, key):
             setattr(plan, key, value)
     db.commit()
@@ -69,8 +83,8 @@ def update_plan(db: Session, plan_id: int, **kwargs) -> HostingPlan:
     return plan
 
 
-def delete_plan(db: Session, plan_id: int) -> bool:
-    plan = db.query(HostingPlan).filter(HostingPlan.id == plan_id).first()
+def delete_plan(db: Session, plan_id: int, owner_id: Optional[int] = None) -> bool:
+    plan = get_plan(db, plan_id, owner_id)
     if plan is None:
         return False
     db.delete(plan)

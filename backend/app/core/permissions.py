@@ -5,6 +5,10 @@ from fastapi import HTTPException, status
 
 class Role(StrEnum):
     admin = "admin"
+    # Sells hosting from its own share of the server: manages its customers
+    # (users.reseller_id) and its own packages, and hosts sites of its own.
+    # Never anything server-wide. See app/core/access.py.
+    reseller = "reseller"
     end_user = "end_user"
 
 
@@ -15,9 +19,12 @@ LEGACY_ROLE_ALIASES = {
 }
 
 
+# ensure_role(x, Role.admin) stays admin-only; ensure_role(x, Role.end_user)
+# lets every signed-in role through.
 ROLE_LEVEL = {
     Role.end_user: 1,
-    Role.admin: 2,
+    Role.reseller: 2,
+    Role.admin: 3,
 }
 
 
@@ -32,6 +39,10 @@ def normalize_role(current_role: str) -> Role:
 
 def is_admin_role(current_role: str) -> bool:
     return normalize_role(current_role) == Role.admin
+
+
+def is_reseller_role(current_role: str) -> bool:
+    return normalize_role(current_role) == Role.reseller
 
 
 def ensure_role(current_role: str, minimum: Role) -> None:

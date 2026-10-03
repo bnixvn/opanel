@@ -192,11 +192,20 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=32, pattern=r"^[a-z_][a-z0-9_-]{2,31}$")
     email: EmailStr
     password: str = Field(min_length=12, max_length=72)  # bcrypt 72-byte limit
-    role: Literal["admin", "end_user"] = "end_user"
+    role: Literal["admin", "reseller", "end_user"] = "end_user"
     website_limit: int = Field(default=5, ge=0, le=1000)
     storage_limit_mb: int = Field(default=1024, ge=0, le=1024 * 1024)
     database_limit: int = Field(default=10, ge=0, le=1000)
     mailbox_limit: int = Field(default=10, ge=0, le=10000)
+    # The admin may put a new customer under a reseller; a reseller's own new
+    # accounts are always its customers, whatever is sent here.
+    reseller_id: Optional[int] = Field(default=None, ge=1)
+    # A reseller's share of the server (role "reseller" only; 0 = unlimited).
+    pool_user_limit: int = Field(default=0, ge=0, le=100000)
+    pool_website_limit: int = Field(default=0, ge=0, le=100000)
+    pool_storage_limit_mb: int = Field(default=0, ge=0, le=1024 * 1024 * 1024)
+    pool_database_limit: int = Field(default=0, ge=0, le=100000)
+    pool_mailbox_limit: int = Field(default=0, ge=0, le=1000000)
 
     @field_validator("username")
     @classmethod
@@ -213,12 +222,21 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
-    role: Optional[Literal["admin", "end_user"]] = None
+    role: Optional[Literal["admin", "reseller", "end_user"]] = None
     is_active: Optional[bool] = None
     website_limit: Optional[int] = Field(default=None, ge=0, le=1000)
     storage_limit_mb: Optional[int] = Field(default=None, ge=0, le=1024 * 1024)
     database_limit: Optional[int] = Field(default=None, ge=0, le=1000)
     mailbox_limit: Optional[int] = Field(default=None, ge=0, le=10000)
+    # Admin only: move an end user under a reseller (an id) or back to the
+    # admin's own accounts (0).
+    reseller_id: Optional[int] = Field(default=None, ge=0)
+    # A reseller's share of the server (role "reseller" only; 0 = unlimited).
+    pool_user_limit: Optional[int] = Field(default=None, ge=0, le=100000)
+    pool_website_limit: Optional[int] = Field(default=None, ge=0, le=100000)
+    pool_storage_limit_mb: Optional[int] = Field(default=None, ge=0, le=1024 * 1024 * 1024)
+    pool_database_limit: Optional[int] = Field(default=None, ge=0, le=100000)
+    pool_mailbox_limit: Optional[int] = Field(default=None, ge=0, le=1000000)
 
 
 class UserPasswordUpdate(BaseModel):
@@ -242,6 +260,12 @@ class UserOut(BaseModel):
     storage_limit_mb: int
     database_limit: int = 10
     mailbox_limit: int = 10
+    reseller_id: Optional[int] = None
+    pool_user_limit: int = 0
+    pool_website_limit: int = 0
+    pool_storage_limit_mb: int = 0
+    pool_database_limit: int = 0
+    pool_mailbox_limit: int = 0
     # None means "not measured yet" -- the accounts list leaves these out so it
     # can paint without waiting on a du of every site. 0 would read as "uses
     # nothing", which is a different claim.

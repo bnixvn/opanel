@@ -6,10 +6,11 @@ from typing import List, Optional
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.permissions import Role, ensure_role
+from app.core.access import managed_user
+from app.core.permissions import Role, ensure_role, is_admin_role, is_reseller_role
 from app.core.security import hash_password
 from app.core.step_up import require_sensitive_action_step_up
-from app.models.entities import AuditLog, BackupSchedule, DatabaseAccount, McpToken, User, Website, WebsiteAlias
+from app.models.entities import AuditLog, BackupSchedule, DatabaseAccount, HostingPlan, McpToken, User, Website, WebsiteAlias
 from app.schemas.schemas import (
     AuditLogOut,
     UserCreate,
@@ -19,7 +20,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import dns_manager, mail, mariadb, notifications, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, wordpress
+from app.services import dns_manager, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, sftp_accounts, site_users, ssl, storage_quota, wordpress
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -90,13 +91,49 @@ def _delete_orphan_databases(db: Session, owner_id: int) -> list[str]:
     return dropped
 
 
+def _account_limits(source) -> dict:
+    return {field: getattr(source, field) for field in reseller_pool.LIMIT_FIELDS}
+
+
+def _reseller(db: Session, reseller_id: int) -> User:
+    owner = db.query(User).filter(User.id == reseller_id).first()
+    if owner is None or not is_reseller_role(owner.role):
+        raise HTTPException(status_code=400, detail="That account is not a reseller")
+    return owner
+
+
+def _check_pool(db: Session, reseller: User, **kwargs) -> None:
+    try:
+        reseller_pool.check_pool(db, reseller, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("", response_model=UserOut)
 def create_user(payload: UserCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.admin)
+    """A new account. A reseller's new accounts are always its own customers."""
+    ensure_role(current_user.role, Role.reseller)
+    role = payload.role
+    reseller_id = payload.reseller_id
+    pools = {field: getattr(payload, field) for field in reseller_pool.POOL_FIELDS}
+    if is_reseller_role(current_user.role):
+        role, reseller_id = "end_user", current_user.id
+        pools = {field: 0 for field in reseller_pool.POOL_FIELDS}
+    elif role != "end_user":
+        reseller_id = None
+    if role != "reseller":
+        pools = {field: 0 for field in reseller_pool.POOL_FIELDS}
     # Only the username has to be unique -- one contact email may be shared by
     # several panel users.
     if db.query(User).filter(User.username == payload.username).first():
         raise HTTPException(status_code=409, detail="Username already taken")
+    limits = _account_limits(payload)
+    if reseller_id:
+        _check_pool(db, current_user if reseller_id == current_user.id else _reseller(db, reseller_id),
+                    new_account=limits)
+    if role == "reseller":
+        # Its own account comes out of its share too.
+        _check_pool(db, User(id=None, **limits, **pools))
     try:
         site_users.ensure_panel_user(payload.username, payload.password)
     except ValueError as exc:
@@ -107,11 +144,10 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         username=payload.username,
         email=payload.email,
         hashed_password=hash_password(payload.password),
-        role=payload.role,
-        website_limit=payload.website_limit,
-        storage_limit_mb=payload.storage_limit_mb,
-        database_limit=payload.database_limit,
-        mailbox_limit=payload.mailbox_limit,
+        role=role,
+        reseller_id=reseller_id,
+        **limits,
+        **pools,
     )
     db.add(user)
     db.commit()
@@ -132,10 +168,12 @@ def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_c
     The limit still comes back: it is arithmetic on a column, not a
     measurement. Used and percent are null rather than 0, so the page can tell
     "not measured yet" apart from "uses nothing".
+
+    An admin sees every account; a reseller sees its customers.
     """
-    ensure_role(current_user.role, Role.admin)
+    ensure_role(current_user.role, Role.reseller)
     rows = []
-    for user in db.query(User).order_by(User.id.desc()).all():
+    for user in _listed_users(db, current_user):
         data = UserOut.model_validate(user).model_dump()
         data["storage_used_bytes"] = None
         data["storage_percent"] = None
@@ -150,11 +188,33 @@ def list_user_usage(db: Session = Depends(get_db), current_user: User = Depends(
 
     Declared above /{user_id} so the literal path wins the route match.
     """
-    ensure_role(current_user.role, Role.admin)
+    ensure_role(current_user.role, Role.reseller)
     return [
         {"id": user.id, **storage_quota.storage_usage_summary(db, user)}
-        for user in db.query(User).order_by(User.id.desc()).all()
+        for user in _listed_users(db, current_user)
     ]
+
+
+def _listed_users(db: Session, actor: User) -> list[User]:
+    query = db.query(User).order_by(User.id.desc())
+    if not is_admin_role(actor.role):
+        query = query.filter(User.reseller_id == actor.id)
+    return query.all()
+
+
+@router.get("/pool")
+def my_pool(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """A reseller's share of the server and what it has handed out."""
+    ensure_role(current_user.role, Role.reseller)
+    if not is_reseller_role(current_user.role):
+        raise HTTPException(status_code=400, detail="Only a reseller has a share to report")
+    return reseller_pool.usage(db, current_user)
+
+
+@router.get("/{user_id}/pool")
+def reseller_pool_usage(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    return reseller_pool.usage(db, _reseller(db, user_id))
 
 
 @router.get("/me", response_model=UserOut)
@@ -174,16 +234,52 @@ def update_me(payload: UserUpdate, request: Request, db: Session = Depends(get_d
 
 @router.patch("/{user_id}", response_model=UserOut)
 def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.admin)
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    role_changed = False
-    if payload.role is not None and payload.role != user.role:
+    ensure_role(current_user.role, Role.reseller)
+    user = managed_user(db, current_user, user_id)
+    admin = is_admin_role(current_user.role)
+    if not admin:
+        if user.id == current_user.id:
+            raise HTTPException(status_code=403, detail="Your own limits are set by the administrator")
+        if payload.role is not None or payload.reseller_id is not None or any(
+                getattr(payload, field) is not None for field in reseller_pool.POOL_FIELDS):
+            raise HTTPException(status_code=403, detail="Only the administrator can change roles or resellers")
+
+    limit_changes = {field: getattr(payload, field) for field in reseller_pool.LIMIT_FIELDS
+                     if getattr(payload, field) is not None}
+    pool_changes = {field: getattr(payload, field) for field in reseller_pool.POOL_FIELDS
+                    if getattr(payload, field) is not None}
+    new_role = payload.role if payload.role is not None else user.role
+    new_reseller_id = user.reseller_id
+    if payload.reseller_id is not None:
+        new_reseller_id = payload.reseller_id or None
+    if new_role != "end_user":
+        new_reseller_id = None
+
+    if new_role != user.role:
         if user_id == current_user.id:
             raise HTTPException(status_code=400, detail="Cannot change your own role")
-        user.role = payload.role
+        if is_reseller_role(user.role) and reseller_pool.customers(db, user):
+            raise HTTPException(status_code=400,
+                                detail="This reseller still has customers: move or delete them first")
+    # The share each affected reseller would end up with must still hold.
+    if new_reseller_id and new_reseller_id != user.reseller_id:
+        _check_pool(db, _reseller(db, new_reseller_id), new_account={**_account_limits(user), **limit_changes})
+    elif new_reseller_id and limit_changes:
+        _check_pool(db, _reseller(db, new_reseller_id), changes={user.id: limit_changes})
+    if new_role == "reseller" and (pool_changes or limit_changes or new_role != user.role):
+        _check_pool(db, user, pool=pool_changes, changes={user.id: limit_changes})
+
+    role_changed = False
+    if new_role != user.role:
+        user.role = new_role
         role_changed = True
+    user.reseller_id = new_reseller_id
+    if new_role == "reseller":
+        for field, value in pool_changes.items():
+            setattr(user, field, value)
+    else:
+        for field in reseller_pool.POOL_FIELDS:
+            setattr(user, field, 0)
     if payload.email is not None and payload.email != user.email:
         user.email = payload.email
     if payload.is_active is not None:
@@ -192,14 +288,8 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         if user.is_active != payload.is_active:
             user.is_active = payload.is_active
             user.token_version = (user.token_version or 0) + 1
-    if payload.website_limit is not None:
-        user.website_limit = payload.website_limit
-    if payload.storage_limit_mb is not None:
-        user.storage_limit_mb = payload.storage_limit_mb
-    if payload.database_limit is not None:
-        user.database_limit = payload.database_limit
-    if payload.mailbox_limit is not None:
-        user.mailbox_limit = payload.mailbox_limit
+    for field, value in limit_changes.items():
+        setattr(user, field, value)
 
     if role_changed:
         # New role -> existing tokens with old role claim should be invalidated.
@@ -213,12 +303,13 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
 
 @router.delete("/{user_id}")
 def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.admin)
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    ensure_role(current_user.role, Role.reseller)
+    user = managed_user(db, current_user, user_id)
     if user.id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    if is_reseller_role(user.role) and reseller_pool.customers(db, user):
+        raise HTTPException(status_code=400,
+                            detail="This reseller still has customers: move or delete them first")
     websites = db.query(Website).filter(Website.owner_id == user.id).order_by(Website.id.asc()).all()
     deleted_domains = []
     panel_linux_user = site_users.linux_user_for_panel_username(user.username)
@@ -236,6 +327,8 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
         mail.delete_for_owner(db, user)
         dns_manager.delete_for_owner(db, user)
         db.query(McpToken).filter(McpToken.user_id == user.id).delete(synchronize_session=False)
+        # A reseller's own packages go with it.
+        db.query(HostingPlan).filter(HostingPlan.owner_id == user.id).delete(synchronize_session=False)
         site_users.delete_panel_user(user.username)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -249,12 +342,10 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
 @router.post("/{user_id}/password")
 def update_user_password(user_id: int, payload: UserPasswordUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if user_id != current_user.id:
-        ensure_role(current_user.role, Role.admin)
+        ensure_role(current_user.role, Role.reseller)
     else:
         require_sensitive_action_step_up(current_user, payload.current_password, payload.code)
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = managed_user(db, current_user, user_id)
     try:
         site_users.set_panel_user_password(user.username, payload.password)
     except ValueError as exc:
@@ -273,10 +364,8 @@ def update_user_password(user_id: int, payload: UserPasswordUpdate, request: Req
 
 @router.post("/{user_id}/2fa/reset")
 def reset_user_two_factor(user_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    ensure_role(current_user.role, Role.admin)
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    ensure_role(current_user.role, Role.reseller)
+    user = managed_user(db, current_user, user_id)
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Use the Security page to disable your own 2FA")
     user.totp_enabled = False

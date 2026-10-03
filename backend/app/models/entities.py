@@ -27,6 +27,17 @@ class User(Base):
     database_limit: Mapped[int] = mapped_column(Integer, default=10)
     # Mailboxes across all of the account's mail domains (Email addon). 0 = unlimited.
     mailbox_limit: Mapped[int] = mapped_column(Integer, default=10, server_default=text("10"))
+    # The reseller this account was created by and is managed by; NULL for the
+    # admin's own accounts. Only end users have one.
+    reseller_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    # A reseller's share of the server (role "reseller" only; 0 = unlimited).
+    # Its own account limits above plus every customer's must fit inside these,
+    # so the per-account limits stay what is enforced day to day.
+    pool_user_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    pool_website_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    pool_storage_limit_mb: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    pool_database_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    pool_mailbox_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     # Bumped to invalidate previously-issued JWTs (logout-everywhere, role
     # change, password reset by admin, account disable, etc).
     token_version: Mapped[int] = mapped_column(Integer, default=0)
@@ -305,10 +316,14 @@ class HostingPlan(Base):
     website_limit: Mapped[int] = mapped_column(Integer, default=1)
     storage_limit_mb: Mapped[int] = mapped_column(Integer, default=1024)
     database_limit: Mapped[int] = mapped_column(Integer, default=10)
+    mailbox_limit: Mapped[int] = mapped_column(Integer, default=10, server_default=text("10"))
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
     app_type: Mapped[str] = mapped_column(String(32), default="php")
     auto_ssl: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # A reseller's own package, seen and used by that reseller only; NULL for
+    # the admin's packages (which provisioning and WHMCS use).
+    owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import _user_from_token, get_current_user, get_current_user_optional
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.permissions import Role, ensure_role, is_admin_role
+from app.core.access import can_manage_user
+from app.core.permissions import Role, ensure_role, is_admin_role, is_reseller_role
 from app.core.security import create_access_token, hash_password, needs_rehash, verify_password
 from app.core.secrets import decrypt, encrypt
 from app.core.step_up import require_current_password, require_sensitive_action_step_up, verify_totp
@@ -643,7 +644,9 @@ def return_from_impersonation(
     except HTTPException:
         actor, actor_payload = None, {}
     if (actor is None or actor.username != impersonator or actor_payload.get("imp")
-            or not actor.is_active or not is_admin_role(actor.role)):
+            or not actor.is_active
+            or not (is_admin_role(actor.role) or is_reseller_role(actor.role))
+            or not can_manage_user(db, actor, current_user)):
         _revoke_request_token(db, request, current_user)
         db.commit()
         _clear_session_cookies(response)
@@ -681,7 +684,8 @@ def impersonate_user(
     of their TOTP if 2FA is enabled, and (2) audit-log every successful
     impersonation with the actor and target identities.
     """
-    ensure_role(current_user.role, Role.admin)
+    # An admin may log in as anyone; a reseller as its own customers only.
+    ensure_role(current_user.role, Role.reseller)
     if _impersonator(request):
         # One level only: the way back restores one saved session.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -692,7 +696,7 @@ def impersonate_user(
     _enforce_rate_limit(_username_key(current_user.username))
 
     target_user = db.query(User).filter(User.id == user_id).first()
-    if target_user is None:
+    if target_user is None or target_user.id == current_user.id or not can_manage_user(db, current_user, target_user):
         raise HTTPException(status_code=404, detail="User not found")
     # Admins may impersonate suspended users for support/troubleshooting.
     # Normal login still rejects inactive users; only impersonation is allowed
