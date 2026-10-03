@@ -4420,6 +4420,9 @@ function App() {
     ...(isAdmin && malwareScanStatus?.enabled ? [['malware', tr("Malware Scanner"), Bug]] : []),
   ];
 
+  // A reseller's accounts page is the same page: its customers.
+  const resellerNavItems = isReseller ? [['users', tr("Customers"), Users]] : [];
+
   // One plain list, top to bottom: no section headings.
   const navSections = [
     { key: 'main', items: [
@@ -4431,7 +4434,8 @@ function App() {
       ['files', tr("File manager"), FolderOpen],
       ['sftp', tr("SFTP accounts"), KeyRound],
       ['backups', tr("Backups"), Archive],
-      ...(canManageUsers ? [['users', isReseller ? tr("Customers") : tr("Panel users"), Users]] : []),
+      ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
+      ...resellerNavItems,
       ...addonNavItems,
       ['config', tr("Settings"), SettingsIcon],
     ] },
@@ -8443,7 +8447,8 @@ function App() {
       [tr("Websites"), resellerPool.allocated_website_limit, resellerPool.pool_website_limit],
       [tr("Disk (MB)"), resellerPool.allocated_storage_limit_mb, resellerPool.pool_storage_limit_mb],
       [tr("Databases"), resellerPool.allocated_database_limit, resellerPool.pool_database_limit],
-      [tr("Mailboxes"), resellerPool.allocated_mailbox_limit, resellerPool.pool_mailbox_limit],
+      // Mailboxes only once the Email addon is installed, as everywhere else.
+      ...(mailInfo?.installed ? [[tr("Mailboxes"), resellerPool.allocated_mailbox_limit, resellerPool.pool_mailbox_limit]] : []),
     ];
     return <section className="section">
       <div className="section-title"><div><h2>{tr("Your share")}</h2><p className="hint">{tr("Your own limits and every customer's together must fit in the share the administrator gave you.")}</p></div></div>
@@ -8466,7 +8471,7 @@ function App() {
       ['pool_website_limit', tr("Websites")],
       ['pool_storage_limit_mb', tr("Disk (MB)")],
       ['pool_database_limit', tr("Databases")],
-      ['pool_mailbox_limit', tr("Mailboxes")],
+      ...(mailInfo?.installed ? [['pool_mailbox_limit', tr("Mailboxes")]] : []),
     ];
     return <>
       <p className="hint wide">{tr("Reseller share: its own limits and all its customers' must fit inside these. 0 = unlimited.")}</p>
@@ -8583,7 +8588,7 @@ function App() {
           <label><span>{tr("Sites")}</span><input type="number" min="0" value={newPlan.website_limit} onChange={e => setNewPlan(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
           <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
           <label><span>{tr("Databases")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.database_limit} onChange={e => setNewPlan(prev => ({ ...prev, database_limit: parseInt(e.target.value) || 0 }))} /></label>
-          <label><span>{tr("Mailboxes")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.mailbox_limit} onChange={e => setNewPlan(prev => ({ ...prev, mailbox_limit: parseInt(e.target.value) || 0 }))} /></label>
+          {mailInfo?.installed && <label><span>{tr("Mailboxes")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.mailbox_limit} onChange={e => setNewPlan(prev => ({ ...prev, mailbox_limit: parseInt(e.target.value) || 0 }))} /></label>}
           <button disabled={!!loading || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> {tr("Add")}</button>
         </div>
         {plans.length === 0 && <p className="hint">{tr("No packages yet. Create one above.")}</p>}
@@ -8608,7 +8613,7 @@ function App() {
                 <label><span>{tr("Sites")}</span><input type="number" min="0" value={editingPlanForm.website_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
                 <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
                 <label><span>{tr("Databases")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.database_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, database_limit: parseInt(e.target.value) || 0 }))} /></label>
-                <label><span>{tr("Mailboxes")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.mailbox_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, mailbox_limit: parseInt(e.target.value) || 0 }))} /></label>
+                {mailInfo?.installed && <label><span>{tr("Mailboxes")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.mailbox_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, mailbox_limit: parseInt(e.target.value) || 0 }))} /></label>}
                 <label className="check-line"><input type="checkbox" checked={editingPlanForm.active} onChange={e => setEditingPlanForm(prev => ({ ...prev, active: e.target.checked }))} /> {tr("Active")}</label>
               </div>
               <div className="user-edit-actions">
@@ -8654,7 +8659,7 @@ function App() {
           <label><span>{tr("Site limit")}</span><input type="number" value={newUser.website_limit} onChange={e => setNewUser(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
           <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
           <label><span>{tr("Database limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newUser.database_limit} onChange={e => setNewUser(prev => ({ ...prev, database_limit: e.target.value, _planId: '' }))} /></label>
-          <label><span>{tr("Mailbox limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newUser.mailbox_limit} onChange={e => setNewUser(prev => ({ ...prev, mailbox_limit: e.target.value, _planId: '' }))} /></label>
+          {mailInfo?.installed && <label><span>{tr("Mailbox limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newUser.mailbox_limit} onChange={e => setNewUser(prev => ({ ...prev, mailbox_limit: e.target.value, _planId: '' }))} /></label>}
           {isAdmin && newUser.role === 'reseller' && renderPoolInputs(newUser, setNewUser)}
           <button disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> {isReseller ? tr("Create customer") : tr("Create user")}</button>
         </div>
