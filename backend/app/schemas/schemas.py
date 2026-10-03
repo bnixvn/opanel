@@ -206,6 +206,7 @@ class UserCreate(BaseModel):
     pool_storage_limit_mb: int = Field(default=0, ge=0, le=1024 * 1024 * 1024)
     pool_database_limit: int = Field(default=0, ge=0, le=100000)
     pool_mailbox_limit: int = Field(default=0, ge=0, le=1000000)
+    pool_oversell: bool = False
 
     @field_validator("username")
     @classmethod
@@ -237,6 +238,7 @@ class UserUpdate(BaseModel):
     pool_storage_limit_mb: Optional[int] = Field(default=None, ge=0, le=1024 * 1024 * 1024)
     pool_database_limit: Optional[int] = Field(default=None, ge=0, le=100000)
     pool_mailbox_limit: Optional[int] = Field(default=None, ge=0, le=1000000)
+    pool_oversell: Optional[bool] = None
 
 
 class UserPasswordUpdate(BaseModel):
@@ -266,6 +268,7 @@ class UserOut(BaseModel):
     pool_storage_limit_mb: int = 0
     pool_database_limit: int = 0
     pool_mailbox_limit: int = 0
+    pool_oversell: bool = False
     # None means "not measured yet" -- the accounts list leaves these out so it
     # can paint without waiting on a du of every site. 0 would read as "uses
     # nothing", which is a different claim.

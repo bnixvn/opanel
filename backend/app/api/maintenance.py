@@ -43,7 +43,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, openlitespeed, php, restore_sources, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, openlitespeed, php, reseller as reseller_pool, restore_sources, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -2213,6 +2213,13 @@ def install_wordpress_on_site(website_id: int, payload: WpInstallRequest, reques
     wp_config = Path(website.root_path) / (website.document_root or "public_html") / "wp-config.php"
     if wp_config.exists():
         raise HTTPException(status_code=400, detail="WordPress is already installed on this site")
+
+    owner = db.query(User).filter(User.id == website.owner_id).first()
+    if owner is not None:
+        try:
+            reseller_pool.ensure_room(db, owner, "database")
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     # Create database
     try:

@@ -231,3 +231,73 @@ def test_a_reseller_sees_its_own_and_its_customers_sites_and_nobody_elses(env, m
     # The customer still sees only its own.
     _login(client, "cust1")
     assert [w["domain"] for w in _call(client, "GET", "/api/websites").json()] == ["custsite.com"]
+
+
+def _oversold(client):
+    _login(client, "root_admin")
+    created = _call(client, "POST", "/api/users", json={"username": "shop", "role": "reseller", **ACCOUNT, **OWN,
+                                                       **POOL, "pool_oversell": True})
+    assert created.status_code == 200, created.text
+    assert created.json()["pool_oversell"] is True
+    _login(client, "shop")
+
+
+def test_an_overselling_reseller_hands_out_more_than_its_share(env):
+    """cPanel and DirectAdmin oversell: the limits handed out are not added up
+    (operator, 2026-10-03). Customers are still counted."""
+    db, client = env
+    _oversold(client)
+    big = {"website_limit": 5, "storage_limit_mb": 0, "database_limit": 0, "mailbox_limit": 0}
+    assert _call(client, "POST", "/api/users", json={"username": "cust1", **ACCOUNT, **big}).status_code == 200
+    assert _call(client, "POST", "/api/users", json={"username": "cust2", **ACCOUNT, **big}).status_code == 200
+    third = _call(client, "POST", "/api/users", json={"username": "cust3", **ACCOUNT, **big})
+    assert third.status_code == 400 and "customers" in third.json()["detail"]
+    pool = _call(client, "GET", "/api/users/pool").json()
+    assert pool["pool_oversell"] is True and pool["used_website_limit"] == 0
+
+    # Turning it off needs the limits to fit again.
+    _login(client, "root_admin")
+    shop = _user(db, "shop")
+    assert _call(client, "PATCH", f"/api/users/{shop.id}", json={"pool_oversell": False}).status_code == 400
+    assert _user(db, "shop").pool_oversell is True
+
+
+def test_an_overselling_reseller_is_held_to_what_its_accounts_hold(env, monkeypatch):
+    from app.services import reseller as reseller_pool, storage_quota
+
+    db, client = env
+    _oversold(client)
+    _call(client, "POST", "/api/users", json={"username": "cust1", **ACCOUNT, "website_limit": 9,
+                                             "storage_limit_mb": 0, "database_limit": 0, "mailbox_limit": 0})
+    shop, cust = _user(db, "shop"), _user(db, "cust1")
+    # POOL: 5 websites, 5 databases. Four sites (each with its database) between them.
+    for owner, n in ((shop, 1), (cust, 3)):
+        for i in range(n):
+            _site(db, owner, f"{owner.username}{i}.com")
+    reseller_pool.ensure_room(db, cust, "website")          # the fifth fits
+    _site(db, cust, "cust9.com")
+    with pytest.raises(ValueError, match="share of websites is used up"):
+        reseller_pool.ensure_room(db, cust, "website")
+    with pytest.raises(ValueError, match="share of databases"):
+        reseller_pool.ensure_room(db, shop, "database")
+    # Somebody else's account is not the reseller's business.
+    reseller_pool.ensure_room(db, _user(db, "direct"), "website")
+
+    # Disk: 3000 MB between them; cust1's own limit is unlimited.
+    used = {shop.id: 1000 * 1024 * 1024, cust.id: 1900 * 1024 * 1024}
+    monkeypatch.setattr(storage_quota, "user_storage_used_bytes", lambda db_, user, use_cache=True: used.get(user.id, 0))
+    storage_quota.enforce_user_storage_quota(db, cust, incoming_bytes=50 * 1024 * 1024)
+    with pytest.raises(storage_quota.StorageQuotaExceeded, match="share of disk"):
+        storage_quota.enforce_user_storage_quota(db, cust, incoming_bytes=200 * 1024 * 1024)
+
+
+def test_without_oversell_the_share_is_not_checked_against_use(env):
+    from app.services import reseller as reseller_pool
+
+    db, client = env
+    _reseller(client)
+    shop = _user(db, "shop")
+    for i in range(7):
+        _site(db, shop, f"many{i}.com")
+    # Its limits fit the share; what it holds is its own limit's business.
+    reseller_pool.ensure_room(db, shop, "website")

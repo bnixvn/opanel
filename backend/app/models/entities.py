@@ -38,6 +38,9 @@ class User(Base):
     pool_storage_limit_mb: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     pool_database_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     pool_mailbox_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    # Overselling (admin's choice): the limits above are not added up; what the
+    # accounts actually hold is checked against the pool instead.
+    pool_oversell: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # Bumped to invalidate previously-issued JWTs (logout-everywhere, role
     # change, password reset by admin, account disable, etc).
     token_version: Mapped[int] = mapped_column(Integer, default=0)

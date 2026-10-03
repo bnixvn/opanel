@@ -18,7 +18,7 @@ from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website
 from app.schemas.schemas import DatabaseCreate, DatabaseCreatedOut, DatabaseOut, DatabaseOwnerUpdate, DatabasePasswordUpdate
-from app.services import mariadb, panel_urls
+from app.services import mariadb, panel_urls, reseller as reseller_pool
 from app.services.audit import log_action
 from app.services.sso_tokens import consume_phpmyadmin_token, create_phpmyadmin_token
 
@@ -81,6 +81,11 @@ def create_database(payload: DatabaseCreate, db: Session = Depends(get_db), curr
                     status_code=403,
                     detail=f"Database limit reached ({owned}/{limit}). Ask your administrator to raise it.",
                 )
+
+    try:
+        reseller_pool.ensure_room(db, current_user, "database")
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     if db.query(DatabaseAccount).filter(DatabaseAccount.db_name == db_name).first():
         raise HTTPException(status_code=409, detail="Database name already exists")

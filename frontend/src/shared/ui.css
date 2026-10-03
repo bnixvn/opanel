@@ -807,3 +807,4 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .reseller-pool-item span{font-size:12px;color:var(--text-muted)}
 .reseller-pool-item strong{font-size:15px}
 .user-edit-grid .hint.wide,.user-create-card .hint.wide{grid-column:1/-1;margin:4px 0 0}
+.user-edit-grid .check-line.wide,.user-create-card .check-line.wide{grid-column:1/-1}

@@ -115,14 +115,14 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
     ensure_role(current_user.role, Role.reseller)
     role = payload.role
     reseller_id = payload.reseller_id
-    pools = {field: getattr(payload, field) for field in reseller_pool.POOL_FIELDS}
+    pools = {field: getattr(payload, field) for field in reseller_pool.SETTINGS}
     if is_reseller_role(current_user.role):
         role, reseller_id = "end_user", current_user.id
-        pools = {field: 0 for field in reseller_pool.POOL_FIELDS}
+        pools = dict(reseller_pool.NO_POOL)
     elif role != "end_user":
         reseller_id = None
     if role != "reseller":
-        pools = {field: 0 for field in reseller_pool.POOL_FIELDS}
+        pools = dict(reseller_pool.NO_POOL)
     # Only the username has to be unique -- one contact email may be shared by
     # several panel users.
     if db.query(User).filter(User.username == payload.username).first():
@@ -241,12 +241,12 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         if user.id == current_user.id:
             raise HTTPException(status_code=403, detail="Your own limits are set by the administrator")
         if payload.role is not None or payload.reseller_id is not None or any(
-                getattr(payload, field) is not None for field in reseller_pool.POOL_FIELDS):
+                getattr(payload, field) is not None for field in reseller_pool.SETTINGS):
             raise HTTPException(status_code=403, detail="Only the administrator can change roles or resellers")
 
     limit_changes = {field: getattr(payload, field) for field in reseller_pool.LIMIT_FIELDS
                      if getattr(payload, field) is not None}
-    pool_changes = {field: getattr(payload, field) for field in reseller_pool.POOL_FIELDS
+    pool_changes = {field: getattr(payload, field) for field in reseller_pool.SETTINGS
                     if getattr(payload, field) is not None}
     new_role = payload.role if payload.role is not None else user.role
     new_reseller_id = user.reseller_id
@@ -278,8 +278,8 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         for field, value in pool_changes.items():
             setattr(user, field, value)
     else:
-        for field in reseller_pool.POOL_FIELDS:
-            setattr(user, field, 0)
+        for field, value in reseller_pool.NO_POOL.items():
+            setattr(user, field, value)
     if payload.email is not None and payload.email != user.email:
         user.email = payload.email
     if payload.is_active is not None:
