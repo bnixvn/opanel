@@ -800,3 +800,10 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .firewall-fail2ban-missing{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .firewall-fail2ban-missing span{flex:1 1 280px}
 .firewall-fail2ban .addon-panel + .addon-panel{margin-top:12px}
+
+/* A reseller's share: handed out / total, one tile per resource. */
+.reseller-pool{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.reseller-pool-item{display:grid;gap:4px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt)}
+.reseller-pool-item span{font-size:12px;color:var(--text-muted)}
+.reseller-pool-item strong{font-size:15px}
+.user-edit-grid .hint.wide,.user-create-card .hint.wide{grid-column:1/-1;margin:4px 0 0}

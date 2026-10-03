@@ -46,8 +46,11 @@ def test_the_usage_endpoint_does_the_measuring():
     assert '"id": user.id' in source
 
 
-def test_usage_is_admin_only():
-    assert "ensure_role(current_user.role, Role.admin)" in inspect.getsource(users_api.list_user_usage)
+def test_usage_is_for_those_who_manage_accounts_and_only_theirs():
+    # An admin sees every account; a reseller its customers (2026-10-03).
+    source = inspect.getsource(users_api.list_user_usage)
+    assert "ensure_role(current_user.role, Role.reseller)" in source
+    assert "_listed_users(db, current_user)" in source
 
 
 def test_usage_carries_an_id_to_merge_on():

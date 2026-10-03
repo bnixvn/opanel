@@ -400,6 +400,8 @@ function App() {
   const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
   const [page, setPage] = useState(() => pageFromPathname(window.location.pathname));
   const [domain, setDomain] = useState('');
+  // Who a new website is for: '' is the account creating it.
+  const [siteOwnerId, setSiteOwnerId] = useState('');
   const [websiteSearch, setWebsiteSearch] = useState('');
   const [databaseSearch, setDatabaseSearch] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
@@ -483,7 +485,9 @@ function App() {
   const [selectedFilePaths, setSelectedFilePaths] = useState([]);
   const [archiveFormat, setArchiveFormat] = useState('zip');
   const [editorCursor, setEditorCursor] = useState({ line: 1, column: 1 });
-  const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
+  const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_website_limit: 0, pool_storage_limit_mb: 0, pool_database_limit: 0, pool_mailbox_limit: 0 });
+  // A reseller's share of the server and what it has handed out (GET /users/pool).
+  const [resellerPool, setResellerPool] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [editingUserForm, setEditingUserForm] = useState({ email: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
   const [phpConfig, setPhpConfig] = useState({ php_version: '8.4', display_errors: 'Off', max_execution_time: 300, max_input_time: 600, max_input_vars: 10000, memory_limit: '1024M', post_max_size: '1024M', upload_max_filesize: '1024M', opcache_enable: true });
@@ -657,14 +661,17 @@ function App() {
   // Hosting plans
   const [plans, setPlans] = useState([]);
   const [editingPlan, setEditingPlan] = useState(null);
-  const [editingPlanForm, setEditingPlanForm] = useState({ name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false, active: true });
-  const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, php_version: '8.4', app_type: 'php', auto_ssl: false });
+  const [editingPlanForm, setEditingPlanForm] = useState({ name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, php_version: '8.4', app_type: 'php', auto_ssl: false, active: true });
+  const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, php_version: '8.4', app_type: 'php', auto_ssl: false });
   // WordPress manager
   const [wpManagerSite, setWpManagerSite] = useState(null);
   const [wpManagerMode, setWpManagerMode] = useState('install'); // 'install' | 'update'
   const [wpInstallForm, setWpInstallForm] = useState({ admin_user: 'admin', admin_email: '', admin_password: '', title: '' });
   const noticeTimer = useRef(null);
   const isAdmin = currentUser?.role === 'admin';
+  // A reseller manages its customers and packages, never the server.
+  const isReseller = currentUser?.role === 'reseller';
+  const canManageUsers = isAdmin || isReseller;
   const currentSite = websites.find(site => String(site.id) === String(selectedWebsiteId));
 
   const navigateToPage = useCallback((nextPage, options = {}) => {
@@ -1188,6 +1195,11 @@ function App() {
     loadPhpVersions();
   }
 
+  async function loadResellerPool() {
+    const data = await request('/users/pool', { silent: true });
+    if (data) setResellerPool(data);
+  }
+
   async function loadUsers() {
     const data = await request('/users');
     if (data) {
@@ -1216,12 +1228,23 @@ function App() {
     if (data) setResourceUsage(data);
   }
 
+  const POOL_FIELDS = ['pool_user_limit', 'pool_website_limit', 'pool_storage_limit_mb', 'pool_database_limit', 'pool_mailbox_limit'];
+
   async function createUser() {
-    const data = await request('/users', { method: 'POST', body: JSON.stringify({ ...newUser, website_limit: Number(newUser.website_limit), storage_limit_mb: Number(newUser.storage_limit_mb) }) }, tr("Creating user..."));
+    const body = {
+      username: newUser.username, email: newUser.email, password: newUser.password,
+      role: isAdmin ? newUser.role : 'end_user',
+      website_limit: Number(newUser.website_limit), storage_limit_mb: Number(newUser.storage_limit_mb),
+      database_limit: Number(newUser.database_limit), mailbox_limit: Number(newUser.mailbox_limit),
+    };
+    if (isAdmin && newUser.role === 'end_user' && newUser.reseller_id) body.reseller_id = Number(newUser.reseller_id);
+    if (isAdmin && newUser.role === 'reseller') POOL_FIELDS.forEach(field => { body[field] = Number(newUser[field]) || 0; });
+    const data = await request('/users', { method: 'POST', body: JSON.stringify(body) }, tr("Creating user..."));
     if (data) {
       setNotice(tr("Created user {0}", data.username));
-      setNewUser({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024 });
+      setNewUser({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_website_limit: 0, pool_storage_limit_mb: 0, pool_database_limit: 0, pool_mailbox_limit: 0 });
       await loadUsers();
+      if (isReseller) await loadResellerPool();
     }
   }
 
@@ -1233,7 +1256,14 @@ function App() {
       role: user.role || 'end_user',
       website_limit: user.website_limit ?? 5,
       storage_limit_mb: user.storage_limit_mb ?? 1024,
+      database_limit: user.database_limit ?? 10,
       mailbox_limit: user.mailbox_limit ?? 10,
+      reseller_id: user.reseller_id ? String(user.reseller_id) : '',
+      pool_user_limit: user.pool_user_limit ?? 0,
+      pool_website_limit: user.pool_website_limit ?? 0,
+      pool_storage_limit_mb: user.pool_storage_limit_mb ?? 0,
+      pool_database_limit: user.pool_database_limit ?? 0,
+      pool_mailbox_limit: user.pool_mailbox_limit ?? 0,
       _password: '',
       _planId: matchedPlan ? String(matchedPlan.id) : '',
     });
@@ -1266,7 +1296,13 @@ function App() {
     if (editingUserForm.mailbox_limit !== undefined && Number.isInteger(mailboxLimit) && mailboxLimit >= 0 && mailboxLimit <= 10000) {
       payload.mailbox_limit = mailboxLimit;
     }
-    if (editingUser.id !== currentUser?.id) payload.role = editingUserForm.role;
+    const databaseLimit = Number(editingUserForm.database_limit);
+    if (Number.isInteger(databaseLimit) && databaseLimit >= 0 && databaseLimit <= 1000) payload.database_limit = databaseLimit;
+    if (isAdmin) {
+      if (editingUser.id !== currentUser?.id) payload.role = editingUserForm.role;
+      if (editingUserForm.role === 'end_user') payload.reseller_id = Number(editingUserForm.reseller_id) || 0;
+      if (editingUserForm.role === 'reseller') POOL_FIELDS.forEach(field => { payload[field] = Number(editingUserForm[field]) || 0; });
+    }
     const data = await request(`/users/${editingUser.id}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
@@ -1290,6 +1326,7 @@ function App() {
       if (data.id === currentUser?.id) setCurrentUser(prev => ({ ...prev, ...data }));
       cancelEditingUser();
       await loadUsers();
+      if (isReseller) await loadResellerPool();
     }
   }
 
@@ -2112,7 +2149,7 @@ function App() {
 
   function startEditingPlan(plan) {
     setEditingPlan(plan);
-    setEditingPlanForm({ name: plan.name, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, php_version: plan.php_version, app_type: plan.app_type, auto_ssl: plan.auto_ssl, active: plan.active });
+    setEditingPlanForm({ name: plan.name, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? 10, mailbox_limit: plan.mailbox_limit ?? 10, php_version: plan.php_version, app_type: plan.app_type, auto_ssl: plan.auto_ssl, active: plan.active });
   }
 
   async function updatePlan() {
@@ -2408,6 +2445,7 @@ function App() {
       install_wordpress: installWp,
       title: cleanDomain,
     };
+    if (siteOwnerId) body.owner_id = Number(siteOwnerId);
     if (installWp) {
       body.admin_user = wpAdminUser;
       body.admin_email = cleanAdminEmail || `admin@${cleanDomain}`;
@@ -4189,7 +4227,8 @@ function App() {
   }, [isAuthenticated, isAdmin, page, backupTab, restoreSource, restoreTargetId]);
 
   useEffect(() => {
-    if (isAuthenticated && page === 'users') { loadUsers(); loadPlans(); }
+    if (isAuthenticated && page === 'users') { loadUsers(); loadPlans(); if (currentUser?.role === 'reseller') loadResellerPool(); }
+    if (isAuthenticated && page === 'websites' && ['admin', 'reseller'].includes(currentUser?.role) && users.length === 0) loadUsers();
     // The databases page shows an owner per row for admins, and offers to
     // hand one over, so it needs the account list too.
     if (isAuthenticated && page === 'databases' && currentUser?.role === 'admin') loadUsers();
@@ -4346,6 +4385,7 @@ function App() {
   useEffect(() => { window.scrollTo(0, 0); }, [showFirewallIpList]);
 
   function roleLabel(role) {
+    if (role === 'reseller') return tr("Reseller");
     return role === 'admin' ? tr("Admin") : tr("End user");
   }
 
@@ -4391,7 +4431,7 @@ function App() {
       ['files', tr("File manager"), FolderOpen],
       ['sftp', tr("SFTP accounts"), KeyRound],
       ['backups', tr("Backups"), Archive],
-      ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
+      ...(canManageUsers ? [['users', isReseller ? tr("Customers") : tr("Panel users"), Users]] : []),
       ...addonNavItems,
       ['config', tr("Settings"), SettingsIcon],
     ] },
@@ -4626,7 +4666,7 @@ function App() {
       { key: 'backup', icon: Archive, label: tr("Back up a website"), run: () => navigateToPage('backups') },
       { key: 'sftp', icon: KeyRound, label: tr("New SFTP account"), run: () => { setShowCreateSftp(true); navigateToPage('sftp'); } },
       ...(mailInfo?.installed ? [{ key: 'mail', icon: Mail, label: tr("New mailbox"), run: () => { setMailTab('mailboxes'); navigateToPage('mail'); } }] : []),
-      ...(isAdmin ? [{ key: 'user', icon: Users, label: tr("Panel users"), run: () => navigateToPage('users') }] : []),
+      ...(canManageUsers ? [{ key: 'user', icon: Users, label: isReseller ? tr("Customers") : tr("Panel users"), run: () => navigateToPage('users') }] : []),
     ];
 
     return <div className="dashboard">
@@ -4855,6 +4895,10 @@ function App() {
         </div>
         <div className="form-row create-site-row">
           <input id="create-website-domain" value={domain} onChange={e => setDomain(e.target.value)} placeholder="domain.com" />
+          {canManageUsers && users.length > 0 && <select value={siteOwnerId} onChange={e => setSiteOwnerId(e.target.value)} aria-label={tr("Owner")} title={tr("Owner")}>
+            <option value="">{tr("For yourself")}</option>
+            {users.filter(u => u.id !== currentUser?.id && u.role !== 'admin').map(u => <option key={u.id} value={u.id}>{tr("For {0}", u.username)}</option>)}
+          </select>}
           <select value={siteType} onChange={e => setSiteType(e.target.value)}>
             <option value="wordpress">{tr("WordPress")}</option>
             <option value="php">{tr("PHP")}</option>
@@ -8391,13 +8435,54 @@ function App() {
     </section>;
   }
 
+  // A reseller's share of the server: what is handed out against what it has.
+  function renderResellerPool() {
+    if (!isReseller || !resellerPool) return null;
+    const rows = [
+      [tr("Customers"), resellerPool.customers, resellerPool.pool_user_limit],
+      [tr("Websites"), resellerPool.allocated_website_limit, resellerPool.pool_website_limit],
+      [tr("Disk (MB)"), resellerPool.allocated_storage_limit_mb, resellerPool.pool_storage_limit_mb],
+      [tr("Databases"), resellerPool.allocated_database_limit, resellerPool.pool_database_limit],
+      [tr("Mailboxes"), resellerPool.allocated_mailbox_limit, resellerPool.pool_mailbox_limit],
+    ];
+    return <section className="section">
+      <div className="section-title"><div><h2>{tr("Your share")}</h2><p className="hint">{tr("Your own limits and every customer's together must fit in the share the administrator gave you.")}</p></div></div>
+      <div className="reseller-pool">
+        {rows.map(([label, used, total]) => <div className="reseller-pool-item" key={label}>
+          <span>{label}</span>
+          <strong>{used == null ? tr("unlimited") : used} / {total ? total : tr("unlimited")}</strong>
+        </div>)}
+      </div>
+    </section>;
+  }
+
+  function resellerName(id) {
+    return users.find(u => u.id === id)?.username || `#${id}`;
+  }
+
+  function renderPoolInputs(form, setForm) {
+    const fields = [
+      ['pool_user_limit', tr("Customers")],
+      ['pool_website_limit', tr("Websites")],
+      ['pool_storage_limit_mb', tr("Disk (MB)")],
+      ['pool_database_limit', tr("Databases")],
+      ['pool_mailbox_limit', tr("Mailboxes")],
+    ];
+    return <>
+      <p className="hint wide">{tr("Reseller share: its own limits and all its customers' must fit inside these. 0 = unlimited.")}</p>
+      {fields.map(([field, label]) => <label key={field}><span>{tr("Share")}: {label}</span><input type="number" min="0" value={form[field] ?? 0} onChange={e => setForm(prev => ({ ...prev, [field]: e.target.value }))} /></label>)}
+    </>;
+  }
+
   function renderUsers() {
-    if (!isAdmin) return <section className="section"><h2>{tr("Users")}</h2><p className="hint">{tr("No permission.")}</p></section>;
+    if (!canManageUsers) return <section className="section"><h2>{tr("Users")}</h2><p className="hint">{tr("No permission.")}</p></section>;
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>{tr("Panel Users")}</h2><p className="hint">{tr("Manage panel accounts, hosting packages, and create new users.")}</p></div>
-          <button className="secondary" disabled={!!loading} onClick={loadUsers}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <div>{isReseller
+            ? <><h2>{tr("Customers")}</h2><p className="hint">{tr("Your customers' accounts, your packages, and new customers.")}</p></>
+            : <><h2>{tr("Panel Users")}</h2><p className="hint">{tr("Manage panel accounts, hosting packages, and create new users.")}</p></>}</div>
+          <button className="secondary" disabled={!!loading} onClick={() => { loadUsers(); if (isReseller) loadResellerPool(); }}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="tab-bar">
           <button className={usersTab === 'list' ? 'tab active' : 'tab'} onClick={() => setUsersTab('list')}><Users size={14}/> {tr("List Users")}</button>
@@ -8405,6 +8490,7 @@ function App() {
           <button className={usersTab === 'add' ? 'tab active' : 'tab'} onClick={() => setUsersTab('add')}><Plus size={14}/> {tr("Add User")}</button>
         </div>
       </section>
+      {renderResellerPool()}
       {usersTab === 'list' && renderUsersListTab()}
       {usersTab === 'packages' && renderUsersPackagesTab()}
       {usersTab === 'add' && renderUsersAddTab()}
@@ -8418,6 +8504,7 @@ function App() {
         {users.map(user => <div className="row user-row" key={user.id}>
           <div className="user-main"><strong>{user.username}</strong><small>{user.email}</small></div>
           <span className="badge">{roleLabel(user.role)}</span>
+          {isAdmin && user.reseller_id && <span className="badge" title={tr("Reseller")}>{tr("via {0}", resellerName(user.reseller_id))}</span>}
           <span className={`badge ${user.is_active ? 'ok' : 'warn'}`}>{user.is_active ? tr("Active") : tr("Suspended")}</span>
           <span className={`user-metric${user.storage_used_bytes == null ? ' pending' : ''}`}><HardDrive size={13}/>{storageUsageText(user)}</span>
           <div className="row-actions">
@@ -8437,13 +8524,17 @@ function App() {
             </div>
             <div className="user-edit-grid">
               <label><span>{tr("Email")}</span><input type="email" value={editingUserForm.email} onChange={e => setEditingUserForm(prev => ({ ...prev, email: e.target.value }))} /></label>
-              <label><span>{tr("Role")}</span><select value={editingUserForm.role} disabled={user.id === currentUser?.id} onChange={e => setEditingUserForm(prev => ({ ...prev, role: e.target.value }))}>
-                <option value="end_user">{tr("End user")}</option><option value="admin">{tr("Admin")}</option>
-              </select></label>
+              {isAdmin && <label><span>{tr("Role")}</span><select value={editingUserForm.role} disabled={user.id === currentUser?.id} onChange={e => setEditingUserForm(prev => ({ ...prev, role: e.target.value }))}>
+                <option value="end_user">{tr("End user")}</option><option value="reseller">{tr("Reseller")}</option><option value="admin">{tr("Admin")}</option>
+              </select></label>}
+              {isAdmin && editingUserForm.role === 'end_user' && <label><span>{tr("Reseller")}</span><select value={editingUserForm.reseller_id || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, reseller_id: e.target.value }))}>
+                <option value="">{tr("None (yours)")}</option>
+                {users.filter(u => u.role === 'reseller').map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+              </select></label>}
               <label><span>{tr("Package")}</span><select value={editingUserForm._planId || ''} onChange={e => {
                 const planId = e.target.value;
                 const plan = plans.find(p => String(p.id) === planId);
-                if (plan) setEditingUserForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb }));
+                if (plan) setEditingUserForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? prev.database_limit, mailbox_limit: plan.mailbox_limit ?? prev.mailbox_limit }));
                 else setEditingUserForm(prev => ({ ...prev, _planId: '' }));
               }}>
                 <option value="">{tr("Custom")}</option>
@@ -8451,7 +8542,9 @@ function App() {
               </select></label>
               <label><span>{tr("Site limit")}</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
               <label><span>{tr("Disk limit (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
+              <label><span>{tr("Database limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" max="1000" value={editingUserForm.database_limit ?? 10} onChange={e => setEditingUserForm(prev => ({ ...prev, database_limit: e.target.value, _planId: '' }))} /></label>
               {mailInfo?.installed && <label><span>{tr("Mailbox limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" max="10000" value={editingUserForm.mailbox_limit ?? 10} onChange={e => setEditingUserForm(prev => ({ ...prev, mailbox_limit: e.target.value }))} /></label>}
+              {isAdmin && editingUserForm.role === 'reseller' && renderPoolInputs(editingUserForm, setEditingUserForm)}
               <label><span>{tr("New password")} <small>{tr("(leave empty to keep)")}</small></span><input type="password" value={editingUserForm._password || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, _password: e.target.value }))} placeholder={tr("Min 12 characters")} /></label>
             </div>
             <div className="user-edit-actions">
@@ -8461,7 +8554,7 @@ function App() {
           </div>}
         </div>)}
       </div>
-      <div className="section" style={{marginTop:16}}>
+      {isAdmin && <div className="section" style={{marginTop:16}}>
         <h2>{tr("Assign domain to user")}</h2>
         <div className="assign-row">
           <select value={assignWebsiteId} onChange={e => setAssignWebsiteId(e.target.value)}>
@@ -8474,7 +8567,7 @@ function App() {
           </select>
           <button disabled={!assignWebsiteId || !assignUserId || !!loading} onClick={assignDomainToUser}>{tr("Assign")}</button>
         </div>
-      </div>
+      </div>}
     </section>;
   }
 
@@ -8482,13 +8575,15 @@ function App() {
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>{tr("Hosting Packages")}</h2><p className="hint">{tr("Manage provisioning plans for WHMCS and billing systems.")}</p></div>
+          <div><h2>{tr("Hosting Packages")}</h2><p className="hint">{isReseller ? tr("Your own packages: only you see them, to fill in your customers' limits.") : tr("Manage provisioning plans for WHMCS and billing systems.")}</p></div>
           <button className="secondary" disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         <div className="token-create-form">
           <label><span>{tr("Name")}</span><input value={newPlan.name} onChange={e => { const name = e.target.value; setNewPlan(prev => ({ ...prev, name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') })); }} placeholder={tr("Starter")} /></label>
           <label><span>{tr("Sites")}</span><input type="number" min="0" value={newPlan.website_limit} onChange={e => setNewPlan(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
           <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
+          <label><span>{tr("Databases")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.database_limit} onChange={e => setNewPlan(prev => ({ ...prev, database_limit: parseInt(e.target.value) || 0 }))} /></label>
+          <label><span>{tr("Mailboxes")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.mailbox_limit} onChange={e => setNewPlan(prev => ({ ...prev, mailbox_limit: parseInt(e.target.value) || 0 }))} /></label>
           <button disabled={!!loading || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> {tr("Add")}</button>
         </div>
         {plans.length === 0 && <p className="hint">{tr("No packages yet. Create one above.")}</p>}
@@ -8512,6 +8607,8 @@ function App() {
                 <label><span>{tr("Name")}</span><input value={editingPlanForm.name} onChange={e => setEditingPlanForm(prev => ({ ...prev, name: e.target.value }))} /></label>
                 <label><span>{tr("Sites")}</span><input type="number" min="0" value={editingPlanForm.website_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
                 <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
+                <label><span>{tr("Databases")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.database_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, database_limit: parseInt(e.target.value) || 0 }))} /></label>
+                <label><span>{tr("Mailboxes")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.mailbox_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, mailbox_limit: parseInt(e.target.value) || 0 }))} /></label>
                 <label className="check-line"><input type="checkbox" checked={editingPlanForm.active} onChange={e => setEditingPlanForm(prev => ({ ...prev, active: e.target.checked }))} /> {tr("Active")}</label>
               </div>
               <div className="user-edit-actions">
@@ -8529,20 +8626,24 @@ function App() {
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>{tr("Add panel user")}</h2><p className="hint">{tr("Panel username is also the Linux user. Select a package to auto-fill limits.")}</p></div>
+          <div><h2>{isReseller ? tr("Add customer") : tr("Add panel user")}</h2><p className="hint">{tr("Panel username is also the Linux user. Select a package to auto-fill limits.")}</p></div>
         </div>
         <div className="user-create-card">
           <label><span>{tr("Username")}</span><input value={newUser.username} onChange={e => setNewUser(prev => ({ ...prev, username: e.target.value.toLowerCase() }))} placeholder={tr("johndoe")} /></label>
           <label><span>{tr("Email")}</span><input value={newUser.email} onChange={e => setNewUser(prev => ({ ...prev, email: e.target.value }))} placeholder="user@domain.com" /></label>
           <label><span>{tr("Password")}</span><input value={newUser.password} onChange={e => setNewUser(prev => ({ ...prev, password: e.target.value }))} placeholder={tr("Min 12 characters")} type="password" /></label>
-          <label><span>{tr("Role")}</span><select value={newUser.role} onChange={e => setNewUser(prev => ({ ...prev, role: e.target.value }))}>
-            <option value="end_user">{tr("End user")}</option><option value="admin">{tr("Admin")}</option>
-          </select></label>
+          {isAdmin && <label><span>{tr("Role")}</span><select value={newUser.role} onChange={e => setNewUser(prev => ({ ...prev, role: e.target.value }))}>
+            <option value="end_user">{tr("End user")}</option><option value="reseller">{tr("Reseller")}</option><option value="admin">{tr("Admin")}</option>
+          </select></label>}
+          {isAdmin && newUser.role === 'end_user' && users.some(u => u.role === 'reseller') && <label><span>{tr("Reseller")}</span><select value={newUser.reseller_id || ''} onChange={e => setNewUser(prev => ({ ...prev, reseller_id: e.target.value }))}>
+            <option value="">{tr("None (yours)")}</option>
+            {users.filter(u => u.role === 'reseller').map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+          </select></label>}
           <label><span>{tr("Package")}</span><select value={newUser._planId || ''} onChange={e => {
             const planId = e.target.value;
             const plan = plans.find(p => String(p.id) === planId);
             if (plan) {
-              setNewUser(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb }));
+              setNewUser(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? prev.database_limit, mailbox_limit: plan.mailbox_limit ?? prev.mailbox_limit }));
             } else {
               setNewUser(prev => ({ ...prev, _planId: '' }));
             }
@@ -8552,7 +8653,10 @@ function App() {
           </select></label>
           <label><span>{tr("Site limit")}</span><input type="number" value={newUser.website_limit} onChange={e => setNewUser(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
           <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
-          <button disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> {tr("Create user")}</button>
+          <label><span>{tr("Database limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newUser.database_limit} onChange={e => setNewUser(prev => ({ ...prev, database_limit: e.target.value, _planId: '' }))} /></label>
+          <label><span>{tr("Mailbox limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newUser.mailbox_limit} onChange={e => setNewUser(prev => ({ ...prev, mailbox_limit: e.target.value, _planId: '' }))} /></label>
+          {isAdmin && newUser.role === 'reseller' && renderPoolInputs(newUser, setNewUser)}
+          <button disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> {isReseller ? tr("Create customer") : tr("Create user")}</button>
         </div>
       </section>
     </>;

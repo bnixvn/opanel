@@ -28,6 +28,9 @@ class _Query:
         except AttributeError:
             return _Query(rows)
         name = getattr(criterion.left, "key", "")
+        if isinstance(wanted, (list, tuple, set)):
+            # column.in_(...): what access.scope_owner filters by.
+            return _Query([r for r in rows if getattr(r, name, None) in wanted])
         return _Query([r for r in rows if getattr(r, name, None) == wanted])
 
     def order_by(self, *_):
