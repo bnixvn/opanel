@@ -62,7 +62,12 @@ def test_the_handover_leaves_nothing_behind():
     script = _script()
     block = _handover_block()
     # exec skips the EXIT trap, so the second stage inherits the cleanup.
-    assert 'opanel_UPDATE_PREVIOUS_COPY="${opanel_UPDATE_STABLE_COPY:-}"' in block
+    # Read before the assignments: they expand left to right, each seeing the
+    # one before, so naming opanel_UPDATE_STABLE_COPY in the list itself
+    # gave the second stage's path and the first stage's copy stayed in /tmp.
+    assert 'first_stage_copy="${opanel_UPDATE_STABLE_COPY:-}"' in block
+    assert 'opanel_UPDATE_PREVIOUS_COPY="$first_stage_copy"' in block
+    assert block.index('first_stage_copy=') < block.index('opanel_UPDATE_STABLE_COPY="$stage2_copy"')
     assert 'RELEASE_WORK_DIR="${RELEASE_WORK_DIR:-}"' in block
     assert 'rm -f "${opanel_UPDATE_STABLE_COPY:-}" "${opanel_UPDATE_PREVIOUS_COPY:-}"' in script
     # ...and the work dir it was handed must not be wiped out on the way in.
