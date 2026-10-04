@@ -924,6 +924,32 @@ def rule_ids(text: str) -> set[str]:
     return set(_RULE_ID_RE.findall(text or ""))
 
 
+def check_rule_basics(rules: str) -> None:
+    """The two mistakes that stop ModSecurity loading a rules file: a rule
+    without an id, and an unclosed quote. A file that fails to load leaves
+    every site that includes it without its WAF, and nothing says so but a
+    line in the OpenLiteSpeed error log - for the server-wide rules, that is
+    every site on the server. Not a parser: what passes here can still be
+    wrong, but these two no longer reach the disk."""
+    logical, pending = [], ""
+    for line in (rules or "").replace("\r\n", "\n").split("\n"):
+        pending += line
+        if pending.endswith("\\"):
+            pending = pending[:-1]
+            continue
+        logical.append(pending.strip())
+        pending = ""
+    if pending:
+        logical.append(pending.strip())
+    for number, rule in enumerate(logical, start=1):
+        if not rule.startswith(("SecRule", "SecAction")):
+            continue
+        if rule.replace('\\"', "").count('"') % 2:
+            raise ValueError(f"WAF rule {number} has an unclosed quote: {rule[:80]}")
+        if not _RULE_ID_RE.search(rule):
+            raise ValueError(f"WAF rule {number} has no id (every rule needs id:<number>): {rule[:80]}")
+
+
 def check_no_shared_rule_ids(rules: str, others: Iterable[str], where: str) -> None:
     """Every site's rules file includes the server-wide file, so a rule id
     used in both stops ModSecurity loading that site's rules."""

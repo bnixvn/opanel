@@ -114,3 +114,23 @@ def test_the_mcp_tool_passes_the_database_to_the_server_wide_save():
     source = (Path(waf.__file__).parent / "mcp.py").read_text(encoding="utf-8")
     calls = [line for line in source.splitlines() if "waf_api.save_waf_custom_rules(" in line]
     assert calls and all("db=ctx.db" in line for line in calls)
+
+
+def test_a_rule_without_an_id_or_with_an_open_quote_is_refused():
+    """What took every site's WAF down on the test box: OLS logged "Rules must
+    have an ID" and served the sites without their rules."""
+    with pytest.raises(ValueError, match="no id"):
+        waf.check_rule_basics('SecRule REQUEST_HEADERS:User-Agent "@contains x" "phase:1,deny"')
+    with pytest.raises(ValueError, match="unclosed quote"):
+        waf.check_rule_basics('SecRule REQUEST_HEADERS:User-Agent "@contains x "id:1,phase:1,deny"')
+    # Comments, continuation lines and escaped quotes are fine.
+    waf.check_rule_basics(
+        '# a comment with "one quote\n'
+        'SecRule ARGS "@rx \\"a\\"" \\\n'
+        '    "id:1095002,phase:1,deny"\n'
+        'SecAction "id:1095003,phase:1,pass,nolog"'
+    )
+    with pytest.raises(HTTPException) as exc:
+        waf_api.save_waf_custom_rules(waf_api.WafCustomRulesUpdate(content='SecRule ARGS "@rx a" "phase:1,deny"'),
+                                      db=_DB([]), current_user=ADMIN)
+    assert exc.value.status_code == 400
