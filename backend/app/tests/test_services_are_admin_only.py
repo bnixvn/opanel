@@ -50,9 +50,9 @@ def test_the_page_is_hidden_from_end_users():
 
 
 def test_the_dashboard_services_card_is_admin_only():
-    # The card sits in the dashboard's `if (isAdmin) { ... } else { ... }`
-    # branch: the nearest branch opening before it must be the admin one.
-    index = APP_JSX.index("cards.push({ key: 'services'")
+    # The status row sits in the dashboard's `if (isAdmin) { ... }` branch:
+    # the nearest branch opening before it must be the admin one.
+    index = APP_JSX.index("status.unshift({ key: 'services'")
     before = APP_JSX[:index]
     assert before.rfind("if (isAdmin) {") > before.rfind("} else {"), "services card is not inside the isAdmin branch"
 

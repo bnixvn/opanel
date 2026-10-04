@@ -4728,13 +4728,13 @@ function App() {
     navigateToPage('users');
   }
 
-  // "3 days, 4 h" / "5 h 12 min": how long the server has been up.
+  // "3 d 4 h" / "5 h 12 min": how long the server has been up.
   function formatUptime(seconds) {
     const total = Math.max(0, Number(seconds) || 0);
     const days = Math.floor(total / 86400);
     const hours = Math.floor((total % 86400) / 3600);
     const minutes = Math.floor((total % 3600) / 60);
-    return days ? tr("{0} days, {1} h", days, hours) : tr("{0} h {1} min", hours, minutes);
+    return days ? tr("{0} d {1} h", days, hours) : tr("{0} h {1} min", hours, minutes);
   }
 
   // Accents and case set aside, so "tuong lua" finds "Tường lửa".

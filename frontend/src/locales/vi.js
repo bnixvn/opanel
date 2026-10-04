@@ -786,7 +786,7 @@ export default {
   "Resource use now": "Tài nguyên đang dùng",
   "{0} ({1} suspended)": "{0} ({1} tạm ngưng)",
   "{0} database(s)": "{0} database",
-  "{0} days, {1} h": "{0} ngày {1} giờ",
+  "{0} d {1} h": "{0} ngày {1} giờ",
   "{0} h {1} min": "{0} giờ {1} phút",
   "{0} mailbox(es)": "{0} mailbox",
   "{0} processes": "{0} tiến trình",

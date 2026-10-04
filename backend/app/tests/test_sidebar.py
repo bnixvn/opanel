@@ -42,6 +42,6 @@ def test_addons_appear_only_while_turned_on():
 
 
 def test_a_page_opened_from_settings_keeps_settings_lit_and_shows_the_way_back():
-    assert "const navKey = settingsPage ? 'config' : page;" in APP_JSX
+    assert "const navKey = settingsPage ? 'config' : page === 'usage' ? 'dashboard' : page;" in APP_JSX
     assert "className={navKey === key ? 'active' : ''}" in APP_JSX
     assert "onClick={() => navigateToPage('config')}>{tr(\"Settings\")}</button>" in APP_JSX
