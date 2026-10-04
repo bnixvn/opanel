@@ -66,6 +66,16 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# As in install.sh: no apt call in an update may stop to ask (needrestart,
+# a dpkg config-file question), and apt waits for the dpkg lock instead of
+# failing while unattended-upgrades holds it. /run is cleared at boot.
+export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l
+if [[ -z "${APT_CONFIG:-}" ]]; then
+  printf '%s\n' 'Dpkg::Options { "--force-confdef"; "--force-confold"; };' 'DPkg::Lock::Timeout "900";' \
+    >/run/opanel-update-apt.conf
+  export APT_CONFIG=/run/opanel-update-apt.conf
+fi
+
 if [[ -z "${opanel_UPDATE_STABLE_COPY:-}" ]]; then
   _original_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
   _stable_copy="$(mktemp /tmp/opanel-update.XXXXXX.sh)"

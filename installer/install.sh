@@ -32,14 +32,37 @@ if [[ ! -d "${BACKEND_SRC}" ]]; then
   OPANEL_CLONE_DIR="$(mktemp -d)"
   echo ""
   echo "==> Source not found locally - downloading main branch to ${OPANEL_CLONE_DIR}"
-  curl -fsSL "${OPANEL_GITHUB}/archive/refs/heads/main.tar.gz" \
+  curl -fsSL --connect-timeout 15 --max-time 600 --retry 2 "${OPANEL_GITHUB}/archive/refs/heads/main.tar.gz" \
     | tar xz -C "${OPANEL_CLONE_DIR}" --strip-components=1
   PROJECT_ROOT="${OPANEL_CLONE_DIR}"
   SCRIPT_DIR="${PROJECT_ROOT}/installer"
   BACKEND_SRC="${PROJECT_ROOT}/backend"
   FRONTEND_SRC="${PROJECT_ROOT}/frontend"
-  trap 'cd /; rm -rf "${OPANEL_CLONE_DIR}"' EXIT
 fi
+
+# Nothing in an install may stop to ask a question nobody sees. Ubuntu runs
+# needrestart after every apt install, and dpkg asks before replacing a config
+# file; behind an apt call whose output goes to /dev/null either one leaves the
+# installer waiting with nothing on the screen (installs "hung" this way,
+# 2026-10-04). The installer restarts what it needs itself, so needrestart is
+# suspended; dpkg keeps an existing config file; and apt waits for the dpkg lock
+# - which a fresh server's first unattended-upgrades run holds - saying so,
+# instead of failing on the spot.
+export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l
+OPANEL_APT_CONFIG="$(mktemp /tmp/opanel-apt.XXXXXX)"
+cat >"$OPANEL_APT_CONFIG" <<'APTCONF'
+Dpkg::Options { "--force-confdef"; "--force-confold"; };
+DPkg::Lock::Timeout "900";
+APTCONF
+export APT_CONFIG="$OPANEL_APT_CONFIG"
+cleanup_install_temp() {
+  rm -f "$OPANEL_APT_CONFIG"
+  if [[ -n "${OPANEL_CLONE_DIR:-}" ]]; then
+    cd /
+    rm -rf "$OPANEL_CLONE_DIR"
+  fi
+}
+trap cleanup_install_temp EXIT
 
 PANEL_URL="${PANEL_URL:-}"
 PANEL_HOSTNAME="${PANEL_HOSTNAME:-}"
@@ -316,41 +339,46 @@ PIDFile=/run/openlitespeed.pid
 KillMode=mixed
 UNIT
   systemctl daemon-reload
-  systemctl enable --now lsws || true
-  # Install ionCube for each LSPHP version
-  for version in $PHP_VERSIONS; do
-    local ver_no_dot="${version//./}"
-    install_ioncube_loader "$version" "/usr/local/lsws/lsphp${ver_no_dot}"
-  done
+  # lshttpd is the unit; lsws.service is a symlink to it, and systemctl refuses
+  # to enable an alias ("Refusing to operate on alias name").
+  systemctl enable --now lshttpd || true
+  # ionCube: downloaded once for every PHP version. It is optional, so a slow
+  # or unreachable ioncube.com costs one bounded wait and a warning, not a
+  # silent wait per PHP version or the whole install.
+  local ioncube_dir=""
+  if ioncube_dir="$(fetch_ioncube_loaders)"; then
+    for version in $PHP_VERSIONS; do
+      local ver_no_dot="${version//./}"
+      install_ioncube_loader "$version" "/usr/local/lsws/lsphp${ver_no_dot}" "$ioncube_dir"
+    done
+    rm -rf -- "$ioncube_dir"
+  fi
+}
+
+# Prints the directory the loaders were unpacked into; returns 1 (having said
+# why) when there are none to install.
+fetch_ioncube_loaders() {
+  local arch url tmp
+  arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+  case "$arch" in
+    amd64|x86_64) url="https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz" ;;
+    *) echo "Skipping ionCube Loader: unsupported architecture ${arch}" >&2; return 1 ;;
+  esac
+  echo "Downloading ionCube Loader..." >&2
+  tmp="$(mktemp -d)" || return 1
+  if ! curl -fsSL --connect-timeout 10 --max-time 180 --retry 2 "$url" -o "${tmp}/ioncube_loaders.tar.gz" \
+      || ! tar -xzf "${tmp}/ioncube_loaders.tar.gz" -C "$tmp"; then
+    rm -rf -- "$tmp"
+    echo "WARNING: could not download ionCube Loader; continuing without it." >&2
+    return 1
+  fi
+  printf '%s\n' "$tmp"
 }
 
 install_ioncube_loader() {
-  local version="$1" ioncube_target_dir="${2:-}" arch url tmp archive loader target_dir target loader_ini_dir
-  arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-  case "$arch" in
-    amd64|x86_64)
-      url="https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz"
-      ;;
-    *)
-      echo "Skipping ionCube Loader: unsupported architecture ${arch}"
-      return 0
-      ;;
-  esac
-
-  apt-get install -y ca-certificates curl tar >/dev/null
-  tmp="$(mktemp -d)" || fail "Cannot create ionCube temporary directory"
-  archive="${tmp}/ioncube_loaders.tar.gz"
-  if ! curl -fsSL --connect-timeout 10 --max-time 300 "$url" -o "$archive"; then
-    rm -rf -- "$tmp"
-    fail "Failed to download ionCube Loader"
-  fi
-  if ! tar -xzf "$archive" -C "$tmp"; then
-    rm -rf -- "$tmp"
-    fail "Failed to unpack ionCube Loader"
-  fi
-  loader="${tmp}/ioncube/ioncube_loader_lin_${version}.so"
+  local version="$1" ioncube_target_dir="${2:-}" unpacked="$3" loader target_dir target loader_ini_dir
+  loader="${unpacked}/ioncube/ioncube_loader_lin_${version}.so"
   if [[ ! -f "$loader" ]]; then
-    rm -rf -- "$tmp"
     echo "Skipping ionCube Loader: no loader found for PHP ${version}"
     return 0
   fi
@@ -359,7 +387,6 @@ install_ioncube_loader() {
   target="${target_dir}/ioncube_loader_lin_${version}.so"
   install -d -o root -g root -m 0755 "$target_dir"
   install -m 0644 -o root -g root "$loader" "$target"
-  rm -rf -- "$tmp"
 
   for loader_ini_dir in /etc/php/"$version"/cli/conf.d /etc/php/"$version"/fpm/conf.d; do
     [[ -d "$loader_ini_dir" ]] || continue
@@ -380,7 +407,8 @@ install_ioncube_loader() {
   if command -v "php${version}" >/dev/null 2>&1; then
     if ! "php${version}" -v 2>&1 | grep -qi 'ionCube'; then
       rm -f /etc/php/"$version"/cli/conf.d/00-ioncube.ini /etc/php/"$version"/fpm/conf.d/00-ioncube.ini
-      fail "ionCube Loader failed to load for PHP ${version}"
+      echo "WARNING: ionCube Loader failed to load for PHP ${version}; continuing without it."
+      return 0
     fi
   fi
   echo "ionCube Loader enabled for PHP ${version}"
