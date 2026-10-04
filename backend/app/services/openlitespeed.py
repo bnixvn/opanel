@@ -555,13 +555,18 @@ def _build_context(
 def _cgroup_limits_enforced() -> bool:
     """Whether the Resource limits addon bounds each account with a cgroup.
 
-    Until then lsphp carries OpenLiteSpeed's own rlimits (memSoftLimit,
-    procSoftLimit, procHardLimit) as a safety net. While the addon runs they
-    go: the account's memory and process limits replace them, and
-    procSoftLimit, being RLIMIT_NPROC on the site's uid, would otherwise stop
-    an account at 1000 processes whatever its own limit said. Installing,
-    removing, starting or stopping the addon re-renders every vhost
-    (resource_limits.refresh_vhosts).
+    Until then lsphp carries rlimits of ours (memSoftLimit, procSoftLimit,
+    procHardLimit) as a safety net. While the addon runs they go, and the
+    account's memory and process limits take over: RLIMIT_AS at 2 GB and
+    RLIMIT_NPROC at 1000 on the site's uid only got in the way of them.
+    Installing, removing, starting or stopping the addon re-renders every
+    vhost (resource_limits.refresh_vhosts).
+
+    Measured on .41 (2026-10-04): without the directives lsphp runs with no
+    address-space limit and with RLIMIT_NPROC 2800, OpenLiteSpeed's own
+    default for an external app (procSoftLimit 0 gives the same). That stays
+    as the floor against a fork bomb in an account with no process limit;
+    only an explicit value raises it.
     """
     from app.services import resource_limits
 

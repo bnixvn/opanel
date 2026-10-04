@@ -4684,7 +4684,8 @@ function App() {
       <div className="kpi-head"><Icon size={15}/><span>{label}</span></div>
       <strong>{value}</strong>
       <small>{detail}</small>
-      {trend
+      {/* Until the agent has two points of history, the meter stands in. */}
+      {trend?.length >= 2
         ? <Sparkline values={trend} limit={trendLimit} floor={floor}/>
         : <div className={`resource-track${safePercent === null ? ' is-empty' : ''}`} aria-hidden={safePercent === null}>{safePercent !== null && <span style={{ width: `${safePercent}%` }}></span>}</div>}
     </article>;
@@ -4760,8 +4761,8 @@ function App() {
         detail: sites.suspended ? tr("{0} suspended", sites.suspended) : sites.total ? tr("All running") : tr("No websites yet"),
         tone: sites.suspended ? 'warn' : 'ok' }] : []),
       { key: 'ssl', icon: Lock, label: tr("SSL"), value: `${ssl.secured}/${ssl.total}`,
-        detail: ssl.unsecured_count ? tr("{0} without SSL", ssl.unsecured_count) : tr("All secured"),
-        tone: ssl.unsecured_count ? 'warn' : 'ok' },
+        detail: !ssl.total ? tr("No websites yet") : ssl.unsecured_count ? tr("{0} without SSL", ssl.unsecured_count) : tr("All secured"),
+        tone: !ssl.total ? 'neutral' : ssl.unsecured_count ? 'warn' : 'ok' },
       ...(isAdmin ? [{ key: 'databases', icon: Database, label: tr("Databases"), value: String(dbCount), detail: tr("MariaDB"), tone: 'neutral' }] : []),
     ];
     if (isAdmin) {
@@ -4792,8 +4793,8 @@ function App() {
     } else {
       const wafOn = websites.filter(site => site.waf_enabled).length;
       cards.push({ key: 'waf', icon: ShieldAlert, label: tr("WAF"), value: `${wafOn}/${websites.length}`,
-        detail: wafOn === websites.length ? tr("On for every website") : tr("{0} website(s) without WAF", websites.length - wafOn),
-        tone: wafOn === websites.length ? 'ok' : 'warn' });
+        detail: !websites.length ? tr("No websites yet") : wafOn === websites.length ? tr("On for every website") : tr("{0} website(s) without WAF", websites.length - wafOn),
+        tone: !websites.length ? 'neutral' : wafOn === websites.length ? 'ok' : 'warn' });
       cards.push({ key: 'security', icon: LockKeyhole, label: tr("Account security"),
         value: currentUser?.totp_enabled ? tr("On") : tr("Off"), detail: tr("Two-factor sign-in"),
         tone: currentUser?.totp_enabled ? 'ok' : 'warn' });

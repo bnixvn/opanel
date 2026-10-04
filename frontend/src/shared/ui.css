@@ -316,7 +316,8 @@ button.top-accounts-row:hover:not(:disabled){background:var(--surface-hover);col
   .top-accounts-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;padding:12px 4px}
   .top-accounts-row.is-head{display:none}
   .top-accounts-name{grid-column:1/-1}
-  .top-accounts-row [data-label]::before{content:attr(data-label);display:block;font-size:11.5px;font-weight:600;color:var(--text-muted)}
+  .top-accounts-row [data-label]::before{content:attr(data-label);display:block;margin-bottom:3px;font-size:11.5px;font-weight:600;color:var(--text-muted)}
+  .usage-chart-x span:nth-child(2n){display:none}
 }
 
 /* ---------- Status / raw output ---------- */
