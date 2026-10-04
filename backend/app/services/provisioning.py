@@ -26,7 +26,7 @@ from app.models.entities import (
     User,
     Website,
 )
-from app.services import mariadb, openlitespeed, site_users, ssl, storage_quota, wordpress
+from app.services import mariadb, openlitespeed, site_users, ssl, storage_quota, waf, wordpress
 from app.services.shell import shell
 
 # ---------------------------------------------------------------------------
@@ -349,8 +349,12 @@ def create_account(
             except (OSError, RuntimeError):
                 pass
 
-        # 4. Write vhost
+        # 4. Write vhost, with the WAF the site is created with: its rules file
+        # first, since the vhost includes it.
         try:
+            waf_result = waf.sync_website_rules(website)
+            if waf_result.returncode != 0:
+                raise RuntimeError((waf_result.stderr or waf_result.stdout or "could not write the WAF rules").strip())
             openlitespeed.rewrite_vhost(
                 domain,
                 root_path,
@@ -360,6 +364,7 @@ def create_account(
                 lsphp_socket_override=site_users.site_lsphp_socket(site_linux_user, root_path, php_version if website.app_type in {"php", "wordpress"} else None),
                 document_root="public_html",
                 rewrite_mode=website.nginx_rewrite_mode,
+                waf_enabled=website.waf_enabled,
             )
         except (RuntimeError, ValueError) as exc:
             _cleanup_failed(db, user, website)

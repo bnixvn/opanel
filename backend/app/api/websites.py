@@ -50,8 +50,10 @@ def _delete_website_reservation(db: Session, website_id: int) -> None:
         db.rollback()
 
 
-def _ensure_default_waf_file(domain: str) -> None:
-    result = waf.sync_site_rules(domain, [rule["id"] for rule in waf.DEFAULT_RULES], "")
+def _ensure_waf_file(website: Website) -> None:
+    """The site's WAF rules as the database has them, written before the
+    vhost that includes them."""
+    result = waf.sync_website_rules(website)
     if result.returncode != 0:
         raise RuntimeError(_command_error(result))
 
@@ -336,7 +338,10 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
             _delete_website_reservation(db, website.id)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
-            _ensure_default_waf_file(payload.domain)
+            _ensure_waf_file(website)
+            # waf_enabled must be passed: rewrite_vhost defaults to off, and a
+            # site created without it had no WAF in its vhost, though the panel
+            # showed it on, until an update rewrote every vhost.
             openlitespeed.rewrite_vhost(
                 payload.domain,
                 root_path,
@@ -346,6 +351,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
                 lsphp_socket_override=site_users.site_lsphp_socket(linux_user, root_path, payload.php_version),
                 document_root="public_html",
                 rewrite_mode="front_controller",
+                waf_enabled=website.waf_enabled,
             )
         except (RuntimeError, ValueError) as exc:
             mariadb.drop_database(db_info["db_name"], db_info["db_user"])
@@ -361,7 +367,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
             if not settings.command_dry_run:
                 _write_placeholder_page(payload.domain, root_path, linux_user, payload.php_version)
                 site_users.fix_site_path(str(public), linux_user)
-            _ensure_default_waf_file(payload.domain)
+            _ensure_waf_file(website)
             openlitespeed.rewrite_vhost(
                 payload.domain,
                 root_path,
@@ -371,6 +377,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
                 lsphp_socket_override=site_users.site_lsphp_socket(linux_user, root_path, runtime_php_version),
                 document_root="public_html",
                 rewrite_mode="none",
+                waf_enabled=website.waf_enabled,
             )
         except (RuntimeError, ValueError, OSError) as exc:
             _cleanup_failed_site(root_path, linux_user)

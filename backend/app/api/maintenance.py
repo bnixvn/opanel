@@ -43,7 +43,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, openlitespeed, php, restore_sources, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, php, restore_sources, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -2236,16 +2236,12 @@ def install_wordpress_on_site(website_id: int, payload: WpInstallRequest, reques
     website.nginx_rewrite_mode = "front_controller"
     db.commit()
 
-    # Rewrite vhost
+    # Rewrite the vhost from the website as it stands, so it keeps its WAF,
+    # certificate, aliases and redirects: a call with only the WordPress
+    # settings wrote a vhost without them.
+    from app.api.websites import _rewrite_website_vhost
     try:
-        openlitespeed.rewrite_vhost(
-            website.domain, website.root_path,
-            app_type="wordpress", php_version=website.php_version,
-            linux_user=website.linux_user,
-            lsphp_socket_override=site_users.site_lsphp_socket(website.linux_user, website.root_path, website.php_version),
-            document_root=website.document_root or "public_html",
-            rewrite_mode="front_controller",
-        )
+        _rewrite_website_vhost(website)
     except (RuntimeError, ValueError):
         pass
 
