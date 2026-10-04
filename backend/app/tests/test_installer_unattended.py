@@ -58,3 +58,15 @@ def test_every_download_in_the_installer_has_a_time_limit():
             continue
         if re.search(r"\bcurl\s+-", line):
             assert "--max-time" in line, line
+
+
+def test_a_long_hostname_still_gets_a_panel_certificate():
+    """A CN holds at most 64 characters. A GitHub runner's fully qualified name
+    is longer: openssl refused, the panel had no certificate and served only its
+    TLS recovery page (the first install smoke test, 2026-10-04)."""
+    helper = (ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    body = helper[helper.index("panel_self_signed_ensure() {"):]
+    body = body[:body.index("\n}\n")]
+    assert '(( ${#subject_cn} <= 64 )) || subject_cn="opanel"' in body
+    assert '-subj "/CN=${subject_cn}"' in body and 'subjectAltName=DNS:${cn}' in body
+    assert ">/dev/null 2>&1; then" not in body, "the openssl error is reported, not discarded"

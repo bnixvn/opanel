@@ -3042,16 +3042,24 @@ panel_self_signed_ensure() {
   if [[ -f "$cert" && -f "$key" ]] && openssl x509 -checkend 2592000 -noout -in "$cert" >/dev/null 2>&1; then
     return 0
   fi
-  local cn tmp
+  local cn subject_cn tmp err
   cn="$(env_get PANEL_DOMAIN)"
   [[ -n "$cn" ]] || cn="$(hostname -f 2>/dev/null || hostname)"
   [[ -n "$cn" ]] || cn="opanel.local"
+  # A certificate's CN holds at most 64 characters, and some hosts have a
+  # longer fully qualified name (a GitHub runner's does): openssl refused, the
+  # panel had no certificate at all and served only its TLS recovery page. The
+  # name the browser checks is the SAN, which takes the full name.
+  subject_cn="$cn"
+  (( ${#subject_cn} <= 64 )) || subject_cn="opanel"
   tmp="$(mktemp -d /tmp/opanel-selfsigned.XXXXXX)"
-  if openssl req -x509 -newkey rsa:2048 -nodes -days 3650        -keyout "${tmp}/privkey.pem" -out "${tmp}/fullchain.pem"        -subj "/CN=${cn}" -addext "subjectAltName=DNS:${cn}" >/dev/null 2>&1; then
+  if err="$(openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+       -keyout "${tmp}/privkey.pem" -out "${tmp}/fullchain.pem" \
+       -subj "/CN=${subject_cn}" -addext "subjectAltName=DNS:${cn}" 2>&1 >/dev/null)"; then
     panel_cert_store_put "_default" "${tmp}/fullchain.pem" "${tmp}/privkey.pem"
     echo "Generated self-signed panel certificate for ${cn}"
   else
-    echo "WARNING: could not generate a self-signed panel certificate" >&2
+    echo "WARNING: could not generate a self-signed panel certificate for ${cn}: ${err}" >&2
   fi
   rm -rf "$tmp"
 }
