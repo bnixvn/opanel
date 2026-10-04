@@ -270,13 +270,13 @@ def test_nothing_is_handed_over_until_the_addon_is_installed(env, monkeypatch):
     assert calls == []
 
     monkeypatch.setattr(resource_limits, "installed", lambda: True)
-    monkeypatch.setattr(resource_limits, "agent_current", lambda: False)
     monkeypatch.setattr(resource_limits.shell, "privileged",
                         lambda *a, **k: calls.append((a, k)) or SimpleNamespace(returncode=0, stdout="", stderr=""))
     resource_limits.sync(db)
-    # A new agent first, then the configuration.
-    assert [c[0][0] for c in calls] == ["limits-agent-install", "limits-apply"]
-    assert json.loads(calls[1][1]["input"])["version"] == 1
+    # The configuration only. A new agent arrives with the update that brings
+    # it (update.sh), not from a comparison on every tick.
+    assert [c[0][0] for c in calls] == ["limits-apply"]
+    assert json.loads(calls[0][1]["input"])["version"] == 1
 
 
 def test_each_caller_sees_the_accounts_it_manages(env, monkeypatch, tmp_path):
@@ -339,3 +339,119 @@ def test_administrators_hear_when_an_account_is_stopped_at_its_memory_limit(env,
     counts(0)   # the slice was made again
     notifications.check_resource_limits(state)
     assert len(sent) == 1
+
+
+# --- OpenLiteSpeed's own rlimits -------------------------------------------------------
+
+RLIMIT_LINES = "    memSoftLimit          2048M\n    procSoftLimit         1000\n    procHardLimit         1200\n}"
+
+
+@pytest.mark.parametrize("app_type", ["php", "wordpress"])
+def test_the_vhost_keeps_openlitespeeds_rlimits_only_until_the_addon_enforces(monkeypatch, app_type):
+    from app.services import openlitespeed
+
+    def render():
+        return openlitespeed.render_vhost("shop.example.com", "/home/shop/shop.example.com",
+                                          app_type=app_type, php_version="8.3", linux_user="shop")
+
+    monkeypatch.setattr(resource_limits, "enforcing", lambda: False)
+    without_addon = render()
+    # Byte for byte what every vhost had before, so a server without the addon
+    # sees "vhost unchanged" on the update and no OpenLiteSpeed restart.
+    assert "    priority              0\n" + RLIMIT_LINES in without_addon
+
+    monkeypatch.setattr(resource_limits, "enforcing", lambda: True)
+    with_addon = render()
+    for directive in ("memSoftLimit", "procSoftLimit", "procHardLimit"):
+        assert directive not in with_addon
+    assert "    priority              0\n}" in with_addon
+    # Nothing else moves: the extprocessor still has its user and its children.
+    assert with_addon.replace("    priority              0\n}", "") == \
+        without_addon.replace("    priority              0\n" + RLIMIT_LINES, "")
+
+
+def test_a_stopped_addon_is_not_enforcing(monkeypatch, tmp_path):
+    unit, wants = tmp_path / "opanel-limits.service", tmp_path / "wants.service"
+    monkeypatch.setattr(resource_limits, "UNIT_FILE", unit)
+    monkeypatch.setattr(resource_limits, "UNIT_WANTS", wants)
+    assert not resource_limits.enforcing()
+    unit.write_text("[Unit]\n")
+    assert resource_limits.installed() and not resource_limits.enforcing(), "installed but stopped"
+    wants.write_text("")
+    assert resource_limits.enforcing()
+
+
+def test_every_php_vhost_is_re_rendered_and_openlitespeed_restarted_once(env, monkeypatch):
+    from app.api import websites as websites_api
+    from app.core import database
+    from app.models.entities import Website
+    from app.services import openlitespeed
+
+    db, _client = env
+    owner = _user(db, "direct")
+    for domain, app_type in (("a.example.com", "wordpress"), ("b.example.com", "php"), ("c.example.com", "static")):
+        db.add(Website(domain=domain, owner_id=owner.id, root_path=f"/home/direct/{domain}", app_type=app_type,
+                       php_version="8.3", linux_user="direct", status="active"))
+    db.commit()
+    monkeypatch.setattr(database, "SessionLocal", lambda: db.__class__(bind=db.get_bind()))
+    written, reloads = [], []
+    monkeypatch.setattr(websites_api, "_rewrite_website_vhost",
+                        lambda website, **k: written.append((website.domain, k.get("defer_reload"))))
+    monkeypatch.setattr(openlitespeed, "reload_service", lambda: reloads.append(1))
+
+    assert resource_limits.refresh_vhosts() == 2
+    assert written == [("a.example.com", True), ("b.example.com", True)], "a static site has no lsphp"
+    assert reloads == [1]
+
+
+def test_installing_removing_starting_or_stopping_the_addon_re_renders_the_vhosts(monkeypatch):
+    from app.services import addons
+
+    refreshed = []
+    monkeypatch.setattr(resource_limits, "refresh_vhosts", lambda: refreshed.append("now"))
+    monkeypatch.setattr(resource_limits, "refresh_vhosts_in_background", lambda: refreshed.append("background"))
+    monkeypatch.setattr(resource_limits, "sync", lambda db: None)
+    monkeypatch.setattr(addons, "_update_state", lambda *a, **k: None)
+    addons._after_lifecycle("limits", "install")
+    addons._after_lifecycle("limits", "uninstall")
+    assert refreshed == ["now", "now"]
+
+    monkeypatch.setattr(addons, "status", lambda addon_id: {"installed": True})
+    monkeypatch.setattr(addons, "_run_addon_command", lambda command, addon_id: "")
+    addons.set_running("limits", False)
+    addons.set_running("limits", True)
+    assert refreshed[2:] == ["background", "background"]
+
+
+def test_a_suspended_vhost_stays_suspended_when_it_is_re_rendered():
+    """Reproduced on .41 on 2026-10-04: writing a vhost whose site was suspended
+    left vhost.conf beside vhost.conf.suspended, and the next ols-sync-main
+    served the site again. Every bulk refresh rewrites every vhost."""
+    start = HELPER.index("  ols-vhost-write|ols-vhost-write-defer)")
+    block = HELPER[start:HELPER.index("  ols-vhost-delete)", start)]
+    assert 'if [[ ! -f "$vhost_conf" && -f "${vhost_conf}.suspended" ]]; then' in block
+    assert 'vhost_conf="${vhost_conf}.suspended"' in block
+    # Chosen before anything compares or installs the file.
+    assert block.index('vhost_conf="${vhost_conf}.suspended"') < block.index('cmp -s "$vhost_tmp" "$vhost_conf"')
+
+
+def test_the_dashboard_counts_the_days_memory_stops_across_a_restart():
+    """The agent records each slice's running total; a total that drops means
+    the slice was made again, and the count carries on from there."""
+    day = {"day": [{"t": 1, "oom": 4}, {"t": 2, "oom": 4}, {"t": 3, "oom": 6}, {"t": 4, "oom": 1}, {"t": 5, "oom": 3}]}
+    assert resource_limits.oom_kills_last_day(day) == 2 + 1 + 2
+    assert resource_limits.oom_kills_last_day({}) == 0
+    assert resource_limits.oom_kills_last_day(None) == 0
+
+
+def test_the_overview_names_each_account_for_the_busiest_list(env, monkeypatch, tmp_path):
+    db, client = env
+    direct = _user(db, "direct")
+    monkeypatch.setattr(resource_limits, "USAGE_FILE", tmp_path / "usage.json")
+    monkeypatch.setattr(resource_limits, "HISTORY_FILE", tmp_path / "history.json")
+    (tmp_path / "history.json").write_text(json.dumps(
+        {f"hosting-a{direct.id}.slice": {"day": [{"t": 1, "oom": 0}, {"t": 2, "oom": 3}], "week": []}}), encoding="utf-8")
+    _login(client, "root_admin")
+    entry = _call(client, "GET", "/api/resource-limits").json()["accounts"][str(direct.id)]
+    assert entry["username"] == "direct" and entry["role"] == "end_user"
+    assert entry["oom_kills_day"] == 3

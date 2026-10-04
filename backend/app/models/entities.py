@@ -32,8 +32,8 @@ class User(Base):
     reseller_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     # A reseller's share of the server (role "reseller" only; 0 = unlimited):
     # how many customers, and how much disk - nothing else (operator,
-    # 2026-10-03). 0037 also added pool_website_limit, pool_database_limit and
-    # pool_mailbox_limit; nothing reads them any more. See services/reseller.py.
+    # 2026-10-03). 0037's website, database and mailbox totals were dropped in
+    # 0040. See services/reseller.py.
     pool_user_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     pool_storage_limit_mb: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     # Off: the disk limits handed out must fit the share. On (overselling, as

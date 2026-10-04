@@ -560,13 +560,23 @@ def _after_lifecycle(addon_id: str, action: str) -> None:
         except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
             _update_state(addon_id, last_error=f"Installed, but the zones could not all be made: {exc}")
         return
-    if addon_id == "limits" and action == "install":
-        try:
-            from app.services import resource_limits
+    if addon_id == "limits":
+        from app.services import resource_limits
 
-            resource_limits.sync_quietly()
+        if action == "install":
+            try:
+                from app.core.database import SessionLocal
+
+                with SessionLocal() as db:
+                    resource_limits.sync(db)
+            except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
+                _update_state(addon_id, last_error=f"Installed, but the accounts could not be added: {exc}")
+        # OpenLiteSpeed's own rlimits leave the vhosts with the addon and come
+        # back without it (openlitespeed._cgroup_limits_enforced).
+        try:
+            resource_limits.refresh_vhosts()
         except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
-            _update_state(addon_id, last_error=f"Installed, but the accounts could not be added: {exc}")
+            _update_state(addon_id, last_error=f"Done, but the websites' vhosts could not be re-rendered: {exc}")
         return
     if addon_id != "mail":
         return
@@ -656,6 +666,13 @@ def set_running(addon_id: str, running: bool) -> dict:
             _malware_stop()
         return status(addon_id)
     _run_addon_command("addon-enable" if running else "addon-disable", addon_id)
+    if addon_id == "limits":
+        # Stopped, the addon holds no limit, so the vhosts take OpenLiteSpeed's
+        # rlimits back; started, they drop them again. Every vhost is
+        # re-rendered, which takes longer than this request should wait.
+        from app.services import resource_limits
+
+        resource_limits.refresh_vhosts_in_background()
     return status(addon_id)
 
 

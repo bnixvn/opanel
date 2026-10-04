@@ -38,8 +38,9 @@ from app.services.shell import shell
 logger = logging.getLogger("opanel.resource_limits")
 
 UNIT_FILE = Path("/etc/systemd/system/opanel-limits.service")
+# `systemctl enable` makes this link, and the addon's Stop removes it.
+UNIT_WANTS = Path("/etc/systemd/system/multi-user.target.wants/opanel-limits.service")
 AGENT_SOURCE = Path(__file__).resolve().parent.parent / "agents" / "opanel_limits_agent.py"
-AGENT_INSTALLED = Path("/usr/local/sbin/opanel-limits-agent")
 USAGE_FILE = Path("/run/opanel-limits/usage.json")
 HISTORY_FILE = Path("/var/lib/opanel-limits/history.json")
 # Where an account's processes come from before the agent moves them: the web
@@ -58,23 +59,26 @@ def installed() -> bool:
     return UNIT_FILE.exists()
 
 
+def enforcing() -> bool:
+    """Installed and switched on, so the agent holds every account's limits.
+    Stopping the addon releases them (addon_limits_disable)."""
+    return installed() and UNIT_WANTS.exists()
+
+
 # --- the agent -------------------------------------------------------------------
 
 def _agent_source() -> bytes:
     return AGENT_SOURCE.read_bytes().replace(b"\r\n", b"\n")
 
 
-def agent_current() -> bool:
-    try:
-        return AGENT_INSTALLED.read_bytes() == _agent_source()
-    except OSError:
-        return False
-
-
 def install_agent() -> None:
     """Hand the helper this release's agent. It installs it only if it matches
     the hash the helper itself carries, so a copy the panel user edited never
-    runs as root."""
+    runs as root.
+
+    Called when the addon is installed or started. A panel update installs the
+    new agent itself (update.sh, from the source it installs), so nothing here
+    has to compare the copies on a timer."""
     result = shell.privileged("limits-agent-install", input=_agent_source().decode("utf-8"), check=False)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "limits-agent-install failed").strip())
@@ -144,9 +148,6 @@ def sync(db: Session) -> None:
     """Hand the agent the current configuration. Raises if the helper refuses."""
     if not installed():
         return
-    if not agent_current():
-        # A panel update brought a new agent: the minute tick installs it.
-        install_agent()
     config = build_config(db)
     with _sync_lock:
         result = shell.privileged("limits-apply", input=json.dumps(config), check=False)
@@ -175,6 +176,50 @@ def sync_in_background() -> None:
     threading.Thread(target=sync_quietly, name="opanel-limits-sync", daemon=True).start()
 
 
+# --- OpenLiteSpeed's own limits ----------------------------------------------------
+
+_refresh_lock = threading.Lock()
+
+
+def refresh_vhosts() -> int:
+    """Re-render every PHP website's vhost and restart OpenLiteSpeed once.
+
+    The vhosts carry OpenLiteSpeed's rlimits only while the addon is not
+    enforcing (openlitespeed._cgroup_limits_enforced), so this runs whenever
+    the addon is installed, removed, started or stopped. A vhost that renders
+    the same is not rewritten; a suspended one stays suspended. Returns how
+    many websites were rendered.
+    """
+    from app.api.websites import _rewrite_website_vhost
+    from app.core.database import SessionLocal
+    from app.services import openlitespeed
+
+    rendered = 0
+    with _refresh_lock, SessionLocal() as db:
+        for website in db.query(Website).order_by(Website.id).all():
+            # A static site has no lsphp, so nothing of this is in its vhost.
+            if (website.app_type or "wordpress") not in {"wordpress", "php"}:
+                continue
+            try:
+                _rewrite_website_vhost(website, defer_reload=True)
+                rendered += 1
+            except Exception:  # noqa: BLE001 - one site must not stop the rest
+                logger.warning("Could not re-render the vhost of %s", website.domain, exc_info=True)
+        if rendered:
+            openlitespeed.reload_service()
+    return rendered
+
+
+def refresh_vhosts_in_background() -> None:
+    def worker() -> None:
+        try:
+            refresh_vhosts()
+        except Exception:  # noqa: BLE001 - logged; a vhost not reached keeps what it had
+            logger.warning("Could not re-render the vhosts", exc_info=True)
+
+    threading.Thread(target=worker, name="opanel-limits-vhosts", daemon=True).start()
+
+
 # --- usage -----------------------------------------------------------------------
 
 def _read_json(path: Path) -> dict:
@@ -193,18 +238,47 @@ def _visible(db: Session, actor: User) -> list[User]:
     return [user for user in query.all() if not is_admin_role(user.role)]
 
 
+def oom_kills_last_day(entry) -> int:
+    """How many processes the memory limit stopped over the history's day.
+
+    The agent records the slice's running total at each point; a total that
+    went down means the slice was made again (a restart, a reboot), so the
+    count starts over from there rather than going negative.
+    """
+    points = entry.get("day") if isinstance(entry, dict) else None
+    if not isinstance(points, list):
+        return 0
+    kills, previous = 0, None
+    for point in points:
+        value = point.get("oom") if isinstance(point, dict) else None
+        if not isinstance(value, int):
+            continue
+        if previous is not None:
+            kills += value - previous if value >= previous else value
+        previous = value
+    return kills
+
+
 def overview(db: Session, actor: User) -> dict:
     """Limits and current use of every account the caller may see; for a
     reseller, its group's too."""
     data = _read_json(USAGE_FILE)
     slices = data.get("slices") if isinstance(data.get("slices"), dict) else {}
     stamp = data.get("time") if isinstance(data.get("time"), int) else None
+    past = _read_json(HISTORY_FILE)
     accounts = {}
     for user in _visible(db, actor):
-        entry = {"limits": _limits(user, RESOURCE_LIMIT_FIELDS), "usage": slices.get(account_slice(user))}
+        entry = {
+            "username": user.username,
+            "role": user.role,
+            "limits": _limits(user, RESOURCE_LIMIT_FIELDS),
+            "usage": slices.get(account_slice(user)),
+            "oom_kills_day": oom_kills_last_day(past.get(account_slice(user))),
+        }
         if is_reseller_role(user.role):
             entry["group_limits"] = _limits(user, GROUP_LIMIT_FIELDS)
             entry["group_usage"] = slices.get(group_slice(user))
+            entry["group_oom_kills_day"] = oom_kills_last_day(past.get(group_slice(user)))
         accounts[str(user.id)] = entry
     return {
         "installed": installed(),

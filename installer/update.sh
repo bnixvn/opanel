@@ -77,7 +77,7 @@ if [[ -z "${opanel_UPDATE_STABLE_COPY:-}" ]]; then
 fi
 
 cleanup_stable_copy() {
-  rm -f "${opanel_UPDATE_STABLE_COPY:-}" 2>/dev/null || true
+  rm -f "${opanel_UPDATE_STABLE_COPY:-}" "${opanel_UPDATE_PREVIOUS_COPY:-}" 2>/dev/null || true
 }
 trap cleanup_stable_copy EXIT
 
@@ -111,7 +111,10 @@ RELEASE_ZIP_URL="${RELEASE_ZIP_URL:-}"             # optional archive URL templa
 SKIP_PULL="${SKIP_PULL:-false}"
 FORCE_SITE_REFRESH="${FORCE_SITE_REFRESH:-false}"
 UPDATE_STATE_FILE="${UPDATE_STATE_FILE:-/var/lib/opanel/update-status.json}"
-RELEASE_WORK_DIR=""
+# Handed over by the first stage of an update (see the handover below), which
+# downloaded the release into it: kept, so this stage builds from it and
+# removes it at the end.
+RELEASE_WORK_DIR="${RELEASE_WORK_DIR:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -1006,17 +1009,21 @@ backup_db() {
   ls -1t "$snap_dir"/opanel-*.db 2>/dev/null | tail -n +11 | xargs -r rm -f
 }
 
-log "Backing up SQLite DB before update"
-backup_db
-write_update_state "checking" "" "Checking for opanel releases"
-update_progress 5 "checking" "Backing up SQLite DB before update"
+if [[ -n "${opanel_UPDATE_STAGE2:-}" ]]; then
+  log "Continuing with the updater shipped in this release"
+else
+  log "Backing up SQLite DB before update"
+  backup_db
+  write_update_state "checking" "" "Checking for opanel releases"
+  update_progress 5 "checking" "Backing up SQLite DB before update"
+fi
 
 # --- Fetch source -----------------------------------------------------------
 if [[ "$SKIP_PULL" == "true" ]]; then
   if [[ "$(readlink -f "$SOURCE_DIR")" == "$(readlink -f "$APP_DIR")" ]]; then
     fail "SOURCE_DIR ($SOURCE_DIR) and APP_DIR ($APP_DIR) must be different."
   fi
-  UPDATE_REF="local:${SOURCE_DIR}"
+  UPDATE_REF="${opanel_UPDATE_REF_OVERRIDE:-local:${SOURCE_DIR}}"
   write_update_state "updating" "$UPDATE_REF" "Syncing opanel from ${SOURCE_DIR}"
 else
   case "$UPDATE_CHANNEL" in
@@ -1108,6 +1115,47 @@ If this rollback is deliberate, re-run with ALLOW_DOWNGRADE=1."
   fi
 fi
 [[ -n "$INCOMING_VERSION" ]] && log "Installing opanel ${INCOMING_VERSION} (was ${INSTALLED_VERSION:-unknown})"
+
+# bash reads a script as it runs, which is why this one re-execs a copy of
+# itself out of /tmp. That copy is the updater of the release the server is
+# leaving, so anything an update changed about updating itself used to take
+# effect only the next time somebody updated: several repairs shipped in this
+# file needed a second update before they held (SITE_HARDEN_VERSION 1 -> 2 was
+# one).
+#
+# The new source is on disk and has passed the checks above, the downgrade
+# refusal included, so hand over to its own updater here - once, guarded by
+# opanel_UPDATE_STAGE2. SOURCE_DIR is passed along already prepared, so the
+# second stage fetches nothing again. BPanel has done the same since 2026-08.
+if [[ -z "${opanel_UPDATE_STAGE2:-}" && -f "$SOURCE_DIR/installer/update.sh" ]] \
+  && ! cmp -s "$SOURCE_DIR/installer/update.sh" "${opanel_UPDATE_STABLE_COPY:-/nonexistent}"; then
+  log "The updater changed in this release; continuing with the new one"
+  update_progress 20 "syncing" "Handing over to the updater from ${UPDATE_REF:-the new release}"
+  stage2_copy="$(mktemp /tmp/opanel-update-stage2.XXXXXX.sh)"
+  cp "$SOURCE_DIR/installer/update.sh" "$stage2_copy"
+  chmod 0700 "$stage2_copy"
+  # The command line was consumed by the argument loop at the top, so the
+  # second stage takes its configuration from the environment. exec replaces
+  # this process, so the EXIT trap here never runs: the second stage is handed
+  # everything this one would have cleaned up.
+  opanel_UPDATE_STAGE2=1 \
+  opanel_UPDATE_STABLE_COPY="$stage2_copy" \
+  opanel_UPDATE_PREVIOUS_COPY="${opanel_UPDATE_STABLE_COPY:-}" \
+  opanel_UPDATE_ORIGINAL_SCRIPT="$SOURCE_DIR/installer/update.sh" \
+  opanel_UPDATE_REF_OVERRIDE="${UPDATE_REF:-}" \
+  INSTALLED_COMMIT="${INSTALLED_COMMIT:-}" \
+  RELEASE_WORK_DIR="${RELEASE_WORK_DIR:-}" \
+  FORCE_SITE_REFRESH="$FORCE_SITE_REFRESH" \
+  APP_DIR="$APP_DIR" \
+  SOURCE_DIR="$SOURCE_DIR" \
+  SKIP_PULL=true \
+    exec /bin/bash "$stage2_copy"
+fi
+
+# Copies of the updater left in /tmp by runs that died before their EXIT trap
+# (a reboot, a kill). A day old is long finished.
+find /tmp -maxdepth 1 -type f \( -name 'opanel-update.*.sh' -o -name 'opanel-update-stage2.*.sh' \) \
+  -mmin +1440 -delete 2>/dev/null || true
 
 # --- Sync code into APP_DIR -------------------------------------------------
 log "Syncing source to $APP_DIR"
@@ -1202,6 +1250,22 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
   else
     echo "  (opanel user not found; skipping helper refresh - run install.sh first)"
   fi
+fi
+
+# --- Resource limits agent -------------------------------------------------
+# Only where the addon is installed: an addon that is off has nothing on disk.
+# The agent runs as root, so it goes through the helper installed just above,
+# which takes it only if it matches the hash that helper carries. This used to
+# be left to the panel's minute tick, because a step added here ran one update
+# late; with the handover above it runs in the update that brings it.
+LIMITS_AGENT_SOURCE="$SOURCE_DIR/backend/app/agents/opanel_limits_agent.py"
+if [[ -f /etc/systemd/system/opanel-limits.service && -f "$LIMITS_AGENT_SOURCE" ]] \
+  && id -u opanel >/dev/null 2>&1 \
+  && ! cmp -s "$LIMITS_AGENT_SOURCE" /usr/local/sbin/opanel-limits-agent; then
+  log "Updating the resource limits agent"
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper limits-agent-install \
+    <"$LIMITS_AGENT_SOURCE" >/dev/null \
+    || echo "  (warning: could not update the resource limits agent; stop and start the addon on the Addons page)"
 fi
 
 # --- Panel serves HTTPS by default -----------------------------------------

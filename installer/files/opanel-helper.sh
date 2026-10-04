@@ -7353,6 +7353,14 @@ case "$cmd" in
       require_domain "$hostname"
     done
     vhost_conf="$OLS_VHOSTS_DIR/$safe_domain/vhost.conf"
+    # A suspended site keeps its vhost as vhost.conf.suspended, which
+    # ols_sync_main_config does not pick up. Writing vhost.conf next to it put
+    # the site back online, and every bulk refresh (an update, an addon that
+    # re-renders all vhosts) rewrites every site. A suspended vhost is
+    # refreshed in place and stays suspended.
+    if [[ ! -f "$vhost_conf" && -f "${vhost_conf}.suspended" ]]; then
+      vhost_conf="${vhost_conf}.suspended"
+    fi
     vhost_tmp="$(mktemp)"
     cat >"$vhost_tmp"
     # The site's PHP runs as its own Linux user and cannot write the

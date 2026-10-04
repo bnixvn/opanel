@@ -15,6 +15,7 @@ import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
 import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye, Mail, Inbox, Forward, Send } from 'lucide-react';
 import { Terminal } from './components/Terminal';
+import { Sparkline, UsageChart } from './components/UsageChart';
 import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
 import './shared/style.css';
 import './shared/brand.css';
@@ -603,6 +604,15 @@ function App() {
   const [mailInfo, setMailInfo] = useState(null);
   // Resource limits addon: whether it is installed, and each visible account's limits and use.
   const [limitsInfo, setLimitsInfo] = useState(null);
+  // The dashboard's view of it: the signed-in account's day and week of history,
+  // which range the charts show, a reseller's own account or its whole group,
+  // and what the administrator's busiest-accounts list is sorted by.
+  const [limitsHistory, setLimitsHistory] = useState(null);
+  const [dashRange, setDashRange] = useState('day');
+  const [dashScope, setDashScope] = useState('account');
+  const [topAccountsSort, setTopAccountsSort] = useState('cpu');
+  // An account picked on the dashboard, opened for editing once Users has loaded.
+  const [pendingEditUserId, setPendingEditUserId] = useState(null);
   const [mailTab, setMailTab] = useState('mailboxes');
   const [mailFilter, setMailFilter] = useState({ domain_id: '', q: '' });
   const [mailPage, setMailPage] = useState(1);
@@ -1643,6 +1653,12 @@ function App() {
   async function loadLimitsInfo() {
     const data = await request('/resource-limits', { silent: true }, '');
     if (data) setLimitsInfo(data);
+  }
+
+  async function loadLimitsHistory() {
+    if (!currentUser?.id) return;
+    const data = await request(`/resource-limits/${currentUser.id}/history`, { silent: true }, '');
+    if (data) setLimitsHistory(data);
   }
 
   // --- Email ---
@@ -4309,6 +4325,26 @@ function App() {
     const timer = window.setInterval(loadLimitsInfo, 15000);
     return () => window.clearInterval(timer);
   }, [isAuthenticated, page, !!limitsInfo?.installed]);
+  // A customer's or reseller's dashboard charts: the agent adds a point every
+  // five minutes, so a minute between reads is plenty.
+  useEffect(() => {
+    if (!isAuthenticated || page !== 'dashboard' || isAdmin || !limitsInfo?.installed) return undefined;
+    loadLimitsHistory();
+    const timer = window.setInterval(loadLimitsHistory, 60000);
+    return () => window.clearInterval(timer);
+  }, [isAuthenticated, page, isAdmin, currentUser?.id, !!limitsInfo?.installed]);
+  // A reseller's dashboard can show its group, and customers and disk are its share.
+  useEffect(() => {
+    if (isAuthenticated && page === 'dashboard' && isReseller) loadResellerPool();
+  }, [isAuthenticated, page, isReseller]);
+  useEffect(() => {
+    if (page !== 'users' || pendingEditUserId == null) return;
+    const user = users.find(item => item.id === pendingEditUserId);
+    if (user) {
+      startEditingUser(user);
+      setPendingEditUserId(null);
+    }
+  }, [page, users, pendingEditUserId]);
 
   // DNS Manager, likewise; its zones load page by page on the server.
   useEffect(() => {
@@ -4588,6 +4624,19 @@ function App() {
     return `${Math.round(amount)}%`;
   }
 
+  // Memory as the Resource limits addon reports it, in MB.
+  function formatMegabytes(value) {
+    const mb = Number(value) || 0;
+    if (mb >= 1024) return `${(mb / 1024).toFixed(mb >= 10240 ? 0 : 1)} GB`;
+    return `${Math.round(mb)} MB`;
+  }
+
+  // CPU where 100% is one core: one decimal while it is small.
+  function formatCpuPercent(value) {
+    const cpu = Number(value) || 0;
+    return `${cpu < 10 ? cpu.toFixed(1).replace(/\.0$/, '') : Math.round(cpu)}%`;
+  }
+
   function clampPercent(value) {
     const amount = Number(value);
     if (!Number.isFinite(amount)) return 0;
@@ -4624,6 +4673,71 @@ function App() {
       {safePercent !== null ? <div className="resource-track"><span style={{ width: `${safePercent}%` }}></span></div> : <div className="resource-track is-empty" aria-hidden="true"></div>}
       <small>{detail}</small>
     </article>;
+  }
+
+  // A dashboard figure: what is used now, against what is allowed, with a
+  // trend line where the addon keeps history and a meter where it does not.
+  function KpiTile({ icon: Icon, label, value, detail, percent, trend, trendLimit, floor }) {
+    const safePercent = percent == null ? null : clampPercent(percent);
+    const tone = safePercent == null ? '' : safePercent >= 90 ? ' tone-bad' : safePercent >= 75 ? ' tone-warn' : '';
+    return <article className={`kpi-tile${tone}`}>
+      <div className="kpi-head"><Icon size={15}/><span>{label}</span></div>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+      {trend
+        ? <Sparkline values={trend} limit={trendLimit} floor={floor}/>
+        : <div className={`resource-track${safePercent === null ? ' is-empty' : ''}`} aria-hidden={safePercent === null}>{safePercent !== null && <span style={{ width: `${safePercent}%` }}></span>}</div>}
+    </article>;
+  }
+
+  function LimitRow({ label, value, percent, tone = '' }) {
+    const safePercent = percent == null ? null : clampPercent(percent);
+    const barTone = safePercent == null ? '' : safePercent >= 90 ? ' tone-bad' : safePercent >= 75 ? ' tone-warn' : '';
+    return <div className={`limit-row${tone ? ` tone-${tone}` : ''}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {safePercent !== null && <div className={`resource-track${barTone}`}><span style={{ width: `${safePercent}%` }}></span></div>}
+    </div>;
+  }
+
+  function openUserFromDashboard(userId) {
+    setPendingEditUserId(userId);
+    navigateToPage('users');
+  }
+
+  // The administrator's view of the Resource limits addon: who uses most now.
+  function renderTopAccounts() {
+    const rows = Object.entries(limitsInfo?.accounts || {}).map(([id, entry]) => ({ ...entry, id: Number(id), now: entry.usage || {}, caps: entry.limits || {} }));
+    if (!rows.length) return null;
+    const measure = topAccountsSort === 'memory' ? row => Number(row.now.memory_mb) || 0 : row => Number(row.now.cpu_percent) || 0;
+    const top = rows.sort((a, b) => measure(b) - measure(a) || (b.oom_kills_day || 0) - (a.oom_kills_day || 0)).slice(0, 5);
+    const share = (used, limit) => limit > 0 ? clampPercent((Number(used) || 0) / limit * 100) : null;
+    const meter = (label, text, percent, limitText) => <span className="top-accounts-meter" data-label={label}>
+      <span>{text}{limitText && <small> / {limitText}</small>}</span>
+      {percent !== null && <span className={`resource-track${percent >= 90 ? ' tone-bad' : percent >= 75 ? ' tone-warn' : ''}`}><span style={{ width: `${percent}%` }}></span></span>}
+    </span>;
+    return <section className="section dash-card">
+      <div className="dash-card-head">
+        <span className="dash-card-icon"><Layers size={16}/></span><h2>{tr("Busiest accounts")}</h2>
+        <div className="segmented-control compact" role="tablist" aria-label={tr("Sort by")}>
+          <button type="button" role="tab" aria-selected={topAccountsSort === 'cpu'} className={topAccountsSort === 'cpu' ? 'active' : ''} onClick={() => setTopAccountsSort('cpu')}>{tr("CPU")}</button>
+          <button type="button" role="tab" aria-selected={topAccountsSort === 'memory'} className={topAccountsSort === 'memory' ? 'active' : ''} onClick={() => setTopAccountsSort('memory')}>{tr("RAM")}</button>
+        </div>
+      </div>
+      {!limitsInfo.running && <p className="hint">{tr("The resource limits agent is not running, so these figures are not current.")}</p>}
+      <div className="top-accounts">
+        <div className="top-accounts-row is-head" aria-hidden="true">
+          <span>{tr("Account")}</span><span>{tr("CPU")}</span><span>{tr("RAM")}</span><span>{tr("Processes")}</span><span>{tr("Stopped (24 h)")}</span>
+        </div>
+        {top.map(row => <button type="button" className="top-accounts-row" key={row.id} onClick={() => openUserFromDashboard(row.id)} title={tr("Open {0}", row.username)}>
+          <span className="top-accounts-name"><strong>{row.username}</strong>{row.role === 'reseller' && <em>{tr("Reseller")}</em>}</span>
+          {meter(tr("CPU"), formatCpuPercent(row.now.cpu_percent), share(row.now.cpu_percent, row.caps.cpu_percent), row.caps.cpu_percent ? `${row.caps.cpu_percent}%` : '')}
+          {meter(tr("RAM"), formatMegabytes(row.now.memory_mb), share(row.now.memory_mb, row.caps.memory_mb), row.caps.memory_mb ? formatMegabytes(row.caps.memory_mb) : '')}
+          <span className="top-accounts-procs" data-label={tr("Processes")}>{row.now.processes ?? 0}{row.caps.process_limit ? <small> / {row.caps.process_limit}</small> : null}</span>
+          <span className={`top-accounts-oom${row.oom_kills_day ? ' tone-bad' : ''}`} data-label={tr("Stopped (24 h)")}>{row.oom_kills_day || 0}</span>
+        </button>)}
+      </div>
+    </section>;
   }
 
   function renderDashboard() {
@@ -4709,87 +4823,174 @@ function App() {
       ...(canManageUsers ? [{ key: 'user', icon: Users, label: isReseller ? tr("Customers") : tr("Panel users"), run: () => navigateToPage('users') }] : []),
     ];
 
-    return <div className="dashboard">
-      {isAdmin && <section className="section dash-card dash-resources">
-        <div className="dash-card-head"><span className="dash-card-icon"><Activity size={16}/></span><h2>{tr("Server resources")}</h2></div>
-        <div className="resource-grid">
-          <ResourceCard icon={Cpu} label={tr("CPU")} value={formatPercent(cpu.percent)} percent={cpu.percent} detail={cpu.load?.length ? tr("Load {0}", cpu.load.join(' / ')) : tr("{0} cores", cpu.cores || '--')} />
-          <ResourceCard icon={MemoryStick} label={tr("RAM")} value={formatPercent(memory.percent)} percent={memory.percent} detail={`${formatBytes(memory.used)} / ${formatBytes(memory.total)}`} />
-          <ResourceCard icon={HardDrive} label={tr("Disk")} value={formatPercent(disk.percent)} percent={disk.percent} detail={`${formatBytes(disk.used)} / ${formatBytes(disk.total)}`} />
-          <ResourceCard icon={Network} label={tr("Network")} value={`${formatBytes(networkTotal)}/s`} detail={tr("Down {0}/s / Up {1}/s", formatBytes(network.rx_per_sec), formatBytes(network.tx_per_sec))} />
-        </div>
-      </section>}
-      {!isAdmin && currentUser && (() => {
-        // A customer's counterpart to the server meters: how much of the plan is used.
-        const storageLimit = storageLimitBytes(currentUser);
-        const siteLimit = Number(currentUser.website_limit) || 0;
-        const dbLimit = Number(currentUser.database_limit) || 0;
-        const usedBytes = Number(currentUser.storage_used_bytes) || 0;
-        const pct = (used, limit) => limit > 0 ? (used / limit) * 100 : null;
-        return <section className="section dash-card dash-resources" style={{ '--meter-cols': 3 }}>
-          <div className="dash-card-head"><span className="dash-card-icon"><Activity size={16}/></span><h2>{tr("Plan usage")}</h2></div>
+    // Needs attention, as a list: its own card on the administrator's
+    // dashboard, folded under the status rows on a customer's.
+    const attentionList = attention.length === 0
+      ? <div className="attention-ok"><CheckCircle size={16}/> {dashSummary ? tr("Everything looks fine.") : tr("Checking…")}</div>
+      : <div className="attention-list">
+          {attention.map((item, index) => <div className={`attention-item tone-${item.tone}`} key={index}>
+            {item.tone === 'info' ? <RefreshCw size={15}/> : <AlertCircle size={15}/>}
+            <span>{item.text}</span>
+            <button type="button" className="mini secondary" onClick={() => navigateToPage(item.target)}>{item.action}</button>
+          </div>)}
+        </div>;
+    const quickActionsCard = <section className="section dash-card">
+      <div className="dash-card-head"><span className="dash-card-icon"><Zap size={16}/></span><h2>{tr("Quick actions")}</h2></div>
+      <div className="quick-actions">
+        {quickActions.map(action => <button type="button" key={action.key} className={action.primary ? '' : 'secondary'} onClick={action.run}><action.icon size={15}/> {action.label}</button>)}
+      </div>
+    </section>;
+
+    if (isAdmin) {
+      return <div className="dashboard">
+        <section className="section dash-card dash-resources">
+          <div className="dash-card-head"><span className="dash-card-icon"><Activity size={16}/></span><h2>{tr("Server resources")}</h2></div>
           <div className="resource-grid">
-            <ResourceCard icon={HardDrive} label={tr("Storage")} value={storageLimit ? formatPercent(pct(usedBytes, storageLimit)) : formatBytes(usedBytes)} percent={storageLimit ? pct(usedBytes, storageLimit) : null} detail={storageLimit ? tr("{0} of {1}", formatBytes(usedBytes), formatBytes(storageLimit)) : tr("unlimited")} />
-            <ResourceCard icon={Globe} label={tr("Websites")} value={siteLimit ? `${websites.length} / ${siteLimit}` : String(websites.length)} percent={pct(websites.length, siteLimit)} detail={siteLimit ? tr("{0} of {1}", websites.length, siteLimit) : tr("unlimited")} />
-            <ResourceCard icon={Database} label={tr("Databases")} value={dbLimit ? `${databases.length} / ${dbLimit}` : String(databases.length)} percent={pct(databases.length, dbLimit)} detail={dbLimit ? tr("{0} of {1}", databases.length, dbLimit) : tr("unlimited")} />
+            <ResourceCard icon={Cpu} label={tr("CPU")} value={formatPercent(cpu.percent)} percent={cpu.percent} detail={cpu.load?.length ? tr("Load {0}", cpu.load.join(' / ')) : tr("{0} cores", cpu.cores || '--')} />
+            <ResourceCard icon={MemoryStick} label={tr("RAM")} value={formatPercent(memory.percent)} percent={memory.percent} detail={`${formatBytes(memory.used)} / ${formatBytes(memory.total)}`} />
+            <ResourceCard icon={HardDrive} label={tr("Disk")} value={formatPercent(disk.percent)} percent={disk.percent} detail={`${formatBytes(disk.used)} / ${formatBytes(disk.total)}`} />
+            <ResourceCard icon={Network} label={tr("Network")} value={`${formatBytes(networkTotal)}/s`} detail={tr("Down {0}/s / Up {1}/s", formatBytes(network.rx_per_sec), formatBytes(network.tx_per_sec))} />
           </div>
-        </section>;
-      })()}
+        </section>
+        {limitsOn && renderTopAccounts()}
 
-      {!isAdmin && currentUser && limitsOn && limitsInfo?.accounts?.[currentUser.id] && (() => {
-        // The Resource limits addon: what this account (and a reseller's whole group) uses now.
-        const entry = limitsInfo.accounts[currentUser.id];
-        const meters = (usage, limits) => {
-          const u = usage || {};
-          const pct = (used, limit) => limit > 0 ? (used / limit) * 100 : null;
-          return <div className="resource-grid">
-            <ResourceCard icon={Cpu} label={tr("CPU")} value={`${u.cpu_percent ?? 0}%`} percent={pct(u.cpu_percent || 0, limits.cpu_percent)} detail={limits.cpu_percent ? tr("Limit {0}", `${limits.cpu_percent}%`) : tr("Unlimited")} />
-            <ResourceCard icon={MemoryStick} label={tr("RAM")} value={`${u.memory_mb ?? 0} MB`} percent={pct(u.memory_mb || 0, limits.memory_mb)} detail={limits.memory_mb ? tr("Limit {0}", `${limits.memory_mb} MB`) : tr("Unlimited")} />
-            <ResourceCard icon={Layers} label={tr("Processes")} value={String(u.processes ?? 0)} percent={pct(u.processes || 0, limits.process_limit)} detail={limits.process_limit ? tr("Limit {0}", limits.process_limit) : tr("Unlimited")} />
-            <ResourceCard icon={HardDrive} label={tr("Disk I/O")} value={`${u.io_read_mbps ?? 0} / ${u.io_write_mbps ?? 0} MB/s`} detail={tr("Read / write")} />
-          </div>;
-        };
-        return <>
-          <section className="section dash-card dash-resources">
-            <div className="dash-card-head"><span className="dash-card-icon"><Cpu size={16}/></span><h2>{tr("Your resources")}</h2></div>
-            {meters(entry.usage, entry.limits || {})}
+        {/* State, not navigation: each card says how something stands and opens its page. */}
+        <div className={`status-grid${cards.length > 4 ? ' many' : ''}`} style={{ '--status-cols': Math.min(4, cards.length) }}>
+          {cards.map(card => <button type="button" key={card.key} className={`status-card tone-${card.tone}`} onClick={() => navigateToPage(card.key)}>
+            <span className="status-card-head"><card.icon size={15}/><span>{card.label}</span></span>
+            <strong>{card.value}</strong>
+            <small>{card.detail}</small>
+          </button>)}
+        </div>
+
+        <div className="dash-bottom">
+          <section className="section dash-card">
+            <div className="dash-card-head"><span className="dash-card-icon"><AlertCircle size={16}/></span><h2>{tr("Needs attention")}</h2></div>
+            {attentionList}
           </section>
-          {entry.group_limits && <section className="section dash-card dash-resources">
-            <div className="dash-card-head"><span className="dash-card-icon"><Users size={16}/></span><h2>{tr("Your group")}</h2></div>
-            <p className="hint">{tr("You and all your customers together.")}</p>
-            {meters(entry.group_usage, entry.group_limits)}
-          </section>}
-        </>;
-      })()}
+          {quickActionsCard}
+        </div>
+      </div>;
+    }
 
-      {/* State, not navigation: each card says how something stands and opens its page. */}
-      <div className={`status-grid${cards.length > 4 ? ' many' : ''}`} style={{ '--status-cols': Math.min(4, cards.length) }}>
-        {cards.map(card => <button type="button" key={card.key} className={`status-card tone-${card.tone}`} onClick={() => navigateToPage(card.key === 'security' ? 'security' : card.key)}>
-          <span className="status-card-head"><card.icon size={15}/><span>{card.label}</span></span>
-          <strong>{card.value}</strong>
-          <small>{card.detail}</small>
+    if (!currentUser) return null;
+
+    // A customer or reseller: a row of figures, the addon's history as charts,
+    // then the rest of the limits and how the account stands.
+    const limitEntry = limitsOn ? limitsInfo?.accounts?.[currentUser.id] : null;
+    const groupScope = isReseller && dashScope === 'group' && !!limitEntry?.group_limits;
+    const now = (groupScope ? limitEntry?.group_usage : limitEntry?.usage) || {};
+    const caps = (groupScope ? limitEntry?.group_limits : limitEntry?.limits) || {};
+    const history = limitsHistory?.[groupScope ? 'group' : 'account'] || {};
+    const dayPoints = history.day || [];
+    const rangePoints = (dashRange === 'week' ? history.week : history.day) || [];
+    const pctOf = (used, limit) => limit > 0 ? ((Number(used) || 0) / limit) * 100 : null;
+    const limitText = (limit, format) => limit ? tr("Limit {0}", format(limit)) : tr("Unlimited");
+    const formatWhen = (t, full) => {
+      const date = new Date(t * 1000);
+      if (full) return date.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      return dashRange === 'week' ? date.toLocaleDateString([], { day: '2-digit', month: '2-digit' }) : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+    const formatMbps = value => `${(Number(value) || 0).toFixed(1).replace(/\.0$/, '')} MB/s`;
+
+    const storageLimit = storageLimitBytes(currentUser);
+    const usedBytes = Number(currentUser.storage_used_bytes) || 0;
+    const siteLimit = Number(currentUser.website_limit) || 0;
+    const dbLimit = Number(currentUser.database_limit) || 0;
+    const cpuTile = { key: 'cpu', icon: Cpu, label: tr("CPU"), value: formatCpuPercent(now.cpu_percent), percent: pctOf(now.cpu_percent, caps.cpu_percent),
+      detail: limitText(caps.cpu_percent, value => `${value}%`), trend: dayPoints.map(point => point.cpu), trendLimit: caps.cpu_percent, floor: 5 };
+    const ramTile = { key: 'ram', icon: MemoryStick, label: tr("RAM"), value: formatMegabytes(now.memory_mb), percent: pctOf(now.memory_mb, caps.memory_mb),
+      detail: limitText(caps.memory_mb, formatMegabytes), trend: dayPoints.map(point => point.mem), trendLimit: caps.memory_mb, floor: 64 };
+    let kpis;
+    if (groupScope) {
+      const pool = resellerPool || {};
+      const shareDisk = pool[pool.pool_oversell ? 'used_storage_limit_mb' : 'allocated_storage_limit_mb'];
+      kpis = [cpuTile, ramTile,
+        { key: 'customers', icon: Users, label: tr("Customers"), value: pool.pool_user_limit ? `${pool.customers ?? 0} / ${pool.pool_user_limit}` : String(pool.customers ?? 0),
+          percent: pctOf(pool.customers, pool.pool_user_limit), detail: pool.pool_user_limit ? tr("Your share") : tr("unlimited") },
+        { key: 'share-disk', icon: HardDrive, label: pool.pool_oversell ? tr("Disk in use") : tr("Disk handed out"), value: formatMegabytes(shareDisk),
+          percent: pctOf(shareDisk, pool.pool_storage_limit_mb), detail: pool.pool_storage_limit_mb ? tr("{0} of {1}", formatMegabytes(shareDisk), formatMegabytes(pool.pool_storage_limit_mb)) : tr("unlimited") }];
+    } else {
+      const storageTile = { key: 'storage', icon: HardDrive, label: tr("Storage"), value: storageLimit ? formatPercent(pctOf(usedBytes, storageLimit)) : formatBytes(usedBytes),
+        percent: storageLimit ? pctOf(usedBytes, storageLimit) : null, detail: storageLimit ? tr("{0} of {1}", formatBytes(usedBytes), formatBytes(storageLimit)) : tr("unlimited") };
+      const sitesTile = { key: 'websites', icon: Globe, label: tr("Websites"), value: siteLimit ? `${websites.length} / ${siteLimit}` : String(websites.length),
+        percent: pctOf(websites.length, siteLimit), detail: siteLimit ? tr("{0} of {1}", websites.length, siteLimit) : tr("unlimited") };
+      const dbTile = { key: 'databases', icon: Database, label: tr("Databases"), value: dbLimit ? `${databases.length} / ${dbLimit}` : String(databases.length),
+        percent: pctOf(databases.length, dbLimit), detail: dbLimit ? tr("{0} of {1}", databases.length, dbLimit) : tr("unlimited") };
+      // With the addon, CPU and RAM lead and databases move to the details;
+      // without it, the plan's own counts fill the row.
+      kpis = limitEntry ? [cpuTile, ramTile, storageTile, sitesTile] : [storageTile, sitesTile, dbTile];
+    }
+
+    const mailboxLimit = Number(mailInfo?.mailbox_limit) || 0;
+    const detailRows = [];
+    if (limitEntry) {
+      detailRows.push({ key: 'procs', label: tr("Processes"), value: caps.process_limit ? `${now.processes ?? 0} / ${caps.process_limit}` : `${now.processes ?? 0}`, percent: pctOf(now.processes, caps.process_limit) });
+      detailRows.push({ key: 'io-read', label: tr("Disk read"), value: caps.io_read_mbps ? `${formatMbps(now.io_read_mbps)} / ${formatMbps(caps.io_read_mbps)}` : formatMbps(now.io_read_mbps), percent: pctOf(now.io_read_mbps, caps.io_read_mbps) });
+      detailRows.push({ key: 'io-write', label: tr("Disk write"), value: caps.io_write_mbps ? `${formatMbps(now.io_write_mbps)} / ${formatMbps(caps.io_write_mbps)}` : formatMbps(now.io_write_mbps), percent: pctOf(now.io_write_mbps, caps.io_write_mbps) });
+    }
+    if (!groupScope && limitEntry) {
+      detailRows.push({ key: 'databases', label: tr("Databases"), value: dbLimit ? `${databases.length} / ${dbLimit}` : String(databases.length), percent: pctOf(databases.length, dbLimit) });
+    }
+    if (!groupScope && mailInfo?.installed) {
+      detailRows.push({ key: 'mailboxes', label: tr("Mailboxes"), value: mailboxLimit ? `${mailInfo.mailbox_count ?? 0} / ${mailboxLimit}` : String(mailInfo.mailbox_count ?? 0), percent: pctOf(mailInfo.mailbox_count, mailboxLimit) });
+    }
+    if (limitEntry) {
+      const stopped = (groupScope ? limitEntry.group_oom_kills_day : limitEntry.oom_kills_day) || 0;
+      detailRows.push({ key: 'oom', label: tr("Stopped at the RAM limit (24 h)"), value: String(stopped), tone: stopped ? 'bad' : '' });
+    }
+
+    const statusCard = <section className="section dash-card">
+      <div className="dash-card-head"><span className="dash-card-icon"><ShieldCheck size={16}/></span><h2>{tr("Status")}</h2></div>
+      <div className="status-list">
+        {cards.map(card => <button type="button" key={card.key} className={`status-row tone-${card.tone}`} onClick={() => navigateToPage(card.key === 'security' ? 'security' : card.key)}>
+          <card.icon size={15}/><span>{card.label}</span><strong>{card.value}</strong><small>{card.detail}</small>
         </button>)}
       </div>
+      {attention.length > 0 && attentionList}
+    </section>;
 
-      <div className="dash-bottom">
-        <section className="section dash-card">
-          <div className="dash-card-head"><span className="dash-card-icon"><AlertCircle size={16}/></span><h2>{tr("Needs attention")}</h2></div>
-          {attention.length === 0
-            ? <div className="attention-ok"><CheckCircle size={16}/> {dashSummary ? tr("Everything looks fine.") : tr("Checking…")}</div>
-            : <div className="attention-list">
-                {attention.map((item, index) => <div className={`attention-item tone-${item.tone}`} key={index}>
-                  {item.tone === 'info' ? <RefreshCw size={15}/> : <AlertCircle size={15}/>}
-                  <span>{item.text}</span>
-                  <button type="button" className="mini secondary" onClick={() => navigateToPage(item.target)}>{item.action}</button>
-                </div>)}
-              </div>}
-        </section>
-        <section className="section dash-card">
-          <div className="dash-card-head"><span className="dash-card-icon"><Zap size={16}/></span><h2>{tr("Quick actions")}</h2></div>
-          <div className="quick-actions">
-            {quickActions.map(action => <button type="button" key={action.key} className={action.primary ? '' : 'secondary'} onClick={action.run}><action.icon size={15}/> {action.label}</button>)}
+    return <div className="dashboard">
+      {isReseller && limitEntry?.group_limits && <div className="dash-scope">
+        <div className="segmented-control" role="tablist" aria-label={tr("Show")}>
+          <button type="button" role="tab" aria-selected={!groupScope} className={!groupScope ? 'active' : ''} onClick={() => setDashScope('account')}>{tr("My account")}</button>
+          <button type="button" role="tab" aria-selected={groupScope} className={groupScope ? 'active' : ''} onClick={() => setDashScope('group')}>{tr("My group")}</button>
+        </div>
+        {groupScope && <p className="hint">{tr("You and all your customers together.")}</p>}
+      </div>}
+
+      <div className="kpi-grid" style={{ '--kpi-cols': kpis.length }}>
+        {kpis.map(({ key, ...tile }) => <KpiTile key={key} {...tile}/>)}
+      </div>
+
+      {limitEntry && <section className="section dash-card dash-history">
+        <div className="dash-card-head">
+          <span className="dash-card-icon"><Activity size={16}/></span>
+          <h2>{groupScope ? tr("Your group's CPU and RAM") : tr("CPU and RAM")}</h2>
+          <div className="segmented-control compact" role="tablist" aria-label={tr("Period")}>
+            <button type="button" role="tab" aria-selected={dashRange === 'day'} className={dashRange === 'day' ? 'active' : ''} onClick={() => setDashRange('day')}>{tr("24 hours")}</button>
+            <button type="button" role="tab" aria-selected={dashRange === 'week'} className={dashRange === 'week' ? 'active' : ''} onClick={() => setDashRange('week')}>{tr("7 days")}</button>
           </div>
-        </section>
+        </div>
+        <div className="usage-charts">
+          <UsageChart title={tr("CPU")} points={rangePoints} pick={point => point.cpu} limit={caps.cpu_percent} format={formatCpuPercent} when={formatWhen} floor={10}
+            emptyText={tr("Not enough history yet: a point is added every 5 minutes.")} limitText={tr("Limit")} peakText={tr("Peak")} averageText={tr("Average")} />
+          <UsageChart title={tr("RAM")} points={rangePoints} pick={point => point.mem} limit={caps.memory_mb} format={formatMegabytes} when={formatWhen} floor={128}
+            emptyText={tr("Not enough history yet: a point is added every 5 minutes.")} limitText={tr("Limit")} peakText={tr("Peak")} averageText={tr("Average")} />
+        </div>
+      </section>}
+
+      <div className={`dash-bottom${detailRows.length ? '' : ' no-details'}`}>
+        {detailRows.length > 0 && <section className="section dash-card">
+          <div className="dash-card-head"><span className="dash-card-icon"><Layers size={16}/></span><h2>{tr("Limits")}</h2></div>
+          <div className="limit-rows">
+            {detailRows.map(({ key, ...row }) => <LimitRow key={key} {...row}/>)}
+          </div>
+        </section>}
+        <div className="dash-side">
+          {statusCard}
+          {quickActionsCard}
+        </div>
       </div>
     </div>;
   }

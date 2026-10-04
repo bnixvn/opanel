@@ -548,7 +548,24 @@ def _build_context(
         "security_headers": SECURITY_HEADERS,
         "hsts_header": HSTS_HEADER if has_ssl else "",
         "csp_header": WORDPRESS_CSP if checked_app == "wordpress" else "",
+        "legacy_rlimits": not _cgroup_limits_enforced(),
     }
+
+
+def _cgroup_limits_enforced() -> bool:
+    """Whether the Resource limits addon bounds each account with a cgroup.
+
+    Until then lsphp carries OpenLiteSpeed's own rlimits (memSoftLimit,
+    procSoftLimit, procHardLimit) as a safety net. While the addon runs they
+    go: the account's memory and process limits replace them, and
+    procSoftLimit, being RLIMIT_NPROC on the site's uid, would otherwise stop
+    an account at 1000 processes whatever its own limit said. Installing,
+    removing, starting or stopping the addon re-renders every vhost
+    (resource_limits.refresh_vhosts).
+    """
+    from app.services import resource_limits
+
+    return resource_limits.enforcing()
 
 
 def render_vhost(

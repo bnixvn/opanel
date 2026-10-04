@@ -93,9 +93,11 @@ extprocessor {{ lsphp_app }} {
     backlog               100
     instances             1
     priority              0
+{% if legacy_rlimits %}
     memSoftLimit          2048M
     procSoftLimit         1000
     procHardLimit         1200
+{% endif %}
 }
 
 scripthandler {
