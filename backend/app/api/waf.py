@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.core.access import ensure_owner_access, scope_owner
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.models.entities import User, Website
-from app.services import openlitespeed, waf
+from app.services import waf
 
 router = APIRouter(prefix="/waf", tags=["waf"])
 
@@ -153,8 +153,13 @@ def save_website_waf(payload: WebsiteWafRulesUpdate, website_id: int, db: Sessio
     db.commit()
     db.refresh(website)
     if website.waf_enabled:
+        # Rebuilt from the website, not read back from the vhost file (see
+        # websites.set_website_waf): saving a rule here - which is what the
+        # MCP add_waf_rule tool does - turned a WordPress site's vhost into a
+        # "php" one on the shared PHP socket.
+        from app.api.websites import _rewrite_website_vhost
         try:
-            openlitespeed.update_waf_block(website.domain, True)
+            _rewrite_website_vhost(website)
         except (RuntimeError, ValueError, FileNotFoundError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     data = waf.site_config(website)

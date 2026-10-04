@@ -6,6 +6,11 @@ database (and so the panel) said the WAF was on, until an update rewrote every
 vhost. Installing WordPress on an existing site rewrote its vhost the same way,
 dropping a WAF it had - with its certificate, aliases and redirects. Found on a
 1.29.1 -> staging update test, 2026-10-04.
+
+Turning a site's WAF on or off, or saving its rules (what the MCP add_waf_rule
+tool does), rebuilt the vhost by reading it back from the file and guessing: a
+WordPress site became "php" on the shared PHP socket, without its rewrites
+(tapsenior.com on .122, 2026-10-04). Those paths now rebuild from the website.
 """
 from __future__ import annotations
 
@@ -134,3 +139,42 @@ def test_installing_wordpress_on_a_site_keeps_its_vhost_whole(env, monkeypatch):
                      {"admin_user": "wpadmin", "admin_password": "Long-Enough-Password-1", "title": "Plain"})
     assert response.status_code == 200, response.text
     assert rewritten == [("plain.test", "wordpress", "front_controller", {})]
+
+
+def test_saving_waf_rules_rebuilds_the_vhost_from_the_website(env, monkeypatch):
+    db, client, _calls = env
+    from app.api import waf as waf_api
+
+    admin = db.query(User).filter(User.username == "root_admin").one()
+    site = Website(domain="wp.test", owner_id=admin.id, root_path="/home/x/wp.test", linux_user="x",
+                   php_version="8.4", app_type="wordpress", status="active", waf_enabled=True)
+    db.add(site)
+    db.commit()
+    rebuilt = []
+    monkeypatch.setattr(websites_api, "_rewrite_website_vhost", lambda website, **k: rebuilt.append((website.domain, k)) or "")
+    monkeypatch.setattr(waf_api.waf, "save_website_config",
+                        lambda *a, **k: CommandResult("waf", 0, "", ""))
+    monkeypatch.setattr(waf_api.waf, "site_config", lambda website: {"domain": website.domain})
+
+    payload = waf_api.WebsiteWafRulesUpdate(enabled_rule_ids=["sql-injection"], custom_rules="")
+    waf_api.save_website_waf(payload, site.id, db=db, current_user=admin)
+    assert rebuilt == [("wp.test", {})]
+
+    _login(client)
+    rebuilt.clear()
+    response = client.patch(f"/api/websites/{site.id}/waf", json={"waf_enabled": False},
+                            headers={"X-CSRF-Token": client.cookies.get("opanel_csrf", "")})
+    assert response.status_code == 200, response.text
+    assert rebuilt == [("wp.test", {"waf_enabled": False})]
+
+
+def test_no_api_rebuilds_a_vhost_by_reading_it_back():
+    """update_waf_block guesses the site from its vhost file; the API has the
+    website and builds from that."""
+    from pathlib import Path
+
+    api = Path(websites_api.__file__).parent
+    offenders = [path.name for path in api.glob("*.py")
+                 if "update_waf_block(" in path.read_text(encoding="utf-8")
+                 or "_rewrite_existing_vhost(" in path.read_text(encoding="utf-8")]
+    assert offenders == []

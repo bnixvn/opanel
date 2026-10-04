@@ -659,7 +659,8 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
             result = waf.sync_website_rules(website)
             if result.returncode != 0:
                 raise RuntimeError(_command_error(result))
-            openlitespeed.update_waf_block(website.domain, payload.waf_enabled)
+            # From the website, not by reading the vhost back: see set_website_waf.
+            _rewrite_website_vhost(website, waf_enabled=payload.waf_enabled)
         except (RuntimeError, ValueError, FileNotFoundError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         website.waf_enabled = payload.waf_enabled
@@ -731,7 +732,12 @@ def set_website_waf(website_id: int, payload: WebsiteWafUpdate, request: Request
         result = waf.sync_website_rules(website)
         if result.returncode != 0:
             raise RuntimeError(_command_error(result))
-        openlitespeed.update_waf_block(website.domain, payload.waf_enabled)
+        # The vhost is rebuilt from the website. update_waf_block read it back
+        # from the file and guessed: no "wp-admin" in it made a WordPress site
+        # "php", the site's own PHP socket became the shared one, and the
+        # WordPress rewrites and the CSP header went (tapsenior.com on .122
+        # after an assistant added a WAF rule, 2026-10-04).
+        _rewrite_website_vhost(website, waf_enabled=payload.waf_enabled)
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     website.waf_enabled = payload.waf_enabled

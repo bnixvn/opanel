@@ -153,7 +153,7 @@ def test_an_owner_may_save_everything_else(monkeypatch):
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     monkeypatch.setattr(waf_api.waf, "save_website_config", fake_save)
-    monkeypatch.setattr(waf_api.openlitespeed, "update_waf_block", lambda *a, **k: "")
+    monkeypatch.setattr(websites_api, "_rewrite_website_vhost", lambda *a, **k: "")
     monkeypatch.setattr(waf_api.waf, "site_config", lambda website: {"domain": website.domain})
 
     payload = waf_api.WebsiteWafRulesUpdate(
@@ -176,7 +176,7 @@ def test_resending_the_stored_custom_rules_unchanged_is_allowed(monkeypatch):
 
     monkeypatch.setattr(waf_api.waf, "save_website_config",
                         lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
-    monkeypatch.setattr(waf_api.openlitespeed, "update_waf_block", lambda *a, **k: "")
+    monkeypatch.setattr(websites_api, "_rewrite_website_vhost", lambda *a, **k: "")
     monkeypatch.setattr(waf_api.waf, "site_config", lambda website: {"domain": website.domain})
 
     payload = waf_api.WebsiteWafRulesUpdate(
@@ -194,7 +194,7 @@ def test_an_admin_may_write_custom_rules(monkeypatch):
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     monkeypatch.setattr(waf_api.waf, "save_website_config", fake_save)
-    monkeypatch.setattr(waf_api.openlitespeed, "update_waf_block", lambda *a, **k: "")
+    monkeypatch.setattr(websites_api, "_rewrite_website_vhost", lambda *a, **k: "")
     monkeypatch.setattr(waf_api.waf, "site_config", lambda website: {"domain": website.domain})
 
     payload = waf_api.WebsiteWafRulesUpdate(enabled_rule_ids=[], custom_rules="SecRule ARGS \"@rx x\" \"id:8,phase:2,deny\"")
