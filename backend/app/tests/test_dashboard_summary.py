@@ -113,3 +113,24 @@ def test_only_the_always_on_daemons_are_checked(monkeypatch):
     monkeypatch.setattr(dashboard.shell, "run", lambda args, check=False: checked.append(args[-1]) or SimpleNamespace(stdout="active"))
     result = dashboard._services()
     assert result["stopped"] == [] and not any(name.startswith("lsphp") for name in checked)
+
+
+def test_the_cpanel_style_columns_get_what_each_role_may_see(env, monkeypatch):
+    """The dashboard's right-hand column, after cPanel's: a customer gets the
+    address to point a domain at (its "Shared IP"); the server's own details
+    and the counts across every account are an administrator's."""
+    monkeypatch.setattr(dashboard.network, "detect_addresses", lambda: {"ipv4": ["203.0.113.5"], "ipv6": []})
+    monkeypatch.setattr(dashboard.mail, "installed", lambda: True)
+    monkeypatch.setattr(dashboard.dns_manager, "installed", lambda: False)
+
+    body = env.as_user("alice")
+    assert body["server"] == {"ipv4": "203.0.113.5"}
+    for key in ("accounts", "mail", "dns"):
+        assert key not in body
+
+    body = env.as_user("root_admin")
+    assert body["server"]["ipv4"] == "203.0.113.5"
+    assert {"hostname", "os", "kernel", "uptime_seconds", "panel_version"} <= set(body["server"])
+    assert body["accounts"] == {"end_users": 2, "resellers": 0}
+    assert body["mail"] == {"domains": 0, "mailboxes": 0}
+    assert "dns" not in body, "an addon that is not installed adds nothing"

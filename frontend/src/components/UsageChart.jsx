@@ -22,17 +22,6 @@ function polyline(values, top) {
   return values.map((value, index) => `${(index * step).toFixed(1)},${(PLOT_H - (value / top) * PLOT_H).toFixed(1)}`).join(' ');
 }
 
-/** A tiny trend line for a KPI tile. */
-export function Sparkline({ values, limit = 0, floor = 1 }) {
-  if (!values || values.length < 2) return <div className="sparkline is-empty" aria-hidden="true" />;
-  const top = scaleTop(values, limit, floor);
-  const line = polyline(values, top);
-  return <svg className="sparkline" viewBox={`0 0 ${PLOT_W} ${PLOT_H}`} preserveAspectRatio="none" aria-hidden="true">
-    <polygon className="sparkline-area" points={`0,${PLOT_H} ${line} ${PLOT_W},${PLOT_H}`} />
-    <polyline className="sparkline-line" points={line} vectorEffect="non-scaling-stroke" />
-  </svg>;
-}
-
 /**
  * One measure over time, with its limit as a dashed line.
  *

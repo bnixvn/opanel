@@ -8,6 +8,9 @@ here refreshes a remote check -- opening the dashboard must stay cheap.
 from __future__ import annotations
 
 import logging
+import platform
+import socket
+from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends
@@ -17,8 +20,9 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.access import scope_owner
 from app.core.permissions import is_admin_role
-from app.models.entities import BackupSchedule, DatabaseAccount, User, Website
-from app.services import firewall, malware_scan, panel_settings, updates, waf
+from app.core.version import APP_VERSION
+from app.models.entities import BackupSchedule, DatabaseAccount, DnsZone, MailDomain, Mailbox, User, Website
+from app.services import dns_manager, firewall, mail, malware_scan, network, panel_settings, updates, waf
 from app.services.shell import shell
 from app.services.system import BASE_SERVICES
 
@@ -82,6 +86,47 @@ def _backups(db: Session) -> dict:
     }
 
 
+def _server_ipv4() -> str:
+    """The address a customer points a domain at (cPanel's "Shared IP")."""
+    addresses = network.detect_addresses().get("ipv4") or []
+    return addresses[0] if addresses else ""
+
+
+def _os_name() -> str:
+    try:
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return platform.system()
+
+
+def _uptime_seconds() -> int:
+    try:
+        return int(float(Path("/proc/uptime").read_text(encoding="ascii").split()[0]))
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def _server_details() -> dict:
+    """The administrator's "Server information": all local reads, no probes."""
+    return {
+        "hostname": socket.getfqdn(),
+        "os": _os_name(),
+        "kernel": platform.release(),
+        "uptime_seconds": _uptime_seconds(),
+        "panel_version": APP_VERSION,
+    }
+
+
+def _accounts(db: Session) -> dict:
+    return {
+        "end_users": db.query(User).filter(User.role == "end_user").count(),
+        "resellers": db.query(User).filter(User.role == "reseller").count(),
+    }
+
+
 @router.get("/summary")
 def dashboard_summary(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     admin = is_admin_role(current_user.role)
@@ -102,6 +147,7 @@ def dashboard_summary(db: Session = Depends(get_db), current_user: User = Depend
             "unsecured_count": len(unsecured),
         },
         "databases": {"total": db_query.count()},
+        "server": {"ipv4": _safe(_server_ipv4, "")},
     }
     if admin:
         summary["users"] = {"total": db.query(User).filter(User.role != "admin").count()}
@@ -111,4 +157,11 @@ def dashboard_summary(db: Session = Depends(get_db), current_user: User = Depend
         summary["services"] = _safe(_services)
         summary["updates"] = _safe(updates.cached_release_summary)
         summary["backups"] = _safe(lambda: _backups(db))
+        summary["server"].update(_safe(_server_details, {}))
+        summary["accounts"] = _safe(lambda: _accounts(db))
+        if _safe(mail.installed, False):
+            summary["mail"] = _safe(lambda: {"domains": db.query(MailDomain).count(),
+                                             "mailboxes": db.query(Mailbox).count()})
+        if _safe(dns_manager.installed, False):
+            summary["dns"] = _safe(lambda: {"zones": db.query(DnsZone).count()})
     return summary
