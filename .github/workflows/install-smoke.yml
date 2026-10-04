@@ -1,0 +1,85 @@
+name: Install smoke test
+
+# The one test that runs what customers run: install.sh on a clean Ubuntu
+# 24.04. A unit test cannot catch an installer that waits on a prompt nobody
+# sees, dies on an apt lock, or stalls on a download - installs "hung" twice
+# that way (2026-10-04). BPanel has run the same job since 2026-08.
+on:
+  push:
+    branches: [staging, main]
+  pull_request:
+    branches: [staging, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run install.sh unattended
+        # PANEL_URL supplies the hostname and port, so no prompt is reached;
+        # an IP for a hostname keeps Let's Encrypt out of CI.
+        run: sudo -E bash installer/install.sh </dev/null
+        env:
+          PANEL_URL: "http://127.0.0.1:2222"
+          opanel_ADMIN_PASSWORD: "ci-smoke-test-not-a-real-secret"
+
+      - name: The panel answers
+        # The panel terminates TLS itself, with a self-signed certificate.
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsSk https://127.0.0.1:2222/api/health; then exit 0; fi
+            if curl -fsS http://127.0.0.1:2222/api/health; then exit 0; fi
+            sleep 2
+          done
+          echo "::error::panel never became healthy"
+          systemctl status opanel-api --no-pager -l || true
+          journalctl -u opanel-api -n 100 --no-pager || true
+          exit 1
+
+      - name: The stack is up
+        # Scoped to what the installer is responsible for: a blanket
+        # `systemctl --failed` also catches units the runner image ships broken.
+        run: |
+          for unit in opanel-api lshttpd mariadb redis-server; do
+            systemctl is-active --quiet "$unit" \
+              || { echo "::error::$unit is not active"; systemctl status "$unit" --no-pager -l; exit 1; }
+          done
+          systemctl is-enabled --quiet lshttpd || { echo "::error::OpenLiteSpeed does not start at boot"; exit 1; }
+          systemctl --failed --no-pager
+
+      - name: Create a site end to end, with its WAF
+        # The sudo helper, the Linux user and its site directory, the rendered
+        # vhost and its WAF block, OpenLiteSpeed serving it.
+        run: |
+          set -euo pipefail
+          base=https://127.0.0.1:2222
+          curl -fsSk -o /dev/null "$base/api/health" || base=http://127.0.0.1:2222
+          token=$(curl -sSk -X POST "$base/api/auth/login" \
+            -d "username=admin&password=$opanel_ADMIN_PASSWORD" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+          curl -fsSk -X POST "$base/api/websites" \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            -d '{"domain":"ci.example.test","install_wordpress":false,"app_type":"php"}' >/dev/null
+
+          vhost=/usr/local/lsws/conf/opanel/vhosts/ci.example.test/vhost.conf
+          sudo test -f "$vhost"
+          sudo grep -q "OPANEL WAF BEGIN" "$vhost" \
+            || { echo "::error::a new site has no WAF in its vhost"; exit 1; }
+
+          # `.test` resolves nowhere: address the vhost by its Host header, and
+          # poll, since the reload that picks the vhost up follows the API.
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: ci.example.test' http://127.0.0.1/ || true)
+            blocked=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: ci.example.test' http://127.0.0.1/.env || true)
+            if [[ "$code" == "200" && "$blocked" == "403" ]]; then exit 0; fi
+            sleep 2
+          done
+          echo "::error::the site never served (got $code), or its WAF did not block /.env (got $blocked)"
+          sudo tail -n 50 /usr/local/lsws/logs/error.log || true
+          exit 1
