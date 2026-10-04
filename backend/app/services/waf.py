@@ -924,13 +924,21 @@ def rule_ids(text: str) -> set[str]:
     return set(_RULE_ID_RE.findall(text or ""))
 
 
+_QUOTED = r'"(?:[^"\\]|\\.)*"'
+_SECRULE_RE = re.compile(rf"^SecRule\s+(?:{_QUOTED}|\S+)\s+{_QUOTED}(?:\s+({_QUOTED}))?\s*$")
+_SECACTION_RE = re.compile(rf"^SecAction\s+({_QUOTED})\s*$")
+_CHAIN_RE = re.compile(r'(?:^"|,)\s*chain\s*(?:,|"$)')
+
+
 def check_rule_basics(rules: str) -> None:
-    """The two mistakes that stop ModSecurity loading a rules file: a rule
-    without an id, and an unclosed quote. A file that fails to load leaves
-    every site that includes it without its WAF, and nothing says so but a
-    line in the OpenLiteSpeed error log - for the server-wide rules, that is
-    every site on the server. Not a parser: what passes here can still be
-    wrong, but these two no longer reach the disk."""
+    """What stops ModSecurity loading a rules file: a rule that is not
+    SecRule VARIABLES "OPERATOR" "ACTIONS" (or SecAction "ACTIONS"), an unclosed
+    quote, or a rule without an id. A file that fails to load leaves every site
+    that includes it without its WAF, with nothing but a line in the
+    OpenLiteSpeed error log to say so - for the server-wide rules, every site
+    on the server. Not a parser: a rule that passes can still be wrong, but
+    these mistakes no longer reach the disk. The rules after a "chain" belong
+    to the rule that started it and take no id of their own."""
     logical, pending = [], ""
     for line in (rules or "").replace("\r\n", "\n").split("\n"):
         pending += line
@@ -941,13 +949,22 @@ def check_rule_basics(rules: str) -> None:
         pending = ""
     if pending:
         logical.append(pending.strip())
+    chained = False
     for number, rule in enumerate(logical, start=1):
-        if not rule.startswith(("SecRule", "SecAction")):
+        if rule.startswith("SecRule"):
+            match = _SECRULE_RE.match(rule)
+        elif rule.startswith("SecAction"):
+            match = _SECACTION_RE.match(rule)
+        else:
             continue
         if rule.replace('\\"', "").count('"') % 2:
-            raise ValueError(f"WAF rule {number} has an unclosed quote: {rule[:80]}")
-        if not _RULE_ID_RE.search(rule):
-            raise ValueError(f"WAF rule {number} has no id (every rule needs id:<number>): {rule[:80]}")
+            raise ValueError(f"WAF rule on line {number} has an unclosed quote: {rule[:80]}")
+        if not match:
+            raise ValueError(f'WAF rule on line {number} should read SecRule VARIABLES "OPERATOR" "ACTIONS": {rule[:80]}')
+        actions = match.group(1) or ""
+        if not chained and not _RULE_ID_RE.search(actions):
+            raise ValueError(f"WAF rule on line {number} has no id (every rule needs id:<number>): {rule[:80]}")
+        chained = bool(_CHAIN_RE.search(actions))
 
 
 def check_no_shared_rule_ids(rules: str, others: Iterable[str], where: str) -> None:

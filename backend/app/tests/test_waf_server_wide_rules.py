@@ -123,13 +123,23 @@ def test_a_rule_without_an_id_or_with_an_open_quote_is_refused():
         waf.check_rule_basics('SecRule REQUEST_HEADERS:User-Agent "@contains x" "phase:1,deny"')
     with pytest.raises(ValueError, match="unclosed quote"):
         waf.check_rule_basics('SecRule REQUEST_HEADERS:User-Agent "@contains x "id:1,phase:1,deny"')
-    # Comments, continuation lines and escaped quotes are fine.
+    # The rule tried on the test box: quotes paired, an id in the text, but the
+    # actions are not one quoted argument, so ModSecurity sees no id.
+    with pytest.raises(ValueError, match="should read"):
+        waf.check_rule_basics('SecRule REQUEST_HEADERS:User-Agent "@contains brokenrule "id:1095001,phase:1,deny')
+    # Comments, continuation lines, escaped quotes and chains are fine.
     waf.check_rule_basics(
         '# a comment with "one quote\n'
         'SecRule ARGS "@rx \\"a\\"" \\\n'
         '    "id:1095002,phase:1,deny"\n'
-        'SecAction "id:1095003,phase:1,pass,nolog"'
+        'SecAction "id:1095003,phase:1,pass,nolog"\n'
+        'SecRule REQUEST_METHOD "@streq POST" "id:1095004,phase:1,chain,deny"\n'
+        '    SecRule ARGS:action "@streq share"\n'
+        'SecRule REQUEST_URI "@beginsWith /a" "id:1095005,phase:1,deny,status:403,msg:\'x, chained\'"'
     )
+    # After a chain ends, the next rule needs its id again.
+    with pytest.raises(ValueError, match="no id"):
+        waf.check_rule_basics('SecRule A "@rx a" "id:1,phase:1,chain,deny"\nSecRule B "@rx b"\nSecRule C "@rx c" "phase:1,deny"')
     with pytest.raises(HTTPException) as exc:
         waf_api.save_waf_custom_rules(waf_api.WafCustomRulesUpdate(content='SecRule ARGS "@rx a" "phase:1,deny"'),
                                       db=_DB([]), current_user=ADMIN)
