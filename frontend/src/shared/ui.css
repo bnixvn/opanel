@@ -274,7 +274,18 @@ button.top-accounts-row:hover:not(:disabled){background:var(--surface-hover);col
 .top-accounts-row small{color:var(--text-secondary);font-size:12px}
 .top-accounts-oom.tone-bad{color:var(--danger);font-weight:700}
 
-/* Resource usage: the addon's history, a chart per measure. */
+/* Resource usage: the limits and their use now, then the addon's history,
+   a chart per measure, each naming its limit beside its title. */
+.usage-subtitle{margin:6px 0 10px;font-size:14px;font-weight:700;color:var(--text)}
+.usage-subtitle small{display:block;margin-top:2px;font-size:13px;font-weight:400;color:var(--text-secondary)}
+.usage-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:18px}
+@media (max-width:900px){.usage-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.usage-summary{grid-template-columns:1fr}}
+.usage-summary-item{padding:6px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md)}
+.usage-summary-item .stat-row{border-bottom:0}
+.usage-chart-head span{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.usage-chart-cap{font-style:normal;font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;border:1px solid var(--danger-border);background:var(--danger-bg);color:var(--danger-text)}
+.usage-chart-cap.is-unlimited{border-color:var(--border);background:var(--surface-alt);color:var(--text-secondary)}
 .usage-charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 28px}
 .usage-chart{display:grid;gap:8px;min-width:0}
 .usage-chart-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}

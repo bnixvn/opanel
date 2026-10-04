@@ -27,14 +27,16 @@ function polyline(values, top) {
  *
  * points: [{ t, ... }] oldest first; pick(point) gives the value; format(value)
  * gives its label; when(t) labels a time. floor keeps an idle account's axis
- * from collapsing onto zero.
+ * from collapsing onto zero. The limit is named beside the title whether or
+ * not there is one, so "no line" never reads as "no limit shown".
  */
-export function UsageChart({ title, points, pick, limit = 0, format, when, floor = 1, emptyText, limitText, peakText, averageText }) {
+export function UsageChart({ title, points, pick, limit = 0, format, when, floor = 1, emptyText, limitText, unlimitedText, peakText, averageText }) {
   const [hover, setHover] = useState(null);
   const values = (points || []).map(pick).map(value => Number(value) || 0);
+  const cap = <em className={`usage-chart-cap${limit > 0 ? '' : ' is-unlimited'}`}>{limit > 0 ? `${limitText} ${format(limit)}` : unlimitedText}</em>;
   if (values.length < 2) {
     return <div className="usage-chart">
-      <div className="usage-chart-head"><span>{title}</span></div>
+      <div className="usage-chart-head"><span>{title}{cap}</span></div>
       <div className="usage-chart-empty">{emptyText}</div>
     </div>;
   }
@@ -54,7 +56,7 @@ export function UsageChart({ title, points, pick, limit = 0, format, when, floor
   const hoverLeft = hover == null ? 0 : (hover / (values.length - 1)) * 100;
   return <div className="usage-chart">
     <div className="usage-chart-head">
-      <span>{title}</span>
+      <span>{title}{cap}</span>
       <small>{peakText} {format(peak)} · {averageText} {format(average)}</small>
     </div>
     <div className="usage-chart-body">
