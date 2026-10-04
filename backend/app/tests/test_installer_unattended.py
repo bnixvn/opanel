@@ -69,4 +69,7 @@ def test_a_long_hostname_still_gets_a_panel_certificate():
     body = body[:body.index("\n}\n")]
     assert '(( ${#subject_cn} <= 64 )) || subject_cn="opanel"' in body
     assert '-subj "/CN=${subject_cn}"' in body and 'subjectAltName=DNS:${cn}' in body
-    assert ">/dev/null 2>&1; then" not in body, "the openssl error is reported, not discarded"
+    request = body[body.index("openssl req"):]
+    request = request[:request.index("; then")]
+    assert request.endswith('2>&1 >/dev/null)"'), "the openssl error is captured and reported, not discarded"
+    assert "${err}" in body
