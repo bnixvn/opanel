@@ -4543,7 +4543,7 @@ function App() {
   const navItems = navSections.flatMap(section => section.items);
   // A page reached from Settings keeps Settings lit in the sidebar.
   const settingsPage = settingsItems.find(([key]) => key === page);
-  const navKey = settingsPage ? 'config' : page;
+  const navKey = settingsPage ? 'config' : page === 'usage' ? 'dashboard' : page;
   // The scanner's page stays reachable by URL while its addon is off (it says
   // how to turn it on), so it keeps its own title then too.
   const activeNavItem = settingsPage || navItems.find(([key]) => key === navKey)
@@ -4739,7 +4739,7 @@ function App() {
 
   // Accents and case set aside, so "tuong lua" finds "Tường lửa".
   function normalizeSearch(text) {
-    return String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+    return String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\u0111/g, 'd').replace(/\u0110/g, 'D').toLowerCase();
   }
 
   // The tools on the dashboard, in cPanel's groups. Each opens its page (and,
@@ -5035,7 +5035,8 @@ function App() {
     const dbLimit = Number(currentUser.database_limit) || 0;
     const mailboxLimit = Number(mailInfo?.mailbox_limit) || 0;
     const primarySite = websites[0];
-    const homeDir = primarySite?.root_path ? primarySite.root_path.split('/').slice(0, 3).join('/') : '';
+    // /home/<user>/<domain> -> /home/<user>
+    const homeDir = (primarySite?.root_path || '').match(/^\/[^/]+\/[^/]+/)?.[0] || '';
     const pool = resellerPool || {};
     const shareDisk = pool[pool.pool_oversell ? 'used_storage_limit_mb' : 'allocated_storage_limit_mb'];
     const stopped = (groupScope ? limitEntry?.group_oom_kills_day : limitEntry?.oom_kills_day) || 0;
