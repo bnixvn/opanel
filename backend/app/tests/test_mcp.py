@@ -435,7 +435,7 @@ def test_add_waf_rule_generates_a_safe_rule_and_saves_it(env, monkeypatch):
     saved = {}
     monkeypatch.setattr(waf, "custom_rules", lambda: SimpleNamespace(stdout='SecRule X "@rx y" "id:1090004,phase:1"'))
     monkeypatch.setattr(waf_api, "save_waf_custom_rules",
-                        lambda payload, current_user: saved.update(content=payload.content))
+                        lambda payload, db, current_user: saved.update(content=payload.content))
     raw = env.token(env.admin, can_write=True)
     result = payload(call(env, raw, "add_waf_rule", {"match": "user_agent", "value": "EvilScanner/2.0",
                                                      "note": "scanner seen in log"}))

@@ -546,6 +546,9 @@ def default_rule_definitions() -> list[dict]:
     ]
 
 
+SERVER_CUSTOM_RULES_FILE = "/usr/local/lsws/conf/opanel/waf/opanel-custom.conf"
+
+
 def site_rules_file(domain: str) -> str:
     safe_domain = _validate_domain(domain)
     return f"/usr/local/lsws/conf/opanel/waf/sites/{safe_domain}.conf"
@@ -566,6 +569,13 @@ def render_site_rules(
     chunks = [
         f"# OPanel WAF rules for {safe_domain}",
         "Include /usr/local/lsws/conf/opanel/waf/opanel-base.conf",
+        "",
+        # The server-wide custom rules (Settings > WAF, and the MCP tool's
+        # add_waf_rule without a domain). Only opanel-main.conf included this
+        # file, and nothing includes opanel-main.conf: a server-wide rule never
+        # applied anywhere (the Chrome/81 botnet rule on .122, 2026-10-04).
+        "# OPanel server-wide custom rules",
+        f"Include {SERVER_CUSTOM_RULES_FILE}",
         "",
         "# OPanel selected default rules",
     ]
@@ -908,6 +918,19 @@ def render_mcp_rule(match: str, value: str, rule_id: int, note: str = "", author
         f"{signature} \"id:{int(rule_id)},phase:1,{transforms},deny,status:403,log,"
         f"msg:'opanel mcp: {clean_note}'\""
     )
+
+
+def rule_ids(text: str) -> set[str]:
+    return set(_RULE_ID_RE.findall(text or ""))
+
+
+def check_no_shared_rule_ids(rules: str, others: Iterable[str], where: str) -> None:
+    """Every site's rules file includes the server-wide file, so a rule id
+    used in both stops ModSecurity loading that site's rules."""
+    shared = rule_ids(rules) & set().union(*(rule_ids(text) for text in others))
+    if shared:
+        raise ValueError(f"Rule id {', '.join(sorted(shared, key=int))} is already used in {where}; "
+                         "every rule needs an id of its own.")
 
 
 def next_mcp_rule_id(texts: Iterable[str]) -> int:

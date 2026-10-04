@@ -757,7 +757,7 @@ def _add_waf_rule(ctx: Context, args: dict):
             website_id=website.id, db=ctx.db, current_user=ctx.user,
         )
     else:
-        waf_api.save_waf_custom_rules(payload=waf_api.WafCustomRulesUpdate(content=updated), current_user=ctx.user)
+        waf_api.save_waf_custom_rules(payload=waf_api.WafCustomRulesUpdate(content=updated), db=ctx.db, current_user=ctx.user)
     out = {"scope": website.domain if website else "server-wide", "already": False, "rule_id": rule_id, "rule": rule}
     if website and not website.waf_enabled:
         out["warning"] = "The WAF is off for this website, so the rule has no effect until it is turned on."

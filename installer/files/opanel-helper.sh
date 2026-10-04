@@ -1220,6 +1220,9 @@ save_waf_site_rules() {
   [[ "$defer" == "" || "$defer" == "defer" ]] || deny "invalid waf-site-save mode: $defer"
   install -d -o root -g root -m 0755 /usr/local/lsws/conf/opanel/waf /usr/local/lsws/conf/opanel/waf/sites
   write_modsec_base_conf
+  # Every site file includes the server-wide custom rules; an Include of a
+  # missing file stops ModSecurity loading the site's rules.
+  touch /usr/local/lsws/conf/opanel/waf/opanel-custom.conf
   tmp="$(mktemp)"
   cat >"$tmp"
   if file_has_nul "$tmp"; then

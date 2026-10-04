@@ -138,6 +138,7 @@ def save_website_waf(payload: WebsiteWafRulesUpdate, website_id: int, db: Sessio
             )
         custom_rules = stored
     try:
+        waf.check_no_shared_rule_ids(custom_rules, [waf.custom_rules().stdout or ""], "the server-wide rules")
         result = waf.save_website_config(
             website,
             payload.enabled_rule_ids,
@@ -204,9 +205,11 @@ def save_bad_bots(
 
 
 @router.put("/rules/custom")
-def save_waf_custom_rules(payload: WafCustomRulesUpdate, current_user: User = Depends(get_current_user)):
+def save_waf_custom_rules(payload: WafCustomRulesUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
     try:
+        waf.check_no_shared_rule_ids(payload.content, [site.waf_custom_rules or "" for site in db.query(Website).all()],
+                                     "a website's own rules")
         result = waf.save_custom_rules(payload.content)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
