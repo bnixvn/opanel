@@ -843,9 +843,13 @@ refresh_tools_ols() {
   php_version="${PHP_DEFAULT:-8.4}"
   default_ver_no_dot="${php_version//./}"
   lsphp_sock="/tmp/lshttpd/lsphp${default_ver_no_dot}.sock"
-  api_scheme="http"; tools_scheme="http"; pma_secure="false"
+  # The panel API is always TLS (app/server.py never serves plain HTTP; without
+  # a certificate of its own it uses a self-signed default), so phpMyAdmin's
+  # sign-on calls it over https. It called http:// on every server without a
+  # panel certificate, got no answer, and single sign-on failed there.
+  api_scheme="https"; tools_scheme="http"; pma_secure="false"
   if panel_tls_enabled; then
-    api_scheme="https"; tools_scheme="https"; pma_secure="true"
+    tools_scheme="https"; pma_secure="true"
   fi
   ensure_ols_conf_dir_writable
   # The IP blocklist is not part of the web configuration and has its own

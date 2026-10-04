@@ -445,9 +445,10 @@ write_tools_nginx_config() {
   php_version="${PHP_DEFAULT:-8.4}"
   server_ip="$(detect_server_ip)"
   host="${panel_domain:-$server_ip}"
-  api_scheme="http"; tools_scheme="http"; pma_secure="false"; ssl_block=""
+  # The panel API is always TLS; see refresh_tools_ols in the helper.
+  api_scheme="https"; tools_scheme="http"; pma_secure="false"; ssl_block=""
   if [[ "$panel_url" == https://* && -n "$panel_cert" && -n "$panel_key" && -f "$panel_cert" && -f "$panel_key" ]]; then
-    api_scheme="https"; tools_scheme="https"; pma_secure="true"
+    tools_scheme="https"; pma_secure="true"
     printf -v ssl_block '\n    listen 443 ssl http2 default_server;\n    ssl_certificate %s;\n    ssl_certificate_key %s;' "$panel_cert" "$panel_key"
   fi
   cat >/etc/nginx/conf.d/00-opanel-tools.conf <<NGINX
@@ -1294,6 +1295,11 @@ if [[ "$panel_url_now" == http://* ]]; then
   env_set ALLOWED_ORIGINS "$panel_url_https"
   log "Panel now serves HTTPS: ${panel_url_https}"
   echo "  (the old http:// address will no longer connect -- use https://)"
+fi
+# The installer wrote the http:// address into login.txt as well, and nothing
+# rewrote it when the panel moved to https (seen on .132, 2026-10-05).
+if [[ -f /root/login.txt ]] && grep -q '^Panel URL: http://' /root/login.txt; then
+  sed -i 's#^Panel URL: http://#Panel URL: https://#' /root/login.txt
 fi
 
 # --- Repair OPcache timestamp validation ------------------------------------

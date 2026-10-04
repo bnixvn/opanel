@@ -225,7 +225,11 @@ ask_panel_url() {
     SERVER_IP="$(detect_server_ip)"
     [[ -n "$SERVER_IP" ]] || fail "Cannot detect server IP. Set PANEL_HOSTNAME manually."
     PANEL_DOMAIN=""
-    PANEL_URL="http://${SERVER_IP}:${PANEL_PORT}"
+    # https whatever the certificate: app/server.py never serves the panel over
+    # plain HTTP, and without Let's Encrypt it uses a self-signed default. An
+    # http:// address here went into login.txt and the summary, and did not
+    # connect (operator, 2026-10-05).
+    PANEL_URL="https://${SERVER_IP}:${PANEL_PORT}"
     ENABLE_SSL="no"
     return 0
   fi
@@ -234,7 +238,7 @@ ask_panel_url() {
 
   if [[ "$PANEL_DOMAIN" == "localhost" || "$PANEL_DOMAIN" == "127.0.0.1" || "$PANEL_DOMAIN" =~ ^[0-9.]+$ ]]; then
     ENABLE_SSL="no"
-    PANEL_URL="http://${PANEL_DOMAIN}:${PANEL_PORT}"
+    PANEL_URL="https://${PANEL_DOMAIN}:${PANEL_PORT}"
     PANEL_DOMAIN=""
   elif [[ "$ENABLE_SSL" == "auto" ]]; then
     if ! is_domain_name "$PANEL_DOMAIN"; then
@@ -244,7 +248,7 @@ ask_panel_url() {
     ssl_answer="${ssl_answer:-Y}"
     if [[ "$ssl_answer" =~ ^[Nn]$ ]]; then
       ENABLE_SSL="no"
-      PANEL_URL="http://${PANEL_DOMAIN}:${PANEL_PORT}"
+      PANEL_URL="https://${PANEL_DOMAIN}:${PANEL_PORT}"
     else
       ENABLE_SSL="yes"
       PANEL_URL="https://${PANEL_DOMAIN}:${PANEL_PORT}"
@@ -254,7 +258,7 @@ ask_panel_url() {
     PANEL_URL="https://${PANEL_DOMAIN}:${PANEL_PORT}"
   else
     ENABLE_SSL="no"
-    PANEL_URL="http://${PANEL_DOMAIN}:${PANEL_PORT}"
+    PANEL_URL="https://${PANEL_DOMAIN}:${PANEL_PORT}"
   fi
 
   if [[ "$ENABLE_SSL" == "yes" && -z "$SSL_EMAIL" ]]; then
@@ -959,9 +963,10 @@ SERVICE
 }
 
 write_tools_vhost_config() {
-  local api_scheme="http" tools_scheme="http" pma_secure="false"
+  # The panel API is always TLS, so phpMyAdmin's sign-on calls it over https;
+  # whether phpMyAdmin itself is served over https depends on a certificate.
+  local api_scheme="https" tools_scheme="http" pma_secure="false"
   if [[ "${PANEL_URL:-}" == https://* && -n "${PANEL_SSL_CERT:-}" && -n "${PANEL_SSL_KEY:-}" && -f "${PANEL_SSL_CERT}" && -f "${PANEL_SSL_KEY}" ]]; then
-    api_scheme="https"
     tools_scheme="https"
     pma_secure="true"
   fi
