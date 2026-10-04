@@ -18,6 +18,9 @@ jobs:
   install:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      PANEL_URL: "http://127.0.0.1:2222"
+      opanel_ADMIN_PASSWORD: "ci-smoke-test-not-a-real-secret"
     steps:
       - uses: actions/checkout@v4
 
@@ -25,9 +28,6 @@ jobs:
         # PANEL_URL supplies the hostname and port, so no prompt is reached;
         # an IP for a hostname keeps Let's Encrypt out of CI.
         run: sudo -E bash installer/install.sh </dev/null
-        env:
-          PANEL_URL: "http://127.0.0.1:2222"
-          opanel_ADMIN_PASSWORD: "ci-smoke-test-not-a-real-secret"
 
       - name: The panel answers
         # The panel terminates TLS itself, with a self-signed certificate.
