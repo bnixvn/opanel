@@ -497,8 +497,10 @@ class Sampler:
                 "cpu_percent": round(cpu, 1),
                 "memory_mb": current["memory_bytes"] // 1048576,
                 "processes": current["processes"],
-                "io_read_mbps": round(read_mb, 2),
-                "io_write_mbps": round(write_mb, 2),
+                # To the KB/s: a quiet site moves a few KB a second, which
+                # two decimals of MB/s would round away to 0.
+                "io_read_mbps": round(read_mb, 3),
+                "io_write_mbps": round(write_mb, 3),
                 # Totals since the slice was made; the panel shows differences.
                 "memory_high_events": current["memory_high"],
                 "memory_max_events": current["memory_max"],
@@ -530,8 +532,8 @@ class Sampler:
                 "cpu_peak": max(p["cpu_percent"] for p in points),
                 "mem": max(p["memory_mb"] for p in points),
                 "procs": max(p["processes"] for p in points),
-                "io_r": round(sum(p["io_read_mbps"] for p in points) / len(points), 2),
-                "io_w": round(sum(p["io_write_mbps"] for p in points) / len(points), 2),
+                "io_r": round(sum(p["io_read_mbps"] for p in points) / len(points), 3),
+                "io_w": round(sum(p["io_write_mbps"] for p in points) / len(points), 3),
                 "oom": last["oom_kills"],
                 "mem_max": last["memory_max_events"],
             }
@@ -546,8 +548,8 @@ class Sampler:
                     "cpu_peak": max(p["cpu_peak"] for p in hour),
                     "mem": max(p["mem"] for p in hour),
                     "procs": max(p["procs"] for p in hour),
-                    "io_r": round(sum(p["io_r"] for p in hour) / len(hour), 2),
-                    "io_w": round(sum(p["io_w"] for p in hour) / len(hour), 2),
+                    "io_r": round(sum(p["io_r"] for p in hour) / len(hour), 3),
+                    "io_w": round(sum(p["io_w"] for p in hour) / len(hour), 3),
                     "oom": point["oom"],
                     "mem_max": point["mem_max"],
                 })

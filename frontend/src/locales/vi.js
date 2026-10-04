@@ -796,6 +796,8 @@ export default {
   "Limits and use now": "Giới hạn và mức dùng hiện tại",
   "Your group's limits and use now": "Giới hạn và mức dùng hiện tại của nhóm",
   "Over time": "Theo thời gian",
+  "No reading for this account yet: the first one comes within a minute.": "Tài khoản này chưa có số đo: số đầu tiên có trong vòng một phút.",
+  "Disk read and write count only what actually reaches the disk. Files the server already holds in memory are read without touching it, so 0 is normal for a quiet site.": "Đọc/ghi đĩa chỉ tính phần dữ liệu thật sự đi xuống ổ đĩa. File máy chủ đã giữ sẵn trong bộ nhớ được đọc mà không chạm tới ổ đĩa, nên 0 là bình thường với website ít truy cập.",
   "Resource limits: 0 = unlimited. CPU 100% is one core.": "Giới hạn tài nguyên: 0 = không giới hạn. CPU 100% là một nhân.",
   "Group limits: this reseller's own account and all its customers together. 0 = unlimited.": "Giới hạn nhóm: tài khoản của đại lý này cộng với mọi khách hàng của đại lý. 0 = không giới hạn.",
   "A reseller's group limits are set by the administrator": "Giới hạn nhóm của đại lý do quản trị viên đặt",

@@ -6676,7 +6676,7 @@ addon_dns_disable() {
 # never run something that user could have edited. A test keeps the two in
 # step (test_resource_limits.py).
 LIMITS_AGENT="/usr/local/sbin/opanel-limits-agent"
-LIMITS_AGENT_SHA256="5ae815c02a1375af7202d3f6adfd2678c62a87aafca533f445b9220a951b8e3e"
+LIMITS_AGENT_SHA256="9c5cb26f191faceb4b84a1c66088de58fc4aa9aa381d7409f33436926be7b4ab"
 LIMITS_UNIT="/etc/systemd/system/opanel-limits.service"
 LIMITS_DIR="/etc/opanel-limits"
 LIMITS_STATE_DIR="/var/lib/opanel-limits"

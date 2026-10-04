@@ -283,6 +283,8 @@ button.top-accounts-row:hover:not(:disabled){background:var(--surface-hover);col
 @media (max-width:560px){.usage-summary{grid-template-columns:1fr}}
 .usage-summary-item{padding:6px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md)}
 .usage-summary-item .stat-row{border-bottom:0}
+.usage-note{margin:-8px 0 18px}
+.usage-stale{margin:0 0 10px;padding:8px 12px;font-size:13px;color:var(--warning-text);background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:var(--radius-sm)}
 .usage-chart-head span{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 .usage-chart-cap{font-style:normal;font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;border:1px solid var(--danger-border);background:var(--danger-bg);color:var(--danger-text)}
 .usage-chart-cap.is-unlimited{border-color:var(--border);background:var(--surface-alt);color:var(--text-secondary)}
