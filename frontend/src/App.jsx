@@ -670,6 +670,7 @@ function App() {
   const [profileForm, setProfileForm] = useState({ email: '', password: '', current_password: '', code: '' });
   // Users page tabs
   const [usersTab, setUsersTab] = useState('list');
+  const [userSearch, setUserSearch] = useState('');
   // Hosting plans
   const [plans, setPlans] = useState([]);
   const [editingPlan, setEditingPlan] = useState(null);
@@ -8730,20 +8731,23 @@ function App() {
     return users.find(u => u.id === id)?.username || `#${id}`;
   }
 
+  // A reseller's share: customers and disk, what a reseller is sold by.
+  // Websites, databases and mailboxes are its own to give its customers.
   function renderPoolInputs(form, setForm) {
-    // Customers and disk: what a reseller is sold by. Websites, databases and
-    // mailboxes are its own to give its customers.
     const fields = [
       ['pool_user_limit', tr("Customers")],
       ['pool_storage_limit_mb', tr("Disk (MB)")],
     ];
-    return <>
-      <p className="hint wide">{form.pool_oversell
+    return <fieldset className="form-section">
+      <legend>{tr("Reseller share")}</legend>
+      <p className="hint">{form.pool_oversell
         ? tr("Reseller share, overselling: number of customers and disk. The disk its accounts use together must stay within it; the disk limits it gives customers may add up to more. 0 = unlimited.")
         : tr("Reseller share: number of customers and disk. Its own disk limit and all its customers' must fit inside it. 0 = unlimited.")}</p>
-      {fields.map(([field, label]) => <label key={field}><span>{tr("Share")}: {label}</span><input type="number" min="0" value={form[field] ?? 0} onChange={e => setForm(prev => ({ ...prev, [field]: e.target.value }))} /></label>)}
-      <label className="check-line wide"><input type="checkbox" checked={!!form.pool_oversell} onChange={e => setForm(prev => ({ ...prev, pool_oversell: e.target.checked }))} /> {tr("Allow overselling (count what is used, as cPanel and DirectAdmin do)")}</label>
-    </>;
+      <div className="form-grid">
+        {fields.map(([field, label]) => <label key={field}><span>{label}</span><input type="number" min="0" value={form[field] ?? 0} onChange={e => setForm(prev => ({ ...prev, [field]: e.target.value }))} /></label>)}
+      </div>
+      <label className="check-line"><input type="checkbox" checked={!!form.pool_oversell} onChange={e => setForm(prev => ({ ...prev, pool_oversell: e.target.checked }))} /> {tr("Allow overselling (count what is used, as cPanel and DirectAdmin do)")}</label>
+    </fieldset>;
   }
 
   // CPU, RAM, processes and disk speed, for an account (prefix '') or a
@@ -8753,22 +8757,66 @@ function App() {
       cpu_percent: tr("CPU (%)"), memory_mb: tr("RAM (MB)"), process_limit: tr("Processes"),
       io_read_mbps: tr("Disk read (MB/s)"), io_write_mbps: tr("Disk write (MB/s)"),
     };
-    return <>
-      <p className="hint wide">{prefix
+    return <fieldset className="form-section">
+      <legend>{prefix ? tr("Group limits") : tr("Resource limits")}</legend>
+      <p className="hint">{prefix
         ? tr("Group limits: this reseller's own account and all its customers together. 0 = unlimited.")
         : tr("Resource limits: 0 = unlimited. CPU 100% is one core.")}</p>
-      {RL_FIELDS.map(field => <label key={prefix + field}><span>{prefix ? `${tr("Group")}: ${labels[field]}` : labels[field]}</span>
-        <input type="number" min="0" value={form[prefix + field] ?? 0} onChange={e => setForm(prev => ({ ...prev, [prefix + field]: e.target.value, _planId: '' }))} /></label>)}
-    </>;
+      <div className="form-grid five">
+        {RL_FIELDS.map(field => <label key={prefix + field}><span>{labels[field]}</span>
+          <input type="number" min="0" value={form[prefix + field] ?? 0} onChange={e => setForm(prev => ({ ...prev, [prefix + field]: e.target.value, _planId: '' }))} /></label>)}
+      </div>
+    </fieldset>;
   }
 
-  // "CPU 12% · RAM 300/1024 MB · 7 processes": one account's use, against its limits.
-  function limitsUsageText(entry) {
-    const usage = entry?.usage;
-    if (!usage) return '';
-    const limits = entry.limits || {};
-    const ram = limits.memory_mb ? `${usage.memory_mb}/${limits.memory_mb} MB` : `${usage.memory_mb} MB`;
-    return `CPU ${usage.cpu_percent}%${limits.cpu_percent ? `/${limits.cpu_percent}%` : ''} · RAM ${ram} · ${tr("{0} processes", usage.processes)}`;
+  // The account fields an administrator or reseller fills in, shared by the
+  // Add form and the editor so the two cannot drift apart: who the account is,
+  // what its package allows, a reseller's share and the resource limits.
+  function renderUserFields(form, setForm, { creating = false, user = null } = {}) {
+    const set = (field, value, keepPlan = false) => setForm(prev => ({ ...prev, [field]: value, ...(keepPlan ? {} : { _planId: '' }) }));
+    const resellers = users.filter(u => u.role === 'reseller');
+    const self = !creating && user?.id === currentUser?.id;
+    const pickPlan = planId => {
+      const plan = plans.find(p => String(p.id) === planId);
+      if (plan) setForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? prev.database_limit, mailbox_limit: plan.mailbox_limit ?? prev.mailbox_limit, ...limitValues(plan) }));
+      else setForm(prev => ({ ...prev, _planId: '' }));
+    };
+    return <div className="form-sections">
+      <fieldset className="form-section">
+        <legend>{tr("Account")}</legend>
+        <div className="form-grid account">
+          {creating && <label><span>{tr("Username")}</span><input value={form.username} autoComplete="off" spellCheck={false} onChange={e => set('username', e.target.value.toLowerCase(), true)} placeholder={tr("johndoe")} /></label>}
+          <label><span>{tr("Email")}</span><input type="email" value={form.email} autoComplete="off" onChange={e => set('email', e.target.value, true)} placeholder="user@domain.com" /></label>
+          {creating
+            ? <label><span>{tr("Password")}</span><input type="password" value={form.password} autoComplete="new-password" onChange={e => set('password', e.target.value, true)} placeholder={tr("Min 12 characters")} /></label>
+            : <label><span>{tr("New password")} <em>{tr("(leave empty to keep)")}</em></span><input type="password" value={form._password || ''} autoComplete="new-password" onChange={e => set('_password', e.target.value, true)} placeholder={tr("Min 12 characters")} /></label>}
+          {isAdmin && <label><span>{tr("Role")}</span><select value={form.role} disabled={self} onChange={e => set('role', e.target.value, true)}>
+            <option value="end_user">{tr("End user")}</option><option value="reseller">{tr("Reseller")}</option><option value="admin">{tr("Admin")}</option>
+          </select></label>}
+          {isAdmin && form.role === 'end_user' && (resellers.length > 0 || form.reseller_id) && <label><span>{tr("Reseller")}</span><select value={form.reseller_id || ''} onChange={e => set('reseller_id', e.target.value, true)}>
+            <option value="">{tr("None (yours)")}</option>
+            {resellers.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+          </select></label>}
+          {form.role !== 'admin' && <label><span>{tr("Package")}</span><select value={form._planId || ''} onChange={e => pickPlan(e.target.value)}>
+            <option value="">{tr("Custom")}</option>
+            {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} {tr("sites,")} {p.storage_limit_mb > 0 ? tr("{0} MB", p.storage_limit_mb) : tr("unlimited")})</option>)}
+          </select></label>}
+        </div>
+      </fieldset>
+      {form.role !== 'admin' && <fieldset className="form-section">
+        <legend>{tr("Hosting limits")}</legend>
+        <p className="hint">{tr("0 = unlimited. Choosing a package fills these in.")}</p>
+        <div className="form-grid">
+          <label><span>{tr("Websites")}</span><input type="number" min="0" max="1000" value={form.website_limit} onChange={e => set('website_limit', e.target.value)} /></label>
+          <label><span>{tr("Disk (MB)")}</span><input type="number" min="0" max="1048576" value={form.storage_limit_mb} onChange={e => set('storage_limit_mb', e.target.value)} /></label>
+          <label><span>{tr("Databases")}</span><input type="number" min="0" max="1000" value={form.database_limit ?? 10} onChange={e => set('database_limit', e.target.value)} /></label>
+          {mailInfo?.installed && <label><span>{tr("Mailboxes")}</span><input type="number" min="0" max="10000" value={form.mailbox_limit ?? 10} onChange={e => set('mailbox_limit', e.target.value)} /></label>}
+        </div>
+      </fieldset>}
+      {isAdmin && form.role === 'reseller' && renderPoolInputs(form, setForm)}
+      {limitsOn && form.role !== 'admin' && renderLimitInputs(form, setForm)}
+      {limitsOn && isAdmin && form.role === 'reseller' && renderLimitInputs(form, setForm, 'group_')}
+    </div>;
   }
 
   function renderUsers() {
@@ -8794,176 +8842,218 @@ function App() {
     </>;
   }
 
+  // Disk used against the account's limit: a figure and, with a limit, a meter.
+  function renderUserDisk(user) {
+    const limit = storageLimitBytes(user);
+    // null is "not measured yet", which is not the same claim as 0 B: the list
+    // ships without it so the page paints straight away, and /users/usage
+    // fills it in.
+    if (user?.storage_used_bytes == null) {
+      return <span className="users-figure is-pending">{tr("Measuring…")}{limit ? <small> / {formatBytes(limit)}</small> : null}</span>;
+    }
+    const used = Number(user.storage_used_bytes);
+    const pct = limit ? clampPercent((used / limit) * 100) : null;
+    return <>
+      <span className="users-figure">{formatBytes(used)}<small> / {limit ? formatBytes(limit) : tr("unlimited")}</small></span>
+      {pct !== null && <span className={`resource-track${pct >= 90 ? ' tone-bad' : pct >= 75 ? ' tone-warn' : ''}`}><span style={{ width: `${pct}%` }}></span></span>}
+    </>;
+  }
+
+  // CPU and RAM now, against the account's limits (Resource limits addon).
+  function renderUserResources(user) {
+    const entry = limitsInfo?.accounts?.[user.id];
+    const usage = entry?.usage;
+    if (!usage) return <span className="users-figure is-pending">—</span>;
+    const limits = entry.limits || {};
+    return <span className="users-figure">
+      {formatCpuPercent(usage.cpu_percent)}{limits.cpu_percent ? <small>/{limits.cpu_percent}%</small> : null}
+      <small> · </small>{formatMegabytes(usage.memory_mb)}{limits.memory_mb ? <small>/{formatMegabytes(limits.memory_mb)}</small> : null}
+      <small className="users-sub">{tr("{0} processes", usage.processes ?? 0)}</small>
+    </span>;
+  }
+
   function renderUsersListTab() {
-    return <section className="section">
-      {users.length === 0 && <EmptyState icon={Users} message={tr("No users found.")} />}
-      <div className="table">
-        {users.map(user => <div className="row user-row" key={user.id}>
-          <div className="user-main"><strong>{user.username}</strong><small>{user.email}</small></div>
-          <span className="badge">{roleLabel(user.role)}</span>
-          {isAdmin && user.reseller_id && <span className="badge" title={tr("Reseller")}>{tr("via {0}", resellerName(user.reseller_id))}</span>}
-          <span className={`badge ${user.is_active ? 'ok' : 'warn'}`}>{user.is_active ? tr("Active") : tr("Suspended")}</span>
-          <span className={`user-metric${user.storage_used_bytes == null ? ' pending' : ''}`}><HardDrive size={13}/>{storageUsageText(user)}</span>
-          {limitsOn && limitsInfo?.accounts?.[user.id]?.usage && <span className="user-metric" title={tr("Resource use now")}><Cpu size={13}/>{limitsUsageText(limitsInfo.accounts[user.id])}</span>}
-          <div className="row-actions">
-            <button className="mini secondary-light" disabled={!!loading} onClick={() => startEditingUser(user)}><Pencil size={14}/> {tr("Edit")}</button>
-            <button className="mini secondary-light" disabled={!!loading} onClick={() => quickLoginUser(user)}><LogIn size={14}/> {tr("Login as")}</button>
-            {user.id !== currentUser?.id && <button className={`mini ${user.is_active ? 'danger' : 'secondary-light'}`} disabled={!!loading} onClick={() => toggleUserActive(user)}>{user.is_active ? <><Ban size={14}/> {tr("Suspend")}</> : <><CheckCircle size={14}/> {tr("Unsuspend")}</>}</button>}
-            {user.totp_enabled && user.id !== currentUser?.id && <button className="mini secondary-light" disabled={!!loading} onClick={() => resetUserTwoFactor(user)}>{tr("Reset 2FA")}</button>}
-            {user.id !== currentUser?.id && <button className="mini danger" disabled={!!loading} onClick={() => deletePanelUser(user)}><Trash2 size={14}/></button>}
+    const query = userSearch.trim().toLowerCase();
+    const shown = query
+      ? users.filter(user => user.username.toLowerCase().includes(query) || (user.email || '').toLowerCase().includes(query))
+      : users;
+    return <>
+      <section className="section">
+        {users.length > 0 && <div className="users-toolbar">
+          <label className="users-search">
+            <Search size={15}/>
+            <input type="search" value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder={tr("Search by username or email")} aria-label={tr("Search by username or email")} />
+          </label>
+          <span className="users-count">{tr("{0} of {1}", shown.length, users.length)}</span>
+        </div>}
+        {users.length === 0 && <EmptyState icon={Users} message={tr("No users found.")} />}
+        {users.length > 0 && shown.length === 0 && <p className="hint">{tr("No account matches your search.")}</p>}
+        {shown.length > 0 && <div className={`users-table${limitsOn ? ' with-resources' : ''}`}>
+          <div className="users-row users-head" aria-hidden="true">
+            <span>{tr("Account")}</span><span>{tr("Role")}</span><span>{tr("Disk")}</span>{limitsOn && <span>{tr("CPU / RAM")}</span>}<span></span>
           </div>
-          {editingUser?.id === user.id && <div className="user-edit-panel">
-            <div className="user-edit-heading">
-              <div><strong>{tr("Edit")} {user.username}</strong><small>
-                {user.id === currentUser?.id ? tr("Role is locked for the active admin session.") : tr("Role changes sign the user out of existing sessions.")}
-                {editingUserForm.role === 'admin' ? tr(" Admin accounts bypass website and storage limits.") : ''}
-              </small></div>
-              <button className="user-edit-close secondary-light" onClick={cancelEditingUser} aria-label={tr("Close user editor")} title={tr("Close user editor")}><X size={16}/></button>
-            </div>
-            <div className="user-edit-grid">
-              <label><span>{tr("Email")}</span><input type="email" value={editingUserForm.email} onChange={e => setEditingUserForm(prev => ({ ...prev, email: e.target.value }))} /></label>
-              {isAdmin && <label><span>{tr("Role")}</span><select value={editingUserForm.role} disabled={user.id === currentUser?.id} onChange={e => setEditingUserForm(prev => ({ ...prev, role: e.target.value }))}>
-                <option value="end_user">{tr("End user")}</option><option value="reseller">{tr("Reseller")}</option><option value="admin">{tr("Admin")}</option>
-              </select></label>}
-              {isAdmin && editingUserForm.role === 'end_user' && <label><span>{tr("Reseller")}</span><select value={editingUserForm.reseller_id || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, reseller_id: e.target.value }))}>
-                <option value="">{tr("None (yours)")}</option>
-                {users.filter(u => u.role === 'reseller').map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
-              </select></label>}
-              <label><span>{tr("Package")}</span><select value={editingUserForm._planId || ''} onChange={e => {
-                const planId = e.target.value;
-                const plan = plans.find(p => String(p.id) === planId);
-                if (plan) setEditingUserForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? prev.database_limit, mailbox_limit: plan.mailbox_limit ?? prev.mailbox_limit, ...limitValues(plan) }));
-                else setEditingUserForm(prev => ({ ...prev, _planId: '' }));
-              }}>
-                <option value="">{tr("Custom")}</option>
-                {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} {tr("sites,")} {p.storage_limit_mb > 0 ? tr("{0} MB", p.storage_limit_mb) : tr("unlimited")})</option>)}
-              </select></label>
-              <label><span>{tr("Site limit")}</span><input type="number" min="0" max="1000" value={editingUserForm.website_limit} onChange={e => setEditingUserForm(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
-              <label><span>{tr("Disk limit (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" max="1048576" value={editingUserForm.storage_limit_mb} onChange={e => setEditingUserForm(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
-              <label><span>{tr("Database limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" max="1000" value={editingUserForm.database_limit ?? 10} onChange={e => setEditingUserForm(prev => ({ ...prev, database_limit: e.target.value, _planId: '' }))} /></label>
-              {mailInfo?.installed && <label><span>{tr("Mailbox limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" max="10000" value={editingUserForm.mailbox_limit ?? 10} onChange={e => setEditingUserForm(prev => ({ ...prev, mailbox_limit: e.target.value }))} /></label>}
-              {isAdmin && editingUserForm.role === 'reseller' && renderPoolInputs(editingUserForm, setEditingUserForm)}
-              {limitsOn && renderLimitInputs(editingUserForm, setEditingUserForm)}
-              {limitsOn && isAdmin && editingUserForm.role === 'reseller' && renderLimitInputs(editingUserForm, setEditingUserForm, 'group_')}
-              <label><span>{tr("New password")} <small>{tr("(leave empty to keep)")}</small></span><input type="password" value={editingUserForm._password || ''} onChange={e => setEditingUserForm(prev => ({ ...prev, _password: e.target.value }))} placeholder={tr("Min 12 characters")} /></label>
-            </div>
-            <div className="user-edit-actions">
-              <button className="secondary-light" onClick={cancelEditingUser}>{tr("Cancel")}</button>
-              <button disabled={!!loading || !editingUserForm.email.trim()} onClick={updatePanelUser}><Save size={14}/> {tr("Save changes")}</button>
-            </div>
-          </div>}
-        </div>)}
-      </div>
-      {isAdmin && <div className="section" style={{marginTop:16}}>
-        <h2>{tr("Assign domain to user")}</h2>
+          {shown.map(user => {
+            const self = user.id === currentUser?.id;
+            const editing = editingUser?.id === user.id;
+            return <div className={`users-item${editing ? ' is-editing' : ''}${user.is_active ? '' : ' is-suspended'}`} key={user.id}>
+              <div className="users-row">
+                <div className="users-account">
+                  <span className="users-avatar" aria-hidden="true">{(user.username || '?').slice(0, 1).toUpperCase()}</span>
+                  <div><strong>{user.username}</strong><small>{user.email || '—'}</small></div>
+                </div>
+                <div className="users-meta">
+                  <div className="users-badges" data-label={tr("Role")}>
+                    <span className={`badge role-${user.role}`}>{roleLabel(user.role)}</span>
+                    <span className={`badge ${user.is_active ? 'ok' : 'warn'}`}>{user.is_active ? tr("Active") : tr("Suspended")}</span>
+                    {isAdmin && user.reseller_id && <span className="badge" title={tr("Reseller")}>{tr("via {0}", resellerName(user.reseller_id))}</span>}
+                  </div>
+                  <div className="users-cell" data-label={tr("Disk")}>{renderUserDisk(user)}</div>
+                  {limitsOn && <div className="users-cell" data-label={tr("CPU / RAM")} title={tr("Resource use now")}>{renderUserResources(user)}</div>}
+                </div>
+                <div className="users-actions">
+                  <button type="button" className={`mini ${editing ? '' : 'secondary-light'}`} disabled={!!loading} onClick={() => editing ? cancelEditingUser() : startEditingUser(user)}><Pencil size={14}/> {tr("Edit")}</button>
+                  <button type="button" className="mini secondary-light" disabled={!!loading} onClick={() => quickLoginUser(user)}><LogIn size={14}/> {tr("Login as")}</button>
+                  {!self && user.totp_enabled && <button type="button" className="mini secondary-light icon-button" disabled={!!loading} onClick={() => resetUserTwoFactor(user)} title={tr("Reset 2FA")} aria-label={tr("Reset 2FA")}><KeyRound size={14}/></button>}
+                  {!self && <button type="button" className={`mini secondary-light icon-button${user.is_active ? ' is-suspend' : ''}`} disabled={!!loading} onClick={() => toggleUserActive(user)} title={user.is_active ? tr("Suspend") : tr("Unsuspend")} aria-label={user.is_active ? tr("Suspend") : tr("Unsuspend")}>{user.is_active ? <Ban size={14}/> : <CheckCircle size={14}/>}</button>}
+                  {!self && <button type="button" className="mini danger icon-button" disabled={!!loading} onClick={() => deletePanelUser(user)} title={tr("Delete")} aria-label={tr("Delete")}><Trash2 size={14}/></button>}
+                </div>
+              </div>
+              {editing && <div className="user-edit-panel">
+                <div className="user-edit-heading">
+                  <div><strong>{tr("Edit")} {user.username}</strong><small>
+                    {self ? tr("Role is locked for the active admin session.") : tr("Role changes sign the user out of existing sessions.")}
+                    {editingUserForm.role === 'admin' ? tr(" Admin accounts bypass website and storage limits.") : ''}
+                  </small></div>
+                  <button type="button" className="user-edit-close secondary-light" onClick={cancelEditingUser} aria-label={tr("Close user editor")} title={tr("Close user editor")}><X size={16}/></button>
+                </div>
+                {renderUserFields(editingUserForm, setEditingUserForm, { user })}
+                <div className="user-edit-actions">
+                  <button type="button" className="secondary-light" onClick={cancelEditingUser}>{tr("Cancel")}</button>
+                  <button type="button" disabled={!!loading || !editingUserForm.email.trim()} onClick={updatePanelUser}><Save size={14}/> {tr("Save changes")}</button>
+                </div>
+              </div>}
+            </div>;
+          })}
+        </div>}
+      </section>
+      {isAdmin && users.length > 0 && websites.length > 0 && <section className="section">
+        <div className="section-title"><div><h2>{tr("Assign domain to user")}</h2><p className="hint">{tr("Give a website to another account.")}</p></div></div>
         <div className="assign-row">
-          <select value={assignWebsiteId} onChange={e => setAssignWebsiteId(e.target.value)}>
+          <select value={assignWebsiteId} onChange={e => setAssignWebsiteId(e.target.value)} aria-label={tr("Select domain")}>
             <option value="">{tr("Select domain")}</option>
             {websites.map(site => <option key={site.id} value={site.id}>{site.domain}</option>)}
           </select>
-          <select value={assignUserId} onChange={e => setAssignUserId(e.target.value)}>
+          <select value={assignUserId} onChange={e => setAssignUserId(e.target.value)} aria-label={tr("Select user")}>
             <option value="">{tr("Select user")}</option>
             {users.map(user => <option key={user.id} value={user.id}>{user.username} ({roleLabel(user.role)})</option>)}
           </select>
-          <button disabled={!assignWebsiteId || !assignUserId || !!loading} onClick={assignDomainToUser}>{tr("Assign")}</button>
+          <button type="button" disabled={!assignWebsiteId || !assignUserId || !!loading} onClick={assignDomainToUser}>{tr("Assign")}</button>
         </div>
-      </div>}
-    </section>;
+      </section>}
+    </>;
+  }
+
+  // A package's limits as short chips: what it gives at a glance.
+  function planChips(plan) {
+    const disk = plan.storage_limit_mb > 0
+      ? (plan.storage_limit_mb >= 1024 ? tr("{0} GB", (plan.storage_limit_mb / 1024).toFixed(plan.storage_limit_mb % 1024 ? 1 : 0)) : tr("{0} MB", plan.storage_limit_mb))
+      : tr("Unlimited disk");
+    const chips = [
+      [Globe, plan.website_limit ? tr("{0} website(s)", plan.website_limit) : tr("Unlimited websites")],
+      [HardDrive, disk],
+      [Database, plan.database_limit ? tr("{0} database(s)", plan.database_limit) : tr("Unlimited databases")],
+    ];
+    if (mailInfo?.installed) chips.push([Mail, plan.mailbox_limit ? tr("{0} mailbox(es)", plan.mailbox_limit) : tr("Unlimited mailboxes")]);
+    if (limitsOn && plan.cpu_percent) chips.push([Cpu, `CPU ${plan.cpu_percent}%`]);
+    if (limitsOn && plan.memory_mb) chips.push([MemoryStick, `RAM ${formatMegabytes(plan.memory_mb)}`]);
+    return <div className="plan-chips">{chips.map(([Icon, text]) => <span className="plan-chip" key={text}><Icon size={13}/>{text}</span>)}</div>;
+  }
+
+  // The slug is made from the name once, on creation: WHMCS finds a package
+  // by it, so renaming a package must leave it alone.
+  function renderPlanFields(form, setForm, { creating = false } = {}) {
+    const number = field => e => setForm(prev => ({ ...prev, [field]: parseInt(e.target.value) || 0 }));
+    return <div className="form-sections">
+      <fieldset className="form-section">
+        <legend>{tr("Package")}</legend>
+        <p className="hint">{tr("0 = unlimited.")}</p>
+        <div className="form-grid">
+          <label className="span-all"><span>{tr("Name")}</span><input value={form.name} onChange={e => { const name = e.target.value; setForm(prev => ({ ...prev, name, ...(creating ? { slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') } : {}) })); }} placeholder={tr("Starter")} /></label>
+          <label><span>{tr("Websites")}</span><input type="number" min="0" value={form.website_limit} onChange={number('website_limit')} /></label>
+          <label><span>{tr("Disk (MB)")}</span><input type="number" min="0" value={form.storage_limit_mb} onChange={number('storage_limit_mb')} /></label>
+          <label><span>{tr("Databases")}</span><input type="number" min="0" value={form.database_limit} onChange={number('database_limit')} /></label>
+          {mailInfo?.installed && <label><span>{tr("Mailboxes")}</span><input type="number" min="0" value={form.mailbox_limit} onChange={number('mailbox_limit')} /></label>}
+        </div>
+      </fieldset>
+      {limitsOn && renderLimitInputs(form, setForm)}
+    </div>;
   }
 
   function renderUsersPackagesTab() {
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>{tr("Hosting Packages")}</h2><p className="hint">{isReseller ? tr("Your own packages: only you see them, to fill in your customers' limits.") : tr("Manage provisioning plans for WHMCS and billing systems.")}</p></div>
-          <button className="secondary" disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> {tr("Refresh")}</button>
+          <div><h2>{tr("New package")}</h2><p className="hint">{isReseller ? tr("Your own packages: only you see them, to fill in your customers' limits.") : tr("Manage provisioning plans for WHMCS and billing systems.")}</p></div>
         </div>
-        <div className="token-create-form">
-          <label><span>{tr("Name")}</span><input value={newPlan.name} onChange={e => { const name = e.target.value; setNewPlan(prev => ({ ...prev, name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') })); }} placeholder={tr("Starter")} /></label>
-          <label><span>{tr("Sites")}</span><input type="number" min="0" value={newPlan.website_limit} onChange={e => setNewPlan(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
-          <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.storage_limit_mb} onChange={e => setNewPlan(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
-          <label><span>{tr("Databases")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.database_limit} onChange={e => setNewPlan(prev => ({ ...prev, database_limit: parseInt(e.target.value) || 0 }))} /></label>
-          {mailInfo?.installed && <label><span>{tr("Mailboxes")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newPlan.mailbox_limit} onChange={e => setNewPlan(prev => ({ ...prev, mailbox_limit: parseInt(e.target.value) || 0 }))} /></label>}
-          {limitsOn && renderLimitInputs(newPlan, setNewPlan)}
-          <button disabled={!!loading || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> {tr("Add")}</button>
+        <div className="user-edit-panel is-form">
+          {renderPlanFields(newPlan, setNewPlan, { creating: true })}
+          <div className="user-edit-actions">
+            <button type="button" disabled={!!loading || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> {tr("Add package")}</button>
+          </div>
+        </div>
+      </section>
+      <section className="section">
+        <div className="section-title">
+          <div><h2>{tr("Hosting Packages")}</h2></div>
+          <button type="button" className="secondary" disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> {tr("Refresh")}</button>
         </div>
         {plans.length === 0 && <p className="hint">{tr("No packages yet. Create one above.")}</p>}
-        {plans.length > 0 && <div className="table">
-          {plans.map(plan => <div className="row" key={plan.id}>
-            <div className="token-info">
-              <strong>{plan.name}</strong>
-              <small>{plan.website_limit} {tr("site")}{plan.website_limit !== 1 ? 's' : ''} | {plan.storage_limit_mb > 0 ? (plan.storage_limit_mb >= 1024 ? tr("{0} GB", (plan.storage_limit_mb/1024).toFixed(plan.storage_limit_mb % 1024 ? 1 : 0)) : tr("{0} MB", plan.storage_limit_mb)) : tr("Unlimited disk")}</small>
-            </div>
-            <span className={plan.active ? 'badge ok' : 'badge'}>{plan.active ? tr("Active") : tr("Inactive")}</span>
-            <div className="row-actions">
-              <button className="mini secondary-light" onClick={() => startEditingPlan(plan)}><Pencil size={14}/> {tr("Edit")}</button>
-              <button className="mini danger" onClick={() => deletePlanItem(plan)}><Trash2 size={14}/></button>
-            </div>
-            {editingPlan?.id === plan.id && <div className="user-edit-panel">
-              <div className="user-edit-heading">
-                <strong>{tr("Edit")} {plan.name}</strong>
-                <button className="user-edit-close secondary-light" onClick={() => setEditingPlan(null)}><X size={16}/></button>
+        {plans.length > 0 && <div className="users-table plans">
+          {plans.map(plan => {
+            const editing = editingPlan?.id === plan.id;
+            return <div className={`users-item${editing ? ' is-editing' : ''}`} key={plan.id}>
+              <div className="users-row plan-row">
+                <div className="users-account">
+                  <span className="users-avatar" aria-hidden="true"><PackageOpen size={16}/></span>
+                  <div><strong>{plan.name}</strong>{planChips(plan)}</div>
+                </div>
+                <span className={plan.active ? 'badge ok' : 'badge'}>{plan.active ? tr("Active") : tr("Inactive")}</span>
+                <div className="users-actions">
+                  <button type="button" className={`mini ${editing ? '' : 'secondary-light'}`} onClick={() => editing ? setEditingPlan(null) : startEditingPlan(plan)}><Pencil size={14}/> {tr("Edit")}</button>
+                  <button type="button" className="mini danger icon-button" onClick={() => deletePlanItem(plan)} title={tr("Delete")} aria-label={tr("Delete")}><Trash2 size={14}/></button>
+                </div>
               </div>
-              <div className="user-edit-grid">
-                <label><span>{tr("Name")}</span><input value={editingPlanForm.name} onChange={e => setEditingPlanForm(prev => ({ ...prev, name: e.target.value }))} /></label>
-                <label><span>{tr("Sites")}</span><input type="number" min="0" value={editingPlanForm.website_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, website_limit: parseInt(e.target.value) || 0 }))} /></label>
-                <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.storage_limit_mb} onChange={e => setEditingPlanForm(prev => ({ ...prev, storage_limit_mb: parseInt(e.target.value) || 0 }))} /></label>
-                <label><span>{tr("Databases")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.database_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, database_limit: parseInt(e.target.value) || 0 }))} /></label>
-                {mailInfo?.installed && <label><span>{tr("Mailboxes")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={editingPlanForm.mailbox_limit} onChange={e => setEditingPlanForm(prev => ({ ...prev, mailbox_limit: parseInt(e.target.value) || 0 }))} /></label>}
-                {limitsOn && renderLimitInputs(editingPlanForm, setEditingPlanForm)}
+              {editing && <div className="user-edit-panel">
+                <div className="user-edit-heading">
+                  <div><strong>{tr("Edit")} {plan.name}</strong></div>
+                  <button type="button" className="user-edit-close secondary-light" onClick={() => setEditingPlan(null)} aria-label={tr("Close")} title={tr("Close")}><X size={16}/></button>
+                </div>
+                {renderPlanFields(editingPlanForm, setEditingPlanForm)}
                 <label className="check-line"><input type="checkbox" checked={editingPlanForm.active} onChange={e => setEditingPlanForm(prev => ({ ...prev, active: e.target.checked }))} /> {tr("Active")}</label>
-              </div>
-              <div className="user-edit-actions">
-                <button className="secondary-light" onClick={() => setEditingPlan(null)}>{tr("Cancel")}</button>
-                <button disabled={!!loading} onClick={updatePlan}><Save size={14}/> {tr("Save")}</button>
-              </div>
-            </div>}
-          </div>)}
+                <div className="user-edit-actions">
+                  <button type="button" className="secondary-light" onClick={() => setEditingPlan(null)}>{tr("Cancel")}</button>
+                  <button type="button" disabled={!!loading} onClick={updatePlan}><Save size={14}/> {tr("Save")}</button>
+                </div>
+              </div>}
+            </div>;
+          })}
         </div>}
       </section>
     </>;
   }
 
   function renderUsersAddTab() {
-    return <>
-      <section className="section">
-        <div className="section-title">
-          <div><h2>{isReseller ? tr("Add customer") : tr("Add panel user")}</h2><p className="hint">{tr("Panel username is also the Linux user. Select a package to auto-fill limits.")}</p></div>
+    return <section className="section">
+      <div className="section-title">
+        <div><h2>{isReseller ? tr("Add customer") : tr("Add panel user")}</h2><p className="hint">{tr("Panel username is also the Linux user. Select a package to auto-fill limits.")}</p></div>
+      </div>
+      <div className="user-edit-panel is-form">
+        {renderUserFields(newUser, setNewUser, { creating: true })}
+        <div className="user-edit-actions">
+          <button type="button" disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> {isReseller ? tr("Create customer") : tr("Create user")}</button>
         </div>
-        <div className="user-create-card">
-          <label><span>{tr("Username")}</span><input value={newUser.username} onChange={e => setNewUser(prev => ({ ...prev, username: e.target.value.toLowerCase() }))} placeholder={tr("johndoe")} /></label>
-          <label><span>{tr("Email")}</span><input value={newUser.email} onChange={e => setNewUser(prev => ({ ...prev, email: e.target.value }))} placeholder="user@domain.com" /></label>
-          <label><span>{tr("Password")}</span><input value={newUser.password} onChange={e => setNewUser(prev => ({ ...prev, password: e.target.value }))} placeholder={tr("Min 12 characters")} type="password" /></label>
-          {isAdmin && <label><span>{tr("Role")}</span><select value={newUser.role} onChange={e => setNewUser(prev => ({ ...prev, role: e.target.value }))}>
-            <option value="end_user">{tr("End user")}</option><option value="reseller">{tr("Reseller")}</option><option value="admin">{tr("Admin")}</option>
-          </select></label>}
-          {isAdmin && newUser.role === 'end_user' && users.some(u => u.role === 'reseller') && <label><span>{tr("Reseller")}</span><select value={newUser.reseller_id || ''} onChange={e => setNewUser(prev => ({ ...prev, reseller_id: e.target.value }))}>
-            <option value="">{tr("None (yours)")}</option>
-            {users.filter(u => u.role === 'reseller').map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
-          </select></label>}
-          <label><span>{tr("Package")}</span><select value={newUser._planId || ''} onChange={e => {
-            const planId = e.target.value;
-            const plan = plans.find(p => String(p.id) === planId);
-            if (plan) {
-              setNewUser(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? prev.database_limit, mailbox_limit: plan.mailbox_limit ?? prev.mailbox_limit, ...limitValues(plan) }));
-            } else {
-              setNewUser(prev => ({ ...prev, _planId: '' }));
-            }
-          }}>
-            <option value="">{tr("Custom")}</option>
-            {plans.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({p.website_limit} {tr("sites,")} {p.storage_limit_mb > 0 ? tr("{0} MB", p.storage_limit_mb) : tr("unlimited")})</option>)}
-          </select></label>
-          <label><span>{tr("Site limit")}</span><input type="number" value={newUser.website_limit} onChange={e => setNewUser(prev => ({ ...prev, website_limit: e.target.value, _planId: '' }))} /></label>
-          <label><span>{tr("Disk (MB)")} <em>{tr("0 = unlimited")}</em></span><input type="number" value={newUser.storage_limit_mb} onChange={e => setNewUser(prev => ({ ...prev, storage_limit_mb: e.target.value, _planId: '' }))} /></label>
-          <label><span>{tr("Database limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newUser.database_limit} onChange={e => setNewUser(prev => ({ ...prev, database_limit: e.target.value, _planId: '' }))} /></label>
-          {mailInfo?.installed && <label><span>{tr("Mailbox limit")} <em>{tr("0 = unlimited")}</em></span><input type="number" min="0" value={newUser.mailbox_limit} onChange={e => setNewUser(prev => ({ ...prev, mailbox_limit: e.target.value, _planId: '' }))} /></label>}
-          {isAdmin && newUser.role === 'reseller' && renderPoolInputs(newUser, setNewUser)}
-          {limitsOn && renderLimitInputs(newUser, setNewUser)}
-          {limitsOn && isAdmin && newUser.role === 'reseller' && renderLimitInputs(newUser, setNewUser, 'group_')}
-          <button disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> {isReseller ? tr("Create customer") : tr("Create user")}</button>
-        </div>
-      </section>
-    </>;
+      </div>
+    </section>;
   }
 
   function renderStandaloneEditor() {
