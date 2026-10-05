@@ -23,7 +23,7 @@
 <tr><td width="50%"><a href="docs/screenshots/updates.webp"><img src="docs/screenshots/updates.webp" alt="Cập nhật"></a><br><sub>Cập nhật</sub></td><td width="50%"><a href="docs/screenshots/addons.webp"><img src="docs/screenshots/addons.webp" alt="Addon"></a><br><sub>Addon</sub></td></tr>
 <tr><td width="50%"><a href="docs/screenshots/malware.webp"><img src="docs/screenshots/malware.webp" alt="Quét mã độc"></a><br><sub>Quét mã độc</sub></td><td width="50%"><a href="docs/screenshots/mcp.webp"><img src="docs/screenshots/mcp.webp" alt="Trợ lý AI (MCP)"></a><br><sub>Trợ lý AI (MCP)</sub></td></tr>
 <tr><td width="50%"><a href="docs/screenshots/notifications.webp"><img src="docs/screenshots/notifications.webp" alt="Thông báo qua email và Telegram"></a><br><sub>Thông báo qua email và Telegram</sub></td><td width="50%"><a href="docs/screenshots/customer-dashboard.webp"><img src="docs/screenshots/customer-dashboard.webp" alt="Tổng quan của khách hosting"></a><br><sub>Tổng quan của khách hosting</sub></td></tr>
-<tr><td width="50%"><a href="docs/screenshots/customer-websites.webp"><img src="docs/screenshots/customer-websites.webp" alt="Website của khách hosting"></a><br><sub>Website của khách hosting</sub></td><td width="50%"></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/customer-websites.webp"><img src="docs/screenshots/customer-websites.webp" alt="Website của khách hosting"></a><br><sub>Website của khách hosting</sub></td><td width="50%"><a href="docs/screenshots/resource-usage.webp"><img src="docs/screenshots/resource-usage.webp" alt="Mức dùng tài nguyên của khách hosting"></a><br><sub>Mức dùng tài nguyên (tiện ích Giới hạn tài nguyên)</sub></td></tr>
 </table>
 
 ## Tính năng
