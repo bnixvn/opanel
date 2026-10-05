@@ -7203,7 +7203,90 @@ sftp_sub_delete_all_for_owner() {
   done
 }
 
+# The admin's SFTP drop folder for large backups (operator, 2026-10-06: "Login
+# admin như DA"). It sits inside the admin's SFTP chroot, so the admin's own
+# login sees it as /backups. Group opanel with setgid: whatever is uploaded is
+# the panel's group, and the API - which runs as opanel - lists it as it is.
+# /home/admin is root-owned, so the admin cannot swap this directory for a
+# link; only what is inside it is the admin's.
+BACKUP_INBOX="/home/admin/backups"
+
+ensure_backup_inbox() {
+  local owner="root"
+  id -u admin >/dev/null 2>&1 && owner="admin"
+  [[ -d /home/admin ]] || install -d -m 0755 -o root -g root /home/admin
+  [[ ! -L "$BACKUP_INBOX" ]] || deny "$BACKUP_INBOX is a symlink"
+  install -d -m 2770 -o "$owner" -g opanel "$BACKUP_INBOX"
+  # An existing folder keeps whatever was done to it over SFTP otherwise.
+  chown "$owner:opanel" "$BACKUP_INBOX"
+  chmod 2770 "$BACKUP_INBOX"
+  echo "$BACKUP_INBOX"
+}
+
+archive_suffix() {
+  local lower="${1,,}" suffix
+  for suffix in .tar.zst .tzst .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .tar; do
+    if [[ "$lower" == *"$suffix" ]]; then
+      echo "${1: -${#suffix}}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Move one archive out of the drop folder into the panel's folder for its
+# kind, and print where it is now. The file belongs to the admin's login, which
+# also runs the admin's websites, so it has to be a plain file with no other
+# name, finished arriving, and it is only handed to the panel once it is in a
+# folder that login cannot write.
+backup_inbox_take() {
+  local name="$1" kind="$2" src dest_dir dest suffix age backup_root
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._@+=,-]{0,200}$ && "$name" != *..* ]] \
+    || deny "invalid backup file name"
+  suffix="$(archive_suffix "$name")" || deny "not a backup archive: $name"
+  case "$kind" in
+    opanel)
+      [[ "${suffix,,}" == ".tar.gz" ]] || deny "not a panel backup: $name"
+      backup_root="$(env_get BACKUP_ROOT)"
+      [[ -n "$backup_root" ]] || backup_root="/var/backups/opanel"
+      dest_dir="${backup_root}/restore"
+      install -d -m 0750 -o opanel -g opanel "$backup_root" "$dest_dir"
+      ;;
+    directadmin)
+      dest_dir="$(env_get DA_BACKUP_DIR)"
+      [[ -n "$dest_dir" ]] || dest_dir="/home/admin/opanel-backups/da"
+      install -d -m 0750 -o opanel -g opanel "$dest_dir"
+      ;;
+    *) deny "usage: backup-inbox-take <file> <opanel|directadmin>" ;;
+  esac
+  src="${BACKUP_INBOX}/${name}"
+  [[ -f "$src" && ! -L "$src" ]] || deny "$name is not in the backup folder"
+  [[ "$(stat -c %h -- "$src")" == "1" ]] || deny "$name has another hard link; upload it again"
+  age=$(( $(date +%s) - $(stat -c %Y -- "$src") ))
+  (( age >= 60 )) || deny "$name is still being uploaded; try again in a minute"
+  dest="${dest_dir}/${name}"
+  if [[ -e "$dest" || -L "$dest" ]]; then
+    dest="${dest_dir}/${name%"$suffix"}-$(date -u +%Y%m%d%H%M%S)${suffix}"
+  fi
+  [[ ! -e "$dest" && ! -L "$dest" ]] || deny "$name is already being taken"
+  mv -T -n -- "$src" "$dest" || deny "could not move $name"
+  [[ ! -e "$src" && -f "$dest" && ! -L "$dest" ]] || deny "could not move $name"
+  chown -h -- opanel:opanel "$dest"
+  chmod 0640 -- "$dest"
+  echo "$dest"
+}
+
 case "$cmd" in
+
+  # ---- backup drop folder ------------------------------------------------
+  backup-inbox-ensure)
+    [[ $# -eq 0 ]] || deny "usage: backup-inbox-ensure"
+    ensure_backup_inbox
+    ;;
+  backup-inbox-take)
+    [[ $# -eq 2 ]] || deny "usage: backup-inbox-take <file> <opanel|directadmin>"
+    backup_inbox_take "$1" "$2"
+    ;;
 
   # ---- systemctl --------------------------------------------------------
   systemctl)

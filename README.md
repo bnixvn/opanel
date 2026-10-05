@@ -56,6 +56,7 @@
 - **Nơi lưu ngoài server:** S3 (AWS, Wasabi, Backblaze B2, MinIO, R2…) và SFTP.
 - **Restore kiểu DirectAdmin** qua 4 bước: chọn nguồn (trên server này, Backup Destination, hoặc máy chủ khác qua SFTP/FTP/FTPS), điền thông tin kết nối, chọn user, bấm Restore.
 - **Chuyển từ DirectAdmin:** restore trực tiếp file `user.admin.<user>.tar.zst`, kể cả kéo thẳng từ server DirectAdmin cũ; website, subdomain, database và SSL được tạo tự động.
+- **Backup dung lượng lớn tải lên qua SFTP**, xem [bên dưới](#tải-backup-lớn-qua-sftp).
 
 ### Bảo mật
 - **Firewall** iptables + ipset: chặn IP/dải mạng kèm ghi chú, blocklist tự cập nhật, danh sách địa chỉ bị chặn có tìm kiếm và phân trang.
@@ -169,9 +170,33 @@ systemctl status opanel-api lsws mariadb redis-server
 | `/home/<user>/<domain>/public_html` | Mã nguồn website |
 | `/var/backups/opanel/` | File backup |
 | `/home/admin/opanel-backups/da/` | Backup DirectAdmin chờ restore |
+| `/home/admin/backups/` | Thư mục nhận backup lớn tải lên qua SFTP |
 | `/var/lib/opanel/` | Dữ liệu vận hành (firewall, addon, lịch sử quét, khu cách ly) |
 | `/var/log/opanel-php/<domain>/php_error.log` | Log lỗi PHP của từng website |
 | `/usr/local/lsws/conf/opanel/` | Cấu hình vhost OpenLiteSpeed, SSL, rule ModSecurity |
+
+### Tải backup lớn qua SFTP
+
+Trình duyệt chỉ tải lên được file đến 1 GB. File lớn hơn thì tải qua SFTP, giống
+cách làm của DirectAdmin:
+
+| | |
+|---|---|
+| Máy chủ | IP của server, cổng `22` |
+| User | `admin`, mật khẩu SFTP đặt ở trang **Tài khoản SFTP** |
+| Thư mục | `/backups` (trên server là `/home/admin/backups`) |
+
+Thả cả backup OPanel lẫn backup DirectAdmin vào đó. Tải xong thì bấm **Làm mới** ở
+**Sao lưu → Khôi phục → Trên server này**: file hiện chung danh sách, có nhãn `SFTP`.
+Không cần chỉnh quyền gì: thư mục thuộc nhóm `opanel`, nên panel đọc được ngay.
+File đang tải dở (đuôi `.filepart`, `.part`, hoặc vừa được ghi trong 1 phút) chưa
+hiện ra. Khi restore, panel chuyển file sang thư mục của nó rồi mới đọc, nên sau
+đó file không còn trong `/backups`. Đăng nhập bằng `root` để tải lên cũng được,
+đặt file vào `/home/admin/backups`.
+
+Đừng để backup nằm lâu trong thư mục này: các website của admin chạy bằng chính
+user `admin`, nên nếu một website đó bị hack thì đọc được backup đang để ở đây.
+Không cần restore nữa thì xoá file bằng nút thùng rác trên dòng của nó.
 
 ## Lưu ý về firewall
 

@@ -3,7 +3,8 @@
 Three sources, one list to pick from:
 
 - ``local``: archives already on this server -- the panel's own account
-  backups, the restore upload folder, and the DirectAdmin folder;
+  backups, the restore upload folder, the DirectAdmin folder, and the admin's
+  SFTP drop folder /home/admin/backups;
 - ``target``: a saved Backup Destination (S3 or SFTP);
 - ``remote``: another server reached over SFTP, FTP or FTPS with credentials
   typed in for this one restore -- DirectAdmin's "restore from FTP", and the
@@ -15,6 +16,11 @@ DirectAdmin one by ``da_import.import_da_backup``.
 
 Credentials for another server never touch the disk. They live in memory for
 the request that lists and the job that downloads, and nowhere else.
+
+The drop folder is for archives past what a browser upload takes (operator,
+2026-10-06: "Login admin như DA"): they go up over SFTP as the admin's own
+login, the DirectAdmin way, and a restore moves one into the panel's folder
+for its kind -- as root, through the helper -- before anything reads it.
 """
 from __future__ import annotations
 
@@ -37,6 +43,7 @@ import paramiko
 
 from app.core.config import settings
 from app.services import backup, da_import
+from app.services.shell import shell
 
 KIND_OPANEL = "opanel"
 KIND_DA = "directadmin"
@@ -52,6 +59,14 @@ DA_NAME_RE = re.compile(
     r"(?:tar\.zst|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz|tar)$",
     re.IGNORECASE,
 )
+
+# The admin's SFTP drop folder. The helper owns the same path; it is not a
+# setting because the helper and the API's sandbox could not follow one.
+INBOX_DIR = Path("/home/admin/backups")
+# A file in the drop folder written to this recently may still be arriving.
+INBOX_SETTLE_SECONDS = 60
+# What SFTP clients call a file they are still writing (WinSCP: .filepart).
+PARTIAL_SUFFIXES = (".part", ".filepart", ".partial", ".tmp", ".crdownload")
 
 # A listing is for a person to pick from. Past this it is the wrong folder,
 # and walking on would only make them wait for a list nobody can read.
@@ -236,7 +251,113 @@ def list_local() -> list[dict]:
             "modified_at": modified,
             "location": "da",
         })
+    rows.extend(list_inbox())
     return rows
+
+
+def list_inbox() -> list[dict]:
+    """Archives in the admin's SFTP drop folder that have finished arriving.
+
+    A file still being written is left out: a temporary name the client gives
+    it, or a write within the last minute. Moving one mid-upload would hand
+    the restore half an archive.
+    """
+    if not _readable(INBOX_DIR):
+        _ensure_inbox()
+    try:
+        entries = list(INBOX_DIR.iterdir())
+    except OSError:
+        return []
+    now = time.time()
+    rows = []
+    for path in entries:
+        name = path.name
+        if name.startswith(".") or name.lower().endswith(PARTIAL_SUFFIXES) or path.is_symlink():
+            continue
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        if not stat.S_ISREG(info.st_mode) or now - info.st_mtime < INBOX_SETTLE_SECONDS:
+            continue
+        kind = archive_kind(name)
+        if not kind:
+            continue
+        rows.append({
+            "ref": str(path),
+            "kind": kind,
+            "filename": name,
+            "account": account_of(kind, name),
+            "size": info.st_size,
+            "modified_at": _iso(info.st_mtime),
+            "location": "inbox",
+        })
+    return rows
+
+
+def _readable(folder: Path) -> bool:
+    try:
+        next(iter(folder.iterdir()), None)
+        return True
+    except OSError:
+        return False
+
+
+def _ensure_inbox() -> None:
+    """Have the helper (re)create the drop folder with the modes the panel
+    reads it with -- the admin may have deleted it, or chmod-ed it shut, over
+    SFTP. Never raises: a listing should still show everything else."""
+    try:
+        shell.privileged("backup-inbox-ensure", check=False, fallback=["true"])
+    except Exception:  # pragma: no cover - helper failure
+        pass
+
+
+def inbox_path(ref: str) -> Optional[Path]:
+    """The drop-folder archive a ref names, or None when it names something
+    else. Only a plain file directly in the folder counts."""
+    raw = (ref or "").replace("\\", "/")
+    folder = str(INBOX_DIR).replace("\\", "/").rstrip("/") + "/"
+    if not raw.startswith(folder):
+        return None
+    name = raw[len(folder):]
+    if not name or "/" in name or name in {".", ".."} or name.startswith(".") or _CONTROL_CHARS_RE.search(name):
+        raise ValueError(f"Not a backup in the SFTP folder: {ref}")
+    return INBOX_DIR / name
+
+
+def take_from_inbox(ref: str, kind: str) -> str:
+    """Move an archive out of the drop folder into the panel's folder for its
+    kind, and return where it is now.
+
+    Root does it, through the helper: the file belongs to the admin's login,
+    which also runs the admin's websites, so it is checked to be a plain file
+    with no other links, moved, and only then given to the panel.
+    """
+    path = inbox_path(ref)
+    if path is None:
+        raise ValueError(f"Not in the SFTP folder: {ref}")
+    result = shell.privileged(
+        "backup-inbox-take",
+        helper_args=[path.name, kind],
+        check=False,
+        fallback=["bash", "-lc", "echo 'backup-inbox-take needs the opanel helper' >&2; exit 1"],
+    )
+    if result.returncode != 0:
+        raise RestoreSourceError((result.stderr or result.stdout or f"Could not take {path.name}").strip()[-500:])
+    lines = (result.stdout or "").strip().splitlines()
+    if not lines:
+        raise RestoreSourceError(f"Could not take {path.name}")
+    return lines[-1].strip()
+
+
+def delete_inbox(ref: str) -> str:
+    """Delete an archive from the drop folder; return its name."""
+    path = inbox_path(ref)
+    if path is None or path.is_symlink() or not path.is_file() or not archive_kind(path.name):
+        raise FileNotFoundError(ref)
+    path.unlink()
+    return path.name
 
 
 def _walk(entries: Callable[[str], list[tuple]], base: str, location: str) -> list[dict]:
@@ -448,6 +569,11 @@ def check_ref(source: Source, kind: str, ref: str) -> str:
     if archive_kind(ref) != kind:
         raise ValueError(f"Not a {'DirectAdmin' if kind == KIND_DA else 'OPanel'} backup: {ref}")
     if source.kind == "local":
+        inbox = inbox_path(ref)
+        if inbox is not None:
+            if inbox.is_symlink() or not inbox.is_file():
+                raise FileNotFoundError(ref)
+            return str(inbox)
         if kind == KIND_OPANEL:
             return str(backup.user_backup_path(ref))
         return str(da_import._resolve_da_backup_path(ref))

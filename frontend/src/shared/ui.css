@@ -709,6 +709,8 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .restore-version{width:100%;min-width:0;height:34px;min-height:34px;font-size:12px}
 .restore-version-name{min-width:0;font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .restore-account .restore-delete{width:34px;min-width:34px;height:34px;min-height:34px;padding:0}
+.restore-kind{margin-left:8px;vertical-align:1px;font-weight:600}
+.restore-sftp-hint code{white-space:nowrap}
 .backup-job small.restore-job-message{white-space:normal;overflow:visible;overflow-wrap:anywhere}
 @media(max-width:1000px){.restore-remote{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:720px){

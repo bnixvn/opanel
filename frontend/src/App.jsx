@@ -5887,6 +5887,10 @@ function App() {
           <p className="hint">
             {tr("Read from")} <code>{restoreList?.directories?.opanel || '/var/backups/opanel/users'}</code> {tr("and")} <code>{restoreList?.directories?.directadmin || '/home/admin/opanel-backups/da'}</code>. {tr("An uploaded archive goes to the right one by its name.")}
           </p>
+          <p className="hint restore-sftp-hint">
+            {tr("Large backups go up over SFTP: sign in as admin on port 22, with the SFTP password set under SFTP accounts.")}<br/>
+            {tr("Put them in {0} (/backups in the SFTP client), panel and DirectAdmin backups alike, then press Refresh once the upload has finished.", '/home/admin/backups')}
+          </p>
           <div className="actions restore-local-actions">
             <label className="upload-button secondary">
               <Upload size={14}/> {tr("Upload backups")}
@@ -5975,7 +5979,7 @@ function App() {
                 ? (chosen.error || tr("Invalid backup"))
                 : [formatBytes(chosen.size), formatIsoTime(chosen.modified_at),
                   chosen.kind === 'opanel' && chosen.websites != null ? tr("{0} website(s)", chosen.websites) : ''].filter(Boolean).join(' · ');
-              const deletable = restoreSource === 'local' && (chosen.location === 'uploaded' || chosen.location === 'da');
+              const deletable = restoreSource === 'local' && ['uploaded', 'da', 'inbox'].includes(chosen.location);
               return <div
                 key={group.key}
                 className={`restore-account${picked ? ' picked' : ''}${invalid ? ' invalid' : ''}`}
@@ -5988,7 +5992,10 @@ function App() {
               >
                 <input type="checkbox" checked={picked} disabled={invalid} tabIndex={-1} onChange={toggle} onClick={e => e.stopPropagation()} aria-hidden="true" />
                 <span className="restore-account-main">
-                  <strong>{group.account || chosen.username || chosen.filename}</strong>
+                  <strong>
+                    {group.account || chosen.username || chosen.filename}
+                    {chosen.location === 'inbox' && <span className="badge restore-kind" title="/home/admin/backups">SFTP</span>}
+                  </strong>
                   <small>{detail}</small>
                 </span>
                 <span className={`badge${group.kind === 'opanel' ? ' ok' : ''}`}>{group.kind === 'directadmin' ? 'DirectAdmin' : 'OPanel'}</span>

@@ -1169,7 +1169,9 @@ def delete_restore_archive(ref: str, request: Request, db: Session = Depends(get
     ensure_role(current_user.role, Role.admin)
     kind = restore_sources.archive_kind(ref)
     try:
-        if kind == restore_sources.KIND_OPANEL:
+        if restore_sources.inbox_path(ref) is not None:
+            deleted = restore_sources.delete_inbox(ref)
+        elif kind == restore_sources.KIND_OPANEL:
             deleted = backup.delete_user_restore_backup(ref)
         elif kind == restore_sources.KIND_DA:
             deleted = da_import.delete_da_backup(ref)
@@ -1177,6 +1179,8 @@ def delete_restore_archive(ref: str, request: Request, db: Session = Depends(get
             raise FileNotFoundError(ref)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Backup not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     log_action(db, current_user.id, "delete_restore_archive", "restore", deleted, request=request)
     return {"deleted": deleted}
 
@@ -1237,6 +1241,12 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
                     local_path = restore_sources.fetch(source, kind, ref, item.get("size") or 0,
                                                        on_progress=download_progress)
                     fetched = local_path
+                elif restore_sources.inbox_path(ref) is not None:
+                    # Out of the admin's SFTP folder first, into the panel's
+                    # own: moved, not copied, so it is kept like an upload.
+                    _set_backup_job(job_id, message=f"Taking {name} from the SFTP folder {position}",
+                                    progress_label=name)
+                    local_path = restore_sources.take_from_inbox(ref, kind)
                 if kind == restore_sources.KIND_OPANEL:
                     def site_progress(sites_done, of, label, _n=name):
                         share = sites_done / of if of else 0.0

@@ -1221,6 +1221,13 @@ install_panel_runtime
 if id -u opanel >/dev/null 2>&1; then
   log "Ensuring DirectAdmin backup import directory"
   install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/da
+  # The admin's SFTP drop folder for large backups, which Restore > This server
+  # lists. setgid opanel, so the panel can read what the admin's login uploads.
+  inbox_owner=root
+  id -u admin >/dev/null 2>&1 && inbox_owner=admin
+  install -d -o "$inbox_owner" -g opanel -m 2770 /home/admin/backups
+  chown "$inbox_owner:opanel" /home/admin/backups
+  chmod 2770 /home/admin/backups
 fi
 log "Configuring legacy FastCGI cache compatibility"
 configure_fastcgi_cache
