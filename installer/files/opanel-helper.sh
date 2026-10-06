@@ -430,6 +430,19 @@ env_get() {
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
 }
 
+# A tuning override, whatever the case of its name. The comments in this file
+# and in the tuning files spell them opanel_..., OPanel_... and OPANEL_..., so
+# operators wrote all three -- .122 had OPANEL_MARIADB_BUFFER_POOL_SIZE=2560M,
+# which an exact match never read (2026-10-06). The last one in the file wins.
+env_get_any_case() {
+  local key="$1"
+  [[ -f "$ENV_FILE" ]] || return 0
+  awk -F= -v key="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')" '
+    { name = $1; gsub(/[ \t]/, "", name) }
+    toupper(name) == key { value = $0; sub(/^[^=]*=/, "", value); gsub(/^[ \t"]+|[ \t"\r]+$/, "", value); found = value }
+    END { if (found != "") print found }' "$ENV_FILE"
+}
+
 env_set() {
   local key="$1" value="$2" escaped
   [[ -f "$ENV_FILE" ]] || deny "$ENV_FILE not found"
@@ -4112,7 +4125,7 @@ php_fpm_tuning_value() {
     value="${!key}"
   fi
   if [[ -z "$value" ]]; then
-    value="$(env_get "$key" 2>/dev/null || true)"
+    value="$(env_get_any_case "$key" 2>/dev/null || true)"
   fi
   printf '%s\n' "${value:-$default}"
 }
@@ -4293,7 +4306,7 @@ mariadb_tuning_value() {
     value="${!key}"
   fi
   if [[ -z "$value" ]]; then
-    value="$(env_get "$key" 2>/dev/null || true)"
+    value="$(env_get_any_case "$key" 2>/dev/null || true)"
   fi
   printf '%s\n' "${value:-$default}"
 }

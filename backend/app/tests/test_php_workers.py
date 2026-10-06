@@ -198,3 +198,14 @@ def test_the_tick_keeps_out_of_a_running_update(tmp_path, monkeypatch):
     assert php_workers.reconcile_quietly() == ["a.test"]
     state.unlink()
     assert php_workers.reconcile_quietly() == ["a.test"]
+
+
+def test_an_override_is_read_whatever_the_case_of_its_name():
+    """.122 had OPANEL_MARIADB_BUFFER_POOL_SIZE=2560M; the helper looked for
+    opanel_MARIADB_BUFFER_POOL_SIZE only, so the operator's 2560M was never
+    read and a retune gave the pool 3968M."""
+    for fn in ("php_fpm_tuning_value", "mariadb_tuning_value"):
+        body = HELPER.split(f"\n{fn}() {{", 1)[1].split("\n}\n", 1)[0]
+        assert 'env_get_any_case "$key"' in body, fn
+    lookup = HELPER.split("\nenv_get_any_case() {", 1)[1].split("\n}\n", 1)[0]
+    assert "toupper(name) == key" in lookup and "tr '[:lower:]' '[:upper:]'" in lookup
