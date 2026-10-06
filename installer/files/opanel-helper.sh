@@ -7364,7 +7364,48 @@ backup_inbox_take() {
   echo "$dest"
 }
 
+# The server pages behind the top bar's status chips (operator, 2026-10-06).
+# The API cannot see other users' processes (ProtectProc=invisible) nor read
+# every account's tree, so both of these run here, as root.
+process_top() {
+  COLUMNS=300 top -b -n 1 -c -w 300 2>/dev/null | head -n 400
+}
+
+# What takes the disk space, one line each: key, bytes, path, mount point.
+# du -x stays on the filesystem it starts on, and timeout keeps a huge /home
+# from holding the helper for ever. The panel adds the lines up per mount.
+disk_usage_scan() {
+  local backup_root datadir path key bytes mount
+  backup_root="$(env_get BACKUP_ROOT 2>/dev/null || true)"
+  [[ -n "$backup_root" ]] || backup_root="/var/backups/opanel"
+  datadir="$(timeout 20 mariadb -NBe 'SELECT @@datadir' 2>/dev/null | tail -n1 || true)"
+  [[ -n "$datadir" && -d "$datadir" ]] || datadir="/var/lib/mysql"
+  while read -r key path; do
+    [[ -n "$path" && -d "$path" && ! -L "$path" ]] || continue
+    bytes="$(timeout 900 du -sxb -- "$path" 2>/dev/null | tail -n1 | awk '{print $1}' || true)"
+    [[ "$bytes" =~ ^[0-9]+$ ]] || continue
+    mount="$(df -P -- "$path" 2>/dev/null | awk 'NR==2 {print $6}' || true)"
+    printf '%s\t%s\t%s\t%s\n' "$key" "$bytes" "$path" "${mount:-/}"
+  done <<PATHS
+home /home
+databases ${datadir%/}
+backups ${backup_root%/}
+$(for extra in /home/admin/opanel-backups /home/admin/backups; do printf 'backups %s\n' "$extra"; done)
+$(for log in /var/log /usr/local/lsws/logs; do printf 'logs %s\n' "$log"; done)
+panel ${APP_DIR:-/opt/opanel}
+PATHS
+}
+
 case "$cmd" in
+
+  process-top)
+    [[ $# -eq 0 ]] || deny "usage: process-top"
+    process_top
+    ;;
+  disk-usage-scan)
+    [[ $# -eq 0 ]] || deny "usage: disk-usage-scan"
+    disk_usage_scan
+    ;;
 
   # ---- backup drop folder ------------------------------------------------
   backup-inbox-ensure)
