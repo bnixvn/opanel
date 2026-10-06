@@ -2,6 +2,7 @@ import os
 import shutil
 import time
 from pathlib import Path
+from typing import Optional
 
 from app.services.shell import shell
 
@@ -117,7 +118,52 @@ def _memory_usage() -> dict:
     available = values.get("MemAvailable", values.get("MemFree", 0))
     used = max(0, total - available)
     percent = round((used / total) * 100, 1) if total else 0.0
-    return {"total": total, "used": used, "available": available, "percent": percent}
+    return {"total": total, "used": used, "available": available, "percent": percent,
+            "breakdown": _memory_breakdown(total, available, values.get("MemFree", 0))}
+
+
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+
+
+def _cgroup_resident(relative: str) -> Optional[int]:
+    """What a cgroup holds that the kernel cannot simply drop: its
+    memory.current less the clean file cache in it. None when it is not
+    there (no hosting.slice before the Resource limits addon)."""
+    base = CGROUP_ROOT / relative
+    try:
+        current = int((base / "memory.current").read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    stat: dict[str, int] = {}
+    try:
+        for line in (base / "memory.stat").read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition(" ")
+            if value.strip().isdigit():
+                stat[key] = int(value)
+    except OSError:
+        pass
+    reclaimable = max(0, stat.get("file", 0) - stat.get("shmem", 0))
+    return max(0, current - reclaimable)
+
+
+def _memory_breakdown(total: int, available: int, free: int) -> dict:
+    """Where the server's RAM is, for the dashboard (operator, 2026-10-06:
+    customers could not see why their accounts' RAM did not add up to the
+    server's). The hosting accounts together, MariaDB -- a service every site
+    shares, so in no account -- the rest of the system, the cache the kernel
+    gives back when it needs to, and what is free. The parts add up to the
+    total."""
+    used = max(0, total - available)
+    accounts = _cgroup_resident("hosting.slice")
+    mariadb = _cgroup_resident("system.slice/mariadb.service")
+    taken = min(used, (accounts or 0) + (mariadb or 0))
+    return {
+        "accounts": accounts,
+        "mariadb": mariadb,
+        "system": max(0, used - taken),
+        "cache": max(0, available - free),
+        "free": max(0, free),
+    }
 
 
 def _disk_usage() -> dict:

@@ -710,6 +710,23 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .restore-version-name{min-width:0;font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .restore-account .restore-delete{width:34px;min-width:34px;height:34px;min-height:34px;padding:0}
 .restore-kind{margin-left:8px;vertical-align:1px;font-weight:600}
+/* Where the server's RAM is: one bar, a legend under it. */
+.ram-breakdown{margin-top:16px;display:grid;gap:8px}
+.ram-breakdown-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:13px}
+.ram-breakdown-head small{color:var(--text-muted)}
+.ram-breakdown-bar{display:flex;height:12px;border-radius:999px;overflow:hidden;background:var(--surface-muted);border:1px solid var(--border)}
+.ram-part{display:block;height:100%;min-width:0}
+.ram-breakdown-legend{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:4px 16px;font-size:13px}
+.ram-breakdown-legend li{display:flex;align-items:center;gap:8px;min-width:0}
+.ram-breakdown-legend span{flex:1;min-width:0;color:var(--text-secondary)}
+.ram-breakdown-legend b{font-weight:600;white-space:nowrap}
+.ram-swatch{flex:none;width:10px;height:10px;border-radius:3px}
+.ram-accounts{background:var(--primary)}
+.ram-mariadb{background:var(--warning)}
+.ram-system{background:var(--text-muted)}
+.ram-cache{background:var(--primary-soft)}
+.ram-free{background:var(--surface-muted);box-shadow:inset 0 0 0 1px var(--border)}
+.ram-breakdown .hint{margin:0}
 .restore-sftp-hint code{white-space:nowrap}
 .backup-job small.restore-job-message{white-space:normal;overflow:visible;overflow-wrap:anywhere}
 @media(max-width:1000px){.restore-remote{grid-template-columns:repeat(2,minmax(0,1fr))}}

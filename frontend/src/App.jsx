@@ -4701,6 +4701,34 @@ function App() {
     return `${formatBytes(used)}/${formatBytes(limit)} ${pct}%`;
   }
 
+  // Where the server's RAM is (operator, 2026-10-06): customers could not see
+  // why their accounts' RAM did not add up to the server's. The accounts
+  // together, MariaDB -- every site's database, so in no account -- the rest
+  // of the system, the cache the kernel hands back when it needs to, and what
+  // is free. The parts add up to the total.
+  function RamBreakdown({ memory }) {
+    const parts = memory?.breakdown;
+    const total = Number(memory?.total) || 0;
+    if (!parts || !total) return null;
+    const rows = [
+      ['accounts', tr("Hosting accounts"), parts.accounts],
+      ['mariadb', tr("MariaDB (every site's databases)"), parts.mariadb],
+      ['system', tr("System and panel"), parts.system],
+      ['cache', tr("Cache (given back when needed)"), parts.cache],
+      ['free', tr("Free"), parts.free],
+    ].filter(row => row[2] != null);
+    return <div className="ram-breakdown">
+      <div className="ram-breakdown-head"><strong>{tr("Where the RAM is")}</strong><small>{formatBytes(total)}</small></div>
+      <div className="ram-breakdown-bar" role="img" aria-label={rows.map(([, label, value]) => `${label}: ${formatBytes(value)}`).join(', ')}>
+        {rows.map(([key, , value]) => <span key={key} className={`ram-part ram-${key}`} style={{ width: `${Math.max(0, Math.min(100, (Number(value) || 0) / total * 100))}%` }} />)}
+      </div>
+      <ul className="ram-breakdown-legend">
+        {rows.map(([key, label, value]) => <li key={key}><i className={`ram-swatch ram-${key}`} aria-hidden="true" /><span>{label}</span><b>{formatBytes(value)}</b></li>)}
+      </ul>
+      <p className="hint">{tr("An account's RAM is its processes plus their file cache. MariaDB serves every site, so it is in no account: that is why the accounts do not add up to what the server uses.")}</p>
+    </div>;
+  }
+
   function ResourceCard({ icon: Icon, label, value, detail, percent }) {
     const safePercent = percent == null ? null : clampPercent(percent);
     return <article className="resource-card">
@@ -4998,6 +5026,7 @@ function App() {
               <ResourceCard icon={HardDrive} label={tr("Disk")} value={formatPercent(disk.percent)} percent={disk.percent} detail={`${formatBytes(disk.used)} / ${formatBytes(disk.total)}`} />
               <ResourceCard icon={Network} label={tr("Network")} value={`${formatBytes(networkTotal)}/s`} detail={tr("Down {0}/s / Up {1}/s", formatBytes(network.rx_per_sec), formatBytes(network.tx_per_sec))} />
             </div>
+            <RamBreakdown memory={memory} />
           </section>
           {limitsOn && renderTopAccounts()}
           {renderToolPanel(5)}
@@ -5163,6 +5192,10 @@ function App() {
         </div>
       </div>
       <p className="hint usage-note">{tr("Disk read and write count only what actually reaches the disk. Files the server already holds in memory are read without touching it, so 0 is normal for a quiet site.")}</p>
+      <p className="hint usage-note">
+        {measured && now.memory_anon_mb != null && <>{tr("RAM now: processes {0}, file cache and OPcache {1}.", formatMegabytes(now.memory_anon_mb), formatMegabytes(now.memory_cache_mb))}{' '}</>}
+        {tr("The cache counts towards the limit but is given back when memory runs short. MariaDB serves every site and is not counted here. Adding up processes in htop or ps gives more, because OPcache's shared memory is counted again in every process.")}
+      </p>
       <h3 className="usage-subtitle">{tr("Over time")}</h3>
       <div className="usage-charts">
         <UsageChart {...common} title={tr("CPU")} pick={point => point.cpu} limit={caps.cpu_percent} format={formatCpuPercent} floor={10} />
@@ -7939,7 +7972,7 @@ function App() {
           <div><strong>{tr("OPcache memory:")}</strong> {phpTuning.recommendation.opcache_memory_consumption} {tr("MB")}</div>
           <div><strong>{tr("OPcache files:")}</strong> {phpTuning.recommendation.opcache_max_accelerated_files}</div>
           <div><strong>{tr("OPcache JIT:")}</strong> {phpTuning.recommendation.opcache_jit} ({phpTuning.recommendation.opcache_jit_buffer_size}{tr("MB)")}</div>
-          <div><strong>{tr("LSAPI workers:")}</strong> {phpTuning.recommendation.lsapi_children}</div>
+          <div><strong>{tr("PHP workers, whole server:")}</strong> {phpTuning.recommendation.lsapi_children} <small>{tr("(3 per CPU core an account may use, split over its sites)")}</small></div>
           <div><strong>{tr("LSAPI idle:")}</strong> {phpTuning.recommendation.lsapi_max_idle}{tr("s, max idle children:")} {phpTuning.recommendation.lsapi_max_idle_children}</div>
           <div><strong>upload_max:</strong> {phpTuning.recommendation.upload_max_filesize}</div>
           <div><strong>post_max:</strong> {phpTuning.recommendation.post_max_size}</div>

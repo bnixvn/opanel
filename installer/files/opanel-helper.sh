@@ -4313,59 +4313,94 @@ mariadb_megabytes() {
   printf '%s\n' "$default"
 }
 
+# MariaDB on a hosting server shares the machine with every site's PHP
+# (operator, 2026-10-06, after .122). The buffer pool takes a quarter of the
+# RAM at most, and no more than 1.25 times the InnoDB data it has to hold --
+# a pool larger than the data is memory the PHP workers needed. Connections
+# follow the PHP workers the memory left over can run (opanel's php_workers
+# plans the same number), and in-memory temporary tables stay small, since
+# each connection may build one. The panel's old Tune button wrote 65% of the
+# RAM and 400 connections into a 99- file that won over this one; it is gone.
+mariadb_innodb_data_mb() {
+  local bytes
+  bytes="$(timeout 60 mariadb -NBe "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE engine = 'InnoDB'" 2>/dev/null | tail -n1 || true)"
+  [[ "$bytes" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' $((bytes / 1048576))
+}
+
+php_lsapi_site_count() {
+  local count=0 conf
+  shopt -s nullglob
+  for conf in /usr/local/lsws/conf/opanel/vhosts/*/vhost.conf; do
+    grep -q 'LSAPI_CHILDREN=' "$conf" 2>/dev/null && count=$((count + 1))
+  done
+  shopt -u nullglob
+  printf '%s\n' "$count"
+}
+
 calculate_mariadb_tuning() {
-  local total_mb cpu_count buffer_default buffer_mb log_file_mb tmp_mb max_connections thread_cache
-  local table_open_cache open_files_limit packet_mb io_capacity
+  local total_mb cpu_count buffer_default buffer_floor buffer_mb log_file_mb tmp_mb max_connections thread_cache
+  local table_open_cache open_files_limit packet_mb io_capacity data_mb reserve_mb php_workers sites
   total_mb="$(php_fpm_total_memory_mb)"
   cpu_count="$(php_fpm_cpu_count)"
 
   if (( total_mb <= 1024 )); then
-    buffer_default=$((total_mb * 22 / 100))
-    max_connections=35
-    thread_cache=16
-    table_open_cache=512
-    tmp_mb=32
-    packet_mb=64
+    thread_cache=16; table_open_cache=512; packet_mb=64
   elif (( total_mb <= 2048 )); then
-    buffer_default=$((total_mb * 25 / 100))
-    max_connections=50
-    thread_cache=24
-    table_open_cache=512
-    tmp_mb=48
-    packet_mb=64
+    thread_cache=24; table_open_cache=512; packet_mb=64
   elif (( total_mb <= 4096 )); then
-    buffer_default=$((total_mb * 28 / 100))
-    max_connections=80
-    thread_cache=32
-    table_open_cache=1024
-    tmp_mb=64
-    packet_mb=96
+    thread_cache=32; table_open_cache=1024; packet_mb=96
   elif (( total_mb <= 8192 )); then
-    buffer_default=$((total_mb * 32 / 100))
-    max_connections=120
-    thread_cache=48
-    table_open_cache=1024
-    tmp_mb=96
-    packet_mb=128
+    thread_cache=48; table_open_cache=1024; packet_mb=128
   else
-    buffer_default=$((total_mb * 36 / 100))
-    max_connections=180
-    thread_cache=64
-    table_open_cache=2048
-    tmp_mb=128
-    packet_mb=128
+    thread_cache=64; table_open_cache=2048; packet_mb=128
   fi
 
+  if (( total_mb <= 4096 )); then
+    buffer_floor=256
+  elif (( total_mb <= 8192 )); then
+    buffer_floor=512
+  else
+    buffer_floor=1024
+  fi
+  buffer_default=$((total_mb * 25 / 100))
+  if data_mb="$(mariadb_innodb_data_mb)"; then
+    # Room for the data, but never below the floor: an import a minute after
+    # this runs should not start on a pool sized for an empty server.
+    local wanted=$((data_mb * 5 / 4))
+    (( wanted >= buffer_floor )) || wanted="$buffer_floor"
+    (( wanted < buffer_default )) && buffer_default="$wanted"
+  fi
   (( buffer_default >= 128 )) || buffer_default=128
-  (( buffer_default <= total_mb * 45 / 100 )) || buffer_default=$((total_mb * 45 / 100))
+  # In 128 MB steps, so a few MB of new data does not mean a new setting.
+  buffer_default=$(( (buffer_default + 127) / 128 * 128 ))
+  (( buffer_default <= total_mb * 25 / 100 || buffer_default <= 128 )) || buffer_default=$(( total_mb * 25 / 100 / 128 * 128 ))
+  (( buffer_default >= 128 )) || buffer_default=128
   buffer_mb="$(mariadb_megabytes "$(mariadb_tuning_value opanel_MARIADB_BUFFER_POOL_SIZE "${buffer_default}M")" "$buffer_default")"
   buffer_mb="$(positive_int_or_default "$buffer_mb" "$buffer_default" 128 "$((total_mb * 60 / 100))")"
+
+  # The PHP workers the rest of the memory runs, as php_workers.server_budget
+  # works it out, and two for every PHP site at the least.
+  reserve_mb=$((total_mb / 8))
+  (( reserve_mb >= 1024 )) || reserve_mb=1024
+  php_workers=$(( (total_mb - buffer_mb - reserve_mb) / 150 ))
+  sites="$(php_lsapi_site_count)"
+  (( php_workers >= sites * 2 )) || php_workers=$((sites * 2))
+  max_connections=$((php_workers + 20))
+  (( max_connections >= 50 )) || max_connections=50
+  (( max_connections <= 500 )) || max_connections=500
+
+  if (( total_mb >= 15000 )); then
+    tmp_mb=64
+  else
+    tmp_mb=32
+  fi
 
   max_connections="$(positive_int_or_default "$(mariadb_tuning_value opanel_MARIADB_MAX_CONNECTIONS "$max_connections")" "$max_connections" 20 1000)"
   thread_cache="$(positive_int_or_default "$(mariadb_tuning_value opanel_MARIADB_THREAD_CACHE_SIZE "$thread_cache")" "$thread_cache" 8 256)"
   table_open_cache="$(positive_int_or_default "$(mariadb_tuning_value opanel_MARIADB_TABLE_OPEN_CACHE "$table_open_cache")" "$table_open_cache" 256 65535)"
   tmp_mb="$(mariadb_megabytes "$(mariadb_tuning_value opanel_MARIADB_TMP_TABLE_SIZE "${tmp_mb}M")" "$tmp_mb")"
-  tmp_mb="$(positive_int_or_default "$tmp_mb" 64 16 512)"
+  tmp_mb="$(positive_int_or_default "$tmp_mb" 32 16 512)"
   packet_mb="$(mariadb_megabytes "$(mariadb_tuning_value opanel_MARIADB_MAX_ALLOWED_PACKET "${packet_mb}M")" "$packet_mb")"
   packet_mb="$(positive_int_or_default "$packet_mb" 64 16 512)"
   log_file_mb=$((buffer_mb / 4))
@@ -4384,12 +4419,18 @@ calculate_mariadb_tuning() {
   MARIADB_MAX_ALLOWED_PACKET="${packet_mb}M"
   MARIADB_INNODB_IO_CAPACITY="$io_capacity"
   MARIADB_OPEN_FILES_LIMIT="$open_files_limit"
+  MARIADB_DATA_MB="${data_mb:-}"
+  MARIADB_PHP_WORKERS="$php_workers"
 }
 
+# Writes the tuning file; returns 0 when it changed (or a stale 99- file of
+# the old Tune button went), 1 when everything was already as it should be.
 write_mariadb_tuning() {
   calculate_mariadb_tuning
   install -d -o root -g root -m 0755 "$(dirname "$MARIADB_TUNING_CONF")"
-  cat >"$MARIADB_TUNING_CONF" <<MYSQL
+  local staged changed=1
+  staged="$(mktemp)"
+  cat >"$staged" <<MYSQL
 # OPanel auto-tunes MariaDB for small and medium VPS plans.
 # Optional overrides in ${ENV_FILE}: opanel_MARIADB_BUFFER_POOL_SIZE,
 # OPanel_MARIADB_MAX_CONNECTIONS, opanel_MARIADB_THREAD_CACHE_SIZE,
@@ -4416,6 +4457,34 @@ long_query_time = 2
 [server]
 open_files_limit = ${MARIADB_OPEN_FILES_LIMIT}
 MYSQL
+  if [[ -f "$MARIADB_TUNING_CONF" ]] && cmp -s "$staged" "$MARIADB_TUNING_CONF"; then
+    rm -f "$staged"
+  else
+    install -m 0644 -o root -g root "$staged" "$MARIADB_TUNING_CONF"
+    rm -f "$staged"
+    changed=0
+  fi
+  if [[ -f "$(dirname "$MARIADB_TUNING_CONF")/99-opanel.cnf" ]]; then
+    rm -f "$(dirname "$MARIADB_TUNING_CONF")/99-opanel.cnf"
+    changed=0
+  fi
+  return "$changed"
+}
+
+mariadb_tune_preview() {
+  calculate_mariadb_tuning
+  printf 'innodb_buffer_pool_size=%s\n' "$MARIADB_INNODB_BUFFER_POOL_SIZE"
+  printf 'innodb_log_file_size=%s\n' "$MARIADB_INNODB_LOG_FILE_SIZE"
+  printf 'max_connections=%s\n' "$MARIADB_MAX_CONNECTIONS"
+  printf 'thread_cache_size=%s\n' "$MARIADB_THREAD_CACHE_SIZE"
+  printf 'table_open_cache=%s\n' "$MARIADB_TABLE_OPEN_CACHE"
+  printf 'tmp_table_size=%s\n' "$MARIADB_TMP_TABLE_SIZE"
+  printf 'max_allowed_packet=%s\n' "$MARIADB_MAX_ALLOWED_PACKET"
+  printf 'innodb_io_capacity=%s\n' "$MARIADB_INNODB_IO_CAPACITY"
+  printf 'innodb_data_mb=%s\n' "$MARIADB_DATA_MB"
+  printf 'php_workers=%s\n' "$MARIADB_PHP_WORKERS"
+  printf 'ram_mb=%s\n' "$(php_fpm_total_memory_mb)"
+  printf 'cores=%s\n' "$(php_fpm_cpu_count)"
 }
 
 ensure_mariadb_slow_log() {
@@ -4427,12 +4496,18 @@ ensure_mariadb_slow_log() {
   chmod 0640 "$log_file"
 }
 
+# Every update runs this. It restarted MariaDB every time, dropping every
+# site's connections for nothing when the numbers had not moved; now only a
+# setting that changed costs a restart.
 retune_mariadb() {
-  write_mariadb_tuning
   ensure_mariadb_slow_log
-  mariadbd --help --verbose >/dev/null
-  systemctl restart mariadb
-  echo "Retuned MariaDB: innodb_buffer_pool_size=${MARIADB_INNODB_BUFFER_POOL_SIZE}, max_connections=${MARIADB_MAX_CONNECTIONS}, table_open_cache=${MARIADB_TABLE_OPEN_CACHE}."
+  if write_mariadb_tuning; then
+    mariadbd --help --verbose >/dev/null
+    systemctl restart mariadb
+    echo "Retuned MariaDB: innodb_buffer_pool_size=${MARIADB_INNODB_BUFFER_POOL_SIZE}, max_connections=${MARIADB_MAX_CONNECTIONS}, tmp_table_size=${MARIADB_TMP_TABLE_SIZE}."
+  else
+    echo "MariaDB tuning unchanged: innodb_buffer_pool_size=${MARIADB_INNODB_BUFFER_POOL_SIZE}, max_connections=${MARIADB_MAX_CONNECTIONS}, tmp_table_size=${MARIADB_TMP_TABLE_SIZE}."
+  fi
 }
 
 delete_site_php_pools() {
@@ -6691,7 +6766,7 @@ addon_dns_disable() {
 # never run something that user could have edited. A test keeps the two in
 # step (test_resource_limits.py).
 LIMITS_AGENT="/usr/local/sbin/opanel-limits-agent"
-LIMITS_AGENT_SHA256="9c5cb26f191faceb4b84a1c66088de58fc4aa9aa381d7409f33436926be7b4ab"
+LIMITS_AGENT_SHA256="f6b4222169f5f565f9673e09bb84b2782b9304d4e6b77cd5ab0a52c6c5ce3915"
 LIMITS_UNIT="/etc/systemd/system/opanel-limits.service"
 LIMITS_DIR="/etc/opanel-limits"
 LIMITS_STATE_DIR="/var/lib/opanel-limits"
@@ -7860,6 +7935,10 @@ case "$cmd" in
   mariadb-retune)
     [[ $# -eq 0 ]] || deny "usage: mariadb-retune"
     retune_mariadb
+    ;;
+  mariadb-tune-preview)
+    [[ $# -eq 0 ]] || deny "usage: mariadb-tune-preview"
+    mariadb_tune_preview
     ;;
 
   # ---- panel runtime ----------------------------------------------------

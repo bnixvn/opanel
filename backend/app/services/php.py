@@ -353,6 +353,12 @@ from app.services.mariadb import _detect_ram_mb, _detect_cpu_cores, _detect_is_s
 
 # (max_ram_mb, memory_limit, opcache_mem_mb, opcache_files, interned_strings_mb,
 #  lsapi_children, lsapi_max_idle, lsapi_max_idle_children, lsapi_max_process_time)
+#
+# memory_limit is 1 GB on every size (operator, 2026-10-06). It is what one
+# request may take, not what the server has: the bigger tiers used to give
+# 2 GB and 4 GB, so one runaway request on a 16 GB box could hold a quarter of
+# it while every other worker waited. The lsapi_children column is no longer
+# what a vhost gets; php_workers plans that per account.
 _PHP_TIERS = [
     # Tiny VPS (≤512 MB)
     (512,  "1024M",   32,  2000,   8,   5,  60,   3,  300),
@@ -363,9 +369,9 @@ _PHP_TIERS = [
     # Large VPS (≤4 GB)
     (4096, "1024M",  256, 12000,  64,  40, 120,  20,  600),
     # XLarge VPS (≤8 GB)
-    (8192, "2048M",  512, 16000, 128,  60, 180,  30,  900),
+    (8192, "1024M",  512, 16000, 128,  60, 180,  30,  900),
     # XXLarge VPS (>8 GB)
-    (999999, "4096M", 512, 20000, 128, 80, 180,  40,  900),
+    (999999, "1024M", 512, 20000, 128, 80, 180,  40,  900),
 ]
 
 
@@ -392,8 +398,11 @@ def recommend_php_config() -> dict:
             lsapi_max_proc = tier[8]
             break
 
-    # Scale LSAPI children by CPU cores (min from tier, max from cores)
-    lsapi_children = max(lsapi_children, cores * 2)
+    # What the whole server's memory holds; each site's share is planned per
+    # account by php_workers and written into its vhost.
+    from app.services import php_workers
+
+    lsapi_children = php_workers.server_budget()
 
     # Upload limits scale with memory
     upload_mb = max(64, min(1024, ram_mb // 4))

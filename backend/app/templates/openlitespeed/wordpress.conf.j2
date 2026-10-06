@@ -79,8 +79,8 @@ module mod_security {
 extprocessor {{ lsphp_app }} {
     type                  lsapi
     address               UDS://{{ lsphp_socket }}
-    maxConns              100
-    env                   LSAPI_CHILDREN=100
+    maxConns              {{ php_workers }}
+    env                   LSAPI_CHILDREN={{ php_workers }}
     initTimeout           60
     retryTimeout          0
     persistConn           1

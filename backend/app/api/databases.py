@@ -268,7 +268,8 @@ def get_mariadb_tuning(current_user: User = Depends(get_current_user)):
 
 @router.post("/mariadb/tuning")
 def apply_mariadb_tuning(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Auto-tune MariaDB for the current hardware and restart."""
+    """Retune MariaDB through the helper (the only tuner); it restarts only
+    when a setting changed."""
     ensure_role(current_user.role, Role.admin)
     result = mariadb.apply_mariadb_tuning()
     log_action(db, current_user.id, "mariadb_tuning_apply",

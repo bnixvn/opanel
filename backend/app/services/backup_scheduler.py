@@ -326,3 +326,13 @@ if __name__ == "__main__":
         resource_limits.sync_quietly()
     except Exception as exc:  # noqa: BLE001
         print(f"opanel resource limits tick failed: {exc}")
+    # PHP workers follow each account's sites and CPU limit and the server's
+    # memory; a site whose number moved is re-rendered (one OLS restart).
+    try:
+        from app.services import php_workers
+
+        changed = php_workers.reconcile_quietly()
+        if changed:
+            print(f"opanel PHP workers re-rendered: {', '.join(changed)}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"opanel PHP workers tick failed: {exc}")

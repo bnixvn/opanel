@@ -436,11 +436,17 @@ def counters(slice_name):
         return None
     cpu = read_kv(os.path.join(base, "cpu.stat"))
     events = read_kv(os.path.join(base, "memory.events"))
+    stat = read_kv(os.path.join(base, "memory.stat"))
     read, write = read_io(os.path.join(base, "io.stat"))
     return {
         "cpu_usec": cpu.get("usage_usec", 0),
         "throttled_usec": cpu.get("throttled_usec", 0),
         "memory_bytes": read_int(os.path.join(base, "memory.current")),
+        # What memory.current is made of, for the page to say so: the
+        # processes' own memory, and the file cache - OPcache's shared memory
+        # included - that the kernel takes back when it needs it.
+        "memory_anon": stat.get("anon", 0),
+        "memory_file": stat.get("file", 0),
         "processes": read_int(os.path.join(base, "pids.current")),
         "read_bytes": read,
         "write_bytes": write,
@@ -480,7 +486,8 @@ class Sampler:
         for name in names:
             current = counters(name)
             if current is None:
-                usage[name] = {"cpu_percent": 0.0, "memory_mb": 0, "processes": 0, "io_read_mbps": 0.0,
+                usage[name] = {"cpu_percent": 0.0, "memory_mb": 0, "memory_anon_mb": 0, "memory_cache_mb": 0,
+                               "processes": 0, "io_read_mbps": 0.0,
                                "io_write_mbps": 0.0, "memory_high_events": 0, "memory_max_events": 0,
                                "oom_kills": 0, "throttled_seconds": 0.0}
                 continue
@@ -496,6 +503,8 @@ class Sampler:
             usage[name] = {
                 "cpu_percent": round(cpu, 1),
                 "memory_mb": current["memory_bytes"] // 1048576,
+                "memory_anon_mb": current["memory_anon"] // 1048576,
+                "memory_cache_mb": current["memory_file"] // 1048576,
                 "processes": current["processes"],
                 # To the KB/s: a quiet site moves a few KB a second, which
                 # two decimals of MB/s would round away to 0.

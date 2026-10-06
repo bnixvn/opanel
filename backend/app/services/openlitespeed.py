@@ -549,7 +549,16 @@ def _build_context(
         "hsts_header": HSTS_HEADER if has_ssl else "",
         "csp_header": WORDPRESS_CSP if checked_app == "wordpress" else "",
         "legacy_rlimits": not _cgroup_limits_enforced(),
+        # Per account, not per site, and no more than the CPU and the memory
+        # can run: see php_workers.
+        "php_workers": _php_workers(safe_domain) if lsphp_app else 0,
     }
+
+
+def _php_workers(domain: str) -> int:
+    from app.services import php_workers
+
+    return php_workers.for_domain(domain)
 
 
 def _cgroup_limits_enforced() -> bool:
