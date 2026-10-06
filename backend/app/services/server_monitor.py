@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -85,8 +86,13 @@ def filesystems() -> list[dict]:
             size, used, available = int(parts[2]), int(parts[3]), int(parts[4])
         except ValueError:
             continue
+        mount = " ".join(parts[6:])
+        try:
+            dev = str(os.stat(mount).st_dev)
+        except OSError:
+            dev = ""
         rows.append({"device": parts[0], "type": parts[1], "size": size, "used": used,
-                     "available": available, "mount": " ".join(parts[6:])})
+                     "available": available, "mount": mount, "dev": dev})
     return rows
 
 
@@ -99,21 +105,21 @@ def _read_cache() -> dict:
 
 
 def _parse_scan(output: str) -> list[dict]:
-    """The helper's lines (key, bytes, path, mount), with the backups kept
-    under /home taken out of the websites so nothing is counted twice."""
+    """The helper's lines (key, bytes, path, device number), with the backups
+    kept under /home taken out of the websites so nothing is counted twice."""
     lines = []
     for line in output.splitlines():
         fields = line.split("\t")
         if len(fields) == 4 and fields[1].isdigit():
-            lines.append({"key": fields[0], "bytes": int(fields[1]), "path": fields[2], "mount": fields[3]})
+            lines.append({"key": fields[0], "bytes": int(fields[1]), "path": fields[2], "dev": fields[3]})
     inside_home = sum(row["bytes"] for row in lines
                       if row["key"] == "backups" and row["path"].startswith("/home/"))
     parts: dict[tuple[str, str], int] = {}
     for row in lines:
         key = "websites" if row["key"] == "home" else row["key"]
         size = max(0, row["bytes"] - inside_home) if key == "websites" else row["bytes"]
-        parts[(row["mount"], key)] = parts.get((row["mount"], key), 0) + size
-    return [{"mount": mount, "key": key, "bytes": size} for (mount, key), size in parts.items()]
+        parts[(row["dev"], key)] = parts.get((row["dev"], key), 0) + size
+    return [{"dev": dev, "key": key, "bytes": size} for (dev, key), size in parts.items()]
 
 
 def _account_usage() -> list[dict]:
@@ -171,10 +177,10 @@ def disk(auto_scan: bool = True) -> dict:
     systems = filesystems()
     parts = (cache or {}).get("parts") or []
     for fs in systems:
-        mine = [part for part in parts if part.get("mount") == fs["mount"]]
+        mine = [part for part in parts if fs["dev"] and part.get("dev") == fs["dev"]]
         # Whatever the scan did not name: the system, packages, swap files.
         known = sum(int(part.get("bytes") or 0) for part in mine)
-        fs["parts"] = mine + ([{"mount": fs["mount"], "key": "other", "bytes": fs["used"] - known}]
+        fs["parts"] = mine + ([{"dev": fs["dev"], "key": "other", "bytes": fs["used"] - known}]
                               if mine and fs["used"] > known else [])
     return {
         "filesystems": systems,

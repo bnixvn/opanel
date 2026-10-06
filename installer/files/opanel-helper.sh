@@ -7374,11 +7374,11 @@ process_top() {
   COLUMNS=300 top -b -n 2 -d 1 -c -w 300 2>/dev/null | awk '/^top - /{frame++} frame == 2' | head -n 400
 }
 
-# What takes the disk space, one line each: key, bytes, path, mount point.
+# What takes the disk space, one line each: key, bytes, path, device number.
 # du -x stays on the filesystem it starts on, and timeout keeps a huge /home
-# from holding the helper for ever. The panel adds the lines up per mount.
+# from holding the helper for ever. The panel adds the lines up per device.
 disk_usage_scan() {
-  local backup_root datadir path key bytes mount
+  local backup_root datadir path key bytes device
   backup_root="$(env_get BACKUP_ROOT 2>/dev/null || true)"
   [[ -n "$backup_root" ]] || backup_root="/var/backups/opanel"
   datadir="$(timeout 20 mariadb -NBe 'SELECT @@datadir' 2>/dev/null | tail -n1 || true)"
@@ -7387,8 +7387,11 @@ disk_usage_scan() {
     [[ -n "$path" && -d "$path" && ! -L "$path" ]] || continue
     bytes="$(timeout 900 du -sxb -- "$path" 2>/dev/null | tail -n1 | awk '{print $1}' || true)"
     [[ "$bytes" =~ ^[0-9]+$ ]] || continue
-    mount="$(df -P -- "$path" 2>/dev/null | awk 'NR==2 {print $6}' || true)"
-    printf '%s\t%s\t%s\t%s\n' "$key" "$bytes" "$path" "${mount:-/}"
+    # The device, not df's mount point: inside the panel's sandbox every
+    # ReadWritePaths entry is a bind mount, so df named /home and /opt/opanel
+    # as filesystems of their own. A bind mount keeps the device's number.
+    device="$(stat -c %d -- "$path" 2>/dev/null || true)"
+    printf '%s\t%s\t%s\t%s\n' "$key" "$bytes" "$path" "${device:-0}"
   done <<PATHS
 home /home
 databases ${datadir%/}

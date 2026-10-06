@@ -28,34 +28,35 @@ def test_top_and_du_run_as_root_through_the_helper():
     assert 'shell.privileged("process-top"' in inspect.getsource(server_monitor.processes)
     assert 'shell.privileged("disk-usage-scan"' in inspect.getsource(server_monitor._scan)
     top = HELPER.split("\nprocess_top() {", 1)[1].split("\n}\n", 1)[0]
-    assert "top -b -n 1 -c" in top
+    assert "top -b -n 2 -d 1 -c" in top and "frame == 2" in top, "the second frame, sorted by real %CPU"
     scan = HELPER.split("\ndisk_usage_scan() {", 1)[1].split("\n}\n", 1)[0]
     assert "timeout 900 du -sxb" in scan and '! -L "$path"' in scan
+    assert 'stat -c %d -- "$path"' in scan, "by device: inside the sandbox df names bind mounts"
 
 
 def test_backups_under_home_are_not_counted_twice():
     output = "\n".join([
-        "home\t10000\t/home\t/",
-        "databases\t3000\t/var/lib/mysql\t/",
-        "backups\t2000\t/var/backups/opanel\t/",
-        "backups\t1500\t/home/admin/opanel-backups\t/",
-        "backups\t500\t/home/admin/backups\t/",
-        "logs\t700\t/var/log\t/",
-        "panel\t300\t/opt/opanel\t/",
-        "home\tnot-a-number\t/x\t/",
+        "home\t10000\t/home\t2049",
+        "databases\t3000\t/var/lib/mysql\t2049",
+        "backups\t2000\t/var/backups/opanel\t2049",
+        "backups\t1500\t/home/admin/opanel-backups\t2049",
+        "backups\t500\t/home/admin/backups\t2049",
+        "logs\t700\t/var/log\t2049",
+        "panel\t300\t/opt/opanel\t2049",
+        "home\tnot-a-number\t/x\t2049",
     ])
-    parts = {(row["mount"], row["key"]): row["bytes"] for row in server_monitor._parse_scan(output)}
-    assert parts == {("/", "websites"): 8000, ("/", "databases"): 3000, ("/", "backups"): 4000,
-                     ("/", "logs"): 700, ("/", "panel"): 300}
+    parts = {(row["dev"], row["key"]): row["bytes"] for row in server_monitor._parse_scan(output)}
+    assert parts == {("2049", "websites"): 8000, ("2049", "databases"): 3000, ("2049", "backups"): 4000,
+                     ("2049", "logs"): 700, ("2049", "panel"): 300}
 
 
 def test_what_the_scan_does_not_name_is_other(monkeypatch):
     monkeypatch.setattr(server_monitor, "filesystems", lambda: [
-        {"device": "/dev/vda1", "type": "ext4", "size": 100000, "used": 20000, "available": 80000, "mount": "/"},
-        {"device": "/dev/vdb1", "type": "ext4", "size": 50000, "used": 1000, "available": 49000, "mount": "/data"},
+        {"device": "/dev/vda1", "type": "ext4", "size": 100000, "used": 20000, "available": 80000, "mount": "/", "dev": "2049"},
+        {"device": "/dev/vdb1", "type": "ext4", "size": 50000, "used": 1000, "available": 49000, "mount": "/data", "dev": "2065"},
     ])
     monkeypatch.setattr(server_monitor, "_read_cache", lambda: {"time": 9_999_999_999, "parts": [
-        {"mount": "/", "key": "websites", "bytes": 8000}, {"mount": "/", "key": "databases", "bytes": 3000}]})
+        {"dev": "2049", "key": "websites", "bytes": 8000}, {"dev": "2049", "key": "databases", "bytes": 3000}]})
     result = server_monitor.disk(auto_scan=False)
     root, data = result["filesystems"]
     assert [(part["key"], part["bytes"]) for part in root["parts"]] == [("websites", 8000), ("databases", 3000), ("other", 9000)]
