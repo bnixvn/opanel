@@ -5066,12 +5066,19 @@ function App() {
       {(scan?.accounts || []).length > 0 && <section className="section">
         <div className="section-title"><div><h2>{tr("Largest accounts")}</h2>
           <p className="hint">{tr("Each account's websites on disk, measured with the rest.")}</p></div></div>
-        <div className="table-scroll"><table className="table">
-          <thead><tr><th>{tr("Account")}</th><th>{tr("Used")}</th><th>{tr("Limit")}</th></tr></thead>
-          <tbody>{scan.accounts.map(row => <tr key={row.username}>
-            <td>{row.username}</td><td>{formatBytes(row.bytes)}</td><td>{row.limit_mb ? formatMegabytes(row.limit_mb) : '∞'}</td>
-          </tr>)}</tbody>
-        </table></div>
+        <div className="top-accounts disk-accounts">
+          <div className="top-accounts-row is-head" aria-hidden="true"><span>{tr("Account")}</span><span>{tr("Used")}</span></div>
+          {scan.accounts.map(row => {
+            const percent = row.limit_mb > 0 ? clampPercent(row.bytes / (row.limit_mb * 1024 * 1024) * 100) : null;
+            return <div className="top-accounts-row" key={row.username}>
+              <span className="top-accounts-name"><strong>{row.username}</strong></span>
+              <span className="top-accounts-meter" data-label={tr("Used")}>
+                <span>{formatBytes(row.bytes)}<small> / {row.limit_mb > 0 ? formatMegabytes(row.limit_mb) : tr("Unlimited")}</small></span>
+                {percent !== null && <span className={`resource-track${percent >= 90 ? ' tone-bad' : percent >= 75 ? ' tone-warn' : ''}`}><span style={{ width: `${percent}%` }}></span></span>}
+              </span>
+            </div>;
+          })}
+        </div>
       </section>}
     </>;
   }

@@ -101,6 +101,7 @@ export default {
   "Statistics": "Thống kê",
   "Stopped (24 h)": "Bị dừng (24 giờ)",
   "Stopped at the RAM limit (24 h)": "Bị dừng vì chạm giới hạn RAM (24 giờ)",
+  "Swap": "Swap",
   "System and other": "Hệ thống và phần khác",
   "System and panel": "Hệ thống và panel",
   "The cache counts towards the limit but is given back when memory runs short. MariaDB serves every site and is not counted here. Adding up processes in htop or ps gives more, because OPcache's shared memory is counted again in every process.": "Cache được tính vào giới hạn nhưng được trả lại khi thiếu RAM. MariaDB phục vụ mọi website nên không tính ở đây. Cộng RAM từng tiến trình trong htop hoặc ps sẽ ra lớn hơn, vì bộ nhớ dùng chung của OPcache bị đếm lại ở mỗi tiến trình.",

@@ -749,13 +749,16 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .restore-kind{margin-left:8px;vertical-align:1px;font-weight:600}
 /* Process monitor: top -c in a terminal. */
 .process-filter{width:220px;max-width:100%}
+/* min-width:0: in the section's grid, top's long lines would widen the card. */
+.process-terminal-wrap{min-width:0}
 .process-terminal-head{display:flex;justify-content:space-between;gap:12px;padding:8px 14px;background:var(--console-surface);color:var(--console-muted);border:1px solid var(--console-border);border-bottom:0;border-radius:var(--radius-md) var(--radius-md) 0 0;font-family:var(--font-mono);font-size:12px}
 .process-terminal{margin:0;padding:12px 14px;min-height:420px;max-height:70vh;overflow:auto;background:var(--console-bg);color:var(--console-text);border:1px solid var(--console-border);border-radius:0 0 var(--radius-md) var(--radius-md);font-family:var(--font-mono);font-size:12px;line-height:1.45;white-space:pre}
 /* RAM, disk and traffic pages. */
 .ram-facts{margin-top:14px}
 .disk-fs,.traffic-iface{display:grid;gap:8px;padding:14px 0;border-top:1px solid var(--border)}
 .disk-fs:first-of-type,.traffic-iface:first-of-type{border-top:0}
-.table-scroll{overflow-x:auto}
+.disk-accounts .top-accounts-row{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}
+.disk-accounts .top-accounts-name{grid-column:auto}
 .ram-websites{background:var(--primary)}
 .ram-databases{background:var(--warning)}
 .ram-backups{background:var(--success)}
