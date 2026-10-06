@@ -48,7 +48,7 @@ h1,h2,h3,h4{letter-spacing:0}
 .sidebar .sidebar-user .user-menu-name{flex:1;min-width:0;text-align:left}
 .sidebar .sidebar-user .user-menu-chevron{color:var(--nav-muted);transform:rotate(180deg)}
 .sidebar .sidebar-tool{
-  flex:none;width:38px;min-width:38px;height:38px;min-height:38px;padding:0;display:inline-grid;place-items:center;
+  flex:none;width:38px;min-width:38px;height:38px;min-height:38px;padding:0;display:inline-flex;align-items:center;justify-content:center;
   background:transparent;color:var(--nav-text);border:1px solid var(--nav-border);border-radius:var(--radius-sm);box-shadow:none;font-size:12px;font-weight:700;
 }
 .sidebar .sidebar-tool:hover:not(:disabled){background:var(--nav-hover);color:var(--nav-text-strong);border-color:var(--nav-border)}
