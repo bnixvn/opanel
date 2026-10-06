@@ -36,8 +36,17 @@ jobs:
           # and opanel signs its JWTs with HS256 (app/core/security.py), so
           # no ECDSA code path is exercised. Removing it for good means
           # dropping python-jose for PyJWT.
+          #
+          # CVE-2026-85394 -- python-jose through 3.5.0 accepts a DER-encoded
+          # public key as an HMAC secret (algorithm confusion; an incomplete
+          # fix of CVE-2024-33663). No release carries the fix yet (only a
+          # commit, 2026-10-06). It needs a service that verifies with a
+          # public key and lets the token choose the algorithm; opanel signs
+          # and verifies with HS256 and its own secret, and every jwt.decode
+          # pins algorithms=[ALGORITHM]. Same way out: PyJWT.
           ignore-vulns: |
             GHSA-wj6h-64fc-37mp
+            CVE-2026-85394
 
   node-deps:
     name: Frontend dependencies (npm audit)

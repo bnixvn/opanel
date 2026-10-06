@@ -4711,19 +4711,19 @@ function App() {
     const total = Number(memory?.total) || 0;
     if (!parts || !total) return null;
     const rows = [
-      ['accounts', tr("Hosting accounts"), parts.accounts],
-      ['mariadb', tr("MariaDB (every site's databases)"), parts.mariadb],
-      ['system', tr("System and panel"), parts.system],
-      ['cache', tr("Cache (given back when needed)"), parts.cache],
-      ['free', tr("Free"), parts.free],
+      ['accounts', "Hosting accounts", parts.accounts],
+      ['mariadb', "MariaDB (every site's databases)", parts.mariadb],
+      ['system', "System and panel", parts.system],
+      ['cache', "Cache (given back when needed)", parts.cache],
+      ['free', "Free", parts.free],
     ].filter(row => row[2] != null);
     return <div className="ram-breakdown">
       <div className="ram-breakdown-head"><strong>{tr("Where the RAM is")}</strong><small>{formatBytes(total)}</small></div>
-      <div className="ram-breakdown-bar" role="img" aria-label={rows.map(([, label, value]) => `${label}: ${formatBytes(value)}`).join(', ')}>
+      <div className="ram-breakdown-bar" role="img" aria-label={rows.map(([, label, value]) => `${tr(label)}: ${formatBytes(value)}`).join(', ')}>
         {rows.map(([key, , value]) => <span key={key} className={`ram-part ram-${key}`} style={{ width: `${Math.max(0, Math.min(100, (Number(value) || 0) / total * 100))}%` }} />)}
       </div>
       <ul className="ram-breakdown-legend">
-        {rows.map(([key, label, value]) => <li key={key}><i className={`ram-swatch ram-${key}`} aria-hidden="true" /><span>{label}</span><b>{formatBytes(value)}</b></li>)}
+        {rows.map(([key, label, value]) => <li key={key}><i className={`ram-swatch ram-${key}`} aria-hidden="true" /><span>{tr(label)}</span><b>{formatBytes(value)}</b></li>)}
       </ul>
       <p className="hint">{tr("An account's RAM is its processes plus their file cache. MariaDB serves every site, so it is in no account: that is why the accounts do not add up to what the server uses.")}</p>
     </div>;
