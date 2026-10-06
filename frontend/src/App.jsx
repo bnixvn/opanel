@@ -4984,6 +4984,19 @@ function App() {
     </nav>;
   }
 
+  // The version opens Updates for an administrator, with a dot while a newer
+  // release waits; a customer sees the number only.
+  function renderTopVersion() {
+    if (!isAdmin) return <span className="top-version" title={tr("Panel version")}>v{appVersion}</span>;
+    const waiting = resourceUsage?.panel_update?.update_available === true;
+    const latest = resourceUsage?.panel_update?.latest_version;
+    const title = waiting ? tr("Panel update {0} is available.", latest) : tr("Updates");
+    return <button type="button" className={`top-version${waiting ? ' has-update' : ''}${page === 'updates' ? ' active' : ''}`}
+      onClick={() => navigateToPage('updates')} title={title} aria-label={`${tr("Panel version")} ${appVersion}. ${title}`}>
+      v{appVersion}{waiting && <i className="top-version-dot" aria-hidden="true" />}
+    </button>;
+  }
+
   function renderProcessMonitor() {
     const output = processTop?.output || '';
     const lines = output.replace(/\s+$/, '').split('\n');
@@ -9681,7 +9694,7 @@ function App() {
           </div>
           <div className="top-actions">
             {isAdmin && renderTopStats()}
-            {appVersion && <span className="top-version" title={tr("Panel version")}>v{appVersion}</span>}
+            {appVersion && renderTopVersion()}
           </div>
         </section>
         <div className="content-body">

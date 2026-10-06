@@ -93,3 +93,13 @@ def test_the_shell_has_the_chips_on_top_and_the_account_below():
     for route in ("processes: '/processes'", "ramUsage: '/ram-usage'", "diskUsage: '/disk-usage'", "traffic: '/traffic'"):
         assert route in APP, route
     assert "dash-resources" not in APP, "the dashboard no longer carries the resource cards"
+
+
+def test_the_version_opens_updates_and_marks_a_waiting_release():
+    version = APP.split("  function renderTopVersion() {", 1)[1].split("\n  function ", 1)[0]
+    assert "if (!isAdmin) return <span" in version, "a customer sees the number only"
+    assert "navigateToPage('updates')" in version and "panel_update?.update_available === true" in version
+    from app.api import services
+    source = inspect.getsource(services.get_resource_usage)
+    assert "if is_admin_role(current_user.role):" in source and "updates.cached_release_summary()" in source, \
+        "the polled endpoint reads the last recorded check, for administrators only"

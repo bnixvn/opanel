@@ -77,6 +77,13 @@ h1,h2,h3,h4{letter-spacing:0}
 .top-actions .top-stat.tone-bad{border-color:var(--danger-border);background:var(--danger-bg)}
 .top-actions .top-stat.tone-bad b,.top-actions .top-stat.tone-bad svg{color:var(--danger-text)}
 .top-version{font-size:12.5px;font-weight:600;color:var(--text-secondary);padding:0 4px;white-space:nowrap}
+.top-actions button.top-version{
+  position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;min-height:32px;width:auto;padding:0 10px;
+  background:transparent;border:1px solid transparent;border-radius:999px;box-shadow:none;font-variant-numeric:tabular-nums;
+}
+.top-actions button.top-version:hover:not(:disabled),.top-actions button.top-version.active{background:var(--surface-hover);border-color:var(--border);color:var(--text)}
+.top-actions button.top-version.has-update{background:var(--primary-light);border-color:var(--primary-light);color:var(--primary-ink)}
+.top-version-dot{width:7px;height:7px;border-radius:50%;background:var(--primary);flex:none}
 
 .user-menu{position:relative}
 .top-actions .user-menu-trigger{

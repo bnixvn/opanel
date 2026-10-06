@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_current_user
-from app.core.permissions import Role, ensure_role
+from app.core.permissions import Role, ensure_role, is_admin_role
 from app.models.entities import User
 from app.schemas.schemas import ServiceAction
+from app.services import updates
 from app.services.system import install_wordpress_stack, list_services, resource_usage, service_action, system_info
 
 router = APIRouter(prefix="/services", tags=["services"])
@@ -18,7 +19,15 @@ def get_system_info(current_user: User = Depends(get_current_user)):
 @router.get("/resource-usage")
 def get_resource_usage(current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.end_user)
-    return resource_usage()
+    usage = resource_usage()
+    if is_admin_role(current_user.role):
+        # The top bar's version button marks a waiting update. The last
+        # recorded check only: this is polled, it must not reach the network.
+        try:
+            usage["panel_update"] = updates.cached_release_summary()
+        except Exception:  # noqa: BLE001 - the chips matter more than the dot
+            usage["panel_update"] = None
+    return usage
 
 
 @router.get("/list")
