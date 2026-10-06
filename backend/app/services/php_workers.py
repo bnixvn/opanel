@@ -237,8 +237,35 @@ def reconcile() -> list[str]:
     return changed
 
 
+def update_running(max_age_seconds: int = 7200) -> bool:
+    """An update is rewriting every vhost itself right now. The minute tick
+    keeps out of its way rather than re-render the same sites and restart
+    OpenLiteSpeed alongside it (seen on .41: the tick ran between the new
+    code landing and the update's own site refresh). A state left at
+    "updating" by an update that died stops counting after two hours."""
+    import json
+    from datetime import datetime, timezone
+
+    from app.services import updates
+
+    try:
+        state = json.loads(updates.UPDATE_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if state.get("last_update_status") not in {"checking", "updating"}:
+        return False
+    try:
+        started = datetime.strptime(state.get("last_update_started_at", ""), "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    age = datetime.now(timezone.utc).replace(tzinfo=None) - started
+    return age.total_seconds() < max_age_seconds
+
+
 def reconcile_quietly() -> list[str]:
     try:
+        if update_running():
+            return []
         return reconcile()
     except Exception:  # noqa: BLE001 - the minute tick must go on
         logger.warning("PHP workers were not reconciled", exc_info=True)

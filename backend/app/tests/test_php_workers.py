@@ -172,3 +172,29 @@ def test_pool_units(value, mb):
     number = value.rstrip("KkMmGg")
     unit = value[len(number):]
     assert php_workers._megabytes(number, unit) == mb
+
+
+def test_the_tick_keeps_out_of_a_running_update(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import updates
+
+    state = tmp_path / "update-status.json"
+    monkeypatch.setattr(updates, "UPDATE_STATE_FILE", state)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    calls = []
+    monkeypatch.setattr(php_workers, "reconcile", lambda: calls.append(1) or ["a.test"])
+
+    def write(status, minutes_ago):
+        state.write_text(json.dumps({"last_update_status": status,
+                                     "last_update_started_at": (now - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")}))
+
+    write("updating", 5)
+    assert php_workers.reconcile_quietly() == [] and calls == [], "the update rewrites the vhosts itself"
+    write("updating", 180)
+    assert php_workers.reconcile_quietly() == ["a.test"], "an update that died two hours ago does not block it"
+    write("completed", 1)
+    assert php_workers.reconcile_quietly() == ["a.test"]
+    state.unlink()
+    assert php_workers.reconcile_quietly() == ["a.test"]
