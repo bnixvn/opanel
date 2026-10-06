@@ -52,6 +52,9 @@ BLOCKED_GETS = [re.compile(pattern) for pattern in (
     r"^/api/maintenance/backups/\d+/download$",
     r"^/api/maintenance/user-backups-download$",
     r"^/api/maintenance/files/\d+/download$",
+    # top -c: every process's command line, and a command line can carry a
+    # password (mysqldump -p..., a cron job's curl with a token).
+    r"^/api/system/processes$",
 )]
 HASH_PREFIX = "opanel-demo$"
 READ_ONLY_MESSAGE = "This is a read-only demo: changes are not saved."

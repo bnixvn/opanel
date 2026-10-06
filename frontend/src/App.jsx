@@ -4238,11 +4238,11 @@ function App() {
     return () => clearInterval(timer);
   }, [isAuthenticated, page, isAdmin]);
   useEffect(() => {
-    if (!isAuthenticated || !isAdmin || page !== 'processes' || processPaused) return undefined;
+    if (!isAuthenticated || !isAdmin || page !== 'processes' || processPaused || currentUser?.demo) return undefined;
     loadProcessTop();
     const timer = setInterval(loadProcessTop, 3000);
     return () => clearInterval(timer);
-  }, [isAuthenticated, isAdmin, page, processPaused]);
+  }, [isAuthenticated, isAdmin, page, processPaused, currentUser?.demo]);
   useEffect(() => {
     if (!isAuthenticated || !isAdmin || page !== 'ramUsage') return undefined;
     loadMemoryInfo();
@@ -5018,7 +5018,8 @@ function App() {
       </div>
       <div className="process-terminal-wrap">
         <div className="process-terminal-head"><span>top -c</span><small>{processPaused ? tr("Paused") : when}</small></div>
-        <pre className="process-terminal" aria-live="off">{output ? shown.join('\n') : tr("Reading processes...")}</pre>
+        <pre className="process-terminal" aria-live="off">{currentUser?.demo ? tr("This is a demo: the process list is not shown.")
+          : output ? shown.join('\n') : tr("Reading processes...")}</pre>
       </div>
     </section>;
   }

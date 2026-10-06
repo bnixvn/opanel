@@ -2162,6 +2162,7 @@ export default {
   "Show the demo accounts on the login page, with a one-click sign-in": "Hiện tài khoản demo ở trang đăng nhập, kèm nút đăng nhập một chạm",
   "Sign in": "Đăng nhập",
   "You are viewing a read-only demo: you can open every page, and nothing you change is saved.": "Bạn đang xem bản demo chỉ xem: mở được mọi trang, nhưng mọi thay đổi đều không được lưu.",
+  "This is a demo: the process list is not shown.": "Đây là bản demo: danh sách tiến trình không được hiển thị.",
   "This is a read-only demo: changes are not saved.": "Đây là bản demo chỉ xem: thay đổi không được lưu.",
   "This is a demo account, and demo mode is off.": "Đây là tài khoản demo, và Demo mode đang tắt.",
   "You cannot make your own account a demo account": "Không thể biến chính tài khoản của bạn thành tài khoản demo",

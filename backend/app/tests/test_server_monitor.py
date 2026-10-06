@@ -24,6 +24,15 @@ def test_every_route_is_the_administrators():
         assert "ensure_role(current_user.role, Role.admin)" in inspect.getsource(route), route.__name__
 
 
+def test_a_demo_account_does_not_read_the_process_list():
+    """A demo account's password is public, and may be an administrator's;
+    a command line can carry a password."""
+    from app.services import demo_mode
+    assert any(pattern.match("/api/system/processes") for pattern in demo_mode.BLOCKED_GETS)
+    assert not any(pattern.match("/api/system/memory") for pattern in demo_mode.BLOCKED_GETS)
+    assert "page !== 'processes' || processPaused || currentUser?.demo" in APP
+
+
 def test_top_and_du_run_as_root_through_the_helper():
     assert 'shell.privileged("process-top"' in inspect.getsource(server_monitor.processes)
     assert 'shell.privileged("disk-usage-scan"' in inspect.getsource(server_monitor._scan)
