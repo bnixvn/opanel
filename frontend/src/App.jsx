@@ -9676,7 +9676,7 @@ function App() {
           </button>
           <div className="page-title">
             {settingsPage
-              ? <h1 className="page-crumbs"><button type="button" onClick={() => navigateToPage('config')}>{tr("Settings")}</button><span aria-hidden="true">›</span>{settingsPage[1]}</h1>
+              ? <h1 className="page-crumbs"><button type="button" onClick={() => navigateToPage('config')}>{tr("Settings")}</button><span aria-hidden="true">›</span><span className="page-crumb-current">{settingsPage[1]}</span></h1>
               : <h1>{page === 'usage' && limitsOn && !isAdmin ? tr("Resource usage") : activeNavItem?.[1] || panelSettings.app_name || tr("opanel")}</h1>}
           </div>
           <div className="top-actions">

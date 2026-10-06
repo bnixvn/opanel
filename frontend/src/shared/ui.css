@@ -412,6 +412,8 @@ details.raw-output > pre,details.raw-output > .raw-output-body{margin:0 12px 12p
 .topbar .page-crumbs button{height:auto;min-height:0;padding:0;background:none;border:0;color:var(--text-muted);font:inherit;font-weight:500;cursor:pointer}
 .topbar .page-crumbs button:hover:not(:disabled){background:none;color:var(--primary);text-decoration:underline}
 .page-crumbs span{color:var(--text-muted);font-weight:400}
+.page-crumbs button,.page-crumbs span{flex:none}
+.page-crumbs .page-crumb-current{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--text);font-weight:inherit}
 /* Notifications page: channel cards, the admin form, event checklists, send log. */
 .notify-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
 .notify-card{background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px 16px;display:grid;gap:10px;align-content:start;min-width:0}
@@ -759,6 +761,7 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .disk-fs:first-of-type,.traffic-iface:first-of-type{border-top:0}
 .disk-accounts .top-accounts-row{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}
 .disk-accounts .top-accounts-name{grid-column:auto}
+.disk-accounts .top-accounts-row [data-label]::before{content:none}
 .ram-websites{background:var(--primary)}
 .ram-databases{background:var(--warning)}
 .ram-backups{background:var(--success)}
@@ -1105,5 +1108,7 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 
 @media(max-width:600px){
   .top-stats .top-stat:last-child,.top-version{display:none}
+  /* The chips leave the title little room: the page's own name only. */
+  .page-crumbs button,.page-crumbs span[aria-hidden]{display:none}
   .top-stats{gap:4px}
 }
