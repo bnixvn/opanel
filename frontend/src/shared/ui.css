@@ -1114,7 +1114,7 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 }
 
 @media(max-width:600px){
-  .top-stats .top-stat:last-child,.top-version{display:none}
+  .top-stats .top-stat:last-child,.top-actions .top-version,.top-actions button.top-version{display:none}
   /* The chips leave the title little room: the page's own name only. */
   .page-crumbs button,.page-crumbs span[aria-hidden]{display:none}
   .top-stats{gap:4px}
