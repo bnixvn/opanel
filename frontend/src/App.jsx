@@ -5003,8 +5003,10 @@ function App() {
           </button>
         </div>
       </div>
-      <div className="process-terminal-head"><span>top -c</span><small>{processPaused ? tr("Paused") : when}</small></div>
-      <pre className="process-terminal" aria-live="off">{output ? shown.join('\n') : tr("Reading processes...")}</pre>
+      <div className="process-terminal-wrap">
+        <div className="process-terminal-head"><span>top -c</span><small>{processPaused ? tr("Paused") : when}</small></div>
+        <pre className="process-terminal" aria-live="off">{output ? shown.join('\n') : tr("Reading processes...")}</pre>
+      </div>
     </section>;
   }
 

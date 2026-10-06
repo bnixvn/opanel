@@ -7368,7 +7368,10 @@ backup_inbox_take() {
 # The API cannot see other users' processes (ProtectProc=invisible) nor read
 # every account's tree, so both of these run here, as root.
 process_top() {
-  COLUMNS=300 top -b -n 1 -c -w 300 2>/dev/null | head -n 400
+  # Two frames a second apart, the second one shown: top's first frame has no
+  # interval to measure %CPU over, so it lists every process at 0.0 in PID
+  # order -- a hundred kernel threads before anything that is busy.
+  COLUMNS=300 top -b -n 2 -d 1 -c -w 300 2>/dev/null | awk '/^top - /{frame++} frame == 2' | head -n 400
 }
 
 # What takes the disk space, one line each: key, bytes, path, mount point.
