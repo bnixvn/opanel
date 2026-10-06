@@ -108,6 +108,14 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        # .env also carries what the helper reads and the panel does not:
+        # opanel_MARIADB_*, opanel_PHP_FPM_* and the like, which the helper's
+        # own comments tell an operator to put there. pydantic-settings forbids
+        # unknown keys by default, so one such line stopped every Python entry
+        # point -- on .122 (2026-10-06) the update died at its migrations on
+        # OPANEL_MARIADB_BUFFER_POOL_SIZE, and the API would not have started
+        # again either.
+        extra = "ignore"
 
 
 settings = Settings()
