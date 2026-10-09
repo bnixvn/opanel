@@ -7663,8 +7663,9 @@ try:
     elif action == "pull":
         branch, mode = args
         git("fetch", "--prune", "origin")
-        code, current = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], check=False)
-        if current.strip().splitlines()[-1:] != [branch]:
+        current = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo, stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=60)
+        if current.stdout.decode("utf-8", "replace").strip() != branch:
             git("checkout", branch)
         if mode == "reset":
             git("reset", "--hard", f"origin/{branch}")
@@ -7719,6 +7720,10 @@ try:
             missing = "WP-CLI is not installed on this server."
         elif preset.startswith("artisan") and not os.path.isfile(os.path.join(repo, "artisan")):
             missing = "There is no artisan file in this repository."
+        elif preset.startswith("npm") and not os.path.isfile(os.path.join(repo, "package.json")):
+            missing = "There is no package.json in this repository."
+        elif preset == "composer-install" and not os.path.isfile(os.path.join(repo, "composer.json")):
+            missing = "There is no composer.json in this repository."
         if missing:
             print(missing, flush=True)
             raise SystemExit(127)
