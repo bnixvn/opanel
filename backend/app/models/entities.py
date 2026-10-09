@@ -566,3 +566,60 @@ class DnsZone(Base):
     managed: Mapped[str] = mapped_column(Text, default="", server_default="")
 
     owner: Mapped["User"] = relationship()
+
+
+class GitRepository(Base):
+    """A git repository in a hosting account's home (operator, 2026-10-09).
+
+    The files are on disk and every git command runs as the account's Linux
+    user through opanel-helper's git-repo; this row is what the panel needs
+    to drive it: where it is, what it tracks, and how it authenticates. The
+    SSH key and the HTTPS token are stored encrypted and reach git on stdin.
+    """
+
+    __tablename__ = "git_repositories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    # Absolute, inside /home/<owner's Linux user>.
+    path: Mapped[str] = mapped_column(String(512), unique=True)
+    remote_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    branch: Mapped[str] = mapped_column(String(100), default="main", server_default="main")
+    # none | ssh | https
+    auth_type: Mapped[str] = mapped_column(String(10), default="none", server_default="none")
+    https_username: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    https_token: Mapped[str] = mapped_column(Text, default="", server_default="")
+    ssh_private_key: Mapped[str] = mapped_column(Text, default="", server_default="")
+    ssh_public_key: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # JSON list of preset commands run after a deploy, in order.
+    deploy_commands: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    php_version: Mapped[str] = mapped_column(String(8), default="", server_default="")
+    webhook_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    webhook_token: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    # False until a clone or init has succeeded.
+    ready: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    owner: Mapped["User"] = relationship()
+
+
+class GitOperation(Base):
+    """One clone, deploy, push or branch switch of a repository, and its log."""
+
+    __tablename__ = "git_operations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    repository_id: Mapped[int] = mapped_column(ForeignKey("git_repositories.id"), index=True)
+    # clone | init | deploy | push | checkout
+    action: Mapped[str] = mapped_column(String(16))
+    # manual | webhook
+    trigger: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
+    actor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # running | done | failed
+    status: Mapped[str] = mapped_column(String(16), default="running", server_default="running")
+    commit_before: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    commit_after: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    log: Mapped[str] = mapped_column(Text, default="", server_default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

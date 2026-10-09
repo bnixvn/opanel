@@ -645,6 +645,47 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .sftp-row-name,.sftp-row-folder{display:grid;gap:2px;min-width:0}
 .sftp-row-name small,.sftp-row-folder small{font-size:12px;color:var(--text-muted)}
 .sftp-row-folder code{font-family:var(--font-mono);font-size:12.5px;overflow-wrap:anywhere}
+/* Git repositories (2026-10-09). */
+.git-create-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 14px;align-items:end}
+.git-create-grid .git-path-field{grid-column:span 2}
+.git-presets{display:flex;flex-wrap:wrap;gap:6px 18px}
+.git-presets code{font-family:var(--font-mono);font-size:12.5px}
+.git-row{grid-template-columns:minmax(0,1.1fr) minmax(0,1.3fr) auto minmax(0,1fr);cursor:pointer}
+.git-row:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.git-row-name{display:grid;gap:2px;min-width:0}
+.git-row-name small{font-size:12px;color:var(--text-muted);overflow-wrap:anywhere}
+.git-row-remote code{font-family:var(--font-mono);font-size:12.5px;overflow-wrap:anywhere;color:var(--text-secondary)}
+.git-row-state{display:flex;justify-content:flex-end;min-width:0}
+.git-row-last{display:grid;justify-items:end;gap:2px}
+.git-row-last small{font-size:12px;color:var(--text-muted)}
+.git-running{display:flex;align-items:center;gap:6px;color:var(--warning-text)}
+.git-setup{display:grid;gap:10px}
+.git-facts{margin-bottom:4px}
+.git-actions-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.git-card{display:grid;align-content:start;gap:8px;padding:14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt);min-width:0}
+.git-card > strong{display:flex;align-items:center;gap:6px}
+.git-card .actions{justify-content:flex-start}
+.git-details{border:1px solid var(--border);border-radius:var(--radius-md);padding:10px 12px}
+.git-details summary{cursor:pointer;font-weight:600}
+.git-details[open] summary{margin-bottom:8px}
+.git-log{margin:0;padding:10px 12px;max-height:420px;overflow:auto;background:var(--console-bg);color:var(--console-text);border:1px solid var(--console-border);border-radius:var(--radius-md);font-family:var(--font-mono);font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}
+.git-commits{display:grid;gap:2px}
+.git-commit{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--border)}
+.git-commit:last-child{border-bottom:0}
+.git-commit code{font-family:var(--font-mono);font-size:12px;color:var(--primary-ink)}
+.git-commit span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-commit small{font-size:12px;color:var(--text-muted);white-space:nowrap}
+.git-op{display:grid;gap:6px;min-width:0}
+.git-op-row{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) minmax(0,1fr) auto}
+.git-op-action{display:flex;align-items:center;gap:6px}
+.git-secret{display:grid;gap:8px}
+@media(max-width:720px){
+  .git-create-grid .git-path-field{grid-column:auto}
+  .git-row,.git-op-row{grid-template-columns:minmax(0,1fr) auto}
+  .git-row-remote,.git-op-row > span:nth-child(3),.git-op-row > span:nth-child(4){display:none}
+  .git-commit{grid-template-columns:auto minmax(0,1fr)}
+  .git-commit small{display:none}
+}
 
 /* ---------- Responsive ---------- */
 @media(max-width:950px){

@@ -13,7 +13,8 @@ def _block(start: str, end: str) -> str:
 def test_the_sidebar_is_only_the_everyday_pages():
     nav = _block("  const navSections = [", "  const navItems =")
     keys = re.findall(r"\['(\w+)', tr\(", nav)
-    assert keys == ["dashboard", "websites", "ssl", "databases", "cron", "files", "sftp", "backups", "users", "config"]
+    # Git beside SFTP (2026-10-09): an account's own deploy tool, used as often.
+    assert keys == ["dashboard", "websites", "ssl", "databases", "cron", "files", "sftp", "git", "backups", "users", "config"]
     assert "...(isAdmin ? [['users', tr(\"Panel users\"), Users]] : [])" in nav
     # One list: no section headings, addons slot in before Settings.
     assert "title:" not in nav
@@ -25,7 +26,10 @@ def test_everything_else_is_on_the_settings_page():
     keys = re.findall(r"\['(\w+)', tr\(", hub)
     # The Malware Scanner is an addon now: in the sidebar while it runs, not here.
     # Panel settings leads the System group.
-    assert keys == ["firewall", "waf", "wafLogs", "security", "settings", "services", "php", "updates", "addons"]
+    # Server status (1.32.0): the pages behind the top bar's chips, admin only.
+    assert keys == ["firewall", "waf", "wafLogs", "security", "processes", "ramUsage", "diskUsage", "traffic",
+                    "settings", "services", "php", "updates", "addons"]
+    assert "...(isAdmin ? [{ key: 'monitor'" in hub
     for admin_only in ("firewall", "services", "php", "settings", "updates", "addons"):
         index = hub.index(f"['{admin_only}', tr(")
         assert "isAdmin ?" in hub[max(0, index - 20):index], admin_only

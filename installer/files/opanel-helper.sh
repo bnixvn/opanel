@@ -7402,7 +7402,345 @@ panel ${APP_DIR:-/opt/opanel}
 PATHS
 }
 
+# --- Git repositories (operator, 2026-10-09) ---------------------------------
+# An account's repositories, anywhere in its home. Every git command runs as
+# the account's own Linux user: a repository's config can name programs git
+# runs (core.fsmonitor, core.sshCommand, hooks), so git never runs as root or
+# as the panel on a tree its owner controls. Root's part is the checks, the
+# first folder level (/home/<user> is root's own), and the credentials: they
+# arrive on stdin and live in a 0700 folder of this run only.
+GIT_RUN_ROOT="/run/opanel-git"
+
+require_git_user() {
+  local uid
+  require_linux_user "$1"
+  uid="$(id -u -- "$1" 2>/dev/null)" || deny "no such Linux user: $1"
+  (( uid >= 1000 )) || deny "not a hosting account user: $1"
+  [[ -d "$HOME_ROOT/$1" && ! -L "$HOME_ROOT/$1" ]] || deny "no home folder for $1"
+}
+
+# Inside /home/<user> and below it; no hidden segment (.ssh, .config...).
+require_git_path() {
+  local user="$1" path="$2" resolved rel part
+  local -a parts
+  # || exit: a command substitution does not inherit set -e, so a refusal
+  # inside it would otherwise run on with an empty path.
+  resolved=$(require_safe_path "$HOME_ROOT/$user" "$path") || exit 1
+  [[ "$resolved" != "$HOME_ROOT/$user" ]] || deny "a repository cannot be the home folder itself"
+  rel="${resolved#"$HOME_ROOT/$user/"}"
+  IFS='/' read -r -a parts <<<"$rel"
+  (( ${#parts[@]} >= 1 && ${#parts[@]} <= 8 )) || deny "repository path is too deep"
+  for part in "${parts[@]}"; do
+    [[ "$part" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$ ]] || deny "invalid repository path segment: $part"
+  done
+  echo "$resolved"
+}
+
+require_git_url() {
+  local url="$1"
+  (( ${#url} <= 500 )) || deny "remote URL is too long"
+  [[ "$url" =~ ^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?/[A-Za-z0-9._~/+%-]+$ ]] && return 0
+  [[ "$url" =~ ^ssh://([A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?/[A-Za-z0-9._~/+%-]+$ ]] && return 0
+  [[ "$url" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9.-]*:[A-Za-z0-9._~+%][A-Za-z0-9._~/+%-]*$ ]] && return 0
+  deny "unsupported remote URL: use https://, ssh:// or git@host:path"
+}
+
+require_git_branch() {
+  local branch="$1"
+  [[ "$branch" =~ ^[A-Za-z0-9_][A-Za-z0-9._/-]{0,99}$ ]] || deny "invalid branch: $branch"
+  case "$branch" in
+    *..*|*//*|*/|*.lock|*/.*|*@\{*) deny "invalid branch: $branch" ;;
+  esac
+}
+
+# The first folder below /home/<user> is made by root (the home is root's);
+# the rest by the user. An existing first folder must be the user's own.
+git_prepare_path() {
+  local user="$1" repo="$2" rel first
+  rel="${repo#"$HOME_ROOT/$user/"}"
+  first="$HOME_ROOT/$user/${rel%%/*}"
+  if [[ -L "$first" ]]; then
+    deny "refusing a symlink: $first"
+  elif [[ -e "$first" ]]; then
+    [[ -d "$first" ]] || deny "not a folder: $first"
+    [[ "$(stat -c %U -- "$first")" == "$user" ]] || deny "folder is not owned by $user: $first"
+  else
+    install -d -o "$user" -g "$user" -m 0755 -- "$first"
+  fi
+  runuser -u "$user" -- mkdir -p -- "$repo"
+}
+
+git_repo() {
+  [[ $# -ge 3 ]] || deny "usage: git-repo <action> <linux-user> <repo-path> [args...]"
+  local action="$1" user="$2" path_arg="$3" repo git_home run_dir auth_kind auth_user php_version php_bin
+  shift 3
+  require_git_user "$user"
+  repo=$(require_git_path "$user" "$path_arg") || exit 1
+  case "$action" in
+    clone)
+      [[ $# -eq 2 ]] || deny "usage: git-repo clone <user> <path> <url> <branch>"
+      require_git_url "$1"; require_git_branch "$2"
+      git_prepare_path "$user" "$repo" ;;
+    init)
+      [[ $# -eq 1 || $# -eq 2 ]] || deny "usage: git-repo init <user> <path> <branch> [<url>]"
+      require_git_branch "$1"; [[ $# -eq 1 ]] || require_git_url "$2"
+      git_prepare_path "$user" "$repo" ;;
+    status|fetch) [[ $# -eq 0 ]] || deny "usage: git-repo $action <user> <path>" ;;
+    pull)
+      [[ $# -eq 2 ]] || deny "usage: git-repo pull <user> <path> <branch> <ff|reset>"
+      require_git_branch "$1"; [[ "$2" == "ff" || "$2" == "reset" ]] || deny "invalid pull mode" ;;
+    push)
+      [[ $# -eq 4 ]] || deny "usage: git-repo push <user> <path> <branch> <author-name> <author-email> <message>"
+      require_git_branch "$1"
+      [[ "$2" =~ ^[A-Za-z0-9._@+-]{1,64}$ ]] || deny "invalid author name"
+      require_email "$3"
+      (( ${#4} >= 1 && ${#4} <= 500 )) || deny "commit message must be 1-500 characters"
+      [[ "$4" != *$'\n'* ]] || deny "commit message must be one line" ;;
+    checkout)
+      [[ $# -eq 1 ]] || deny "usage: git-repo checkout <user> <path> <branch>"
+      require_git_branch "$1" ;;
+    set-remote)
+      [[ $# -eq 1 ]] || deny "usage: git-repo set-remote <user> <path> <url|->"
+      [[ "$1" == "-" ]] || require_git_url "$1" ;;
+    run)
+      [[ $# -eq 2 ]] || deny "usage: git-repo run <user> <path> <preset> <php-version>"
+      [[ "$1" =~ ^(composer-install|npm-ci|npm-build|artisan-migrate|artisan-optimize|wp-cache-flush)$ ]] || deny "unknown command: $1"
+      require_php_version "$2" ;;
+    *) deny "unknown git-repo action: $action" ;;
+  esac
+  if [[ "$action" != clone && "$action" != init ]]; then
+    [[ -d "$repo/.git" && ! -L "$repo" ]] || deny "not a git repository: $repo"
+  fi
+
+  # A writable home for git, ssh's known_hosts, composer and npm caches:
+  # /home/<user> itself is root's.
+  git_home="$HOME_ROOT/$user/.opanel-git"
+  if [[ -L "$git_home" || ( -e "$git_home" && ! -d "$git_home" ) ]]; then
+    deny "refusing $git_home"
+  fi
+  [[ -d "$git_home" ]] || install -d -o "$user" -g "$user" -m 0700 -- "$git_home"
+
+  # Credentials: line 1 none|ssh|https, for https line 2 the username, then
+  # the key or the token. Only for actions that talk to the remote.
+  install -d -o root -g root -m 0711 "$GIT_RUN_ROOT"
+  run_dir="$(mktemp -d "$GIT_RUN_ROOT/run.XXXXXXXX")"
+  # Expanded now: run_dir is local and gone by the time EXIT fires.
+  trap "rm -rf -- '$run_dir'" EXIT
+  chown "$user:$user" "$run_dir"; chmod 0700 "$run_dir"
+  auth_kind="none"; auth_user=""
+  case "$action" in
+    clone|fetch|pull|push|checkout)
+      IFS= read -r auth_kind || auth_kind="none"
+      case "$auth_kind" in
+        none) ;;
+        ssh)
+          ( umask 077; cat >"$run_dir/key" )
+          chown "$user:$user" "$run_dir/key"; chmod 0400 "$run_dir/key" ;;
+        https)
+          IFS= read -r auth_user || deny "missing HTTPS username"
+          [[ "$auth_user" =~ ^[A-Za-z0-9._@+-]{1,100}$ ]] || deny "invalid HTTPS username"
+          ( umask 077; head -c 4096 >"$run_dir/token" )
+          chown "$user:$user" "$run_dir/token"; chmod 0400 "$run_dir/token" ;;
+        *) deny "invalid credential kind" ;;
+      esac ;;
+  esac
+  php_version=""; php_bin="/usr/bin"
+  if [[ "$action" == run ]]; then
+    php_version="$2"
+    php_bin="/usr/local/lsws/lsphp${php_version//./}/bin"
+    [[ -x "$php_bin/php" ]] || deny "PHP $php_version is not installed"
+  fi
+
+  local ssh_command="ssh -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$git_home/known_hosts"
+  [[ "$auth_kind" != ssh ]] || ssh_command="$ssh_command -o IdentitiesOnly=yes -i $run_dir/key"
+  # The token reaches git through a credential helper set in the environment
+  # (GIT_CONFIG_*): not in any process's arguments, and nothing to execute
+  # from /run, which is mounted noexec.
+  local -a askpass_env=()
+  [[ "$auth_kind" != https ]] || askpass_env=(
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper
+    'GIT_CONFIG_VALUE_0=!f() { test "$1" = get || exit 0; echo "username=$OPANEL_GIT_USERNAME"; printf "password=%s\n" "$(cat "$OPANEL_GIT_TOKEN_FILE")"; }; f'
+    OPANEL_GIT_USERNAME="$auth_user" OPANEL_GIT_TOKEN_FILE="$run_dir/token"
+  )
+
+  runuser -u "$user" -- env -i \
+    PATH="$php_bin:/usr/local/bin:/usr/bin:/bin" HOME="$git_home" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+    GIT_TERMINAL_PROMPT=0 GIT_ALLOW_PROTOCOL=https:ssh GIT_CONFIG_NOSYSTEM=1 \
+    GIT_SSH_COMMAND="$ssh_command" "${askpass_env[@]}" \
+    nice -n 10 python3 - "$action" "$repo" "$@" <<'PY'
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+action, repo = sys.argv[1], sys.argv[2]
+args = sys.argv[3:]
+LIMIT = 200_000
+result = {"ok": False}
+
+
+def run(cmd, timeout=600, cwd=None, check=True):
+    print("$ " + " ".join(cmd), flush=True)
+    try:
+        done = subprocess.run(cmd, cwd=cwd or repo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"timed out after {timeout} s", flush=True)
+        raise SystemExit(124)
+    output = done.stdout.decode("utf-8", "replace")
+    if output:
+        print(output[-LIMIT:].rstrip("\n"), flush=True)
+    if check and done.returncode != 0:
+        raise SystemExit(done.returncode or 1)
+    return done.returncode, output
+
+
+def git(*cmd, **kwargs):
+    return run(["git", "-c", "advice.detachedHead=false", *cmd], **kwargs)
+
+
+def head():
+    if not os.path.isdir(os.path.join(repo, ".git")):
+        return ""
+    done = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=repo, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=60)
+    return done.stdout.decode("utf-8", "replace").strip() if done.returncode == 0 else ""
+
+
+def status():
+    def quiet(*cmd):
+        done = subprocess.run(["git", *cmd], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              stdin=subprocess.DEVNULL, timeout=60)
+        return done.returncode, done.stdout.decode("utf-8", "replace")
+    info = {"branch": "", "head": None, "ahead": 0, "behind": 0, "upstream": "", "changes": [],
+            "changes_total": 0, "log": [], "local_branches": [], "remote_branches": [], "remote_url": ""}
+    code, out = quiet("rev-parse", "--abbrev-ref", "HEAD")
+    info["branch"] = out.strip() if code == 0 else ""
+    code, out = quiet("log", "-n", "20", "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s")
+    for line in out.splitlines() if code == 0 else []:
+        full, short, author, date, subject = (line.split("\x1f") + [""] * 5)[:5]
+        info["log"].append({"hash": full, "short": short, "author": author, "date": date, "subject": subject[:200]})
+    info["head"] = info["log"][0] if info["log"] else None
+    code, out = quiet("status", "--porcelain=v1", "-uall")
+    lines = out.splitlines() if code == 0 else []
+    info["changes_total"] = len(lines)
+    info["changes"] = [{"code": line[:2], "path": line[3:][:300]} for line in lines[:300]]
+    code, out = quiet("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    if code == 0 and out.strip():
+        info["upstream"] = out.strip()
+        code, out = quiet("rev-list", "--left-right", "--count", "HEAD...@{u}")
+        if code == 0 and out.split():
+            ahead, behind = (out.split() + ["0", "0"])[:2]
+            info["ahead"], info["behind"] = int(ahead), int(behind)
+    code, out = quiet("for-each-ref", "--format=%(refname:short)", "refs/heads")
+    info["local_branches"] = out.split()[:200] if code == 0 else []
+    code, out = quiet("for-each-ref", "--format=%(refname:short)", "refs/remotes/origin")
+    info["remote_branches"] = [b[len("origin/"):] for b in out.split() if b.startswith("origin/") and b != "origin/HEAD"][:200] if code == 0 else []
+    code, out = quiet("remote", "get-url", "origin")
+    info["remote_url"] = out.strip() if code == 0 else ""
+    return info
+
+
+try:
+    before = head()
+    if action == "status":
+        print("OPANEL_GIT_STATUS " + json.dumps(status()), flush=True)
+        raise SystemExit(0)
+    if action == "clone":
+        url, branch = args
+        if os.listdir(repo):
+            print("The folder is not empty: clone into an empty or new folder.", flush=True)
+            raise SystemExit(1)
+        run(["git", "clone", "--origin", "origin", "--branch", branch, "--", url, repo], timeout=1800, cwd="/")
+    elif action == "init":
+        branch = args[0]
+        run(["git", "init", "-b", branch, repo], cwd="/")
+        if len(args) > 1:
+            git("remote", "add", "origin", args[1])
+    elif action == "fetch":
+        git("fetch", "--prune", "origin")
+    elif action == "pull":
+        branch, mode = args
+        git("fetch", "--prune", "origin")
+        code, current = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], check=False)
+        if current.strip().splitlines()[-1:] != [branch]:
+            git("checkout", branch)
+        if mode == "reset":
+            git("reset", "--hard", f"origin/{branch}")
+        else:
+            git("merge", "--ff-only", f"origin/{branch}")
+    elif action == "push":
+        branch, name, email, message = args
+        git("add", "-A")
+        code, _ = run(["git", "diff", "--cached", "--quiet"], check=False)
+        if code != 0:
+            git("-c", f"user.name={name}", "-c", f"user.email={email}", "commit", "-m", message)
+        else:
+            print("Nothing to commit; pushing what is already committed.", flush=True)
+        git("push", "origin", f"HEAD:refs/heads/{branch}")
+        git("fetch", "origin", check=False)
+    elif action == "checkout":
+        branch = args[0]
+        git("fetch", "--prune", "origin", check=False)
+        code, _ = run(["git", "rev-parse", "--verify", "-q", f"refs/heads/{branch}"], check=False)
+        if code == 0:
+            git("checkout", branch)
+        else:
+            git("checkout", "-b", branch, "--track", f"origin/{branch}")
+    elif action == "set-remote":
+        url = args[0]
+        code, _ = run(["git", "remote", "get-url", "origin"], check=False)
+        if url == "-":
+            if code == 0:
+                git("remote", "remove", "origin")
+        elif code == 0:
+            git("remote", "set-url", "origin", url)
+        else:
+            git("remote", "add", "origin", url)
+    elif action == "run":
+        preset, version = args
+        php = shutil.which("php") or "php"
+        commands = {
+            "composer-install": [php, shutil.which("composer") or "/usr/bin/composer", "install", "--no-dev",
+                                 "--optimize-autoloader", "--no-interaction", "--no-progress"],
+            "npm-ci": ["npm", "ci", "--no-audit", "--no-fund"],
+            "npm-build": ["npm", "run", "build"],
+            "artisan-migrate": [php, "artisan", "migrate", "--force"],
+            "artisan-optimize": [php, "artisan", "optimize"],
+            "wp-cache-flush": [php, "/usr/local/bin/wp", "cache", "flush"],
+        }
+        missing = ""
+        if preset.startswith("npm") and not shutil.which("npm"):
+            missing = "npm is not installed on this server."
+        elif preset == "composer-install" and not shutil.which("composer"):
+            missing = "composer is not installed on this server."
+        elif preset == "wp-cache-flush" and not os.path.exists("/usr/local/bin/wp"):
+            missing = "WP-CLI is not installed on this server."
+        elif preset.startswith("artisan") and not os.path.isfile(os.path.join(repo, "artisan")):
+            missing = "There is no artisan file in this repository."
+        if missing:
+            print(missing, flush=True)
+            raise SystemExit(127)
+        run(commands[preset], timeout=1200)
+    result["ok"] = True
+except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else 1
+    result["ok"] = code == 0
+    if code:
+        result["exit"] = code
+result["before"] = before
+result["after"] = head()
+print("OPANEL_GIT_RESULT " + json.dumps(result), flush=True)
+sys.exit(0 if result["ok"] else 1)
+PY
+}
+
 case "$cmd" in
+
+  git-repo)
+    git_repo "$@"
+    ;;
 
   process-top)
     [[ $# -eq 0 ]] || deny "usage: process-top"

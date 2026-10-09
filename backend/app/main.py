@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from app.api import addons, api_tokens, auth, dashboard, databases, demo, dns, firewall, mail, maintenance, mcp, notifications, panel_settings as panel_settings_api, plans, provisioning, resource_limits, server_monitor, services, sftp, terminal, updates, users, waf, websites
+from app.api import addons, api_tokens, auth, dashboard, databases, demo, dns, firewall, git, mail, maintenance, mcp, notifications, panel_settings as panel_settings_api, plans, provisioning, resource_limits, server_monitor, services, sftp, terminal, updates, users, waf, websites
 from app.core.config import settings
 from app.core.database import get_db, run_migrations
 from app.core.version import APP_VERSION
@@ -105,6 +105,7 @@ app.include_router(databases.router, prefix="/api")
 app.include_router(firewall.router, prefix="/api")
 app.include_router(services.router, prefix="/api")
 app.include_router(server_monitor.router, prefix="/api")
+app.include_router(git.router, prefix="/api")
 app.include_router(updates.router, prefix="/api")
 app.include_router(waf.router, prefix="/api")
 app.include_router(maintenance.router, prefix="/api")
