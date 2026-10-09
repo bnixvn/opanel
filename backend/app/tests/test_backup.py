@@ -1,5 +1,6 @@
 import json
 import tarfile
+import inspect
 from pathlib import Path
 
 from app.core.config import settings
@@ -50,6 +51,37 @@ def test_restore_backup_for_site_user_uses_privileged_restore(tmp_path, monkeypa
     assert restored == str(site_root.resolve())
     assert [call[0] for call in calls] == ["site-backup-restore"]
     assert calls[0][1][0:3] == ["siteuser", str(site_root), str(archive_path)]
+
+
+def test_an_account_restore_puts_site_files_in_place_through_the_helper(tmp_path, monkeypatch):
+    """The site tree is the site user's; opanel-api extracting into it failed
+    with "Permission denied on the server" (operator, 2026-10-09)."""
+    calls = []
+
+    def fake_privileged(helper_command, helper_args=None, **kwargs):
+        calls.append((helper_command, helper_args))
+        return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(backup.shell, "privileged", fake_privileged)
+    monkeypatch.setattr(settings, "command_dry_run", False)
+    monkeypatch.setattr(backup, "_safe_extract_prefix", lambda *a, **k: (_ for _ in ()).throw(AssertionError("extracted as opanel")))
+    archive = tmp_path / "account.tar.gz"
+    backup._restore_account_site_tree(archive, "greener.vn", "/home/tamle/greener.vn", "tamle")
+    assert calls == [("site-backup-restore", ["tamle", "/home/tamle/greener.vn", str(archive),
+                                              str(backup.SITE_RESTORE_MAX_ITEMS), str(backup.SITE_RESTORE_MAX_BYTES),
+                                              "sites/greener.vn/site"])]
+    source = inspect.getsource(backup.restore_user_backup)
+    assert "_restore_account_site_tree(archive, domain, root_path, linux_user)" in source
+    assert "_safe_extract_prefix(" not in source
+
+
+def test_the_helper_takes_one_site_of_an_account_backup():
+    helper = (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    arm = helper.split("\n  site-backup-restore)\n", 1)[1].split("\n    ;;\n", 1)[0]
+    assert "[[ $# -eq 5 || $# -eq 6 ]]" in arm
+    assert '^sites/[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?/site$' in arm, "the prefix is one site's tree, nothing else"
+    assert 'if name == prefix or not name.startswith(prefix + "/"):' in arm
+    assert 'fix_site_tree "$root_target" "$user"' in arm, "the tree goes to its owner"
 
 
 def test_restore_helper_validates_and_extracts_external_backup():

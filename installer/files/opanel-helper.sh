@@ -8558,23 +8558,31 @@ PY
     ;;
 
   site-backup-restore)
-    [[ $# -eq 5 ]] || deny "usage: site-backup-restore <site-user> <site-root> <backup-path> <max-items> <max-bytes>"
-    user="$1"; root_arg="$2"; archive_arg="$3"; max_items="$4"; max_bytes="$5"
+    # A website backup (site/ + database/), or -- with a member prefix -- one
+    # site's tree inside an account backup (sites/<domain>/site). The site
+    # tree belongs to the site's own Linux user, so the panel cannot write it
+    # itself: an account restore that extracted as opanel failed with
+    # "Permission denied" (operator, 2026-10-09).
+    [[ $# -eq 5 || $# -eq 6 ]] || deny "usage: site-backup-restore <site-user> <site-root> <backup-path> <max-items> <max-bytes> [<member-prefix>]"
+    user="$1"; root_arg="$2"; archive_arg="$3"; max_items="$4"; max_bytes="$5"; member_prefix="${6:-}"
     require_linux_user "$user"
     [[ "$max_items" =~ ^[0-9]+$ && "$max_bytes" =~ ^[0-9]+$ ]] || deny "invalid restore limits"
+    if [[ -n "$member_prefix" ]]; then
+      [[ "$member_prefix" =~ ^sites/[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?/site$ && "$member_prefix" != *..* ]] || deny "invalid member prefix"
+    fi
     root_target=$(require_managed_path "$root_arg" "$user")
     backup_root="$(env_get BACKUP_ROOT)"
     [[ -n "$backup_root" ]] || backup_root="/var/backups/opanel"
     backup_root=$(readlink -m "$backup_root") || deny "cannot resolve backup root"
     archive_target=$(require_safe_path "$backup_root" "$archive_arg")
     [[ -f "$archive_target" && ! -L "$archive_target" ]] || deny "backup archive not found"
-    python3 - "$archive_target" "$root_target" "$max_items" "$max_bytes" <<'PY'
+    python3 - "$archive_target" "$root_target" "$max_items" "$max_bytes" "$member_prefix" <<'PY'
 import os
 import shutil
 import sys
 import tarfile
 
-archive_path, destination, max_items, max_bytes = sys.argv[1:]
+archive_path, destination, max_items, max_bytes, prefix = sys.argv[1:6]
 max_items = int(max_items)
 max_bytes = int(max_bytes)
 destination = os.path.realpath(destination)
@@ -8584,9 +8592,14 @@ def normalized_name(name, has_site_prefix):
     if "\x00" in name:
         raise ValueError("backup contains an unsafe path")
     name = name.replace("\\", "/")
-    if name.startswith("database/"):
+    if prefix:
+        # One site of an account backup: only what is under its prefix.
+        if name == prefix or not name.startswith(prefix + "/"):
+            return None
+        name = name[len(prefix) + 1:]
+    elif name.startswith("database/"):
         return None
-    if has_site_prefix:
+    elif has_site_prefix:
         if name == "site" or not name.startswith("site/"):
             return None
         name = name[len("site/"):]
@@ -8600,14 +8613,22 @@ def normalized_name(name, has_site_prefix):
 
 with tarfile.open(archive_path, "r:gz") as archive:
     members = archive.getmembers()
-    has_site_prefix = any(member.name == "site" or member.name.startswith("site/") for member in members)
+    has_site_prefix = not prefix and any(member.name == "site" or member.name.startswith("site/") for member in members)
     selected = []
     total = 0
+    skipped_links = 0
     for member in members:
         name = normalized_name(member.name, has_site_prefix)
         if name is None:
             continue
         if member.issym() or member.islnk() or member.isdev() or not (member.isdir() or member.isfile()):
+            if prefix:
+                # An account's sites can hold links a DirectAdmin import
+                # brought (private_html -> public_html): left out, as the
+                # unprivileged extraction this replaces left hard links out,
+                # rather than failing the whole account over one.
+                skipped_links += 1
+                continue
             raise ValueError("backup links and special files are not allowed")
         target = os.path.abspath(os.path.join(destination, name))
         resolved = os.path.realpath(target)
@@ -8640,6 +8661,9 @@ with tarfile.open(archive_path, "r:gz") as archive:
         descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
         with source, os.fdopen(descriptor, "wb") as output:
             shutil.copyfileobj(source, output, length=1024 * 1024)
+
+if skipped_links:
+    print(f"skipped {skipped_links} links and special files", file=sys.stderr)
 PY
     fix_site_tree "$root_target" "$user"
     ;;

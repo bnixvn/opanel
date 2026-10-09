@@ -828,6 +828,32 @@ def _safe_extract_prefix(archive: Path, prefix: str, destination: Path) -> None:
                 tar.extract(original, str(destination))
 
 
+def _restore_account_site_tree(archive: Path, domain: str, root_path: str, linux_user: Optional[str]) -> None:
+    """Put one site of an account backup in place.
+
+    The site tree belongs to the site's own Linux user, so opanel-api cannot
+    write into it: extracting here as opanel failed every account restore with
+    "Permission denied on the server" (operator, 2026-10-09). The helper
+    extracts the site's part of the archive as root and hands the tree to its
+    owner, as restore_backup does for a website backup.
+    """
+    prefix = f"sites/{domain}/site"
+    if linux_user and not settings.command_dry_run:
+        shell.privileged(
+            "site-backup-restore",
+            helper_args=[
+                site_users.validate_linux_user(linux_user),
+                root_path,
+                str(archive),
+                str(SITE_RESTORE_MAX_ITEMS),
+                str(SITE_RESTORE_MAX_BYTES),
+                prefix,
+            ],
+        )
+        return
+    _safe_extract_prefix(archive, prefix, Path(root_path).resolve())
+
+
 def _extract_member_to_file(archive: Path, member_name: str, output_dir: Path) -> Optional[Path]:
     with tarfile.open(archive, "r:gz") as tar:
         try:
@@ -1059,7 +1085,7 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
             root_path = site_users.site_root_for_panel_user(user.username, domain)
             runtime_php_version = php_version if app_type in {"wordpress", "php"} else None
             site_users.ensure_site_runtime(domain, root_path, runtime_php_version, linux_user)
-            _safe_extract_prefix(archive, f"sites/{domain}/site", Path(root_path).resolve())
+            _restore_account_site_tree(archive, domain, root_path, linux_user)
             # Backups from older opanel releases may contain public/. Normalize
             # the document root after extraction before rewriting the vhost.
             site_users.ensure_site_runtime(domain, root_path, runtime_php_version, linux_user)
