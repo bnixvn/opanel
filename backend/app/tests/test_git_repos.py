@@ -61,6 +61,8 @@ def env(monkeypatch):
     monkeypatch.setattr(git_repos, "_executor", InlineExecutor())
     monkeypatch.setattr(git_repos, "_session_factory", Session)
     monkeypatch.setattr(git_repos, "generate_ssh_key", lambda comment: ("PRIVATE-KEY", f"ssh-ed25519 AAAA {comment}"))
+    addon = {"on": True}
+    monkeypatch.setattr(git_repos, "enabled", lambda: addon["on"])
 
     def get_test_db():
         session = Session()
@@ -79,7 +81,7 @@ def env(monkeypatch):
         return client
 
     try:
-        yield SimpleNamespace(db=db, client=client, people=people, calls=calls, as_user=as_user)
+        yield SimpleNamespace(db=db, client=client, people=people, calls=calls, as_user=as_user, addon=addon)
     finally:
         app.dependency_overrides.pop(get_db, None)
         app.dependency_overrides.pop(get_current_user, None)
@@ -232,8 +234,8 @@ def test_an_account_sees_its_own_repositories_only(env):
     repo = _create(env)
     assert env.as_user("bob").get(f"/api/git/repos/{repo['id']}").status_code == 404
     assert env.as_user("bob").post(f"/api/git/repos/{repo['id']}/deploy", json={}).status_code == 404
-    assert env.as_user("bob").get("/api/git").json()["repos"] == []
-    assert [r["id"] for r in env.as_user("root_admin").get("/api/git").json()["repos"]] == [repo["id"]]
+    assert env.as_user("bob").get("/api/git/overview").json()["repos"] == []
+    assert [r["id"] for r in env.as_user("root_admin").get("/api/git/overview").json()["repos"]] == [repo["id"]]
 
 
 def test_one_repository_per_folder_and_none_inside_another(env):
@@ -294,3 +296,39 @@ def test_an_operation_cut_off_by_a_restart_is_not_shown_running(env):
     detail = env.as_user("alice").get(f"/api/git/repos/{repo['id']}").json()
     assert detail["operations"][0]["status"] == "failed"
     assert not detail["repo"]["busy"]
+
+
+# --- An addon (operator, 2026-10-10: "Git này như 1 addon") ---------------------------
+
+def test_git_is_a_panel_addon_off_until_installed():
+    from app.services import addons
+    definition = addons.ADDONS["git"]
+    assert definition["kind"] == "panel" and definition["packages"] == []
+    assert "git" not in addons.helper_addon_ids()
+
+
+def test_stopped_or_not_installed_every_route_and_the_webhook_are_gone(env):
+    repo = _create(env)
+    env.as_user("alice").patch(f"/api/git/repos/{repo['id']}", json={"webhook_enabled": True})
+    hook = env.db.get(GitRepository, repo["id"]).webhook_token
+    env.addon["on"] = False
+    client = env.as_user("alice")
+    assert client.get("/api/git/info").json() == {"enabled": False}
+    for method, path in (("get", "/api/git/overview"), ("get", f"/api/git/repos/{repo['id']}"),
+                         ("post", f"/api/git/repos/{repo['id']}/deploy"), ("delete", f"/api/git/repos/{repo['id']}")):
+        assert getattr(client, method)(path).status_code == 404, path
+    assert client.post("/api/git/repos", json={"name": "x", "path": "x", "mode": "init"}).status_code == 404
+    assert env.client.post(f"/api/git/hook/{repo['id']}/{hook}", json={"ref": "refs/heads/main"}).status_code == 404
+    assert env.db.query(GitRepository).count() == 1, "stopping keeps the repositories"
+
+
+def test_removing_the_addon_forgets_the_repositories_and_keeps_the_files(env):
+    import inspect
+    from app.api import addons as addons_api
+    _create(env)
+    env.calls.clear()
+    assert git_repos.forget_all(env.db) == 1
+    env.db.commit()
+    assert env.db.query(GitRepository).count() == 0 and env.calls == []
+    source = inspect.getsource(addons_api.uninstall_addon)
+    assert 'if addon_id == "git":' in source and "git_repos.forget_all(db)" in source

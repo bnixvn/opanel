@@ -13,8 +13,7 @@ def _block(start: str, end: str) -> str:
 def test_the_sidebar_is_only_the_everyday_pages():
     nav = _block("  const navSections = [", "  const navItems =")
     keys = re.findall(r"\['(\w+)', tr\(", nav)
-    # Git beside SFTP (2026-10-09): an account's own deploy tool, used as often.
-    assert keys == ["dashboard", "websites", "ssl", "databases", "cron", "files", "sftp", "git", "backups", "users", "config"]
+    assert keys == ["dashboard", "websites", "ssl", "databases", "cron", "files", "sftp", "backups", "users", "config"]
     assert "...(isAdmin ? [['users', tr(\"Panel users\"), Users]] : [])" in nav
     # One list: no section headings, addons slot in before Settings.
     assert "title:" not in nav
@@ -41,6 +40,8 @@ def test_addons_appear_only_while_turned_on():
     addons = _block("  const addonNavItems = [", "  ];")
     assert "...(mailInfo?.installed ? [['mail'" in addons
     assert "...(mcpInfo?.enabled ? [['mcp'" in addons
+    # Git is an addon (2026-10-10): in the sidebar only while it is on.
+    assert "...(gitEnabled ? [['git'" in addons
     assert "...(isAdmin && notifyInfo?.enabled ? [['notifications'" in addons
     assert "...(isAdmin && malwareScanStatus?.enabled ? [['malware'" in addons
 

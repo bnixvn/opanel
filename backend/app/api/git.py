@@ -21,6 +21,16 @@ from app.services.audit import log_action
 
 router = APIRouter(prefix="/git", tags=["git"])
 
+
+def _require_enabled() -> None:
+    """Git is an addon: stopped or not installed, its routes and webhooks answer
+    as if they were not there."""
+    if not git_repos.enabled():
+        raise HTTPException(status_code=404, detail="The Git addon is not installed")
+
+
+guarded = APIRouter(dependencies=[Depends(_require_enabled)])
+
 WEBHOOK_BODY_LIMIT = 2 * 1024 * 1024
 
 
@@ -115,7 +125,12 @@ def _start(db: Session, repo: GitRepository, action: str, actor: User, **params)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.get("")
+@router.get("/info")
+def git_info(current_user: User = Depends(get_current_user)):
+    return {"enabled": git_repos.enabled()}
+
+
+@guarded.get("/overview")
 def overview(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     query = scope_owner(db.query(GitRepository), GitRepository.owner_id, db, current_user)
     repos = query.order_by(GitRepository.name.asc(), GitRepository.id.asc()).all()
@@ -130,7 +145,7 @@ def overview(db: Session = Depends(get_db), current_user: User = Depends(get_cur
     }
 
 
-@router.post("/repos")
+@guarded.post("/repos")
 def create_repo(payload: RepoCreate, request: Request, db: Session = Depends(get_db),
                 current_user: User = Depends(get_current_user)):
     owner = current_user
@@ -174,7 +189,7 @@ def create_repo(payload: RepoCreate, request: Request, db: Session = Depends(get
     return _out(db, repo, owner, current_user)
 
 
-@router.get("/repos/{repo_id}")
+@guarded.get("/repos/{repo_id}")
 def repo_detail(repo_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     repo, owner = _repo_for(db, repo_id, current_user)
     status, status_error = None, ""
@@ -193,7 +208,7 @@ def repo_detail(repo_id: int, db: Session = Depends(get_db), current_user: User 
     }
 
 
-@router.get("/repos/{repo_id}/operations/{operation_id}")
+@guarded.get("/repos/{repo_id}/operations/{operation_id}")
 def operation_detail(repo_id: int, operation_id: int, db: Session = Depends(get_db),
                      current_user: User = Depends(get_current_user)):
     repo, _ = _repo_for(db, repo_id, current_user)
@@ -203,7 +218,7 @@ def operation_detail(repo_id: int, operation_id: int, db: Session = Depends(get_
     return git_repos.serialize_operation(operation, with_log=True)
 
 
-@router.patch("/repos/{repo_id}")
+@guarded.patch("/repos/{repo_id}")
 def update_repo(repo_id: int, payload: RepoUpdate, request: Request, db: Session = Depends(get_db),
                 current_user: User = Depends(get_current_user)):
     repo, owner = _repo_for(db, repo_id, current_user)
@@ -254,7 +269,7 @@ def update_repo(repo_id: int, payload: RepoUpdate, request: Request, db: Session
     return _out(db, repo, owner, current_user)
 
 
-@router.post("/repos/{repo_id}/start")
+@guarded.post("/repos/{repo_id}/start")
 def start_repo(repo_id: int, payload: StartIn, request: Request, db: Session = Depends(get_db),
                current_user: User = Depends(get_current_user)):
     """Clone (after the deploy key was added), or try a failed clone/init again."""
@@ -268,7 +283,7 @@ def start_repo(repo_id: int, payload: StartIn, request: Request, db: Session = D
     return git_repos.serialize_operation(operation)
 
 
-@router.post("/repos/{repo_id}/deploy")
+@guarded.post("/repos/{repo_id}/deploy")
 def deploy_repo(repo_id: int, payload: DeployIn, request: Request, db: Session = Depends(get_db),
                 current_user: User = Depends(get_current_user)):
     repo, owner = _repo_for(db, repo_id, current_user)
@@ -281,7 +296,7 @@ def deploy_repo(repo_id: int, payload: DeployIn, request: Request, db: Session =
     return git_repos.serialize_operation(operation)
 
 
-@router.post("/repos/{repo_id}/push")
+@guarded.post("/repos/{repo_id}/push")
 def push_repo(repo_id: int, payload: PushIn, request: Request, db: Session = Depends(get_db),
               current_user: User = Depends(get_current_user)):
     repo, owner = _repo_for(db, repo_id, current_user)
@@ -295,7 +310,7 @@ def push_repo(repo_id: int, payload: PushIn, request: Request, db: Session = Dep
     return git_repos.serialize_operation(operation)
 
 
-@router.post("/repos/{repo_id}/checkout")
+@guarded.post("/repos/{repo_id}/checkout")
 def checkout_repo(repo_id: int, payload: CheckoutIn, request: Request, db: Session = Depends(get_db),
                   current_user: User = Depends(get_current_user)):
     repo, owner = _repo_for(db, repo_id, current_user)
@@ -308,7 +323,7 @@ def checkout_repo(repo_id: int, payload: CheckoutIn, request: Request, db: Sessi
     return git_repos.serialize_operation(operation)
 
 
-@router.post("/repos/{repo_id}/ssh-key")
+@guarded.post("/repos/{repo_id}/ssh-key")
 def regenerate_ssh_key(repo_id: int, request: Request, db: Session = Depends(get_db),
                        current_user: User = Depends(get_current_user)):
     repo, owner = _repo_for(db, repo_id, current_user)
@@ -320,7 +335,7 @@ def regenerate_ssh_key(repo_id: int, request: Request, db: Session = Depends(get
     return _out(db, repo, owner, current_user)
 
 
-@router.post("/repos/{repo_id}/webhook-token")
+@guarded.post("/repos/{repo_id}/webhook-token")
 def rotate_webhook_token(repo_id: int, request: Request, db: Session = Depends(get_db),
                          current_user: User = Depends(get_current_user)):
     repo, owner = _repo_for(db, repo_id, current_user)
@@ -330,7 +345,7 @@ def rotate_webhook_token(repo_id: int, request: Request, db: Session = Depends(g
     return _out(db, repo, owner, current_user)
 
 
-@router.delete("/repos/{repo_id}")
+@guarded.delete("/repos/{repo_id}")
 def delete_repo(repo_id: int, request: Request, db: Session = Depends(get_db),
                 current_user: User = Depends(get_current_user)):
     repo, owner = _repo_for(db, repo_id, current_user)
@@ -345,7 +360,7 @@ def delete_repo(repo_id: int, request: Request, db: Session = Depends(get_db),
 
 # --- Webhook: no session, the token in the URL is the credential ------------------------
 
-@router.post("/hook/{repo_id}/{token}")
+@guarded.post("/hook/{repo_id}/{token}")
 async def webhook(repo_id: int, token: str, request: Request, db: Session = Depends(get_db)):
     body = await request.body()
     if len(body) > WEBHOOK_BODY_LIMIT:
@@ -375,3 +390,6 @@ async def webhook(repo_id: int, token: str, request: Request, db: Session = Depe
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "deployed": True, "operation_id": operation.id}
+
+
+router.include_router(guarded)

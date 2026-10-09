@@ -263,6 +263,36 @@ ADDONS: dict[str, dict] = {
             "Stopping or removing the addon lifts every limit at once.",
         ],
     },
+    "git": {
+        "id": "git",
+        "name": "Git",
+        "summary": "Git repositories in each account's home: clone, deploy, commit and push.",
+        "description": (
+            "Each account can keep git repositories anywhere in its home: clone "
+            "one from GitHub, GitLab or Bitbucket, or start one in a folder that "
+            "already has files. Deploy pulls the latest code and runs the preset "
+            "commands the account picks (composer install, npm ci, npm run build, "
+            "artisan migrate and optimize, wp cache flush); Commit & push sends "
+            "what changed on the server. A private remote is reached with a "
+            "deploy key the panel generates or an HTTPS token, and a webhook can "
+            "deploy on every push. Every git command runs as the account's own "
+            "user."
+        ),
+        "category": "integration",
+        "version": "1",
+        # Part of the panel: installing it only turns it on. See _is_panel_addon.
+        "kind": "panel",
+        "packages": [],
+        "service": "",
+        "features": ["git"],
+        "notes": [
+            "Stopping the addon hides the Git page and refuses its webhooks; the "
+            "repositories and their files are kept.",
+            "Removing it also makes the panel forget every repository. The files "
+            "stay in the accounts' homes.",
+            "Webhooks need the panel's address to be reachable from GitHub or GitLab.",
+        ],
+    },
     "notifications": {
         "id": "notifications",
         "name": "Notifications",

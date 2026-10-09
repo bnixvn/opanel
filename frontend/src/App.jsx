@@ -583,6 +583,8 @@ function App() {
   // Git repositories in the account's home (operator, 2026-10-09).
   const BLANK_GIT_FORM = { owner_id: '', name: '', mode: 'clone', path: '', remote_url: '', branch: 'main', auth_type: 'none', https_username: '', https_token: '', deploy_commands: [], php_version: '' };
   const [gitInfo, setGitInfo] = useState(null);
+  // Git is an addon (2026-10-10): null until asked, then whether it is on.
+  const [gitEnabled, setGitEnabled] = useState(null);
   const [gitRepo, setGitRepo] = useState(null);
   const [showCreateGit, setShowCreateGit] = useState(false);
   const [gitForm, setGitForm] = useState(BLANK_GIT_FORM);
@@ -2133,8 +2135,14 @@ function App() {
     if (data) { setNotice(tr("SFTP account {0} deleted.", account.username)); await loadSftp(); }
   }
 
+  async function loadGitInfo() {
+    const data = await request('/git/info', { silent: true }, '');
+    if (data) setGitEnabled(!!data.enabled);
+    return data;
+  }
+
   async function loadGit() {
-    const data = await request('/git', { silent: true });
+    const data = await request('/git/overview', { silent: true });
     if (data) setGitInfo(data);
   }
 
@@ -4488,7 +4496,6 @@ function App() {
     if (isAuthenticated && page === 'dns') loadDnsInfo();
     if (isAuthenticated && page === 'dashboard') loadDashboardSummary();
     if (isAuthenticated && page === 'sftp') { loadSftp(); if (isAdmin) loadUsers(); if (!websites.length) refreshAll(); }
-    if (isAuthenticated && page === 'git') { loadGit(); if (isAdmin) loadUsers(); }
     if (isAuthenticated && page === 'settings') { loadPanelSettings(); loadApiTokens(); loadNetworkStatus(); }
     if (isAuthenticated && page === 'backups' && currentUser?.role === 'admin') { loadUsers(); loadSftpTargets(); loadBackupSchedules(); }
   }, [isAuthenticated, page, currentUser?.role]);
@@ -4498,6 +4505,16 @@ function App() {
   useEffect(() => {
     if (isAuthenticated) loadMcpInfo();
   }, [isAuthenticated, addonList]);
+
+  // So does Git's (an addon since 2026-10-10).
+  useEffect(() => {
+    if (isAuthenticated) loadGitInfo();
+  }, [isAuthenticated, addonList]);
+  useEffect(() => {
+    if (!isAuthenticated || page !== 'git' || !gitEnabled) return;
+    loadGit();
+    if (isAdmin) loadUsers();
+  }, [isAuthenticated, page, gitEnabled]);
 
   useEffect(() => {
     if (!isAuthenticated) loadDemoInfo();
@@ -4699,6 +4716,7 @@ function App() {
     // Email is everyday work for every account, so it leads the addons.
     ...(mailInfo?.installed ? [['mail', tr("Email"), Mail]] : []),
     ...(dnsInfo?.installed ? [['dns', tr("DNS Manager"), Network]] : []),
+    ...(gitEnabled ? [['git', tr("Git"), GitBranch]] : []),
     ...(mcpInfo?.enabled ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
     ...(isAdmin && notifyInfo?.enabled ? [['notifications', tr("Notifications"), Bell]] : []),
     ...(isAdmin && malwareScanStatus?.enabled ? [['malware', tr("Malware Scanner"), Bug]] : []),
@@ -4717,7 +4735,6 @@ function App() {
       ['cron', tr("Cron"), Clock],
       ['files', tr("File manager"), FolderOpen],
       ['sftp', tr("SFTP accounts"), KeyRound],
-      ['git', tr("Git"), GitBranch],
       ['backups', tr("Backups"), Archive],
       ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
       ...resellerNavItems,
@@ -4991,7 +5008,7 @@ function App() {
       { key: 'files', label: tr("File manager"), icon: FolderOpen, run: go('files') },
       { key: 'sftp', label: tr("SFTP accounts"), icon: KeyRound, run: go('sftp') },
       { key: 'sftp-new', label: tr("New SFTP account"), icon: Plus, run: go('sftp', () => setShowCreateSftp(true)) },
-      { key: 'git', label: tr("Git"), icon: GitBranch, run: go('git') },
+      ...(gitEnabled ? [{ key: 'git', label: tr("Git"), icon: GitBranch, run: go('git') }] : []),
       { key: 'backups', label: tr("Backups"), icon: Archive, run: go('backups') },
     ] });
     groups.push({ key: 'databases', title: tr("Databases"), icon: Database, tools: [
@@ -6920,6 +6937,13 @@ function App() {
   }
 
   function renderGit() {
+    if (gitEnabled === false) return <section className="section">
+      <div className="section-title"><div><h2>{tr("Git repositories")}</h2></div></div>
+      <div className="info-box"><AlertCircle size={14}/> {isAdmin
+        ? tr("The Git addon is not installed or is stopped. Install it on the Addons page.")
+        : tr("Git is not available on this server.")}</div>
+      {isAdmin && <div className="actions"><button type="button" onClick={() => navigateToPage('addons')}><PackageOpen size={14}/> {tr("Open Addons")}</button></div>}
+    </section>;
     if (gitRepo) return renderGitRepo();
     const info = gitInfo || {};
     const repos = info.repos || [];
@@ -8480,6 +8504,10 @@ function App() {
               {addon.id === 'malware' && addon.installed && <div className="addon-panel">
                 <div className="addon-panel-head"><strong>{tr("Scans, schedules, real-time protection and quarantine")}</strong>
                   <button className="mini" disabled={!addon.running} onClick={() => navigateToPage('malware')}><Bug size={13}/> {tr("Open Malware Scanner")}</button></div>
+              </div>}
+              {addon.id === 'git' && addon.installed && <div className="addon-panel">
+                <div className="addon-panel-head"><strong>{tr("Repositories, deploys and webhooks")}</strong>
+                  <button className="mini" disabled={!addon.running} onClick={() => navigateToPage('git')}><GitBranch size={13}/> {tr("Open Git")}</button></div>
               </div>}
               {addon.id === 'notifications' && addon.installed && <div className="addon-panel">
                 <div className="addon-panel-head"><strong>{tr("Channels, recipients and events")}</strong>

@@ -39,6 +39,7 @@ from app.services.shell import shell
 
 logger = logging.getLogger("opanel.git")
 
+ADDON_ID = "git"
 HOME_ROOT = PurePosixPath("/home")
 MAX_REPOS_PER_OWNER = 20
 KEEP_OPERATIONS = 30
@@ -71,6 +72,13 @@ _busy: set[int] = set()
 _busy_lock = threading.Lock()
 # Tests point the background work at their own database.
 _session_factory = None
+
+
+def enabled() -> bool:
+    """Git is an addon (operator, 2026-10-10): off until an admin installs it."""
+    from app.services import addons
+
+    return addons.is_enabled(ADDON_ID)
 
 
 # --- Validation ----------------------------------------------------------------------
@@ -444,6 +452,15 @@ def delete(db: Session, repo: GitRepository) -> None:
     """The panel forgets the repository; its files stay where they are."""
     db.query(GitOperation).filter(GitOperation.repository_id == repo.id).delete(synchronize_session=False)
     db.delete(repo)
+
+
+def forget_all(db: Session) -> int:
+    """Removing the addon: the panel forgets every repository; the files stay."""
+    count = 0
+    for repo in db.query(GitRepository).all():
+        delete(db, repo)
+        count += 1
+    return count
 
 
 def delete_for_owner(db: Session, owner: User) -> None:

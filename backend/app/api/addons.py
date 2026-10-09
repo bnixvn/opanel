@@ -128,6 +128,12 @@ def uninstall_addon(
     except ValueError as exc:
         code = 404 if not addons.is_known(addon_id) else 409
         raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if addon_id == "git":
+        # Removing it forgets every repository; Stop is the pause. The files
+        # stay in the accounts' homes.
+        from app.services import git_repos
+        git_repos.forget_all(db)
+        db.commit()
     if addon_id == "mcp":
         # Removing it is the end of every token, not a pause: Stop is the pause.
         from app.api import mcp as mcp_api
