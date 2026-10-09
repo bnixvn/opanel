@@ -17,7 +17,11 @@ from app.models import entities  # noqa: F401  (register metadata)
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: the panel runs its migrations at startup,
+    # after its own modules have made their loggers, and the default silenced
+    # every one of them - a failed restore's traceback, a lost CRS mode, all
+    # went nowhere (2026-10-09).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
