@@ -646,6 +646,8 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .sftp-row-name small,.sftp-row-folder small{font-size:12px;color:var(--text-muted)}
 .sftp-row-folder code{font-family:var(--font-mono);font-size:12.5px;overflow-wrap:anywhere}
 /* Git repositories (2026-10-09). */
+/* min-width:0: in the section's grid a long URL or commit subject would widen it. */
+.git-facts,.git-actions-grid,.git-details,.git-setup,.git-secret{min-width:0}
 .git-create-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 14px;align-items:end}
 .git-create-grid .git-path-field{grid-column:span 2}
 .git-presets{display:flex;flex-wrap:wrap;gap:6px 18px}
