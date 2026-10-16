@@ -1041,7 +1041,8 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
             role=Role.end_user.value,
             is_active=bool(user_info.get("is_active", True)),
             website_limit=int(user_info.get("website_limit") or 5),
-            storage_limit_mb=int(user_info.get("storage_limit_mb") or 1024),
+            # 0 is unlimited, not "missing": `or 1024` turned it into 1 GB.
+            storage_limit_mb=int(user_info["storage_limit_mb"]) if user_info.get("storage_limit_mb") is not None else 1024,
         )
         db.add(user)
         db.flush()

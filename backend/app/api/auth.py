@@ -566,17 +566,33 @@ def logout(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Invalidate the session by clearing cookies AND bumping token_version.
+    """End this session: its token is revoked and its cookies cleared.
 
-    The current JWT's jti is stored server-side, and bumping token_version
-    forces all other devices/tabs holding a JWT for this user to re-authenticate.
-
-    Not while an admin is logged in as this user: that would sign the real
-    customer out of every device of theirs. Only the borrowed session ends.
+    Only this one. Bumping token_version here signed the same account out of
+    every other browser and device at once, and on a server where several
+    people share an administrator login every sign-out threw everyone else
+    out (operator, 2026-10-16). Signing out everywhere is /auth/logout-all;
+    a password or two-factor change still does it by itself.
     """
     _revoke_request_token(db, request, current_user)
-    if not _impersonator(request):
-        current_user.token_version = (current_user.token_version or 0) + 1
+    db.commit()
+    _clear_session_cookies(response)
+    return {"ok": True}
+
+
+@router.post("/logout-all")
+def logout_everywhere(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Sign this account out of every browser and device, this one included."""
+    payload = getattr(request.state, "jwt_payload", None) or {}
+    if payload.get("imp"):
+        raise HTTPException(status_code=400, detail="Not while logged in as another user")
+    _revoke_request_token(db, request, current_user)
+    current_user.token_version = (current_user.token_version or 0) + 1
     db.commit()
     _clear_session_cookies(response)
     return {"ok": True}

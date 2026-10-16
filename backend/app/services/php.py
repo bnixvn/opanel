@@ -33,9 +33,11 @@ def _safe_ini_value(value: str) -> str:
 
 
 OPCACHE_PREFIX = "opcache."
+# The sizes the PHP page can set over Auto-tune's choice (operator, 2026-10-16).
+OPCACHE_SIZE_KEYS = ("opcache.memory_consumption", "opcache.interned_strings_buffer", "opcache.max_accelerated_files")
 
 
-def _existing_opcache_lines(php_version: str) -> list[str]:
+def _existing_opcache_lines(php_version: str, replaced: frozenset = frozenset()) -> list[str]:
     """Keep the tuned opcache block when this editor rewrites the ini.
 
     Two things write this file: the auto-tuner, which emits the whole opcache
@@ -53,7 +55,7 @@ def _existing_opcache_lines(php_version: str) -> list[str]:
         if not stripped or stripped.startswith(";") or "=" not in stripped:
             continue
         key = stripped.split("=", 1)[0].strip()
-        if key.startswith(OPCACHE_PREFIX) and key not in {"opcache.enable", "opcache.enable_cli"}:
+        if key.startswith(OPCACHE_PREFIX) and key not in {"opcache.enable", "opcache.enable_cli"} and key not in replaced:
             kept.append(stripped)
     return kept
 
@@ -65,6 +67,8 @@ def update_php_ini(payload: PhpConfigUpdate) -> str:
         raise ValueError(f"Unsupported PHP version. Allowed: {allowed}")
     display_errors = "On" if str(payload.display_errors).lower() in {"1", "true", "on", "yes"} else "Off"
     opcache_enable = 1 if payload.opcache_enable else 0
+    sizes = {key: getattr(payload, key.replace(".", "_")) for key in OPCACHE_SIZE_KEYS}
+    sizes = {key: int(value) for key, value in sizes.items() if value}
     content = "\n".join([
         f"display_errors = {display_errors}",
         f"memory_limit = {_safe_ini_value(payload.memory_limit)}",
@@ -78,7 +82,8 @@ def update_php_ini(payload: PhpConfigUpdate) -> str:
         # enable_cli follows the same switch so wp-cli and cron runs behave
         # like web requests instead of quietly diverging.
         f"opcache.enable_cli = {opcache_enable}",
-        *_existing_opcache_lines(php_version),
+        *[f"{key} = {value}" for key, value in sizes.items()],
+        *_existing_opcache_lines(php_version, frozenset(sizes)),
         "",
     ])
     target = _lsphp_opanel_ini_path(php_version)
@@ -161,6 +166,16 @@ def read_php_ini(php_version: str) -> dict:
     values["max_file_uploads"] = int(values["max_file_uploads"])
     raw_opcache = str(values.pop("opcache.enable", "1")).strip().lower()
     values["opcache_enable"] = raw_opcache not in {"0", "off", "false", ""}
+    # What the sizes are now, tuned or set here: the form shows and edits them.
+    sizes = {}
+    path = _lsphp_opanel_ini_path(php_version)
+    if path.exists():
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            key, _, value = line.strip().partition("=")
+            if key.strip() in OPCACHE_SIZE_KEYS and value.strip().isdigit():
+                sizes[key.strip()] = int(value.strip())
+    for key in OPCACHE_SIZE_KEYS:
+        values[key.replace(".", "_")] = sizes.get(key)
     return values
 
 

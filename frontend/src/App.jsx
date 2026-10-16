@@ -23,6 +23,15 @@ import './shared/ui.css';
 import './shared/file-manager.css';
 
 const API = import.meta.env.VITE_API_URL || '/api';
+// What loadCurrentUser returns when the API did not answer at all.
+const SESSION_UNREACHABLE = Symbol('session-unreachable');
+// The OPcache sizes the PHP page sets (operator, 2026-10-16): field, directive,
+// range, and the value shown when nothing is set yet.
+const OPCACHE_SIZE_FIELDS = [
+  ['opcache_memory_consumption', 'opcache.memory_consumption (MB)', 32, 8192, '768'],
+  ['opcache_interned_strings_buffer', 'opcache.interned_strings_buffer (MB)', 4, 1024, '64'],
+  ['opcache_max_accelerated_files', 'opcache.max_accelerated_files', 200, 1000000, '100000'],
+];
 const DEFAULT_SERVICE_NAMES = ['opanel-api', 'nginx', 'php8.3-fpm', 'php8.4-fpm', 'mariadb', 'redis-server'];
 const PHP_VERSION_ORDER = ['7.4', '8.1', '8.2', '8.3', '8.4', '8.5'];
 const NGINX_REWRITE_MODES = [
@@ -885,7 +894,11 @@ function App() {
       if (res.ok && data?.message && !silent) setNotice(tr(data.message));
       return res.ok ? data : null;
     } catch (err) {
-      setError(tr("Cannot connect to the {0} API at {1}. Check opanel-api and the panel port.", panelSettings.app_name || tr("opanel"), API));
+      // fetch throws only when no answer came back at all: the API restarting
+      // (an update, a settings change) or the network dropping. A background
+      // poll keeps quiet - the next one tries again - instead of raising an
+      // "Action failed" nobody asked for (operator, 2026-10-16).
+      if (!options?.silent) setError(tr("Cannot reach {0} right now: it may be restarting. Try again in a few seconds.", panelSettings.app_name || tr("opanel")));
       return null;
     } finally {
       if (label) setLoading('');
@@ -977,7 +990,7 @@ function App() {
         setError(formatApiError(data.detail, tr("Login failed with status {0}", res.status)));
       }
     } catch (err) {
-      setError(tr("Cannot connect to the {0} API at {1}. Check opanel-api and the panel port.", panelSettings.app_name || tr("opanel"), API));
+      setError(tr("Cannot reach {0} right now: it may be restarting. Try again in a few seconds.", panelSettings.app_name || tr("opanel")));
     } finally {
       setLoading('');
     }
@@ -1060,10 +1073,11 @@ function App() {
     }
   }
 
-  async function logout() {
+  async function logout({ everywhere = false } = {}) {
     try {
-      // Best-effort server logout: clears cookies and bumps token_version.
-      await fetch(`${API}/auth/logout`, {
+      // Best-effort server logout. It ends this session only; "everywhere"
+      // also ends every other browser and device of this account.
+      await fetch(`${API}/auth/${everywhere ? 'logout-all' : 'logout'}`, {
         method: 'POST',
         credentials: 'include',
         headers: (() => {
@@ -1075,7 +1089,7 @@ function App() {
     clearSession(tr("Logged out."));
   }
 
-  async function loadCurrentUser({ clearOnUnauthorized = true } = {}) {
+  async function loadCurrentUser({ clearOnUnauthorized = true, reportUnreachable = false } = {}) {
     try {
       const res = await fetch(`${API}/auth/session`, { credentials: 'include' });
       if (!res.ok) {
@@ -1103,8 +1117,9 @@ function App() {
       setIsAuthenticated(true);
       return data.user;
     } catch {
-      setCurrentUser(null);
-      return null;
+      // No answer at all: the API is restarting. Keep what is shown; the
+      // caller that asked to know (the page load) waits and asks again.
+      return reportUnreachable ? SESSION_UNREACHABLE : null;
     }
   }
 
@@ -1139,7 +1154,9 @@ function App() {
     const hostnameChanged = hostname && hostname !== currentHostname;
 
     if (wantsSsl && (!hasSsl || hostnameChanged)) {
-      const sslEmail = String(currentUser?.email || panelSslEmail || defaultPanelSslEmail(hostname) || '').trim();
+      // The address typed here first; the server passes over a placeholder
+      // such as admin@example.com for admin@<panel host> (operator, 2026-10-16).
+      const sslEmail = String(panelSslEmail || currentUser?.email || defaultPanelSslEmail(hostname) || '').trim();
       const nameData = await request('/panel-settings', {
         method: 'PATCH',
         body: JSON.stringify({ app_name: panelSettingsForm.app_name }),
@@ -1201,7 +1218,15 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
-        await loadCurrentUser({ clearOnUnauthorized: false });
+        // A page opened while the API restarts must not land on the sign-in
+        // form: that read as being signed out, and signing in then failed
+        // with "cannot connect" (operator, 2026-10-16). Wait up to half a
+        // minute for an answer instead.
+        for (let attempt = 0; attempt < 15; attempt += 1) {
+          const outcome = await loadCurrentUser({ clearOnUnauthorized: false, reportUnreachable: true });
+          if (outcome !== SESSION_UNREACHABLE) break;
+          await new Promise(resolve => window.setTimeout(resolve, 2000));
+        }
       } catch {}
       finally { setBootstrapping(false); }
     })();
@@ -3863,7 +3888,9 @@ function App() {
   async function updatePhpConfig() {
     const data = await request('/maintenance/php-config', {
       method: 'POST',
-      body: JSON.stringify({ ...phpConfig, max_execution_time: Number(phpConfig.max_execution_time), max_input_time: Number(phpConfig.max_input_time), max_input_vars: Number(phpConfig.max_input_vars), opcache_enable: !!phpConfig.opcache_enable }),
+      body: JSON.stringify({ ...phpConfig, max_execution_time: Number(phpConfig.max_execution_time), max_input_time: Number(phpConfig.max_input_time), max_input_vars: Number(phpConfig.max_input_vars), opcache_enable: !!phpConfig.opcache_enable,
+        // Empty keeps the tuned value.
+        ...Object.fromEntries(OPCACHE_SIZE_FIELDS.map(([key]) => [key, String(phpConfig[key] ?? '').trim() === '' ? null : Number(phpConfig[key])])) }),
     }, tr("Updating PHP config..."));
     if (data?.target) { setNotice(tr("Updated PHP config: {0}", data.target)); await loadPhpConfig(phpConfig.php_version); }
   }
@@ -5350,7 +5377,8 @@ function App() {
       status.push({ key: 'backups', icon: Archive, label: tr("Backups"),
         value: backups ? shortDate(backups.last_run_at) : '—',
         detail: !backups ? tr("Checking…") : !backups.schedules ? tr("No schedule") : backups.failed ? tr("Last run failed") : tr("{0} schedule(s)", backups.schedules),
-        tone: !backups ? 'neutral' : !backups.schedules ? 'warn' : backups.failed ? 'bad' : 'ok' });
+        // No schedule is a choice, not a fault (operator, 2026-10-16).
+        tone: !backups || !backups.schedules ? 'neutral' : backups.failed ? 'bad' : 'ok' });
     } else {
       const wafOn = websites.filter(site => site.waf_enabled).length;
       status.push({ key: 'waf', icon: ShieldAlert, label: tr("WAF"), value: `${wafOn}/${websites.length}`,
@@ -5369,7 +5397,6 @@ function App() {
     if (isAdmin && sum.backups?.failed) attention.push({ tone: 'bad', text: tr("{0} scheduled backup(s) failed on their last run.", sum.backups.failed), action: tr("Open"), target: 'backups' });
     if (ssl.unsecured_count) attention.push({ tone: 'warn', text: tr("{0} website(s) without SSL: {1}", ssl.unsecured_count, ssl.unsecured.join(', ') + (ssl.unsecured_count > ssl.unsecured.length ? '…' : '')), action: tr("Set up SSL"), target: 'ssl' });
     if (sites.suspended) attention.push({ tone: 'warn', text: tr("{0} website(s) suspended.", sites.suspended), action: tr("Open"), target: 'websites' });
-    if (isAdmin && sum.backups && !sum.backups.schedules) attention.push({ tone: 'warn', text: tr("No scheduled backup is set up."), action: tr("Set up"), target: 'backups' });
     if (isAdmin && sum.waf?.engine === 'off') attention.push({ tone: 'warn', text: tr("The WAF engine is not installed."), action: tr("Open"), target: 'waf' });
     if (isAdmin && sum.malware && !sum.malware.installed) attention.push({ tone: 'info', text: tr("The Malware Scanner addon is not installed."), action: tr("Install"), target: 'addons' });
     if (!isAdmin && !currentUser?.totp_enabled) attention.push({ tone: 'info', text: tr("Two-factor sign-in is off for your account."), action: tr("Turn on"), target: 'security' });
@@ -8636,6 +8663,9 @@ function App() {
         <label><span>memory_limit</span><input value={phpConfig.memory_limit} onChange={e => setPhpConfig(prev => ({ ...prev, memory_limit: e.target.value }))} placeholder="1024M" /></label>
         <label><span>post_max_size</span><input value={phpConfig.post_max_size} onChange={e => setPhpConfig(prev => ({ ...prev, post_max_size: e.target.value }))} placeholder="1024M" /></label>
         <label><span>upload_max_filesize</span><input value={phpConfig.upload_max_filesize} onChange={e => setPhpConfig(prev => ({ ...prev, upload_max_filesize: e.target.value }))} placeholder="1024M" /></label>
+        {OPCACHE_SIZE_FIELDS.map(([key, directive, min, max, example]) => <label key={key}><span>{directive}</span>
+          <input type="number" min={min} max={max} value={phpConfig[key] ?? ''} placeholder={example}
+            title={tr("Empty keeps the Auto-tune value.")} onChange={e => setPhpConfig(prev => ({ ...prev, [key]: e.target.value }))} /></label>)}
         <button className="secondary-light" disabled={!!loading} onClick={restorePhpDefaults}><RotateCcw size={14}/> {tr("Restore defaults")}</button>
         <button className="secondary-light" disabled={!!loading} onClick={loadPhpTuning}><Zap size={14}/> {tr("Auto-tune")}</button>
         <button disabled={!!loading} onClick={updatePhpConfig}>{tr("Save")}</button>
@@ -9098,10 +9128,20 @@ function App() {
     const enabled = Boolean(twoFactorStatus?.enabled || currentUser?.totp_enabled);
     const pk = passkeyStatus || {};
     const keys = pk.passkeys || [];
+    const sessionsCard = <section className="section">
+      <div className="section-title">
+        <div><h2>{tr("Signed-in devices")}</h2>
+          <p className="hint">{tr("Signing out ends this browser only. Sign out everywhere ends every session of this account, on other browsers and devices too.")}</p></div>
+        <button className="secondary" disabled={!!loading || !!currentUser?.impersonator || !!currentUser?.demo}
+          onClick={() => { if (confirm(tr("Sign out of every browser and device, this one included?"))) logout({ everywhere: true }); }}>
+          <LogOut size={14}/> {tr("Sign out everywhere")}</button>
+      </div>
+    </section>;
     // Independent. Sign-in prefers the passkey; the code is what gets the
     // owner in when the passkey cannot be used.
     const canEnableTotp = pk.can_enable_totp !== undefined ? pk.can_enable_totp : !enabled;
     return <>
+      {sessionsCard}
       <section className="section">
         <div className="section-title">
           <div>

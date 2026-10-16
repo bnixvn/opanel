@@ -70,6 +70,33 @@ def is_domain(host: str) -> bool:
     return bool(DOMAIN_RE.fullmatch((host or "").lower()))
 
 
+# Addresses no certificate authority takes: the installer's own admin@example.com,
+# reserved names and local ones (RFC 2606/6761). An administrator who never
+# changed theirs could not get a certificate for the panel (operator, 2026-10-16).
+PLACEHOLDER_EMAIL_DOMAINS = ("example.com", "example.net", "example.org", "localhost", "localdomain")
+PLACEHOLDER_EMAIL_SUFFIXES = (".example", ".invalid", ".test", ".local", ".localhost", ".localdomain",
+                              ".example.com", ".example.net", ".example.org")
+
+
+def usable_acme_email(value: str | None) -> str:
+    email = (value or "").strip()
+    if "@" not in email:
+        return ""
+    domain = email.rsplit("@", 1)[1].lower()
+    if domain in PLACEHOLDER_EMAIL_DOMAINS or domain.endswith(PLACEHOLDER_EMAIL_SUFFIXES) or "." not in domain:
+        return ""
+    return email
+
+
+def acme_email(*candidates: str | None, host: str = "") -> str:
+    """The first real address, or admin@<the panel's own hostname>."""
+    for candidate in candidates:
+        email = usable_acme_email(candidate)
+        if email:
+            return email
+    return default_ssl_email(host) if host else ""
+
+
 def default_ssl_email(host: str) -> str:
     return f"admin@{host.lower()}" if is_domain(host) else ""
 
@@ -268,7 +295,7 @@ def install_panel_ssl(email: str | None = None, panel_hostname: str | None = Non
     _scheme, host, port = parse_panel_url(normalized)
     if not is_domain(host):
         raise ValueError("Panel SSL requires a domain name, not an IP address")
-    certbot_email = (email or settings.ssl_email or default_ssl_email(host)).strip()
+    certbot_email = acme_email(email, settings.ssl_email, host=host)
     helper_args = [host, str(port)]
     if certbot_email:
         helper_args.append(certbot_email)

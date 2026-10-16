@@ -1296,6 +1296,18 @@ class PhpConfigUpdate(BaseModel):
     max_input_time: int = Field(default=600, ge=1, le=3600)
     max_input_vars: int = Field(default=10000, ge=100, le=1_000_000)
     opcache_enable: bool = True
+    # OPcache sizes, written over what Auto-tune chose (operator, 2026-10-16);
+    # None leaves the tuned value in place.
+    opcache_memory_consumption: Optional[int] = Field(default=None, ge=32, le=8192)
+    opcache_interned_strings_buffer: Optional[int] = Field(default=None, ge=4, le=1024)
+    opcache_max_accelerated_files: Optional[int] = Field(default=None, ge=200, le=1_000_000)
+
+    @model_validator(mode="after")
+    def interned_strings_fit_in_opcache(self):
+        if (self.opcache_memory_consumption and self.opcache_interned_strings_buffer
+                and self.opcache_interned_strings_buffer >= self.opcache_memory_consumption):
+            raise ValueError("opcache.interned_strings_buffer must be smaller than opcache.memory_consumption")
+        return self
 
     @field_validator("php_version")
     @classmethod
