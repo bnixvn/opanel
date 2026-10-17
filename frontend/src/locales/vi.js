@@ -2910,4 +2910,13 @@ export default {
   "Target": "Đối tượng",
   "What each account did in the panel, newest first.": "Mỗi tài khoản đã làm gì trong panel, mới nhất trước.",
   "{from}-{to}": "{from}-{to}",
+  " and ": " và ",
+  "Delete its databases": "Xoá cơ sở dữ liệu của website",
+  "Delete its files": "Xoá các tệp của website",
+  "Deleted {0}.": "Đã xoá {0}.",
+  "Deleted {0}; kept {1}.": "Đã xoá {0}; giữ lại {1}.",
+  "Its web server configuration and certificate are removed. Untick what should stay with the account.": "Cấu hình máy chủ web và chứng chỉ của website sẽ bị gỡ. Bỏ tick những gì muốn giữ lại cho tài khoản.",
+  "Removes its web server configuration and certificate; you choose whether its files and databases go too.": "Gỡ cấu hình máy chủ web và chứng chỉ; bạn chọn có xoá luôn tệp và cơ sở dữ liệu hay không.",
+  "its databases ({0})": "cơ sở dữ liệu ({0})",
+  "its files": "các tệp",
 };

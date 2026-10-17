@@ -2791,15 +2791,27 @@ function App() {
     return () => clearTimeout(t);
   }, [domain, createSslMode, installSslAfterCreate]);
 
+  // Its vhost and certificate always go; its files and its databases as the
+  // dialog's boxes say - unticked, they stay with the account.
   async function deleteWebsite(id) {
     const site = websites.find(item => String(item.id) === String(id));
-    if (!(await confirmDialog({
+    const dbs = databases.filter(db => String(db.website_id) === String(id));
+    const choice = await confirmDialog({
       title: tr("Delete website"), subject: site?.domain, danger: true, typeToConfirm: site?.domain,
-      message: tr("Its files, its vhost, its certificate and its databases are deleted. This cannot be undone."),
+      message: tr("Its web server configuration and certificate are removed. Untick what should stay with the account."),
+      options: [
+        { name: 'files', label: tr("Delete its files"), hint: site?.root_path, checked: true },
+        { name: 'databases', label: tr("Delete its databases"), hint: dbs.length ? dbs.map(db => db.db_name).join(', ') : tr("No database is attached to this website."), checked: true, disabled: dbs.length === 0 },
+      ],
       confirmLabel: tr("Delete website"),
-    }))) return false;
-    const data = await request(`/websites/${id}?delete_files=true&delete_database=true`, { method: 'DELETE' }, tr("Deleting website..."));
-    if (data) refreshAll();
+    });
+    if (!choice) return false;
+    const data = await request(`/websites/${id}?delete_files=${!!choice.files}&delete_database=${!!choice.databases}`, { method: 'DELETE' }, tr("Deleting website..."));
+    if (data) {
+      const kept = [data.kept_files ? tr("its files") : '', data.kept_databases?.length ? tr("its databases ({0})", data.kept_databases.join(', ')) : ''].filter(Boolean);
+      setNotice(kept.length ? tr("Deleted {0}; kept {1}.", site?.domain || '', kept.join(tr(" and "))) : tr("Deleted {0}.", site?.domain || ''));
+      refreshAll();
+    }
     return !!data;
   }
 

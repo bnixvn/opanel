@@ -799,14 +799,24 @@ def delete_website(website_id: int, request: Request, delete_files: bool = True,
             site_users.delete_site_runtime(website.root_path, website.linux_user)
         else:
             wordpress.delete_wordpress(website.root_path)
+    else:
+        # The folder stays in the account's home; only what served it goes.
+        site_users.detach_site_runtime(website.root_path, website.linux_user)
     for db_item in db_items:
-        db.delete(db_item)
+        if delete_database:
+            db.delete(db_item)
+        else:
+            # Kept with the account, on no website: still the owner's, still
+            # in its backups, still in its database list.
+            db_item.website_id = None
     owner_id = website.owner_id
     db.delete(website)
     db.commit()
     dns_manager.website_removed(db, dns_hosts, owner_id)
-    log_action(db, current_user.id, "delete_website", website.domain, request=request)
-    return {"ok": True}
+    kept = [part for part, gone in (("files", delete_files), ("databases", delete_database)) if not gone]
+    log_action(db, current_user.id, "delete_website", website.domain,
+               f"kept {', '.join(kept)}" if kept else "", request=request)
+    return {"ok": True, "kept_files": not delete_files, "kept_databases": [item.db_name for item in db_items] if not delete_database else []}
 
 
 @router.post("/{website_id}/fix-nginx-security")

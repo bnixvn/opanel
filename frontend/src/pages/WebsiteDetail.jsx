@@ -360,7 +360,7 @@ function AdvancedTab({ site }) {
     </section>
 
     <section className="section wsd-danger">
-      <PageHeader title={t('Delete this website')} subtitle={t('Removes its files, its vhost, its certificate and its database.')}
+      <PageHeader title={t('Delete this website')} subtitle={t('Removes its web server configuration and certificate; you choose whether its files and databases go too.')}
         actions={<button type="button" className="danger" disabled={!!loading} onClick={async () => { if (await deleteWebsite(site.id)) navigateToPage('websites'); }}>
           <Trash2 size={14} aria-hidden="true"/> {t('Delete website')}</button>}/>
     </section>

@@ -325,3 +325,15 @@ def delete_site_runtime(root_path: str, linux_user: Optional[str]) -> None:
         check=False,
         fallback=["true"],
     )
+
+
+def detach_site_runtime(root_path: str, linux_user: Optional[str]) -> None:
+    """A website deleted with its files kept: its PHP pools go, its folder stays."""
+    if not linux_user:
+        return
+    shell.privileged(
+        "site-runtime-detach",
+        helper_args=[validate_linux_user(linux_user), root_path],
+        check=False,
+        fallback=["true"],
+    )

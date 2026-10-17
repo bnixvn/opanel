@@ -9491,6 +9491,16 @@ PY
     exec rm -rf "$target"
     ;;
 
+  # A website deleted with its files kept: its PHP pools go, as they would
+  # with the files, and the folder stays in the account's home.
+  site-runtime-detach)
+    [[ $# -eq 2 ]] || deny "usage: site-runtime-detach <site-user> <path>"
+    user="$1"; path="$2"
+    require_linux_user "$user"
+    target=$(require_managed_path "$path" "$user")
+    delete_site_php_pools "$user" "$target"
+    ;;
+
   rm-site)
     [[ $# -eq 3 ]] || deny "usage: rm-site <site-user> <site-root> <path>"
     user="$1"; root="$2"; path="$3"
