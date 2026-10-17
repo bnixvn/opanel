@@ -27,6 +27,8 @@ from app.main import app
 from app.models.entities import User, Website, WpInstall, WpJob
 from app.services import provisioning, wp_manager
 
+HELPER = (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+
 
 class InlineExecutor:
     def submit(self, fn, *args, **kwargs):
@@ -301,3 +303,52 @@ def test_hardening_runs_only_known_items_as_the_site_user(env):
     sets = [call["args"][:4] for call in env.calls if call["args"][:2] == ["config", "set"]]
     assert ["config", "set", "DISALLOW_FILE_EDIT", "true"] in sets
     assert {call["user"] for call in env.calls} == {"alice"}
+
+
+def _helper_case(name: str) -> str:
+    start = HELPER.index(f"  {name})")
+    return HELPER[start: HELPER.index(";;\n\n", start)]
+
+
+def test_restore_points_are_made_and_put_back_as_the_site_user():
+    body = _helper_case("wp-point-create|wp-point-restore")
+    # Only a folder of the account's own, and only as the account.
+    assert '^/home/${user}/\\.opanel-wp-points/[a-f0-9]{16}/[0-9]{8}T[0-9]{6}$' in body
+    assert 'exec runuser -u "$user" -- bash -c' in body and 'exec runuser -u "$user" -- tar -xzf' in body
+    assert "--exclude=./wp-content/uploads" in body
+    delete = _helper_case("wp-point-delete")
+    assert 'exec runuser -u "$user" -- rm -rf -- "$point"' in delete
+
+
+def test_an_update_takes_a_restore_point_first_and_two_are_kept(env):
+    _scan(env)
+    row = env.db.query(WpInstall).one()
+    client = env.as_user("alice")
+    for _ in range(3):
+        env.calls.clear()
+        answer = client.post(f"/api/wordpress/installs/{row.id}/update", json={})
+        assert answer.status_code == 200
+    commands = [call["command"] for call in env.calls]
+    # The point (files, then the database) comes before the first update.
+    first_update = next(i for i, call in enumerate(env.calls) if call["args"][:2] == ["core", "update"])
+    assert commands.index("wp-point-create") < first_update
+    export = next(call for call in env.calls if call["args"][:2] == ["db", "export"])
+    assert export["args"][2].startswith("/home/alice/.opanel-wp-points/") and export["args"][2].endswith("/db.sql")
+    env.db.refresh(row)
+    points = json.loads(row.inventory)["points"]
+    assert len(points) == 2 and points[-1]["reason"] == "update everything"
+
+
+def test_a_restore_names_a_point_the_site_has(env):
+    _scan(env)
+    row = env.db.query(WpInstall).one()
+    client = env.as_user("alice")
+    assert client.post(f"/api/wordpress/installs/{row.id}/points/restore", json={"name": "../../etc"}).status_code == 422
+    client.post(f"/api/wordpress/installs/{row.id}/points", json={})
+    env.db.refresh(row)
+    name = json.loads(row.inventory)["points"][0]["name"]
+    env.calls.clear()
+    assert client.post(f"/api/wordpress/installs/{row.id}/points/restore", json={"name": name}).status_code == 200
+    restored = [call for call in env.calls if call["command"] == "wp-point-restore"]
+    assert restored and restored[0]["user"] == "alice"
+    assert any(call["args"][:2] == ["db", "import"] for call in env.calls)

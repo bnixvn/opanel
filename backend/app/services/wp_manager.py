@@ -236,8 +236,10 @@ def apply_inventory(install: WpInstall, inventory: dict) -> None:
     install.themes_total = len(inventory["themes"])
     install.themes_updates = sum(1 for item in inventory["themes"] if item["update"])
     previous = json.loads(install.inventory or "{}")
-    if previous.get("security_full") and "security_full" not in inventory:
-        inventory["security_full"] = previous["security_full"]
+    # What a check does not read: the last full security check, the restore points.
+    for key in ("security_full", "points"):
+        if previous.get(key) and key not in inventory:
+            inventory[key] = previous[key]
     install.inventory = json.dumps(inventory)
     install.last_checked_at = datetime.utcnow()
     install.last_error = ""
@@ -428,6 +430,7 @@ def _handle_core(db: Session, task: _Task, params: dict) -> None:
         version = str(params.get("version") or "")
         if version and not re.fullmatch(r"\d+(\.\d+){1,3}", version):
             raise WpError("Invalid WordPress version")
+        _point_first(db, task, params, install, website, "core update")
         task.stage(f"Updating WordPress{' to ' + version if version else ''}")
         args = ["core", "update"] + ([f"--version={version}"] if version else [])
         task.log(_short(wp(website, install.path, args).stdout))
@@ -470,6 +473,8 @@ def _handle_items(kind: str):
             raise WpError(f"Unknown {noun} action")
         if action != "update_all" and not slugs:
             raise WpError(f"Name the {noun}")
+        if action in ("update", "update_all"):
+            _point_first(db, task, params, install, website, f"{noun} update")
         task.stage(f"{noun.capitalize()}: {action.replace('_', ' ')} {' '.join(slugs)}".strip())
         if action == "install":
             args = [noun, "install", *slugs] + (["--activate"] if params.get("activate") else [])
@@ -496,6 +501,7 @@ def _handle_items(kind: str):
 
 def _handle_update_everything(db: Session, task: _Task, params: dict) -> None:
     install, website = _install_and_site(db, task.job)
+    _point_first(db, task, params, install, website, "update everything")
     for stage, args in (("Updating WordPress", ["core", "update"]), ("Updating the database", ["core", "update-db"]),
                         ("Updating plugins", ["plugin", "update", "--all"]), ("Updating themes", ["theme", "update", "--all"])):
         task.stage(stage)
@@ -531,6 +537,92 @@ def config_set(website: Website, path: str, name: str, value: str) -> None:
             if "transformation" not in str(exc) and "anchor" not in str(exc).lower():
                 raise
     raise last
+
+
+# --- Restore points ---------------------------------------------------------------------
+# A WordPress's files without its uploads and caches, and its database, in the
+# account's own home - taken before an update, and on request; the newest two
+# are kept. Made and put back as the account itself (opanel-helper's
+# wp-point-*), so they count against its disk like anything else of its own.
+
+POINTS_DIR = ".opanel-wp-points"
+KEEP_POINTS = 2
+
+
+def _point_dir(website: Website, install: WpInstall, name: str) -> str:
+    key = hashlib.sha256(install.path.encode()).hexdigest()[:16]
+    # The helper takes /home/<user>/... and nothing else.
+    return f"/home/{_linux_user(website)}/{POINTS_DIR}/{key}/{name}"
+
+
+def _points(install: WpInstall) -> list[dict]:
+    return list(json.loads(install.inventory or "{}").get("points") or [])
+
+
+def _save_points(db: Session, install: WpInstall, points: list[dict]) -> None:
+    inventory = json.loads(install.inventory or "{}")
+    inventory["points"] = points
+    install.inventory = json.dumps(inventory)
+    db.commit()
+
+
+def create_point(db: Session, task: _Task, install: WpInstall, website: Website, reason: str) -> dict:
+    name = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    folder = _point_dir(website, install, name)
+    task.stage("Taking a restore point: the files")
+    result = shell.privileged("wp-point-create", helper_args=[_linux_user(website), install.path, folder], check=False)
+    if result.returncode != 0:
+        raise WpError("The restore point could not be taken: " + _clean_error(result.stderr or result.stdout))
+    lines = [line for line in (result.stdout or "").split() if line.isdigit()]
+    task.stage("Taking a restore point: the database")
+    wp(website, install.path, ["db", "export", f"{folder}/db.sql"])
+    point = {"name": name, "created_at": datetime.utcnow().isoformat() + "Z", "reason": reason,
+             "size_bytes": int(lines[-1]) if lines else None, "core_version": install.core_version}
+    points = _points(install) + [point]
+    # The newest are kept; older points go.
+    for old in points[:-KEEP_POINTS]:
+        shell.privileged("wp-point-delete", helper_args=[_linux_user(website), _point_dir(website, install, old["name"])], check=False)
+    _save_points(db, install, points[-KEEP_POINTS:])
+    task.log(f"Restore point {name} taken")
+    return point
+
+
+def _handle_point_create(db: Session, task: _Task, params: dict) -> None:
+    install, website = _install_and_site(db, task.job)
+    create_point(db, task, install, website, "manual")
+
+
+def _handle_point_restore(db: Session, task: _Task, params: dict) -> None:
+    install, website = _install_and_site(db, task.job)
+    point = next((item for item in _points(install) if item["name"] == params.get("name")), None)
+    if not point:
+        raise WpError("That restore point is gone")
+    folder = _point_dir(website, install, point["name"])
+    task.stage("Putting the files back")
+    result = shell.privileged("wp-point-restore", helper_args=[_linux_user(website), install.path, folder], check=False)
+    if result.returncode != 0:
+        raise WpError("The files could not be put back: " + _clean_error(result.stderr or result.stdout))
+    task.stage("Putting the database back")
+    wp(website, install.path, ["db", "import", f"{folder}/db.sql"])
+    wp(website, install.path, ["cache", "flush"], check=False)
+    refresh_install(db, task, install, website)
+
+
+def _handle_point_delete(db: Session, task: _Task, params: dict) -> None:
+    install, website = _install_and_site(db, task.job)
+    points = _points(install)
+    point = next((item for item in points if item["name"] == params.get("name")), None)
+    if not point:
+        return
+    task.stage("Deleting the restore point")
+    shell.privileged("wp-point-delete", helper_args=[_linux_user(website), _point_dir(website, install, point["name"])], check=False)
+    _save_points(db, install, [item for item in points if item["name"] != point["name"]])
+
+
+def _point_first(db: Session, task: _Task, params: dict, install: WpInstall, website: Website, reason: str) -> None:
+    """Before an update: a restore point, unless the task was asked not to."""
+    if params.get("restore_point", True):
+        create_point(db, task, install, website, reason)
 
 
 def _short(text: str) -> str:
@@ -649,6 +741,9 @@ HANDLERS = {
     "update": _handle_update_everything,
     "security_scan": _handle_security_scan,
     "harden": _handle_harden,
+    "point_create": _handle_point_create,
+    "point_restore": _handle_point_restore,
+    "point_delete": _handle_point_delete,
 }
 
 

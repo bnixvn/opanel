@@ -55,6 +55,7 @@ class CoreIn(BaseModel):
     action: str
     version: Optional[str] = None
     mode: Optional[str] = None
+    restore_point: bool = True
 
 
 class SwitchIn(BaseModel):
@@ -65,6 +66,11 @@ class ItemsIn(BaseModel):
     action: str
     slugs: List[str] = Field(default_factory=list, max_length=50)
     activate: bool = False
+    restore_point: bool = True
+
+
+class PointIn(BaseModel):
+    name: str = Field(pattern=r"^[0-9]{8}T[0-9]{6}$")
 
 
 class UserIn(BaseModel):
@@ -275,6 +281,21 @@ def plugins(install_id: int, payload: ItemsIn, request: Request, db: Session = D
 @router.post("/installs/{install_id}/themes")
 def themes(install_id: int, payload: ItemsIn, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return _items("theme", install_id, payload, request, db, current_user)
+
+
+@router.post("/installs/{install_id}/points")
+def point_create(install_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return _task(db, current_user, install_id, "point_create", {}, request)
+
+
+@router.post("/installs/{install_id}/points/restore")
+def point_restore(install_id: int, payload: PointIn, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return _task(db, current_user, install_id, "point_restore", payload.model_dump(), request)
+
+
+@router.post("/installs/{install_id}/points/delete")
+def point_delete(install_id: int, payload: PointIn, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return _task(db, current_user, install_id, "point_delete", payload.model_dump(), request)
 
 
 @router.post("/installs/{install_id}/security/scan")

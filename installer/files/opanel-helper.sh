@@ -9570,6 +9570,41 @@ PY
     exec runuser -u www-data -- env HOME=/var/www       WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable'       php -d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp --info
     ;;
 
+  # ---- WordPress Manager restore points --------------------------------
+  # A WordPress's files (without its uploads and caches) in the account's own
+  # home, /home/<user>/.opanel-wp-points/<install>/<when>/files.tar.gz, made,
+  # put back and removed as the account itself: never as root on a tree its
+  # owner controls. The database dump beside it is WP-CLI's (wp-site).
+  wp-point-create|wp-point-restore)
+    [[ $# -eq 3 ]] || deny "usage: $cmd <site-user> <wordpress-path> <point-dir>"
+    user="$1"; path="$2"; point="$3"
+    require_linux_user "$user"
+    target=$(require_managed_path "$path" "$user")
+    [[ "$point" =~ ^/home/${user}/\.opanel-wp-points/[a-f0-9]{16}/[0-9]{8}T[0-9]{6}$ ]] || deny "invalid restore point: $point"
+    if [[ "$cmd" == "wp-point-create" ]]; then
+      exec runuser -u "$user" -- bash -c '
+        set -euo pipefail
+        umask 077
+        mkdir -p "$1"
+        tar -czf "$1/files.tar.gz" -C "$2" --exclude=./wp-content/uploads --exclude=./wp-content/cache \
+          --exclude=./wp-content/upgrade --exclude=./wp-content/updraft --exclude=./wp-content/ai1wm-backups .
+        du -sb "$1" | cut -f1
+      ' _ "$point" "$target"
+    fi
+    [[ -f "$point/files.tar.gz" ]] || deny "restore point has no files: $point"
+    # Put back over what is there: a file added since the point stays, every
+    # file the point had comes back as it was.
+    exec runuser -u "$user" -- tar -xzf "$point/files.tar.gz" -C "$target"
+    ;;
+
+  wp-point-delete)
+    [[ $# -eq 2 ]] || deny "usage: wp-point-delete <site-user> <point-dir>"
+    user="$1"; point="$2"
+    require_linux_user "$user"
+    [[ "$point" =~ ^/home/${user}/\.opanel-wp-points/[a-f0-9]{16}/[0-9]{8}T[0-9]{6}$ ]] || deny "invalid restore point: $point"
+    exec runuser -u "$user" -- rm -rf -- "$point"
+    ;;
+
   wp-site)
     [[ $# -ge 2 ]] || deny "usage: wp-site <site-user> <args...>"
     user="$1"; shift

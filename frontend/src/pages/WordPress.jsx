@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Activity, AlertTriangle, ArrowLeft, Bug, CheckCircle2, CircleHelp, Copy, Download, ExternalLink, KeyRound, LogIn, Package, Palette,
+  Activity, AlertTriangle, ArrowLeft, Bug, CheckCircle2, CircleHelp, Copy, Download, ExternalLink, History, KeyRound, LogIn, Package, Palette,
   Plus, RefreshCw, RotateCcw, ScanSearch, Search, Settings2, ShieldCheck, Trash2, Wrench, X,
 } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
@@ -34,6 +34,9 @@ const JOB_LABELS = {
   update: msg('Update everything'),
   security_scan: msg('Security check'),
   harden: msg('Hardening'),
+  point_create: msg('Restore point'),
+  point_restore: msg('Roll back'),
+  point_delete: msg('Delete restore point'),
 };
 
 // Each security check, in the words for when it is fine and when it is not.
@@ -180,7 +183,7 @@ export default function WordPressPage() {
 
   async function updateSelected() {
     if (!selected.length) return;
-    if (!(await confirmDialog({ title: t('Update {count} site(s)?', { count: selected.length }), message: t('WordPress, every plugin and every theme are updated to their latest versions.'), confirmLabel: t('Update now') }))) return;
+    if (!(await confirmDialog({ title: t('Update {count} site(s)?', { count: selected.length }), message: t('WordPress, every plugin and every theme are updated to their latest versions. A restore point of each is taken first.'), confirmLabel: t('Update now') }))) return;
     await post('/wordpress/bulk-update', { install_ids: selected }, t('Starting the updates...'));
     setSelected([]);
   }
@@ -338,6 +341,7 @@ const TABS = [
   ['plugins', Package, msg('Plugins')],
   ['themes', Palette, msg('Themes')],
   ['security', ShieldCheck, msg('Security')],
+  ['points', History, msg('Restore points')],
   ['activity', ScanSearch, msg('Activity')],
 ];
 
@@ -378,6 +382,7 @@ function ManageView({ id, detail, back, reload, post, signIn, setSecret, busy })
       {tab === 'plugins' && <Items kind="plugin" detail={detail} items={inv.plugins || []} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'themes' && <Items kind="theme" detail={detail} items={inv.themes || []} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'security' && <Security detail={detail} base={base} post={post} busy={busy || !usable}/>}
+      {tab === 'points' && <RestorePoints detail={detail} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'activity' && <ActivityTab detail={detail}/>}
     </section>
   </>;
@@ -387,7 +392,7 @@ function Overview({ detail, inv, base, post, busy, signIn, resetPassword }) {
   const t = useT();
   const admins = inv.admins || [];
   const updateTo = async (version) => {
-    if (await confirmDialog({ title: t('Update WordPress to {version}?', { version }), message: t('Its database is updated after the files.'), confirmLabel: t('Update now') })) {
+    if (await confirmDialog({ title: t('Update WordPress to {version}?', { version }), message: t('A restore point is taken first; the database is updated after the files.'), confirmLabel: t('Update now') })) {
       post(`${base}/core`, { action: 'update', version }, t('Starting...'));
     }
   };
@@ -410,7 +415,7 @@ function Overview({ detail, inv, base, post, busy, signIn, resetPassword }) {
 
     <div className="wpm-toolbar">
       <button type="button" disabled={busy || !(detail.core_update || detail.plugins_updates || detail.themes_updates)}
-        onClick={async () => (await confirmDialog({ title: t('Update everything?'), message: t('WordPress, every plugin and every theme are updated to their latest versions.'), confirmLabel: t('Update now') })) && post(`${base}/update`, {}, t('Starting...'))}>
+        onClick={async () => (await confirmDialog({ title: t('Update everything?'), message: t('WordPress, every plugin and every theme are updated to their latest versions. A restore point is taken first.'), confirmLabel: t('Update now') })) && post(`${base}/update`, {}, t('Starting...'))}>
         <Download size={15} aria-hidden="true"/> {t('Update everything')}</button>
     </div>
 
@@ -494,7 +499,7 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
     <div className="wpm-toolbar">
       <button type="button" disabled={busy} onClick={() => setAdding((v) => !v)}><Plus size={15} aria-hidden="true"/> {plugin ? t('Add plugin') : t('Add theme')}</button>
       <button type="button" className="secondary-light" disabled={busy || updates.length === 0}
-        onClick={async () => (await confirmDialog({ title: plugin ? t('Update every plugin with an update waiting?') : t('Update every theme with an update waiting?'), confirmLabel: t('Update now') })) && act('update_all', [])}>
+        onClick={async () => (await confirmDialog({ title: plugin ? t('Update every plugin with an update waiting?') : t('Update every theme with an update waiting?'), message: t('A restore point is taken first.'), confirmLabel: t('Update now') })) && act('update_all', [])}>
         <Download size={15} aria-hidden="true"/> {t('Update all')} {updates.length ? `(${updates.length})` : ''}</button>
     </div>
     {adding && <div className="wpm-panel">
@@ -606,6 +611,49 @@ function Security({ detail, base, post, busy }) {
         </li>;
       })}
     </ul>}
+  </div>;
+}
+
+// The restore points, newest first: the site's files (without its uploads)
+// and its database, taken before every update and on request; the newest
+// two are kept, in the account's own home.
+function RestorePoints({ detail, base, post, busy }) {
+  const t = useT();
+  const { formatBytes } = usePanel();
+  const points = [...((detail.inventory || {}).points || [])].reverse();
+  const reasons = { manual: t('Taken by hand'), 'core update': t('Before a WordPress update'), 'plugin update': t('Before a plugin update'),
+    'theme update': t('Before a theme update'), 'update everything': t('Before updating everything') };
+  async function rollBack(point) {
+    if (!(await confirmDialog({
+      title: t('Roll back to {when}?', { when: when(point.created_at) }), danger: true, confirmLabel: t('Roll back'),
+      message: t('The site\'s files and its whole database go back to how they were then; what was posted or changed since in the database is lost. Uploads are not touched.'),
+    }))) return;
+    post(`${base}/points/restore`, { name: point.name }, t('Starting...'));
+  }
+  async function remove(point) {
+    if (!(await confirmDialog({ title: t('Delete this restore point?'), danger: true, confirmLabel: t('Delete') }))) return;
+    post(`${base}/points/delete`, { name: point.name }, t('Starting...'));
+  }
+  return <div className="wpm-tab">
+    <div className="wpm-toolbar">
+      <button type="button" disabled={busy} onClick={() => post(`${base}/points`, {}, t('Starting...'))}><History size={15} aria-hidden="true"/> {t('Take a restore point')}</button>
+      <span className="hint">{t('The files without the uploads, and the database. Taken before every update; the newest two are kept, in the account\'s home.')}</span>
+    </div>
+    {points.length === 0 ? <p className="hint">{t('No restore point yet.')}</p> : <div className="data-table-wrap">
+      <table className="data-table wpm-cards">
+        <thead><tr><th scope="col">{t('Taken')}</th><th scope="col">{t('Why')}</th><th scope="col">WordPress</th><th scope="col">{t('Size')}</th><th scope="col"><span className="sr-only">{t('Actions')}</span></th></tr></thead>
+        <tbody>{points.map((point) => <tr key={point.name}>
+          <td className="wpm-card-title"><strong>{when(point.created_at)}</strong></td>
+          <td data-label={t('Why')}>{reasons[point.reason] || point.reason}</td>
+          <td data-label="WordPress">{point.core_version || '-'}</td>
+          <td data-label={t('Size')}>{point.size_bytes != null ? formatBytes(point.size_bytes) : '-'}</td>
+          <td className="wpm-actions"><div className="wpm-row-actions">
+            <button type="button" className="mini" disabled={busy} onClick={() => rollBack(point)}><RotateCcw size={13} aria-hidden="true"/> {t('Roll back')}</button>
+            <button type="button" className="mini danger icon-button" disabled={busy} onClick={() => remove(point)} aria-label={t('Delete')} title={t('Delete')}><Trash2 size={14} aria-hidden="true"/></button>
+          </div></td>
+        </tr>)}</tbody>
+      </table>
+    </div>}
   </div>;
 }
 
