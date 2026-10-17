@@ -15,6 +15,8 @@ from app.schemas.schemas import (
     GROUP_LIMIT_FIELDS,
     RESOURCE_LIMIT_FIELDS,
     AuditLogOut,
+    OwnSftpPassword,
+    SftpAccessUpdate,
     UserCreate,
     UserOut,
     UserPasswordUpdate,
@@ -22,7 +24,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, resource_limits, sftp_accounts, site_users, ssl, storage_quota, terminal, wordpress, wp_manager
+from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, resource_limits, sftp_access, sftp_accounts, site_users, ssl, storage_quota, terminal, wordpress, wp_manager
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -312,12 +314,14 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
             setattr(user, field, value)
     if payload.email is not None and payload.email != user.email:
         user.email = payload.email
+    active_changed = False
     if payload.is_active is not None:
         if user_id == current_user.id and payload.is_active is False:
             raise HTTPException(status_code=400, detail="Cannot deactivate yourself")
         if user.is_active != payload.is_active:
             user.is_active = payload.is_active
             user.token_version = (user.token_version or 0) + 1
+            active_changed = True
     for field, value in limit_changes.items():
         setattr(user, field, value)
     for field in RESOURCE_LIMIT_FIELDS:
@@ -341,6 +345,10 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         user.token_version = (user.token_version or 0) + 1
 
     db.commit()
+    if active_changed:
+        # A suspended account's SFTP login is shut with it, and opens again
+        # with it - unless its SFTP is off.
+        sftp_access.apply_quietly(user)
     # A shell the account is no longer entitled to ends now, not when it is
     # next idle.
     if not user.is_active or not user.terminal_enabled or role_changed:
@@ -404,7 +412,8 @@ def update_user_password(user_id: int, payload: UserPasswordUpdate, request: Req
         require_sensitive_action_step_up(current_user, payload.current_password, payload.code)
     user = managed_user(db, current_user, user_id)
     try:
-        site_users.set_panel_user_password(user.username, payload.password)
+        # The SFTP login follows, unless it has a password of its own.
+        sftp_access.sync_panel_password(user, payload.password)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -417,6 +426,80 @@ def update_user_password(user_id: int, payload: UserPasswordUpdate, request: Req
     notifications.security_change(user.id, "password_changed" if user.id == current_user.id else "password_reset_by_admin",
                                   notifications.client_ip(request))
     return {"message": f"Changed password for user {user.username}"}
+
+
+@router.get("/{user_id}/sftp")
+def get_sftp_access(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The account's main SFTP login: open or shut, and which password it takes."""
+    user = managed_user(db, current_user, user_id)
+    if is_admin_role(user.role):
+        raise HTTPException(status_code=400, detail="Administrators have no SFTP login of their own")
+    return sftp_access.state(user)
+
+
+@router.put("/{user_id}/sftp")
+def update_sftp_access(user_id: int, payload: SftpAccessUpdate, request: Request, db: Session = Depends(get_db),
+                       current_user: User = Depends(get_current_user)):
+    """Turn an account's main SFTP login on or off, or change which password it takes.
+
+    An administrator's, or a reseller's for its customers. A password of its
+    own is the one given, or one made up and returned once. Put back on the
+    panel password, the login stays shut until the account next signs in -
+    the panel keeps only a hash of that password.
+    """
+    ensure_role(current_user.role, Role.reseller)
+    user = managed_user(db, current_user, user_id)
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Change your own SFTP password on the SFTP page")
+    if is_admin_role(user.role):
+        raise HTTPException(status_code=400, detail="Administrators have no SFTP login of their own")
+    shown = None
+    try:
+        if payload.enabled is not None:
+            user.sftp_enabled = bool(payload.enabled)
+        if payload.password_mode == "own" and (payload.password or payload.generate or not user.sftp_own_password):
+            shown = sftp_access.set_own_password(user, payload.password)
+            if payload.password:
+                shown = None
+        elif payload.password_mode == "panel":
+            sftp_access.use_panel_password(user)
+        sftp_access.apply(user)
+    except (RuntimeError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    db.commit()
+    state = sftp_access.state(user)
+    log_action(db, current_user.id, "update_sftp_access", user.username,
+               f"{'on' if state['enabled'] else 'off'} {state['password_mode']}", request=request)
+    return {**state, **({"password": shown} if shown else {})}
+
+
+@router.post("/me/sftp-password")
+def change_own_sftp_password(payload: OwnSftpPassword, request: Request, db: Session = Depends(get_db),
+                             current_user: User = Depends(get_current_user)):
+    """The account's own SFTP password: its own, or back to the panel password.
+
+    Confirmed with the panel password - and the code, when two-step sign-in
+    is on - as a panel password change is.
+    """
+    require_sensitive_action_step_up(current_user, payload.current_password, payload.code)
+    if is_admin_role(current_user.role):
+        raise HTTPException(status_code=400, detail="Administrators have no SFTP login of their own")
+    user = db.query(User).filter(User.id == current_user.id).first()
+    shown = None
+    try:
+        if payload.password_mode == "panel":
+            sftp_access.use_panel_password(user, payload.current_password)
+        else:
+            shown = sftp_access.set_own_password(user, payload.password)
+            if payload.password:
+                shown = None
+    except (RuntimeError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    db.commit()
+    log_action(db, current_user.id, "change_own_sftp_password", user.username, payload.password_mode, request=request)
+    return {**sftp_access.state(user), **({"password": shown} if shown else {})}
 
 
 @router.post("/{user_id}/2fa/reset")

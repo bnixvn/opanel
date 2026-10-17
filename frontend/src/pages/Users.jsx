@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import { ArrowRightLeft, Ban, ChevronDown, LogIn, Package, Pencil, Play, Plus, Save, Search, ShieldCheck, ShieldOff, Trash2, Users } from 'lucide-react';
+import { ArrowRightLeft, Ban, ChevronDown, FolderKey, FolderX, LogIn, Package, Pencil, Play, Plus, Save, Search, ShieldCheck, ShieldOff, Trash2, Users } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
 import PageHeader from '../components/PageHeader.jsx';
@@ -8,6 +8,7 @@ import Drawer from '../components/Drawer.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import { Checkbox, Field } from '../components/Form.jsx';
+import { SftpAccessDrawer } from '../components/SftpAccess.jsx';
 import './Users.css';
 
 // Users & packages, as SNPanel's (pages/Users.jsx there): a filter by role
@@ -33,6 +34,8 @@ export default function UsersPage() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [packageSheet, setPackageSheet] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // The account whose main SFTP login is being set.
+  const [sftpUser, setSftpUser] = useState(null);
 
   if (!canManageUsers) return <section className="section"><p className="hint">{t('No permission.')}</p></section>;
   // "Add user" is a side sheet over the list: the 'add' tab (the Dashboard's
@@ -86,6 +89,7 @@ export default function UsersPage() {
           <span role="cell" className="ust-status" data-label={t('Status')}>
             <span className={`ust-state ${user.is_active ? 'is-on' : 'is-off'}`}><i aria-hidden="true"></i>{user.is_active ? t('Active') : t('Suspended')}</span>
             {user.totp_enabled && <span className="ust-flag" role="img" aria-label={t('Two-step verification is on')} title={t('Two-step verification is on')}><ShieldCheck size={14} aria-hidden="true"/></span>}
+            {user.role !== 'admin' && user.sftp_enabled === false && <span className="ust-flag is-off" role="img" aria-label={t('SFTP is off')} title={t('SFTP is off')}><FolderX size={14} aria-hidden="true"/></span>}
           </span>
         </div>
         <span role="cell" className="ust-actions">
@@ -94,6 +98,7 @@ export default function UsersPage() {
           <ActionMenu label={t('More actions for {name}', { name: user.username })} items={[
             { label: t('Log in as'), icon: LogIn, hidden: self, disabled: !!loading, onClick: () => quickLoginUser(user) },
             { label: t('Move a domain to {name}', { name: user.username }), icon: ArrowRightLeft, hidden: !isAdmin || websites.length === 0, disabled: !!loading, onClick: () => openMove(user) },
+            { label: t('SFTP access'), icon: FolderKey, hidden: self || user.role === 'admin', disabled: !!loading, onClick: () => setSftpUser(user) },
             { label: t('Reset 2FA'), icon: ShieldOff, hidden: self || !user.totp_enabled, disabled: !!loading, onClick: () => resetUserTwoFactor(user) },
             user.is_active
               ? { label: t('Suspend'), icon: Ban, hidden: self, disabled: !!loading, onClick: () => toggleUserActive(user) }
@@ -263,5 +268,6 @@ export default function UsersPage() {
         </Field>
       </div>
     </Drawer>}
+    <SftpAccessDrawer user={sftpUser} onClose={() => { setSftpUser(null); loadUsers(); }}/>
   </>;
 }

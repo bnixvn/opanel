@@ -26,7 +26,7 @@ from app.models.entities import (
     User,
     Website,
 )
-from app.services import mariadb, openlitespeed, site_users, ssl, storage_quota, waf, wordpress, wp_manager
+from app.services import mariadb, openlitespeed, sftp_access, site_users, ssl, storage_quota, waf, wordpress, wp_manager
 from app.services.shell import shell
 
 # ---------------------------------------------------------------------------
@@ -491,6 +491,9 @@ def unsuspend_account(db: Session, external_id: str) -> HostingAccount:
     # than leaving the operator believing service was restored.
     linux_user = site_users.linux_user_for_panel_username(user.username)
     shell.privileged("panel-user-unlock", helper_args=[linux_user])
+    # Unless its SFTP was turned off: that stays off.
+    if not getattr(user, "sftp_enabled", True) or getattr(user, "sftp_sync_pending", False):
+        shell.privileged("panel-user-sftp", helper_args=[linux_user, "off"], check=False, fallback=["true"])
 
     # Enable panel user. token_version is deliberately NOT bumped here: suspend
     # already moved it forward, so every pre-suspension JWT stays rejected.
@@ -606,9 +609,8 @@ def change_password(db: Session, external_id: str, password: str) -> bool:
     user.token_version = (user.token_version or 0) + 1
     db.commit()
 
-    # Update Linux/SFTP password
-    linux_user = site_users.linux_user_for_panel_username(user.username)
-    site_users.set_panel_user_password(linux_user, password)
+    # Update Linux/SFTP password - unless the SFTP login has one of its own.
+    sftp_access.sync_panel_password(user, password)
 
     _finish_job(db, job, "completed")
     db.commit()

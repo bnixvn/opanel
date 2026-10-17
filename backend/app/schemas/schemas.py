@@ -311,6 +311,36 @@ class UserPasswordUpdate(BaseModel):
         return _validate_linux_login_password(value)
 
 
+class SftpAccessUpdate(BaseModel):
+    """An account's main SFTP login, as an administrator or reseller sets it."""
+    enabled: Optional[bool] = None
+    # "panel": the panel password; "own": a password of its own - `password`,
+    # or one made up (`generate`) and shown once.
+    password_mode: Optional[Literal["panel", "own"]] = None
+    password: Optional[str] = Field(default=None, min_length=12, max_length=72)
+    generate: bool = False
+
+    @field_validator("password")
+    @classmethod
+    def validate_sftp_password(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_linux_login_password(value) if value else value
+
+
+class OwnSftpPassword(BaseModel):
+    """The account's own change: confirmed with its panel password (and code)."""
+    current_password: str = Field(min_length=1, max_length=72)
+    code: Optional[str] = Field(default=None, min_length=6, max_length=12)
+    # "own" sets `password` (or a made-up one); "panel" goes back to the panel password.
+    password_mode: Literal["panel", "own"] = "own"
+    password: Optional[str] = Field(default=None, min_length=12, max_length=72)
+    generate: bool = False
+
+    @field_validator("password")
+    @classmethod
+    def validate_sftp_password(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_linux_login_password(value) if value else value
+
+
 class UserOut(BaseModel):
     id: int
     username: str
@@ -336,6 +366,8 @@ class UserOut(BaseModel):
     group_io_read_mbps: int = 0
     group_io_write_mbps: int = 0
     terminal_enabled: bool = False
+    sftp_enabled: bool = True
+    sftp_own_password: bool = False
     # None means "not measured yet" -- the accounts list leaves these out so it
     # can paint without waiting on a du of every site. 0 would read as "uses
     # nothing", which is a different claim.

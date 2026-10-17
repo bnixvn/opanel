@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.access import can_access_owner, scope_owner
 from app.core.permissions import is_admin_role
 from app.models.entities import SftpAccount, User, Website
-from app.services import sftp_accounts
+from app.services import sftp_access, sftp_accounts
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/sftp", tags=["sftp"])
@@ -52,7 +52,8 @@ def sftp_overview(db: Session = Depends(get_db), current_user: User = Depends(ge
     primary = None
     if not admin:
         linux_user = sftp_accounts.owner_linux_user(current_user)
-        primary = {"username": linux_user, "directory": "/", "server_path": f"/home/{linux_user}"}
+        primary = {"username": linux_user, "directory": "/", "server_path": f"/home/{linux_user}",
+                   **sftp_access.state(current_user)}
     return {
         "host": sftp_accounts.sftp_host(),
         "port": sftp_accounts.sftp_port(),

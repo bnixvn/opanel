@@ -26,7 +26,7 @@ from app.core.permissions import Role, ensure_role, is_admin_role, is_reseller_r
 from app.core.security import create_access_token, hash_password, needs_rehash, verify_password
 from app.core.secrets import decrypt, encrypt
 from app.core.step_up import require_current_password, require_sensitive_action_step_up, verify_totp
-from app.services import demo_mode, notifications, passkeys, terminal
+from app.services import demo_mode, notifications, passkeys, sftp_access, terminal
 from app.models.entities import RevokedToken, User
 from app.schemas.schemas import (
     LoginResponse,
@@ -494,6 +494,15 @@ def login(
         # Demo mode can never open it.
         user.hashed_password = demo_mode.demo_hash(form.password)
         db.commit()
+
+    # Put back on the panel password by an administrator, the SFTP login has
+    # waited, shut, for the panel to learn that password: it is known now.
+    if getattr(user, "sftp_sync_pending", False) and not user.sftp_own_password and not is_admin_role(user.role):
+        try:
+            sftp_access.sync_panel_password(user, form.password)
+            db.commit()
+        except Exception:  # pragma: no cover - the sign-in goes on; the next one tries again
+            db.rollback()
 
     # Second factor. An account may hold a passkey, an authenticator app, or
     # both; when it holds both the passkey is offered first and the code is the

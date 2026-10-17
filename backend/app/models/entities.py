@@ -58,6 +58,12 @@ class User(Base):
     # customers": a reseller, like the administrator, opens a shell only by
     # logging in as the customer.
     terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    # The account's main SFTP login (services/sftp_access.py): open or shut,
+    # and signing in with the panel password or one of its own. Pending: put
+    # back on the panel password, which is only known at the next sign-in.
+    sftp_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    sftp_own_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    sftp_sync_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # Bumped to invalidate previously-issued JWTs (logout-everywhere, role
     # change, password reset by admin, account disable, etc).
     token_version: Mapped[int] = mapped_column(Integer, default=0)

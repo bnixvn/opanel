@@ -4144,9 +4144,10 @@ grant_panel_home_access() {
 }
 
 set_panel_user_password() {
-  local user="$1" password
+  local user="$1" state="${2:-}" password
   require_linux_user "$user"
   id -u "$user" >/dev/null 2>&1 || deny "panel Linux user does not exist: $user"
+  [[ -z "$state" || "$state" == locked ]] || deny "usage: panel-user-password <panel-user> [locked]"
   password="$(cat)"
   password="${password%$'\n'}"
   [[ ${#password} -ge 12 && ${#password} -le 72 ]] || deny "password must be 12-72 characters"
@@ -4154,7 +4155,34 @@ set_panel_user_password() {
     *:*|*$'\r'*|*$'\n'*) deny "password cannot contain ':', carriage returns or newlines" ;;
   esac
   printf '%s:%s\n' "$user" "$password" | chpasswd
-  passwd -u "$user" >/dev/null 2>&1 || true
+  # "locked": the password is kept for when the login is opened again - an
+  # account whose SFTP is off, or that is suspended, stays shut.
+  if [[ "$state" == locked ]]; then
+    usermod -L "$user" || deny "could not lock $user"
+  else
+    passwd -u "$user" >/dev/null 2>&1 || true
+  fi
+}
+
+# The account's main SFTP login, opened or shut. Shut is the password locked
+# (its hash kept, so opening it brings the same password back) and its SSH
+# sessions ended - only those: its websites' PHP and its cron keep running.
+set_panel_user_sftp() {
+  local user="$1" state="$2"
+  require_linux_user "$user"
+  id -u "$user" >/dev/null 2>&1 || deny "panel Linux user does not exist: $user"
+  case "$state" in
+    on)
+      passwd -u "$user" >/dev/null 2>&1 || true
+      ;;
+    off)
+      usermod -L "$user" || deny "could not lock $user"
+      pkill -KILL -u "$user" -x sshd 2>/dev/null || true
+      pkill -KILL -u "$user" -x sshd-session 2>/dev/null || true
+      ;;
+    *) deny "usage: panel-user-sftp <panel-user> on|off" ;;
+  esac
+  echo "sftp $state $user"
 }
 
 delete_panel_user_runtime() {
@@ -9390,8 +9418,13 @@ PY
     ;;
 
   panel-user-password)
-    [[ $# -eq 1 ]] || deny "usage: panel-user-password <panel-user>"
-    set_panel_user_password "$1"
+    [[ $# -ge 1 && $# -le 2 ]] || deny "usage: panel-user-password <panel-user> [locked]"
+    set_panel_user_password "$@"
+    ;;
+
+  panel-user-sftp)
+    [[ $# -eq 2 ]] || deny "usage: panel-user-sftp <panel-user> on|off"
+    set_panel_user_sftp "$1" "$2"
     ;;
 
   panel-user-delete)

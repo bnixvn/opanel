@@ -7,13 +7,14 @@ import PageHeader from '../components/PageHeader.jsx';
 import Drawer from '../components/Drawer.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import { Field, PasswordField } from '../components/Form.jsx';
+import { OwnSftpPasswordDrawer } from '../components/SftpAccess.jsx';
 import './Sftp.css';
 
 // SFTP, as SNPanel's (pages/Sftp.jsx there): every login in one list - the
 // account's own first, marked Main, then the ones it made, each shut into
 // one folder. A password change folds open under its row; a new login is
-// made in a side sheet. OPanel's main login signs in with the panel
-// password, so its change is the account's own password change.
+// made in a side sheet. The main login signs in with the panel password or a
+// password of its own, and an administrator may have turned it off.
 export default function SftpPage() {
   const t = useT();
   const {
@@ -24,6 +25,7 @@ export default function SftpPage() {
   // The login whose password is being changed, and the new one so far.
   const [changing, setChanging] = useState(null);
   const [password, setPassword] = useState('');
+  const [ownSheet, setOwnSheet] = useState(false);
 
   const info = sftpInfo || {};
   const host = info.host || window.location.hostname;
@@ -79,11 +81,19 @@ export default function SftpPage() {
         {info.primary && <li>
           <FolderKey size={16} aria-hidden="true"/>
           <div className="sftp-row-text">
-            <strong><code>{info.primary.username}</code> <span className="badge">{t('Main')}</span></strong>
-            <small>{t('The whole account · the panel password. It opens at / - one folder per website (for example /{example}/public_html).', { example: websites[0]?.domain || 'example.com' })}</small>
+            <strong><code>{info.primary.username}</code> <span className="badge">{t('Main')}</span>
+              {info.primary.enabled === false && <span className="badge bad">{t('Off')}</span>}</strong>
+            <small>{info.primary.enabled === false
+              ? t('Turned off by your administrator: this login is refused. Your websites keep running.')
+              : info.primary.waiting_for_sign_in
+                ? t('Back on your panel password: it opens at your next sign-in to the panel.')
+                : t('The whole account · {password}. It opens at / - one folder per website (for example /{example}/public_html).', {
+                  password: info.primary.password_mode === 'own' ? t('a password of its own') : t('the panel password'),
+                  example: websites[0]?.domain || 'example.com' })}</small>
           </div>
           <div className="sftp-row-actions">
-            <button type="button" className="secondary-light" disabled={!!loading} onClick={openProfileModal}><KeyRound size={14} aria-hidden="true"/> {t('Change password')}</button>
+            <button type="button" className="secondary-light" disabled={!!loading || info.primary.enabled === false}
+              onClick={() => setOwnSheet(true)}><KeyRound size={14} aria-hidden="true"/> {t('SFTP password')}</button>
           </div>
         </li>}
         {accounts.map((account) => <li key={account.id}>
@@ -114,6 +124,8 @@ export default function SftpPage() {
         action={{ label: t('Add an SFTP account'), icon: Plus, onClick: () => setShowCreateSftp(true) }}/>}
       {full && <p className="hint">{t('This account has {count} SFTP accounts, the most it may have.', { count: info.max_accounts || 10 })}</p>}
     </section>
+
+    <OwnSftpPasswordDrawer open={ownSheet} primary={info.primary} onClose={() => setOwnSheet(false)} onSaved={loadSftp}/>
 
     <Drawer open={!!showCreateSftp} onClose={() => setShowCreateSftp(false)} title={t('New SFTP account')}
       subtitle={t('A login of its own, shut into one folder.')}

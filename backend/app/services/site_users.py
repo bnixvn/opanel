@@ -211,11 +211,12 @@ def ensure_panel_user(username: str, password: Optional[str] = None) -> str:
     return linux_user
 
 
-def set_panel_user_password(username: str, password: str) -> None:
+def set_panel_user_password(username: str, password: str, locked: bool = False) -> None:
+    """Set the Linux login's password; `locked` keeps the login shut meanwhile."""
     linux_user = linux_user_for_panel_username(username)
     shell.privileged(
         "panel-user-password",
-        helper_args=[linux_user],
+        helper_args=[linux_user, *(["locked"] if locked else [])],
         input=f"{password}\n",
         sensitive=True,
         fallback=["true"],
