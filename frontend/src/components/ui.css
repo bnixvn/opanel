@@ -82,3 +82,7 @@
 /* ---- TechDetails: a program's raw output, collapsed ---- */
 .tech-details{margin-top:8px;min-width:0}
 .tech-details>pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.5;max-height:240px;overflow:auto}
+
+/* Read by a screen reader, not shown: a column header with no words on
+   screen, the "(required)" after a field's mark. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
