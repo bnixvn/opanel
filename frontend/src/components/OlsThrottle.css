@@ -1,0 +1,13 @@
+/* The per-visitor limits (components/OlsThrottle.jsx). Not in a cascade layer:
+   OPanel's element rules are unlayered and would win over a layered class. */
+.ols-throttle{display:grid;gap:12px}
+.ols-throttle .section-title{margin-bottom:0}
+.ols-throttle-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 16px}
+.ols-throttle-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.ols-throttle .hint svg{vertical-align:-2px}
+@media (max-width:760px){
+  .ols-throttle-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:420px){
+  .ols-throttle-grid{grid-template-columns:minmax(0,1fr)}
+}

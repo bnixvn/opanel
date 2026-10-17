@@ -30,6 +30,7 @@ import ProcessesPage from './pages/Processes';
 import AuditLogPage from './pages/AuditLog';
 import WordPressPage from './pages/WordPress';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
+import OlsThrottle from './components/OlsThrottle.jsx';
 import Switch from './components/Switch';
 import { isWebsitePath } from './lib/websites';
 import { PanelContext } from './lib/panel-context';
@@ -7562,7 +7563,7 @@ function App() {
   function renderPhpConfig() {
     if (!isAdmin) return <section className="section"><h2>{tr("PHP config")}</h2><p className="hint">{tr("You do not have permission to edit PHP config.")}</p></section>;
     const notInstalled = sortPhpVersions(phpVersions.supported.filter(v => !phpVersions.installed.includes(v)));
-    return <section className="section">
+    return <><section className="section">
       <div className="section-title">
         <div><h2>{tr("PHP Configuration")}</h2></div>
       </div>
@@ -7621,7 +7622,9 @@ function App() {
           {notInstalled.map(v => <button key={v} className="secondary" disabled={!!loading} onClick={() => installPhpVersion(v)}>{tr("+ PHP")} {v}</button>)}
         </div>
       </div>}
-    </section>;
+    </section>
+    <OlsThrottle/>
+    </>;
   }
 
   // A sub-page of Firewall, like a malware scan's detail: same URL, a back button.

@@ -3829,6 +3829,85 @@ EOF
 # OpenLiteSpeed ships logLevel DEBUG in the server error log block. opanel sets
 # WARN on every vhost it writes but never touched the server block, so every
 # install has been writing debug output since the day it was built.
+# OpenLiteSpeed's per-client throttle (perClientConnLimit), whole server:
+# requests per second and connections per visitor's address, the grace before
+# a ban and the ban. `ols-throttle-get` prints the values in force as JSON;
+# `ols-throttle-set` writes six numbers and trusts the loopback and this
+# server's own addresses (their "T" entries in accessControl), so the sites'
+# own loopback calls are never limited.
+ols_throttle() {
+  local mode="$1"; shift
+  [[ -f "$OLS_HTTPD_CONF" ]] || deny "OpenLiteSpeed's configuration is missing"
+  if [[ "$mode" == set ]]; then
+    [[ $# -eq 6 ]] || deny "usage: ols-throttle-set <static/s> <dynamic/s> <soft> <hard> <grace> <ban>"
+    local value
+    for value in "$@"; do
+      [[ "$value" =~ ^[0-9]{1,6}$ ]] || deny "throttle values are whole numbers"
+    done
+    cp -a "$OLS_HTTPD_CONF" "${OLS_HTTPD_CONF}.bak.throttle"
+  fi
+  python3 - "$OLS_HTTPD_CONF" "$mode" "$@" $(hostname -I 2>/dev/null) <<'PY'
+import ipaddress
+import json
+import pathlib
+import re
+import sys
+
+conf = pathlib.Path(sys.argv[1])
+mode = sys.argv[2]
+keys = ["staticReqPerSec", "dynReqPerSec", "softLimit", "hardLimit", "gracePeriod", "banPeriod"]
+text = conf.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+block = re.search(r"(?ms)^perClientConnLimit\s*\{\n(.*?)^\}", text)
+
+if mode == "get":
+    found = {}
+    for key in keys:
+        match = re.search(rf"(?m)^[ 	]*{key}[ 	]+(\d+)[ 	]*$", block.group(1) if block else "")
+        found[key] = int(match.group(1)) if match else None
+    print(json.dumps(found))
+    sys.exit(0)
+
+values = dict(zip(keys, sys.argv[3:9]))
+if block:
+    body = block.group(1)
+    for key, value in values.items():
+        line = f"    {key:<41}{value}"
+        if re.search(rf"(?m)^[ 	]*{key}[ 	]+\S*[ 	]*$", body):
+            body = re.sub(rf"(?m)^[ 	]*{key}[ 	]+\S*[ 	]*$", line, body)
+        else:
+            body += line + "\n"
+    text = text[:block.start(1)] + body + text[block.end(1):]
+else:
+    body = "".join(f"    {key:<41}{value}\n" for key, value in values.items())
+    text = text.rstrip("\n") + "\n\nperClientConnLimit{\n" + body + "}\n"
+
+trusted = ["127.0.0.1", "::1"]
+for item in sys.argv[9:]:
+    try:
+        address = ipaddress.ip_address(item.split("%")[0])
+        if not address.is_link_local:
+            trusted.append(str(address))
+    except ValueError:
+        pass
+access = re.search(r"(?ms)^accessControl\s*\{\n(.*?)^\}", text)
+if access:
+    body = access.group(1)
+    allow = re.search(r"(?m)^([ 	]*)allow([ 	]+)(.*?)[ 	]*$", body)
+    if allow:
+        entries = [entry.strip() for entry in allow.group(3).split(",") if entry.strip()]
+        for address in trusted:
+            if f"{address}T" not in entries:
+                entries.append(f"{address}T")
+        body = body[:allow.start()] + f"{allow.group(1)}allow{allow.group(2)}{', '.join(entries)}" + body[allow.end():]
+        text = text[:access.start(1)] + body + text[access.end(1):]
+conf.write_text(text, encoding="utf-8")
+print(json.dumps({key: int(value) for key, value in values.items()}))
+PY
+  if [[ "$mode" == set ]]; then
+    restart_openlitespeed
+  fi
+}
+
 ensure_ols_server_log_level() {
   local conf=/usr/local/lsws/conf/httpd_config.conf
   [[ -f "$conf" ]] || return 0
@@ -8087,6 +8166,15 @@ case "$cmd" in
       ols_sync_main_config
       restart_openlitespeed 2>/dev/null || true
     fi
+    ;;
+
+  ols-throttle-get)
+    [[ $# -eq 0 ]] || deny "usage: ols-throttle-get"
+    ols_throttle get
+    ;;
+
+  ols-throttle-set)
+    ols_throttle set "$@"
     ;;
 
   lscache-purge)

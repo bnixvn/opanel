@@ -44,7 +44,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, php, restore_sources, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, ols_throttle, php, restore_sources, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -2253,6 +2253,31 @@ def apply_php_tuning_endpoint(
                ",".join(result["applied_to"]),
                detail=f"mem={result['memory_limit']} opcache={result['opcache_memory_consumption']}M workers={result['lsapi_children']}")
     return result
+
+
+@router.get("/ols-throttle")
+def get_ols_throttle(current_user: User = Depends(get_current_user)):
+    """LiteSpeed's per-client throttle: what is saved, what is in force, the defaults."""
+    ensure_role(current_user.role, Role.admin)
+    return {"throttle": ols_throttle.saved(), "current": ols_throttle.in_force(),
+            "defaults": ols_throttle.DEFAULTS, "limits": ols_throttle.LIMITS}
+
+
+@router.put("/ols-throttle")
+def set_ols_throttle(payload: dict, request: Request, db: Session = Depends(get_db),
+                     current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        throttle = ols_throttle.apply(bool(payload.get("enabled")), payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    log_action(db, current_user.id, "ols_throttle", "server",
+               ("on " + " ".join(f"{key}={throttle[key]}" for key in ols_throttle.FIELDS)) if throttle["enabled"] else "off",
+               request=request)
+    return {"throttle": throttle, "current": ols_throttle.in_force(),
+            "defaults": ols_throttle.DEFAULTS, "limits": ols_throttle.LIMITS}
 
 
 @router.post("/cron")
