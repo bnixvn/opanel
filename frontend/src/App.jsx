@@ -5750,7 +5750,7 @@ function App() {
     }
     return <section className="section">
       <div className="section-title"><div><h2>{tr("Terminal")}</h2>
-        <p className="hint">{tr("A shell in your home folder, in a sandbox of its own. To start in a website's folder with its PHP version, open the terminal from the website's row.")}</p></div></div>
+        <p className="hint">{tr("A shell in your home folder. To start in a website's folder with its PHP version, open the terminal from the website's row.")}</p></div></div>
       <Terminal apiBase={API} />
     </section>;
   }
@@ -9778,7 +9778,7 @@ function App() {
         <label className="check-line"><input type="checkbox" checked={!!form.terminal_enabled} onChange={e => set('terminal_enabled', e.target.checked)} /> {form.role === 'reseller' ? tr("May offer the terminal to its customers") : tr("Browser terminal")}</label>
         <p className="hint">{form.role === 'reseller'
           ? tr("A reseller, like an administrator, opens a customer's terminal by logging in as the customer.")
-          : tr("A real shell as this account's own Linux user, in a sandbox: its own home only, its own processes, no root.")}</p>
+          : tr("A shell as this account's own Linux user: it sees its own home and its own processes only, with no root access.")}</p>
       </fieldset>}
       {limitsOn && form.role !== 'admin' && renderLimitInputs(form, setForm)}
       {limitsOn && isAdmin && form.role === 'reseller' && renderLimitInputs(form, setForm, 'group_')}
