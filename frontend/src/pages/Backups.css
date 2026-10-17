@@ -22,6 +22,12 @@
 
 /* The schedule sheet's users: every one a checkbox, in a box that scrolls. */
 .bk-users{display:grid;gap:8px}
+.bk-restore-history{display:grid;gap:8px;margin-top:16px}
+.bk-restore-history h3{margin:0;font-size:15px}
+.bk-restore-items{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
+.bk-restore-items li{display:block;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt)}
+.bk-restore-items li.is-failed,.bk-restore-items li.is-interrupted{border-color:var(--danger-border,var(--border))}
+.bk-restore-items small{display:block;margin-top:2px}
 .bk-user-list{display:grid;gap:6px;max-height:220px;overflow:auto;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt)}
 
 @media (max-width:760px){

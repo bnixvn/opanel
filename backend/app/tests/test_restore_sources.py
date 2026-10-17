@@ -252,14 +252,23 @@ def test_the_source_needs_what_it_names():
     assert RestoreRemoteIn(host=" 203.0.113.9 ", protocol="ftps", port=21).host == "203.0.113.9"
 
 
+class _Submitted(list):
+    """The submitted runs, and the restore records made for them."""
+
+
 @pytest.fixture
 def runner(monkeypatch):
-    submitted = []
+    submitted = _Submitted()
     monkeypatch.setattr(maintenance._backup_job_executor, "submit",
                         lambda fn, *args: submitted.append(args))
     monkeypatch.setattr(maintenance, "log_action", lambda *a, **k: None)
     monkeypatch.setattr(maintenance, "_backup_jobs", {})
     monkeypatch.setattr(maintenance, "_da_import_jobs", {})
+    # The restore's record (services/restore_jobs.py): what it was given is kept to check.
+    recorded = []
+    monkeypatch.setattr(maintenance.restore_jobs, "create",
+                        lambda db, **kw: recorded.append(kw) or SimpleNamespace(id=len(recorded)))
+    submitted.recorded = recorded
     return submitted
 
 
@@ -273,10 +282,12 @@ def test_a_remote_restore_is_queued_without_writing_the_password_anywhere(runner
                items=[{"kind": "directadmin", "ref": "/backups/user.admin.alice.tar.zst"},
                       {"kind": "directadmin", "ref": "/backups/user.admin.alice.tar.zst"}])
     assert job["status"] == "queued"
-    job_id, user_id, source, items, overwrite = runner[0]
+    job_id, user_id, source, items, overwrite, record_id = runner[0]
     assert items == [{"kind": "directadmin", "ref": "/backups/user.admin.alice.tar.zst"}]  # de-duplicated
     assert source.remote.password == "s3cret-pw"  # handed to the worker in memory...
     assert "s3cret-pw" not in repr(maintenance._backup_jobs)  # ...and not into the job record
+    assert "s3cret-pw" not in repr(runner.recorded)  # ...nor into the restore's stored record
+    assert runner.recorded[0]["source_kind"] == "remote" and record_id == 1
 
 
 def test_a_pick_outside_the_listed_folder_is_refused(runner):

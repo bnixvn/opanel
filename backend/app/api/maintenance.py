@@ -20,7 +20,7 @@ from app.core.database import SessionLocal, get_db
 from app.core.access import can_access_owner, ensure_owner_access, managed_user
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
-from app.models.entities import BackupSchedule, BackupTarget, DatabaseAccount, User, Website
+from app.models.entities import BackupSchedule, BackupTarget, DatabaseAccount, RestoreJob, User, Website
 from app.schemas.schemas import (
     BackupScheduleCreate,
     BackupScheduleOut,
@@ -44,7 +44,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, ols_throttle, php, restore_sources, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, ols_throttle, php, restore_jobs, restore_sources, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -1216,9 +1216,11 @@ def _da_summary_note(name: str, summary: dict) -> str:
 
 
 def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.Source,
-                     items: list[dict], overwrite: bool) -> None:
+                     items: list[dict], overwrite: bool, record_id: int | None = None) -> None:
     total = len(items)
     _set_backup_job(job_id, status="running", started_at=_now_iso(), message=f"Restoring 1 of {total}")
+    if record_id:
+        restore_jobs.started(record_id)
     db = SessionLocal()
     done, failures = [], []
     try:
@@ -1227,6 +1229,8 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
             ref, kind = item["ref"], item["kind"]
             name = ref.replace("\\", "/").rsplit("/", 1)[-1]
             local_path, fetched = ref, ""
+            if record_id:
+                restore_jobs.item(record_id, index - 1, status="running")
             try:
                 # From another server the download is the first half of an
                 # item's share of the bar and the restore the second.
@@ -1275,6 +1279,8 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
                     if result.get("ssl_warnings"):
                         note += f", SSL not restored for {len(result['ssl_warnings'])}"
                     done.append(note)
+                    if record_id:
+                        restore_jobs.item(record_id, index - 1, status="done", note=note)
                 else:
                     _set_backup_job(job_id, message=f"Importing {name} (DirectAdmin) {position}",
                                     progress_label=name)
@@ -1282,12 +1288,16 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
                     log_action(db, request_user_id, "start_da_import", name, "overwrite" if overwrite else "")
                     note = _da_summary_note(name, summary)
                     done.append(note)
+                    if record_id:
+                        restore_jobs.item(record_id, index - 1, status="done", note=note)
                     notifications.notify_admin("da_import_done", {"status": "done", "file": name, "message": note})
             except Exception as exc:  # noqa: BLE001 - one archive failing must not stop the rest
                 db.rollback()
                 logger.exception("Restore failed for %s", ref)
                 message = restore_sources.describe_error(exc, source)
                 failures.append(f"{name}: {message}")
+                if record_id:
+                    restore_jobs.item(record_id, index - 1, status="failed", error=message)
                 if kind == restore_sources.KIND_DA:
                     notifications.notify_admin("da_import_done", {"status": "error", "file": name, "message": message})
             finally:
@@ -1308,6 +1318,52 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
         )
     finally:
         db.close()
+        if record_id:
+            restore_jobs.finished(record_id)
+
+
+@router.get("/restore/jobs")
+def list_restore_jobs(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The last restores, each archive with how it went."""
+    ensure_role(current_user.role, Role.admin)
+    restore_jobs.settle_stale(db)
+    rows = db.query(RestoreJob).order_by(RestoreJob.id.desc()).limit(20).all()
+    return {"jobs": [restore_jobs.serialize(row) for row in rows]}
+
+
+@router.post("/restore/jobs/{record_id}/retry")
+def retry_restore_job(record_id: int, request: Request, db: Session = Depends(get_db),
+                      current_user: User = Depends(get_current_user)):
+    """Run a restore's failed and interrupted archives again, from where they were."""
+    ensure_role(current_user.role, Role.admin)
+    restore_jobs.settle_stale(db)
+    row = db.get(RestoreJob, record_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Restore not found")
+    if row.source_kind not in {"local", "target"}:
+        raise HTTPException(status_code=400, detail="That server's login was never stored: run it again from the Restore wizard")
+    pending = restore_jobs.retry_items(row)
+    if not pending or row.status not in {"error", "interrupted"}:
+        raise HTTPException(status_code=400, detail="Nothing in that restore is left to run")
+    source, target = _restore_source(RestoreSourceIn(source=row.source_kind, target_id=row.target_id), db)
+    items = []
+    for pick in pending:
+        try:
+            items.append({"kind": pick["kind"], "ref": restore_sources.check_ref(source, pick["kind"], pick["ref"])})
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"{pick['ref']}: backup not found any more") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if _restore_running():
+        raise HTTPException(status_code=409, detail="A restore is already running. Wait for it to finish.")
+    record = restore_jobs.create(db, user_id=current_user.id, source_kind=row.source_kind, target_id=row.target_id,
+                                 label=row.source_label, overwrite=row.overwrite, items=items, retry_of=row.id)
+    job = _queue_backup_job(current_user, "user_restore_batch", f"Restore of {len(items)} backup(s) queued",
+                            count=len(items))
+    _backup_job_executor.submit(_run_restore_job, job["job_id"], current_user.id, source, items, row.overwrite,
+                                record.id)
+    log_action(db, current_user.id, "retry_restore", f"restore #{row.id}", f"{len(items)} backup(s)", request=request)
+    return {**job, "record_id": record.id}
 
 
 @router.post("/restore/run")
@@ -1335,10 +1391,13 @@ def run_restore(payload: RestoreRunIn, request: Request, db: Session = Depends(g
         items.append({"kind": pick.kind, "ref": ref})
     if _restore_running():
         raise HTTPException(status_code=409, detail="A restore is already running. Wait for it to finish.")
+    record = restore_jobs.create(db, user_id=current_user.id, source_kind=payload.source,
+                                 target_id=payload.target_id if payload.source == "target" else None,
+                                 label=_restore_source_label(source, target), overwrite=payload.overwrite, items=items)
     job = _queue_backup_job(current_user, "user_restore_batch",
                             f"Restore of {len(items)} backup(s) queued", count=len(items))
     _backup_job_executor.submit(_run_restore_job, job["job_id"], current_user.id, source, items,
-                                payload.overwrite)
+                                payload.overwrite, record.id)
     names = ", ".join(item["ref"].replace("\\", "/").rsplit("/", 1)[-1] for item in items)
     log_action(db, current_user.id, "restore_backups",
                f"{len(items)} backup(s) from {_restore_source_label(source, target)}"

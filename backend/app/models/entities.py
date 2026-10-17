@@ -202,6 +202,25 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class RestoreJob(Base):
+    """One restore run: its archives and how each went (services/restore_jobs.py)."""
+
+    __tablename__ = "restore_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    source_kind: Mapped[str] = mapped_column(String(16), default="local")
+    target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    source_label: Mapped[str] = mapped_column(String(255), default="")
+    overwrite: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    items: Mapped[str] = mapped_column(Text, default="[]")
+    retry_of: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class RevokedToken(Base):
     __tablename__ = "revoked_tokens"
 
