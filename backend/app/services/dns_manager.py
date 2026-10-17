@@ -48,7 +48,14 @@ DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a
 HOST_RE = re.compile(r"^(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?)(?:\.[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?)*$")
 LABEL_RE = re.compile(r"^(?:@|\*|(?:\*\.)?[a-z0-9_](?:[a-z0-9_.-]{0,200}[a-z0-9_])?)$")
 
-SETTINGS_DEFAULTS = {"ns1": "", "ns2": "", "hostmaster": "", "default_ttl": 3600}
+SETTINGS_DEFAULTS = {"ns1": "", "ns2": "", "hostmaster": "", "default_ttl": 3600,
+                     # The addresses new records point at, when not the ones found here.
+                     "ipv4": "", "ipv6": "",
+                     # Records every new zone gets, as SNPanel's zone template:
+                     # {"name", "type", "value", "priority"} with {domain}, {ip}, {ipv6}.
+                     "zone_template": []}
+TEMPLATE_MAX = 30
+TEMPLATE_TYPES = ("A", "AAAA", "CNAME", "MX", "TXT", "SRV", "CAA")
 
 
 class NotInstalled(RuntimeError):
@@ -100,7 +107,80 @@ def server_addresses() -> dict:
             ipv6 = []
     except Exception:  # noqa: BLE001
         pass
-    return {"ipv4": (found.get("ipv4") or [])[:1], "ipv6": ipv6[:1]}
+    chosen = current_settings()
+    return {"ipv4": [chosen["ipv4"]] if chosen.get("ipv4") else (found.get("ipv4") or [])[:1],
+            "ipv6": [chosen["ipv6"]] if chosen.get("ipv6") else ipv6[:1]}
+
+
+def _detected_addresses() -> dict:
+    try:
+        found = network.detect_addresses()
+    except Exception:  # noqa: BLE001
+        found = {"ipv4": [], "ipv6": []}
+    return {"ipv4": (found.get("ipv4") or [])[:1], "ipv6": (found.get("ipv6") or [])[:1]}
+
+
+def _fill(text: str, zone: str, ipv4: str, ipv6: str) -> str:
+    return str(text or "").replace("{domain}", zone).replace("{ip}", ipv4).replace("{ipv6}", ipv6)
+
+
+def check_template(entries) -> list[dict]:
+    """The zone template, each record checked as it would be written for example.com."""
+    if not isinstance(entries, list):
+        raise ValueError("The zone template is a list of records")
+    if len(entries) > TEMPLATE_MAX:
+        raise ValueError(f"At most {TEMPLATE_MAX} records in the zone template")
+    clean = []
+    for number, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            raise ValueError(f"Template record {number} is not a record")
+        rtype = str(entry.get("type") or "").upper()
+        if rtype not in TEMPLATE_TYPES:
+            raise ValueError(f"Template record {number}: the type is one of {', '.join(TEMPLATE_TYPES)}")
+        name = str(entry.get("name") or "@").strip() or "@"
+        value = str(entry.get("value") or "").strip()
+        priority = entry.get("priority")
+        if not value or len(value) > 1000:
+            raise ValueError(f"Template record {number} needs a value")
+        try:
+            _name_in_zone(_fill(name, "example.com", "192.0.2.1", "2001:db8::1"), "example.com")
+            to_content(rtype, _fill(value, "example.com", "192.0.2.1", "2001:db8::1"), priority, "example.com")
+        except ValueError as exc:
+            raise ValueError(f"Template record {number}: {exc}") from exc
+        clean.append({"name": name, "type": rtype, "value": value,
+                      "priority": int(priority) if rtype in ("MX", "SRV") and str(priority or "").strip() else None})
+    return clean
+
+
+def _apply_template(zone: str) -> None:
+    """The zone template's records, where the zone has nothing of that name and type yet."""
+    template = current_settings().get("zone_template") or []
+    if not template:
+        return
+    addresses = server_addresses()
+    ipv4 = (addresses.get("ipv4") or [""])[0]
+    ipv6 = (addresses.get("ipv6") or [""])[0]
+    data = _get_zone(zone)
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for entry in template:
+        if ("{ip}" in entry["value"] and not ipv4) or ("{ipv6}" in entry["value"] and not ipv6):
+            continue
+        try:
+            name = _name_in_zone(_fill(entry["name"], zone, ipv4, ipv6), zone)
+            content = to_content(entry["type"], _fill(entry["value"], zone, ipv4, ipv6), entry.get("priority"), zone)
+        except ValueError as exc:
+            log.warning("zone template record skipped for %s: %s", zone, exc)
+            continue
+        grouped.setdefault((name, entry["type"]), []).append(content)
+    ttl = int(current_settings()["default_ttl"])
+    changes = []
+    for (name, rtype), contents in grouped.items():
+        if _values(data, name, rtype) or _values(data, name, "CNAME"):
+            continue
+        if rtype == "CNAME" and any(rrset.get("name") == _abs(name) for rrset in data.get("rrsets", [])):
+            continue
+        changes.append(_replace(name, rtype, contents, ttl))
+    _patch(zone, changes)
 
 
 def save_settings(db: Session, payload: dict) -> dict:
@@ -122,6 +202,17 @@ def save_settings(db: Session, payload: dict) -> dict:
         if ttl not in TTL_CHOICES:
             raise ValueError("Pick one of the offered TTLs")
         stored["default_ttl"] = ttl
+    for key, kind in (("ipv4", ipaddress.IPv4Address), ("ipv6", ipaddress.IPv6Address)):
+        if key in payload:
+            value = str(payload[key] or "").strip()
+            if value:
+                try:
+                    value = str(kind(value))
+                except ValueError as exc:
+                    raise ValueError(f"Not an {key.upper().replace('V', 'v')} address: {value}") from exc
+            stored[key] = value
+    if "zone_template" in payload:
+        stored["zone_template"] = check_template(payload["zone_template"])
     stored.pop("auto_zone", None)
     before = current_settings()
     addons._update_state(ADDON_ID, settings=stored)
@@ -451,6 +542,8 @@ def seed_zone(db: Session, zone: DnsZone, ttl: Optional[int] = None) -> None:
             closest = mail_zone(db, mail_domain)
             if closest is not None and closest.id == zone.id:
                 _write_mail_records(db, zone, mail_domain)
+        # Last, so a record the panel writes (a site's A, mail's SPF) wins over the template's.
+        _apply_template(zone.name)
     except (RuntimeError, ValueError, LookupError) as exc:
         log.warning("could not add the default records of %s: %s", zone.name, exc)
 

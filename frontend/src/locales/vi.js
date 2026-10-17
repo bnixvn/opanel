@@ -3263,4 +3263,11 @@ export default {
   "a retry of #{id}": "chạy lại của #{id}",
   "{count} archive(s) that failed or were interrupted are restored again.": "{count} bản sao lưu bị lỗi hoặc bị ngắt sẽ được khôi phục lại.",
   "{done} restored, {failed} not": "{done} đã khôi phục, {failed} chưa",
+  "Add the usual SPF and CAA": "Thêm SPF và CAA thông dụng",
+  "Found on this server": "Tự phát hiện trên máy chủ",
+  "IPv4 the records point at": "IPv4 mà bản ghi trỏ tới",
+  "IPv6 the records point at": "IPv6 mà bản ghi trỏ tới",
+  "Left empty, the addresses found on this server. Set one when the server sits behind NAT or a floating IP; zones made before keep their records.": "Để trống thì dùng địa chỉ tìm thấy trên máy chủ này. Hãy đặt khi máy chủ nằm sau NAT hoặc dùng IP động; các vùng tạo trước đó giữ nguyên bản ghi.",
+  "Records every new zone gets, besides the websites' and email's own - not where the zone already has a record of that name and type. Use {domain}, {ip} and {ipv6}; \"Restore panel records\" adds them to an existing zone.": "Các bản ghi mà mọi vùng mới đều có, ngoài bản ghi của website và email - trừ khi vùng đã có bản ghi cùng tên và loại. Dùng {domain}, {ip} và {ipv6}; \"Khôi phục bản ghi của panel\" sẽ thêm chúng vào vùng đã có.",
+  "Zone template": "Mẫu vùng DNS",
 };

@@ -64,6 +64,11 @@ class DnsSettingsIn(BaseModel):
     ns2: Optional[str] = Field(default=None, max_length=253)
     hostmaster: Optional[str] = Field(default=None, max_length=254)
     default_ttl: Optional[int] = None
+    # The addresses new records point at ("" = the ones found here), and the
+    # records every new zone gets.
+    ipv4: Optional[str] = Field(default=None, max_length=45)
+    ipv6: Optional[str] = Field(default=None, max_length=45)
+    zone_template: Optional[list[dict]] = None
 
 
 @router.get("/overview")
@@ -147,7 +152,7 @@ def post_defaults(zone_id: int, request: Request, db: Session = Depends(get_db),
 @router.get("/settings")
 def get_settings(current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
-    return dns_manager.current_settings()
+    return {**dns_manager.current_settings(), "detected": dns_manager._detected_addresses()}
 
 
 @router.put("/settings")
@@ -157,7 +162,7 @@ def put_settings(payload: DnsSettingsIn, request: Request, db: Session = Depends
     values = {key: value for key, value in payload.model_dump().items() if value is not None}
     result = _call(dns_manager.save_settings, db, values)
     log_action(db, current_user.id, "dns_settings", ", ".join(sorted(values)), request=request)
-    return result
+    return {**result, "detected": dns_manager._detected_addresses()}
 
 
 @router.post("/sync")

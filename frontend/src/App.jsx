@@ -1804,7 +1804,12 @@ function App() {
 
   async function saveDnsSettings() {
     const f = dnsSettingsForm;
-    const body = { ns1: f.ns1.trim(), ns2: f.ns2.trim(), hostmaster: f.hostmaster.trim(), default_ttl: Number(f.default_ttl), auto_zone: !!f.auto_zone };
+    const body = {
+      ns1: f.ns1.trim(), ns2: f.ns2.trim(), hostmaster: f.hostmaster.trim(), default_ttl: Number(f.default_ttl), auto_zone: !!f.auto_zone,
+      ipv4: (f.ipv4 || '').trim(), ipv6: (f.ipv6 || '').trim(),
+      zone_template: (f.zone_template || []).filter(row => (row.value || '').trim())
+        .map(row => ({ name: (row.name || '@').trim() || '@', type: row.type, value: row.value.trim(), priority: row.priority === '' ? null : row.priority })),
+    };
     const data = await request('/dns/settings', { method: 'PUT', body: JSON.stringify(body) }, tr("Saving DNS settings..."));
     if (!data) return;
     setDnsSettingsForm({ ...data });
@@ -6953,6 +6958,40 @@ function App() {
             </select></label>
         </div>
         <p className="hint">{tr("A changed nameserver is written into the NS and SOA records of every zone. Register both names as glue (child nameserver) records at the registrar of their domain, pointing at this server.")} {address && tr("This server: {0}.", address)}</p>
+        <div className="mail-settings-grid">
+          <label className="field"><span className="field-label">{tr("IPv4 the records point at")}</span>
+            <input value={f.ipv4 || ''} placeholder={f.detected?.ipv4?.[0] || tr("Found on this server")} spellCheck={false} onChange={e => set({ ipv4: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("IPv6 the records point at")}</span>
+            <input value={f.ipv6 || ''} placeholder={f.detected?.ipv6?.[0] || tr("Found on this server")} spellCheck={false} onChange={e => set({ ipv6: e.target.value })} /></label>
+        </div>
+        <p className="hint">{tr("Left empty, the addresses found on this server. Set one when the server sits behind NAT or a floating IP; zones made before keep their records.")}</p>
+        <div className="dns-template">
+          <h3>{tr("Zone template")}</h3>
+          <p className="hint">{tr("Records every new zone gets, besides the websites' and email's own - not where the zone already has a record of that name and type. Use {domain}, {ip} and {ipv6}; \"Restore panel records\" adds them to an existing zone.")}</p>
+          {(f.zone_template || []).map((row, index) => <div className="dns-template-row" key={index}>
+            <input aria-label={tr("Name")} value={row.name} placeholder="@" spellCheck={false}
+              onChange={e => set({ zone_template: f.zone_template.map((item, i) => i === index ? { ...item, name: e.target.value } : item) })}/>
+            <select aria-label={tr("Type")} value={row.type}
+              onChange={e => set({ zone_template: f.zone_template.map((item, i) => i === index ? { ...item, type: e.target.value } : item) })}>
+              {['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV', 'CAA'].map(type => <option key={type} value={type}>{type}</option>)}
+            </select>
+            {(row.type === 'MX' || row.type === 'SRV') && <input aria-label={tr("Priority")} className="dns-template-priority" value={row.priority ?? ''} inputMode="numeric" placeholder="10"
+              onChange={e => set({ zone_template: f.zone_template.map((item, i) => i === index ? { ...item, priority: e.target.value.replace(/[^0-9]/g, '') } : item) })}/>}
+            <input aria-label={tr("Value")} value={row.value} spellCheck={false} placeholder={row.type === 'TXT' ? 'v=spf1 a mx ~all' : row.type === 'CAA' ? 'issue letsencrypt.org' : '{ip}'}
+              onChange={e => set({ zone_template: f.zone_template.map((item, i) => i === index ? { ...item, value: e.target.value } : item) })}/>
+            <button type="button" className="mini secondary-light" aria-label={tr("Remove")} title={tr("Remove")}
+              onClick={() => set({ zone_template: f.zone_template.filter((_, i) => i !== index) })}><Trash2 size={13}/></button>
+          </div>)}
+          <div className="actions">
+            <button type="button" className="secondary-light" disabled={(f.zone_template || []).length >= 30}
+              onClick={() => set({ zone_template: [...(f.zone_template || []), { name: '@', type: 'TXT', value: '', priority: '' }] })}><Plus size={14}/> {tr("Add a record")}</button>
+            {!(f.zone_template || []).length && <button type="button" className="secondary-light"
+              onClick={() => set({ zone_template: [
+                { name: '@', type: 'TXT', value: 'v=spf1 a mx ip4:{ip} ~all', priority: '' },
+                { name: '@', type: 'CAA', value: 'issue letsencrypt.org', priority: '' },
+              ] })}>{tr("Add the usual SPF and CAA")}</button>}
+          </div>
+        </div>
         <div className="actions"><button type="button" disabled={!f.ns1.trim() || !f.ns2.trim() || !!loading} onClick={saveDnsSettings}><Save size={14}/> {tr("Save settings")}</button></div>
       </div>}
     </section>;
