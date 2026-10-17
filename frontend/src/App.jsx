@@ -26,6 +26,7 @@ import FilesPage from './pages/Files';
 import SftpPage from './pages/Sftp';
 import BackupsPage from './pages/Backups';
 import UsersPage from './pages/Users';
+import ProcessesPage from './pages/Processes';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import Switch from './components/Switch';
 import { isWebsitePath } from './lib/websites';
@@ -4828,6 +4829,8 @@ function App() {
       plans, renderPlanFields, renderResellerPool, renderUserDisk, renderUserFields, renderUserResources, resetUserTwoFactor, roleLabel,
       setAssignUserId, setAssignWebsiteId, setEditingPlan, setEditingPlanForm, setEditingUserForm, setNewPlan, setNewUser, setUserSearch,
       setUsersTab, startEditingPlan, startEditingUser, toggleUserActive, updatePanelUser, updatePlan, userSearch, usersTab,
+      // The process monitor (pages/Processes.jsx); App reads top while it is open.
+      processFilter, processPaused, processTop, setProcessFilter, setProcessPaused,
     };
   }
   const sideItems = sidebarItems(navCtx);
@@ -5064,33 +5067,6 @@ function App() {
   }
 
   // --- The server's own pages: the Server hub's tabs, administrators only ---------------
-
-  function renderProcessMonitor() {
-    const output = processTop?.output || '';
-    const lines = output.replace(/\s+$/, '').split('\n');
-    const headerEnd = lines.findIndex(line => /^\s*PID\s+USER\b/.test(line));
-    const needle = processFilter.trim().toLowerCase();
-    const shown = headerEnd < 0 || !needle ? lines
-      : [...lines.slice(0, headerEnd + 1), ...lines.slice(headerEnd + 1).filter(line => line.toLowerCase().includes(needle))];
-    const when = processTop?.time ? new Date(processTop.time * 1000).toLocaleTimeString() : '';
-    return <section className="section">
-      <div className="section-title">
-        <div><h2>{tr("Process monitor")}</h2>
-          <p className="hint">{tr("What the server is running, as top -c shows it. It refreshes every 3 seconds.")}</p></div>
-        <div className="actions">
-          <input className="process-filter" value={processFilter} onChange={e => setProcessFilter(e.target.value)} placeholder={tr("Filter processes")} aria-label={tr("Filter processes")} />
-          <button type="button" className="secondary" onClick={() => setProcessPaused(paused => !paused)}>
-            {processPaused ? <><Play size={14}/> {tr("Resume")}</> : <><Pause size={14}/> {tr("Pause")}</>}
-          </button>
-        </div>
-      </div>
-      <div className="process-terminal-wrap">
-        <div className="process-terminal-head"><span>top -c</span><small>{processPaused ? tr("Paused") : when}</small></div>
-        <pre className="process-terminal" aria-live="off">{currentUser?.demo ? tr("This is a demo: the process list is not shown.")
-          : output ? shown.join('\n') : tr("Reading processes...")}</pre>
-      </div>
-    </section>;
-  }
 
   function renderRamUsage() {
     const memory = memoryInfo?.memory || resourceUsage?.memory;
@@ -8782,7 +8758,7 @@ function App() {
     if (page === 'settings') return renderPanelSettings();
     if (page === 'users') return <UsersPage/>;
     if (page === 'usage') return renderResourceUsage();
-    if (page === 'processes') return isAdmin ? renderProcessMonitor() : <DashboardPage/>;
+    if (page === 'processes') return isAdmin ? <ProcessesPage/> : <DashboardPage/>;
     if (page === 'ramUsage') return isAdmin ? renderRamUsage() : <DashboardPage/>;
     if (page === 'diskUsage') return isAdmin ? renderDiskUsage() : <DashboardPage/>;
     if (page === 'traffic') return isAdmin ? renderTraffic() : <DashboardPage/>;

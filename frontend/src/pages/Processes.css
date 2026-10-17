@@ -1,0 +1,35 @@
+/* Not in a cascade layer: OPanel's element rules are unlayered and would win
+   over a layered class. */
+/* The process monitor as a table (pages/Processes.jsx): a toolbar of
+   filters, top's summary, and the processes, sorted by a column's head. */
+.process-page{display:grid;gap:12px}
+.process-toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:8px 12px}
+.process-field{display:grid;gap:6px;min-width:0;flex:0 1 220px}
+.process-field>span{font-size:13px;font-weight:600;color:var(--text-secondary)}
+.process-field-grow{flex:1 1 240px}
+.process-toolbar .sn-check{align-self:center;min-height:40px;align-items:center}
+.process-time{margin-left:auto;align-self:center;color:var(--text-muted);font-size:13px;font-variant-numeric:tabular-nums}
+.process-summary{margin:0;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt);color:var(--text-secondary);font-family:var(--font-mono);font-size:12px;line-height:1.5;white-space:pre;overflow-x:auto}
+.process-count{margin:0}
+.process-table-wrap{max-height:70vh;overflow:auto}
+.process-table{font-size:13px;font-variant-numeric:tabular-nums}
+.process-table thead th{position:sticky;top:0;z-index:1;padding:0}
+.process-sort{display:flex;align-items:center;justify-content:flex-start;gap:4px;width:100%;height:auto;min-height:0;padding:8px 12px;border:0;border-radius:0;background:transparent;box-shadow:none;color:inherit;font:inherit;font-weight:700;text-align:left;white-space:nowrap;cursor:pointer}
+.process-sort:hover:not(:disabled){background:var(--surface-hover);color:var(--text)}
+.process-sort:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
+.process-table td{white-space:nowrap}
+.process-col-pid,.process-col-cpu,.process-col-mem,.process-col-res,.process-col-time{text-align:right}
+.process-table th.process-col-pid .process-sort,.process-table th.process-col-cpu .process-sort,.process-table th.process-col-mem .process-sort,.process-table th.process-col-res .process-sort,.process-table th.process-col-time .process-sort{justify-content:flex-end}
+.process-col-state{text-align:center;color:var(--text-muted)}
+.process-col-command{width:100%;max-width:0}
+.process-col-command code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:12px}
+.process-user{height:auto;min-height:0;padding:0;border:0;background:none;box-shadow:none;color:var(--primary-ink);font:inherit;font-weight:600;cursor:pointer}
+.process-user:hover:not(:disabled){background:none;text-decoration:underline;color:var(--primary-ink)}
+.process-empty{margin:12px}
+
+@media (max-width:760px){
+  .process-field{flex:1 1 100%}
+  .process-time{margin-left:0}
+  .process-col-command{min-width:220px;max-width:none}
+  .process-col-command code{max-width:60vw}
+}
