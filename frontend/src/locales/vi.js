@@ -3188,4 +3188,8 @@ export default {
   "Static requests per second": "Yêu cầu file tĩnh mỗi giây",
   "This server and the loopback are always trusted. Behind Cloudflare or another proxy, leave it off: every visitor of that edge would share one limit. Suggested: {static}/s static, {dynamic}/s PHP, {soft}/{hard} connections, {grace}s grace, {ban}s ban.": "Máy chủ này và loopback luôn được tin cậy. Nếu website nằm sau Cloudflare hoặc proxy khác, hãy để tắt: mọi khách qua cùng điểm biên đó sẽ dùng chung một giới hạn. Gợi ý: {static}/giây file tĩnh, {dynamic}/giây PHP, {soft}/{hard} kết nối, ân hạn {grace} giây, chặn {ban} giây.",
   "Visitors are no longer limited.": "Đã bỏ giới hạn theo IP truy cập.",
+  "Custom rules saved for {domain}.": "Đã lưu quy tắc tùy chỉnh cho {domain}.",
+  "One rule a line: RewriteCond and RewriteRule (flags L, R=301/302/307/308, NC, OR, QSA, QSD, NE, F, G, END), or a header as \"Name: value\". They run after the HTTPS and domain redirects. A .htaccess file in the website keeps working as well.": "Mỗi dòng một quy tắc: RewriteCond và RewriteRule (cờ L, R=301/302/307/308, NC, OR, QSA, QSD, NE, F, G, END), hoặc một header dạng \"Tên: giá trị\". Chúng chạy sau chuyển hướng HTTPS và chuyển hướng tên miền. File .htaccess trong website vẫn hoạt động như cũ.",
+  "Rewrite rules and response headers of your own, added to the web server's configuration for this website.": "Quy tắc rewrite và header phản hồi của riêng bạn, được thêm vào cấu hình web server của website này.",
+  "Saving custom rules...": "Đang lưu quy tắc tùy chỉnh...",
 };

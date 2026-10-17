@@ -721,6 +721,10 @@ class WebsiteCacheUpdate(BaseModel):
     on: bool
 
 
+class WebsiteCustomRules(BaseModel):
+    custom_rules: str = Field(default="", max_length=64 * 1024)
+
+
 class WebsiteOut(BaseModel):
     id: int
     domain: str
@@ -741,6 +745,7 @@ class WebsiteOut(BaseModel):
     ssl_updated_at: Optional[datetime] = None
     ssl_has_ca: bool = False
     lscache_enabled: bool = True
+    custom_rules: str = ""
     ssl_cert_path: Optional[str] = Field(default=None, exclude=True)
     ssl_key_path: Optional[str] = Field(default=None, exclude=True)
     ssl_ca_path: Optional[str] = Field(default=None, exclude=True)

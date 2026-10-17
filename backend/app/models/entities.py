@@ -86,6 +86,8 @@ class Website(Base):
     # LiteSpeed's page cache looked up for the site (what its application marks
     # cacheable), in a folder of its own - openlitespeed.lscache_dir.
     lscache_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    # The site's own rewrite rules and response headers (openlitespeed.parse_custom_rules).
+    custom_rules: Mapped[str] = mapped_column(Text, default="", server_default="")
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
     app_type: Mapped[str] = mapped_column(String(32), default="wordpress")
     ssl_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

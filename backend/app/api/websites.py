@@ -15,7 +15,7 @@ from app.core.access import can_access_owner, ensure_owner_access, scope_owner
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
-from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCacheUpdate, WebsiteCreate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
+from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCacheUpdate, WebsiteCreate, WebsiteCustomRules, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
 from app.services import dns_manager, file_manager, mail, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress, wp_manager
 from app.services.audit import log_action
 
@@ -204,6 +204,7 @@ def _rewrite_website_vhost(website: Website, **overrides) -> str:
         "aliases": overrides.pop("aliases", _alias_domains(website)),
         "redirects": overrides.pop("redirects", _redirect_domains(website)),
         "lscache": overrides.pop("lscache", getattr(website, "lscache_enabled", True) is not False),
+        "custom_rules": overrides.pop("custom_rules", getattr(website, "custom_rules", "") or ""),
     }
     if overrides.pop("include_ssl", True):
         rewrite_kwargs.update(_rewrite_ssl_kwargs(website))
@@ -810,11 +811,48 @@ def get_website_log(
 
 @router.put("/{website_id}/nginx-custom", response_model=WebsiteOut)
 def set_website_webserver_custom(website_id: int, payload: WebsiteNginxCustom, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    website = db.query(Website).filter(Website.id == website_id).first()
-    if not website:
-        raise HTTPException(status_code=404, detail="Website not found")
-    ensure_owner_access(db, current_user, website.owner_id)
-    raise HTTPException(status_code=405, detail="Custom OpenLiteSpeed directives are disabled. Use managed website settings.")
+    raise HTTPException(status_code=405, detail="Custom OpenLiteSpeed directives are disabled. Use the website's custom rules.")
+
+
+@router.get("/{website_id}/custom-rules")
+def get_website_custom_rules(website_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    website = _get_authorized_website(db, website_id, current_user)
+    return {"custom_rules": website.custom_rules or "", "max_lines": openlitespeed.CUSTOM_MAX_LINES}
+
+
+@router.put("/{website_id}/custom-rules", response_model=WebsiteOut)
+def set_website_custom_rules(website_id: int, payload: WebsiteCustomRules, request: Request, db: Session = Depends(get_db),
+                             current_user: User = Depends(get_current_user)):
+    """The site's own rewrite rules and response headers, from an allowlist.
+
+    RewriteCond and RewriteRule lines join the vhost's rewrite block after
+    the panel's HTTPS and domain redirects; "Name: value" lines are response
+    headers, and one the panel also sends (the security headers, WordPress's
+    Content-Security-Policy) replaces the panel's. The site's owner or an
+    administrator.
+    """
+    website = _get_authorized_website(db, website_id, current_user)
+    try:
+        openlitespeed.parse_custom_rules(payload.custom_rules)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    text = (payload.custom_rules or "").replace("\r\n", "\n").strip()
+    previous = website.custom_rules or ""
+    try:
+        _rewrite_website_vhost(website, custom_rules=text)
+    except (RuntimeError, ValueError, FileNotFoundError) as exc:
+        try:
+            _rewrite_website_vhost(website, custom_rules=previous)
+        except (RuntimeError, ValueError, FileNotFoundError):
+            pass
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    website.custom_rules = text
+    db.commit()
+    db.refresh(website)
+    log_action(db, current_user.id, "website_custom_rules", website.domain,
+               f"{len([line for line in text.splitlines() if line.strip() and not line.strip().startswith('#')])} rule(s)",
+               request=request)
+    return website
 
 
 @router.delete("/{website_id}")

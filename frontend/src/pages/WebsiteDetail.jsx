@@ -365,6 +365,40 @@ function TerminalSection({ site }) {
   </>;
 }
 
+// The site's own rewrite rules and response headers, as SNPanel's custom
+// directives: RewriteCond and RewriteRule lines, and "Name: value" headers -
+// nothing else, which the server checks line by line.
+const CUSTOM_EXAMPLE = `# Send an old path elsewhere
+RewriteRule ^old-page$ /new-page [R=301,L]
+# Refuse a folder
+RewriteRule ^private/ - [F]
+# A response header (one the panel also sends, like Content-Security-Policy, replaces the panel's)
+X-Robots-Tag: noindex`;
+
+function CustomRules({ site }) {
+  const t = useT();
+  const { loading, refreshAll, request, setNotice } = usePanel();
+  const saved = site.custom_rules || '';
+  const [text, setText] = useState(saved);
+  useEffect(() => { setText(site.custom_rules || ''); }, [site.id, site.custom_rules]);
+  const dirty = text.trim() !== saved.trim();
+  async function save() {
+    const data = await request(`/websites/${site.id}/custom-rules`, { method: 'PUT', body: JSON.stringify({ custom_rules: text }) }, t('Saving custom rules...'));
+    if (data) { setNotice(t('Custom rules saved for {domain}.', { domain: site.domain })); await refreshAll(); }
+  }
+  return <section className="section">
+    <PageHeader title={t('Custom rules')} subtitle={t('Rewrite rules and response headers of your own, added to the web server\'s configuration for this website.')}/>
+    <textarea className="code-editor" value={text} onChange={(e) => setText(e.target.value)} rows={8} spellCheck={false}
+      placeholder={CUSTOM_EXAMPLE} aria-label={t('Custom rules')}/>
+    <div className={`wsd-savebar${dirty ? ' is-dirty' : ''}`}>
+      <span role="status">{dirty ? t('Unsaved changes') : ''}</span>
+      {dirty && <button type="button" className="secondary-light" disabled={!!loading} onClick={() => setText(saved)}><RotateCcw size={14} aria-hidden="true"/> {t('Undo changes')}</button>}
+      <button type="button" disabled={!dirty || !!loading} onClick={save}><Save size={14} aria-hidden="true"/> {t('Save changes')}</button>
+    </div>
+    <p className="hint">{t('One rule a line: RewriteCond and RewriteRule (flags L, R=301/302/307/308, NC, OR, QSA, QSD, NE, F, G, END), or a header as "Name: value". They run after the HTTPS and domain redirects. A .htaccess file in the website keeps working as well.')}</p>
+  </section>;
+}
+
 function AdvancedTab({ site }) {
   const t = useT();
   const {
@@ -385,6 +419,8 @@ function AdvancedTab({ site }) {
           : <button type="button" className="secondary-light" disabled={!editor || !!loading} onClick={viewFullNginxConfig}><FileText size={14} aria-hidden="true"/> {t('View the full vhost')}</button>}/>
       {full && <textarea className="code-editor" value={editor.content || ''} readOnly spellCheck={false} rows={18} aria-label={t('Full vhost')}/>}
     </section>}
+
+    <CustomRules site={site}/>
 
     <section className="section">
       <PageHeader title={t('Repair')} subtitle={t('Puts back what the panel manages, when something was changed by hand.')}/>

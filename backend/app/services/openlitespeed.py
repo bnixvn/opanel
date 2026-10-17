@@ -327,6 +327,60 @@ def validate_custom_directives(content: Optional[str]) -> str:
     return text
 
 
+# A site's own rules: RewriteCond and RewriteRule lines for the vhost's rewrite
+# block, and "Name: value" response headers - nothing else, and nothing that
+# could leave the heredoc or the block it is written into. A flag that hands
+# the request elsewhere (proxy, handler, type, environment) is refused.
+CUSTOM_MAX_LINES = 100
+CUSTOM_HEADER_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,63})[ \t]*:[ \t]*(\S.{0,1500})$")
+CUSTOM_REWRITE_RE = re.compile(r"^(RewriteCond|RewriteRule)[ \t]+\S")
+CUSTOM_REWRITE_FLAGS = {
+    "L", "LAST", "NC", "NOCASE", "OR", "ORNEXT", "QSA", "QSAPPEND", "QSD", "QSDISCARD", "NE", "NOESCAPE",
+    "F", "FORBIDDEN", "G", "GONE", "END", "NS", "NOSUBREQ", "R", "REDIRECT",
+    "R=301", "R=302", "R=303", "R=307", "R=308", "REDIRECT=301", "REDIRECT=302", "REDIRECT=307", "REDIRECT=308",
+}
+CUSTOM_BLOCKED_HEADERS = {"content-length", "transfer-encoding", "connection", "host", "status", "content-encoding"}
+CUSTOM_VARIABLE_RE = re.compile(r"%\{[A-Za-z0-9_:]{1,64}\}")
+CUSTOM_FORBIDDEN_TEXT = ("<<<", "END_RULES", "END_HEADERS", "END_param", "{", "}", "`", "\x00")
+
+
+def parse_custom_rules(content: Optional[str]) -> tuple[list[str], list[str]]:
+    """A site's custom rules split into rewrite lines and header lines; ValueError names the bad line."""
+    rewrites: list[str] = []
+    headers: list[str] = []
+    for number, raw in enumerate((content or "").replace("\r\n", "\n").split("\n"), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        # A server variable, %{HTTP_HOST}, is the one place a brace belongs.
+        bare = CUSTOM_VARIABLE_RE.sub("", line)
+        if len(line) > 1500 or any(token in bare for token in CUSTOM_FORBIDDEN_TEXT):
+            raise ValueError(f"Line {number}: braces, backticks and heredoc markers are not allowed")
+        if CUSTOM_REWRITE_RE.match(line):
+            flags = re.search(r"\[([^\]]*)\]\s*$", line)
+            for flag in (flags.group(1).split(",") if flags else []):
+                if flag.strip().upper() not in CUSTOM_REWRITE_FLAGS:
+                    raise ValueError(f"Line {number}: the flag [{flag.strip()}] is not allowed")
+            rewrites.append(line)
+            continue
+        header = CUSTOM_HEADER_RE.match(line)
+        if header:
+            if header.group(1).lower() in CUSTOM_BLOCKED_HEADERS:
+                raise ValueError(f"Line {number}: the {header.group(1)} header is LiteSpeed's to set")
+            headers.append(f"{header.group(1)}: {header.group(2)}")
+            continue
+        raise ValueError(f"Line {number}: only RewriteCond, RewriteRule and \"Header-Name: value\" lines are allowed")
+    if len(rewrites) + len(headers) > CUSTOM_MAX_LINES:
+        raise ValueError(f"At most {CUSTOM_MAX_LINES} rules")
+    return rewrites, headers
+
+
+def _header_lines(panel: list[str], custom: list[str]) -> list[str]:
+    """The panel's headers, less any the site sets itself, then the site's."""
+    overridden = {line.split(":", 1)[0].strip().lower() for line in custom}
+    return [line for line in panel if line.split(":", 1)[0].strip().lower() not in overridden] + custom
+
+
 def validate_full_config(content: Optional[str]) -> str:
     """Validate a full OLS vhost config block."""
     if not content:
@@ -463,8 +517,10 @@ def _build_context(
     linux_user: str | None = None,
     lsphp_socket_override: str | None = None,
     lscache: bool = True,
+    custom_rules: str = "",
 ) -> dict:
     """Build the template context for vhost rendering."""
+    custom_rewrites, custom_headers = parse_custom_rules(custom_rules)
     safe_domain = _safe_domain(domain)
     checked_app = _check_app_type(app_type)
     checked_php = _check_php_version(php_version) if checked_app != "static" else None
@@ -551,6 +607,14 @@ def _build_context(
         "security_headers": SECURITY_HEADERS,
         "hsts_header": HSTS_HEADER if has_ssl else "",
         "csp_header": WORDPRESS_CSP if checked_app == "wordpress" else "",
+        "custom_rewrites": custom_rewrites,
+        # Every response header the site sends: the panel's, less those the
+        # site sets itself, then the site's own.
+        "header_lines": _header_lines(
+            ([HSTS_HEADER] if has_ssl else []) + SECURITY_HEADERS.split("\n")
+            + ([f"Content-Security-Policy: {WORDPRESS_CSP}"] if checked_app == "wordpress" else []),
+            custom_headers,
+        ),
         "legacy_rlimits": not _cgroup_limits_enforced(),
         # Per account, not per site, and no more than the CPU and the memory
         # can run: see php_workers.
@@ -604,6 +668,7 @@ def render_vhost(
     linux_user: str | None = None,
     lsphp_socket_override: str | None = None,
     lscache: bool = True,
+    custom_rules: str = "",
 ) -> str:
     """Render an OLS vhost config from the template."""
     ctx = _build_context(
@@ -623,6 +688,7 @@ def render_vhost(
         linux_user=linux_user,
         lsphp_socket_override=lsphp_socket_override,
         lscache=lscache,
+        custom_rules=custom_rules,
     )
     env = _get_jinja_env()
     template_name = f"{ctx['app_type']}.conf.j2"
