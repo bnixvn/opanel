@@ -514,8 +514,12 @@ def test_every_addon_endpoint_requires_admin():
 
 
 def test_the_page_is_hidden_and_not_reachable_by_url():
-    index = APP_JSX.index("['addons', tr(\"Addons\"), PackageOpen,")
-    assert "isAdmin ?" in APP_JSX[max(0, index - 120):index]
+    # A tab of the administrator's Settings hub (lib/navigation.jsx).
+    from pathlib import Path
+    NAV = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "lib" / "navigation.jsx").read_text(encoding="utf-8")
+    hub = NAV[NAV.index("{ key: 'config',"):]
+    hub = hub[:hub.index("] },")]
+    assert "roles: ['admin']" in hub and "{ page: 'addons'," in hub
     line_start = APP_JSX.index("if (page === 'addons')")
     line = APP_JSX[line_start:APP_JSX.index("\n", line_start)]
     assert "isAdmin" in line, "a deep link would paint a page whose requests all 403"

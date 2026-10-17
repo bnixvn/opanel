@@ -1,0 +1,125 @@
+/* The dashboard. See pages/Dashboard.jsx.
+
+   OPanel's markup where it has one, so its stylesheet (skin.css) gives the
+   look: .cp-layout, .dash-card, .attention-*, .top-accounts-*,
+   .side-card, .status-row, .info-row, .stat-row. What is here is what that
+   stylesheet does not say: the feature tiles (.dash-*), and SNPanel's
+   status rows are links, so a Ctrl-click opens a tab, where OPanel's are
+   buttons. */
+
+.dashboard a.status-row,
+.dashboard a.button-link{text-decoration:none}
+/* What a button has of its own and a link does not. */
+.dashboard a.status-row{font-size:13px;line-height:1}
+
+/* The "check again" button, at the end of the heading or of the all-clear. */
+.cp-attention .dash-recheck{flex:none}
+.cp-attention .attention-ok .dash-recheck{margin-left:auto}
+
+/* Narrow, the way to the fix goes under the text: what OPanel does for its
+   buttons, for these links. */
+@media (width<=720px){
+  .attention-item a.button-link{grid-column:2;justify-self:start}
+}
+
+/* A customer's CloudLinux usage (LveStats): the side card's heading with
+   its refresh button, a hit limit's count under its row, and the way to
+   CloudLinux's own Resource Usage page. */
+.lve-stats-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.lve-stats .hint{margin:0 0 4px}
+.lve-stats-faults{grid-column:1/-1;color:var(--danger-text);font-weight:600}
+.lve-stats-more{width:100%;display:inline-flex;align-items:center;justify-content:center;gap:6px;margin-top:8px}
+
+/* ---- The features: sections of tiles (REPORT 3.3) ----
+   A tile is the feature's picture (icons/feature, 40px) over its name. Six
+   to a row on a desktop, two (picture beside name) on a phone. */
+.dash-features{gap:4px}
+.dash-features .tools-search{margin-bottom:8px}
+.dash-section{border-top:1px solid var(--border)}
+.dash-section:first-of-type{border-top:0}
+.dash-section-head{
+  width:100%;height:auto;min-height:44px;display:flex;align-items:center;gap:10px;padding:10px 2px;
+  background:none;border:0;border-radius:0;box-shadow:none;color:var(--text);text-align:left;justify-content:flex-start;
+}
+.dash-section-head:hover:not(:disabled){background:none;color:var(--primary-ink, var(--primary-text))}
+.dash-section-head:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.dash-section-head h3{margin:0;font-size:14px;font-weight:700;color:inherit}
+.dash-section-count{min-width:22px;padding:1px 7px;border-radius:999px;background:var(--surface-alt);color:var(--text-secondary);font-size:12px;font-weight:600;text-align:center}
+.dash-section-chevron{margin-left:auto;color:var(--text-secondary);flex:none;transition:transform .15s}
+.dash-section:not(.is-open) .dash-section-chevron{transform:rotate(-90deg)}
+.dash-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;padding:2px 0 14px}
+.dash-tile{position:relative;min-width:0}
+.dash-tile-link{
+  display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:8px;height:100%;min-height:98px;
+  padding:14px 8px 11px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);
+  color:var(--text);text-decoration:none;text-align:center;transition:border-color .15s,background-color .15s,box-shadow .15s;
+}
+.dash-tile-link:hover{background:var(--surface-hover);border-color:var(--primary-soft, var(--primary-border));color:var(--text)}
+.dash-tile-link:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+/* Wraps between words only, never inside one. */
+.dash-tile-label{font-size:13px;font-weight:600;line-height:1.3;overflow-wrap:normal;word-break:normal;hyphens:none;min-width:0}
+.dash-tile-note{font-size:11.5px;color:var(--text-muted);line-height:1.2}
+.dash-tile.is-missing .dash-tile-link{border-style:dashed;background:transparent}
+.dash-tile.is-missing .dash-tile-label{color:var(--text-secondary)}
+.dash-tile-art{position:relative;display:inline-flex}
+.dash-tile-badge{position:absolute;right:-6px;bottom:-4px;display:grid;place-items:center;width:18px;height:18px;border-radius:50%;
+  background:var(--primary);color:#fff;box-shadow:0 0 0 2px var(--surface)}
+@media (prefers-reduced-motion:reduce){.dash-tile-link,.dash-section-chevron{transition:none}}
+
+/* The alerts' fold. */
+.cp-attention .dash-fold svg{transition:transform .15s}
+.cp-attention .dash-fold[aria-expanded="false"] svg{transform:rotate(-90deg)}
+
+/* ---- The administrator's server card: four figures with a sparkline ---- */
+.dash-figures{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:2px 0 6px}
+.dash-figure{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:2px 8px;padding:9px 10px 6px;
+  border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt);color:var(--text);text-decoration:none;
+}
+.dash-figure:hover{border-color:var(--border-hover);background:var(--surface-hover);color:var(--text)}
+.dash-figure-label{font-size:12px;font-weight:600;color:var(--text-secondary)}
+.dash-figure strong{font-size:15px;font-variant-numeric:tabular-nums}
+.dash-figure .dash-spark{grid-column:1/-1}
+.dash-spark{width:100%;height:24px;display:block;overflow:visible}
+.dash-spark-line{fill:none;stroke:var(--primary);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.dash-spark-area{fill:var(--primary-light);stroke:none;opacity:.7}
+.dash-figure.tone-warn .dash-spark-line{stroke:var(--warning)}
+.dash-figure.tone-bad .dash-spark-line{stroke:var(--danger)}
+.dash-figure.tone-warn strong{color:var(--warning-text)}
+.dash-figure.tone-bad strong{color:var(--danger-text)}
+.side-card-hint{margin:-2px 0 4px}
+
+@media (width<=1100px){
+  .dash-tiles{grid-template-columns:repeat(auto-fill,minmax(132px,1fr))}
+}
+@media (width<=720px){
+  .dash-tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .dash-tile-link{flex-direction:row;justify-content:flex-start;text-align:left;min-height:60px;padding:8px;gap:8px}
+  .dash-tile-link .feature-icon{width:30px;height:30px}
+  .dash-tile-label{font-size:12.5px}
+}
+
+
+
+/* Unlayered, to win over skin.css. */
+
+/* Before the first answer: neither good nor bad. */
+.cp-attention .attention-ok.is-pending{background:var(--surface-alt);border-color:var(--border);color:var(--text-secondary)}
+
+/* All clear, the "check again" button is no taller than the line it ends -
+   even on a phone, where every button is 42px. */
+.cp-attention.is-clear .attention-ok .dash-recheck{width:26px;min-width:26px;height:26px;min-height:26px}
+
+/* A count that is the way to its page: the row it was, not a link's bold
+   colour, underlined while pointed at. */
+.dashboard a.stat-row{color:inherit;font-weight:inherit;text-decoration:none}
+.dashboard a.stat-row:hover .stat-row-label{text-decoration:underline;text-underline-offset:2px}
+
+/* No website yet: the hint under the tool search. */
+.tools-panel .dash-first-hint{display:flex;align-items:center;gap:6px;margin:0 0 10px}
+
+/* Narrow, the CPU/RAM switch keeps its own width beside the heading, where
+   OPanel's rule makes every segmented control as wide as the screen. */
+@media (width<=700px){
+  .dash-card-head .segmented-control.compact{width:auto;flex:none}
+}

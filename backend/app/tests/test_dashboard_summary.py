@@ -68,18 +68,25 @@ def env(monkeypatch):
 
 def test_a_customer_sees_its_own_numbers_and_no_server_state(env):
     body = env.as_user("alice")
-    assert body["websites"] == {"total": 2, "active": 2, "suspended": 0}
+    assert body["websites"] == {"total": 2, "active": 2, "suspended": 0,
+                                "with_ssl": 1, "waf_on": 2, "without_ssl": ["a2.test"]}
     assert body["ssl"]["secured"] == 1 and body["ssl"]["unsecured"] == ["a2.test"]
     assert body["databases"]["total"] == 1
+    assert body["two_factor"] == {"totp": False, "passkeys": 0}
     for key in ("firewall", "waf", "services", "updates", "backups", "malware", "users"):
         assert key not in body
 
 
 def test_an_administrator_sees_everything(env):
     body = env.as_user("root_admin")
-    assert body["websites"] == {"total": 3, "active": 2, "suspended": 1}
+    # A suspended site is not one waiting for a certificate (SNPanel's count).
+    assert body["websites"] == {"total": 3, "active": 2, "suspended": 1,
+                                "with_ssl": 1, "waf_on": 3, "without_ssl": ["a2.test"]}
     assert body["ssl"]["unsecured_count"] == 2
-    assert body["firewall"] == {"enabled": True}
+    assert body["firewall"] == {"enabled": True, "state": "enabled", "chain_active": None}
+    assert body["waf"] == {"engine": True}
+    assert body["backups"]["state"] == "none", "no schedule is a choice, not a fault"
+    assert "two_factor" not in body
     assert body["services"]["stopped"] == ["redis-server"]
     assert body["updates"]["update_available"] is True
     assert body["users"]["total"] == 2
@@ -92,7 +99,7 @@ def test_a_failing_probe_is_left_out_not_fatal(env, monkeypatch):
 
     monkeypatch.setattr(dashboard.firewall, "is_enabled", broken)
     body = env.as_user("root_admin")
-    assert body["firewall"] == {"enabled": None}
+    assert body["firewall"] == {"enabled": None, "state": None, "chain_active": None}
     assert body["websites"]["total"] == 3
 
 
@@ -134,3 +141,22 @@ def test_the_cpanel_style_columns_get_what_each_role_may_see(env, monkeypatch):
     assert body["accounts"] == {"end_users": 2, "resellers": 0}
     assert body["mail"] == {"domains": 0, "mailboxes": 0}
     assert "dns" not in body, "an addon that is not installed adds nothing"
+
+
+def test_the_latest_scan_of_each_target_counts():
+    """A clean scan of one site must not hide threats an earlier scan found on another."""
+    jobs = [
+        {"job_id": "c", "status": "done", "scope": "website", "domains": ["a.test"], "infected": 0, "finished_at": "3"},
+        {"job_id": "b", "status": "done", "scope": "website", "domains": ["b.test"], "infected": 2, "quarantined": 1},
+        {"job_id": "a", "status": "done", "scope": "website", "domains": ["a.test"], "infected": 5},
+        {"job_id": "r", "status": "running", "scope": "server", "domains": []},
+    ]
+    state = dashboard._malware_state(jobs, installed=True)
+    assert state == {"state": "threats", "threats": 2, "quarantined": 1, "last_scan_at": "3", "infected_job": "b"}
+    assert dashboard._malware_state([], installed=True)["state"] == "never"
+    assert dashboard._malware_state(jobs, installed=False)["state"] == "not_installed"
+
+
+def test_os_updates_are_counted_for_the_dashboard():
+    output = "Listing...\nbash/noble 5.2 amd64 [upgradable from: 5.1]\ncurl/noble 8 amd64 [upgradable from: 7]\n"
+    assert dashboard._count_os_updates(output) == 2

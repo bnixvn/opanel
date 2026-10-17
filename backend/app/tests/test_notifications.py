@@ -398,9 +398,11 @@ def test_the_addon_is_a_panel_addon_the_helper_never_sees():
 def test_the_page_is_offered_once_the_addon_is_on():
     app = (ROOT / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     assert "  notifications: '/notifications'," in app
-    # Administrators only, and only while the addon is on.
-    assert "...(isAdmin && notifyInfo?.enabled ? [['notifications', tr(\"Notifications\"), Bell]] : [])" in app
-    assert "if (page === 'notifications') return isAdmin ? renderNotificationCenter() : renderDashboard();" in app
+    # Administrators only (the Settings hub's tab), and only while the addon is on.
+    nav = (ROOT / "frontend" / "src" / "lib" / "navigation.jsx").read_text(encoding="utf-8")
+    assert "{ page: 'notifications', label: msg('Notifications'), when: (c) => c.notifications }" in nav
+    assert "notifications: !!notifyInfo?.enabled" in app
+    assert "if (page === 'notifications') return isAdmin ? renderNotificationCenter() : <DashboardPage/>;" in app
     # The send log is a sub-page with a way back, not a dialog.
     assert "if (showNotifyLog && isAdmin) return renderNotifyLog();" in app
     # Secrets are never echoed back into the form.

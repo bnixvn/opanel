@@ -1,0 +1,122 @@
+/* Feature icons (icons/feature): one palette, a hue per Dashboard section
+   (see icons.js), each a 500 base and a 200 tint, plus slate, ink and paper.
+   Dark mode lifts the bases to 3:1 or better on the dark card and dims the
+   paper, so the same drawings hold on both. */
+:root{
+  --ic-blue-500:#2f7fe0;--ic-blue-200:#a6cefa;
+  --ic-indigo-500:#5363d6;--ic-indigo-200:#bcc3f6;
+  --ic-violet-500:#8e5ae6;--ic-violet-200:#d6c3fb;
+  --ic-teal-500:#0f9d91;--ic-teal-200:#93ddd5;
+  --ic-cyan-500:#0aa2c8;--ic-cyan-200:#98dcee;
+  --ic-green-500:#23a463;--ic-green-200:#a2e0bf;
+  --ic-red-500:#e03e4e;--ic-red-200:#fbb3ba;
+  --ic-orange-500:#f0623c;--ic-orange-200:#ffbda6;
+  --ic-amber-500:#f4ad1c;--ic-amber-200:#ffd784;
+  --ic-magenta-500:#d03d98;--ic-magenta-200:#f6b4dc;
+  --ic-slate-500:#5f7288;--ic-slate-200:#c4d0dd;
+  --ic-ink:#223145;--ic-paper:#ffffff;
+}
+/* The dark palette: the dark theme, and the sidebar, dark in both. */
+:root[data-theme="dark"],.sidebar{
+  --ic-blue-500:#4a95ee;--ic-blue-200:#a9d0fb;
+  --ic-indigo-500:#7584ec;--ic-indigo-200:#c1c8fa;
+  --ic-violet-500:#a57ff0;--ic-violet-200:#d9c8fc;
+  --ic-teal-500:#22b8aa;--ic-teal-200:#98e2da;
+  --ic-cyan-500:#2bb9dd;--ic-cyan-200:#9de0f1;
+  --ic-green-500:#35bd78;--ic-green-200:#a6e4c3;
+  --ic-red-500:#f0606c;--ic-red-200:#fcb9bf;
+  --ic-orange-500:#f57a55;--ic-orange-200:#ffc2ad;
+  --ic-amber-500:#f6b939;--ic-amber-200:#ffda8c;
+  --ic-magenta-500:#e05cae;--ic-magenta-200:#f8bbe0;
+  --ic-slate-500:#8497ad;--ic-slate-200:#c3cfdc;
+  --ic-ink:#1b2737;--ic-paper:#edf2f8;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ic-blue-500:#4a95ee;--ic-blue-200:#a9d0fb;
+    --ic-indigo-500:#7584ec;--ic-indigo-200:#c1c8fa;
+    --ic-violet-500:#a57ff0;--ic-violet-200:#d9c8fc;
+    --ic-teal-500:#22b8aa;--ic-teal-200:#98e2da;
+    --ic-cyan-500:#2bb9dd;--ic-cyan-200:#9de0f1;
+    --ic-green-500:#35bd78;--ic-green-200:#a6e4c3;
+    --ic-red-500:#f0606c;--ic-red-200:#fcb9bf;
+    --ic-orange-500:#f57a55;--ic-orange-200:#ffc2ad;
+    --ic-amber-500:#f6b939;--ic-amber-200:#ffda8c;
+    --ic-magenta-500:#e05cae;--ic-magenta-200:#f8bbe0;
+    --ic-slate-500:#8497ad;--ic-slate-200:#c3cfdc;
+    --ic-ink:#1b2737;--ic-paper:#edf2f8;
+  }
+}
+
+.feature-icon{display:inline-block;flex:none;vertical-align:middle;overflow:visible}
+/* Every shape: nothing until a class says. A fill class also sets the
+   stroke colour, which only shows with .j (rounded corners). */
+.feature-icon *{fill:none;stroke-width:0;stroke-linecap:round;stroke-linejoin:round}
+.feature-icon .b{fill:var(--ic-blue-500);stroke:var(--ic-blue-500)}
+.feature-icon .b2{fill:var(--ic-blue-200);stroke:var(--ic-blue-200)}
+.feature-icon .i{fill:var(--ic-indigo-500);stroke:var(--ic-indigo-500)}
+.feature-icon .i2{fill:var(--ic-indigo-200);stroke:var(--ic-indigo-200)}
+.feature-icon .v{fill:var(--ic-violet-500);stroke:var(--ic-violet-500)}
+.feature-icon .v2{fill:var(--ic-violet-200);stroke:var(--ic-violet-200)}
+.feature-icon .t{fill:var(--ic-teal-500);stroke:var(--ic-teal-500)}
+.feature-icon .t2{fill:var(--ic-teal-200);stroke:var(--ic-teal-200)}
+.feature-icon .c{fill:var(--ic-cyan-500);stroke:var(--ic-cyan-500)}
+.feature-icon .c2{fill:var(--ic-cyan-200);stroke:var(--ic-cyan-200)}
+.feature-icon .g{fill:var(--ic-green-500);stroke:var(--ic-green-500)}
+.feature-icon .g2{fill:var(--ic-green-200);stroke:var(--ic-green-200)}
+.feature-icon .r{fill:var(--ic-red-500);stroke:var(--ic-red-500)}
+.feature-icon .r2{fill:var(--ic-red-200);stroke:var(--ic-red-200)}
+.feature-icon .o{fill:var(--ic-orange-500);stroke:var(--ic-orange-500)}
+.feature-icon .o2{fill:var(--ic-orange-200);stroke:var(--ic-orange-200)}
+.feature-icon .a{fill:var(--ic-amber-500);stroke:var(--ic-amber-500)}
+.feature-icon .a2{fill:var(--ic-amber-200);stroke:var(--ic-amber-200)}
+.feature-icon .m{fill:var(--ic-magenta-500);stroke:var(--ic-magenta-500)}
+.feature-icon .m2{fill:var(--ic-magenta-200);stroke:var(--ic-magenta-200)}
+.feature-icon .s{fill:var(--ic-slate-500);stroke:var(--ic-slate-500)}
+.feature-icon .s2{fill:var(--ic-slate-200);stroke:var(--ic-slate-200)}
+.feature-icon .k{fill:var(--ic-ink);stroke:var(--ic-ink)}
+.feature-icon .p{fill:var(--ic-paper);stroke:var(--ic-paper)}
+.feature-icon .j{stroke-width:2}
+/* Strokes: 3 units on the 48 grid, the one weight of the set. */
+.feature-icon [class*="x"]{stroke-width:3}
+.feature-icon .xb{stroke:var(--ic-blue-500)}
+.feature-icon .xb2{stroke:var(--ic-blue-200)}
+.feature-icon .xi{stroke:var(--ic-indigo-500)}
+.feature-icon .xi2{stroke:var(--ic-indigo-200)}
+.feature-icon .xv{stroke:var(--ic-violet-500)}
+.feature-icon .xv2{stroke:var(--ic-violet-200)}
+.feature-icon .xt{stroke:var(--ic-teal-500)}
+.feature-icon .xt2{stroke:var(--ic-teal-200)}
+.feature-icon .xc{stroke:var(--ic-cyan-500)}
+.feature-icon .xc2{stroke:var(--ic-cyan-200)}
+.feature-icon .xg{stroke:var(--ic-green-500)}
+.feature-icon .xg2{stroke:var(--ic-green-200)}
+.feature-icon .xr{stroke:var(--ic-red-500)}
+.feature-icon .xr2{stroke:var(--ic-red-200)}
+.feature-icon .xo{stroke:var(--ic-orange-500)}
+.feature-icon .xo2{stroke:var(--ic-orange-200)}
+.feature-icon .xa{stroke:var(--ic-amber-500)}
+.feature-icon .xa2{stroke:var(--ic-amber-200)}
+.feature-icon .xm{stroke:var(--ic-magenta-500)}
+.feature-icon .xm2{stroke:var(--ic-magenta-200)}
+.feature-icon .xs{stroke:var(--ic-slate-500)}
+.feature-icon .xs2{stroke:var(--ic-slate-200)}
+.feature-icon .xk{stroke:var(--ic-ink)}
+.feature-icon .xp{stroke:var(--ic-paper)}
+.feature-icon .d{stroke-dasharray:0 5.5}
+/* variant="mono": one colour, the text's; tints at 40%; paper and ink cut. */
+.feature-icon .q{fill:currentColor;stroke:currentColor}
+.feature-icon .q2{fill:currentColor;stroke:currentColor;opacity:.4}
+.feature-icon .xq{stroke:currentColor}
+.feature-icon .xq2{stroke:currentColor;opacity:.4}
+/* A feature that is not installed yet. */
+.feature-icon.is-muted{filter:grayscale(1);opacity:.55}
+/* The cut-outs, inside the masks: a filled shape 2 units wider all round, a
+   stroke 2 units wider each side. */
+.feature-icon .fi-mw{fill:#fff}
+.feature-icon .fi-mk{fill:#000;stroke:#000;stroke-width:4}
+.feature-icon .fi-mkn{fill:none;stroke:#000}
+.feature-icon .fi-mks{stroke-width:7}
+.feature-icon .fi-mc{fill:#000;stroke:#000;stroke-width:0}
+.feature-icon .fi-mcs{fill:none;stroke:#000;stroke-width:3}
+.feature-icon .fi-mc.j{stroke-width:2}

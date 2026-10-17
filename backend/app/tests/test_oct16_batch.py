@@ -69,7 +69,11 @@ def test_the_interface_waits_for_an_api_that_is_restarting():
 
 def test_no_backup_schedule_is_not_a_warning():
     assert 'tr("No scheduled backup is set up.")' not in APP
-    assert "tone: !backups || !backups.schedules ? 'neutral'" in APP
+    # SNPanel's Dashboard (2026-10-17): no schedule is neither good nor bad,
+    # and only a failing one needs attention.
+    DASH = (PROJECT_ROOT / "frontend" / "src" / "pages" / "Dashboard.jsx").read_text(encoding="utf-8")
+    assert "bk.state === 'none' ? 'neutral'" in DASH
+    assert "if (bk.state === 'error') need('bad', 'backups'" in DASH
 
 
 def test_opcache_sizes_replace_the_tuned_lines(monkeypatch, tmp_path):

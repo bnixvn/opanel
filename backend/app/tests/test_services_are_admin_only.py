@@ -43,18 +43,23 @@ def test_the_dashboard_numbers_stay_open_to_end_users():
 
 
 def test_the_page_is_hidden_from_end_users():
-    fragment = "['services', tr(\"Services\"), Activity,"
-    index = APP_JSX.index(fragment)
-    window = APP_JSX[max(0, index - 120):index]
-    assert "isAdmin ?" in window, f"not gated on isAdmin: {fragment}"
+    # A tab of the administrator's Server hub (lib/navigation.jsx, 2026-10-17).
+    from pathlib import Path
+    nav = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "lib" / "navigation.jsx").read_text(encoding="utf-8")
+    hub = nav[nav.index("{ key: 'server',"):]
+    hub = hub[:hub.index("] },")]
+    assert "roles: ['admin']" in hub and "{ page: 'services'," in hub
 
 
 def test_the_dashboard_services_card_is_admin_only():
     # The status row sits in the dashboard's `if (isAdmin) { ... }` branch:
     # the nearest branch opening before it must be the admin one.
-    index = APP_JSX.index("status.unshift({ key: 'services'")
-    before = APP_JSX[:index]
-    assert before.rfind("if (isAdmin) {") > before.rfind("} else {"), "services card is not inside the isAdmin branch"
+    # SNPanel's Dashboard (2026-10-17): the Services row is in the admin's status.
+    from pathlib import Path
+    DASH = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "pages" / "Dashboard.jsx").read_text(encoding="utf-8")
+    index = DASH.index("{ key: 'services', page: 'services'")
+    before = DASH[:index]
+    assert before.rfind("if (summary && isAdmin) {") > before.rfind("if (summary && !isAdmin) {"), "services row is not in the admin branch"
 
 
 def test_a_bookmarked_services_url_does_not_render_the_page():
