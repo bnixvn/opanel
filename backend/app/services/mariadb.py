@@ -121,6 +121,28 @@ def _run_sql(sql: str, *, check: bool = True):
     return shell.run(_mysql_args(), check=check, input=sql, sensitive=True)
 
 
+def account_connection_limit() -> int:
+    """Server > MySQL's connections per database account (0: none of its own)."""
+    try:
+        from app.services import panel_settings
+
+        return max(int((panel_settings._read_raw().get("mysql_limits") or {}).get("max_user_connections", 0)), 0)
+    except Exception:  # an unreadable setting never stops a database being made
+        return 0
+
+
+def connection_limit_sql(db_user: str, limit: int | None = None) -> str:
+    """The account's own connection limit - works on a running server, unlike the global."""
+    if limit is None:
+        # A new account with no limit set needs no statement at all.
+        limit = account_connection_limit()
+        if not limit:
+            return ""
+    limit = max(int(limit), 0)
+    who =f"{_quote_sql_string(_validate_identifier(db_user))}@'localhost'"
+    return f"ALTER USER IF EXISTS {who} WITH MAX_USER_CONNECTIONS {limit};\n"
+
+
 def create_database(seed: str, prefix: str = "wp", db_name: str | None = None, if_not_exists: bool = True) -> Dict[str, str]:
     db_name = _validate_identifier(db_name or safe_db_identifier(seed, prefix))
     db_user = _validate_identifier(safe_db_identifier(db_name, "u"))
@@ -131,7 +153,8 @@ def create_database(seed: str, prefix: str = "wp", db_name: str | None = None, i
         f"CREATE USER IF NOT EXISTS {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
         f"ALTER USER {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
         f"GRANT ALL PRIVILEGES ON {_quote_identifier(db_name)}.* TO {_quote_sql_string(db_user)}@'localhost';\n"
-        "FLUSH PRIVILEGES;\n"
+        + connection_limit_sql(db_user)
+        + "FLUSH PRIVILEGES;\n"
     )
     _run_sql(sql)
     return {"db_name": db_name, "db_user": db_user, "db_password": db_password}
@@ -166,7 +189,8 @@ def create_database_credentials(
         )
     sql += (
         f"GRANT ALL PRIVILEGES ON {_quote_identifier(db_name)}.* TO {_quote_sql_string(db_user)}@'localhost';\n"
-        "FLUSH PRIVILEGES;\n"
+        + connection_limit_sql(db_user)
+        + "FLUSH PRIVILEGES;\n"
     )
     _run_sql(sql)
     return {"db_name": db_name, "db_user": db_user, "db_password": db_password}
@@ -358,7 +382,8 @@ def adopt_account(db_name: str, db_user: str, db_password: str, *, existing: boo
     _run_sql(
         f"{verb} {who} IDENTIFIED BY {_quote_sql_string(db_password)};\n"
         f"GRANT ALL PRIVILEGES ON {_quote_identifier(db_name)}.* TO {who};\n"
-        "FLUSH PRIVILEGES;\n"
+        + connection_limit_sql(db_user)
+        + "FLUSH PRIVILEGES;\n"
     )
 
 

@@ -81,20 +81,30 @@ def validate(values: dict) -> dict:
     return clean
 
 
-def apply(values: dict) -> dict:
+def apply(values: dict, db_users: list[str] | tuple[str, ...] = ()) -> dict:
+    """The budget onto the machine: the unit and option file (helper), then the running server.
+
+    The connection limit goes onto each of the panel's database accounts
+    (`ALTER USER ... MAX_USER_CONNECTIONS`), which a running server takes at
+    once - the global cannot be changed while MariaDB runs if it started at 0
+    (measured on .41) - and every account made later gets it too. The global
+    in the option file is the backstop from MariaDB's next start.
+    """
     clean = validate(values)
     shell.privileged("mariadb-limits-apply", helper_args=[
         str(clean["cpu_quota_percent"]), str(clean["cpu_weight"]), str(clean["io_weight"]),
         str(clean["memory_max_mb"]), str(clean["max_user_connections"]), "1" if clean["userstat"] else "0",
     ], fallback=["true"])
-    # The option file is for the next start; the running server takes it now.
-    mariadb._run_sql(
-        f"SET GLOBAL userstat = {1 if clean['userstat'] else 0};\n"
-        f"SET GLOBAL max_user_connections = {clean['max_user_connections']};\n"
-    )
     data = panel_settings._read_raw()
     data[SETTING] = clean
     panel_settings._write_raw(data)
+    mariadb._run_sql(f"SET GLOBAL userstat = {1 if clean['userstat'] else 0};\n")
+    # Refused (1290) on a server started with 0; the option file covers that.
+    mariadb._run_sql(f"SET GLOBAL max_user_connections = {clean['max_user_connections']};\n", check=False)
+    statements = [mariadb.connection_limit_sql(user, clean["max_user_connections"])
+                  for user in sorted(set(db_users)) if mariadb.valid_identifier(user)]
+    for start in range(0, len(statements), 200):
+        mariadb._run_sql("".join(statements[start:start + 200]) + "FLUSH PRIVILEGES;\n")
     return saved()
 
 

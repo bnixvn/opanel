@@ -34,7 +34,8 @@ def put_limits(payload: dict, request: Request, db: Session = Depends(get_db), c
     """MariaDB's CPU, IO and memory on its unit, and the per-account connection backstop."""
     ensure_role(current_user.role, Role.admin)
     try:
-        limits = mysql_limits.apply(payload)
+        db_users = [row.db_user for row in db.query(DatabaseAccount.db_user).all()]
+        limits = mysql_limits.apply(payload, db_users)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

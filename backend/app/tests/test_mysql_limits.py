@@ -80,7 +80,10 @@ def test_saving_sets_the_unit_the_option_file_and_the_running_server(env):
         "max_user_connections": 30, "userstat": True})
     assert answer.status_code == 200, answer.text
     assert env.calls[-1] == ("mariadb-limits-apply", ["150", "50", "50", "2048", "30", "1"])
-    assert "SET GLOBAL max_user_connections = 30;" in env.sql[-1] and "SET GLOBAL userstat = 1;" in env.sql[-1]
+    joined = "".join(env.sql)
+    assert "SET GLOBAL userstat = 1;" in joined
+    # Each of the panel's database accounts gets the limit at once.
+    assert "ALTER USER IF EXISTS 'acme_shop'@'localhost' WITH MAX_USER_CONNECTIONS 30;" in env.sql[-1]
     assert answer.json()["limits"]["memory_max_mb"] == 2048
 
 
@@ -118,3 +121,12 @@ def test_the_helper_checks_its_numbers_and_resets_with_empty_values():
     assert '[[ "$value" =~ ^[0-9]{1,7}$ ]]' in body
     assert '"CPUQuota="' in body and '"MemoryMax=infinity"' in body
     assert "systemctl set-property" in body and "91-opanel-limits.cnf" in body
+
+
+def test_a_new_database_account_gets_the_limit(monkeypatch):
+    from app.services import mariadb
+    monkeypatch.setattr(panel_settings, "_read_raw", lambda: {"mysql_limits": {"max_user_connections": 25}})
+    sent = []
+    monkeypatch.setattr(mariadb, "_run_sql", lambda text, **kw: sent.append(text))
+    mariadb.create_database_credentials("acme_new", "acme_new", "PasswordLongEnough1")
+    assert "ALTER USER IF EXISTS 'acme_new'@'localhost' WITH MAX_USER_CONNECTIONS 25;" in sent[0]
