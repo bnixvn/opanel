@@ -20,7 +20,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.entities import DatabaseAccount, Website, WpInstall
-from app.services import da_import, mariadb, site_users, wp_manager
+from app.services import da_import, mariadb, openlitespeed, site_users, wp_manager
 from app.services.shell import shell
 
 STAGE_DIR = ".opanel-wp-stage"
@@ -277,8 +277,19 @@ def handle_lscache(db: Session, task, params: dict) -> None:
     elif action == "deactivate":
         out = wp_manager.wp(website, install.path, ["plugin", "deactivate", LSCACHE_SLUG], skip=False)
     elif action == "purge":
-        # The plugin's own command needs the plugin loaded.
-        out = wp_manager.wp(website, install.path, ["litespeed-purge", "all"], skip=False)
+        # The cache is on this server, so it is emptied here first. The
+        # plugin's own purge asks the site's address over HTTP, which fails
+        # while the domain points elsewhere or nowhere -- a site just moved
+        # here -- so it only follows, and a failure of it is only noted.
+        files = openlitespeed.purge_site_cache(website.domain)
+        task.log(f"Emptied the website's LiteSpeed cache: {files} cached page(s)")
+        try:
+            # The plugin's own command needs the plugin loaded.
+            out = wp_manager.wp(website, install.path, ["litespeed-purge", "all"], skip=False)
+        except wp_manager.WpError as exc:
+            task.log(f"The plugin's own purge did not run: {wp_manager._short(str(exc))}")
+            wp_manager.refresh_install(db, task, install, website)
+            return
     else:
         raise wp_manager.WpError("Unknown LiteSpeed Cache action")
     task.log(wp_manager._short(out.stdout))

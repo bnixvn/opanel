@@ -165,3 +165,25 @@ def test_a_second_wordpress_in_a_folder_gets_its_own_database(env, monkeypatch):
     env.db.refresh(site)
     assert site.app_type == "wordpress"
     assert client.post(f"/api/maintenance/wordpress/{site.id}/install", json={**body, "subfolder": "wp-admin"}).status_code == 400
+
+
+def test_a_purge_empties_the_cache_here_even_when_the_plugin_cannot_reach_the_site(env, monkeypatch):
+    """`wp litespeed-purge all` asks the site's own address, which a site just
+    moved here (or a .test one) does not resolve to: the job used to fail."""
+    from app.services import openlitespeed
+
+    install = _scan(env)
+    purged = []
+    monkeypatch.setattr(openlitespeed, "purge_site_cache", lambda domain: purged.append(domain) or 7)
+
+    def unreachable(website, path, args, **kw):
+        if args[:1] == ["litespeed-purge"]:
+            raise wp_manager.WpError("cURL error 6: Could not resolve host")
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(wp_manager, "wp", unreachable)
+    monkeypatch.setattr(wp_manager, "refresh_install", lambda *a, **k: None)
+    answer = env.as_user("alice").post(f"/api/wordpress/installs/{install.id}/lscache", json={"action": "purge"})
+    assert answer.status_code == 200 and answer.json()["job"]["status"] == "completed", answer.text
+    assert purged == ["alice.example"]
+    assert "7 cached page(s)" in answer.json()["job"]["log"]
