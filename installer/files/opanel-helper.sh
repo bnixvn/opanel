@@ -4966,6 +4966,7 @@ require_addon_ip() {
 # --- Fail2ban ---------------------------------------------------------------
 FAIL2BAN_JAIL_FILE="/etc/fail2ban/jail.d/opanel.local"
 FAIL2BAN_FILTER_FILE="/etc/fail2ban/filter.d/opanel-panel.conf"
+FAIL2BAN_WP_FILTER_FILE="/etc/fail2ban/filter.d/opanel-wordpress.conf"
 FAIL2BAN_SETTINGS_FILE="/var/lib/opanel/addons/fail2ban-settings.json"
 
 addon_fail2ban_status() {
@@ -5001,6 +5002,16 @@ failregex = ^.*opanel-auth: authentication failure \([^)]*\) for user '[^']*' fr
 ignoreregex =
 FILTER
   chmod 0644 "$FAIL2BAN_FILTER_FILE"
+  # WordPress sign-in failures, from the sites' OpenLiteSpeed access logs: a
+  # wrong password re-shows the form (200), a right one redirects (302). The
+  # address opens the line, as LiteSpeed's common log format writes it.
+  cat >"$FAIL2BAN_WP_FILTER_FILE" <<'FILTER'
+# Managed by opanel -- edits are overwritten when the addon is reconfigured.
+[Definition]
+failregex = ^<HOST> \S+ \S+ \[[^\]]*\] "POST /(?:[^"\s]*/)?wp-login\.php(?:\?[^"\s]*)? HTTP/[0-9.]+" 200
+ignoreregex =
+FILTER
+  chmod 0644 "$FAIL2BAN_WP_FILTER_FILE"
 }
 
 addon_fail2ban_write_jails() {
@@ -5024,8 +5035,19 @@ defaults = {
     "findtime": 600,
     "jail_sshd": True,
     "jail_panel": True,
+    "jail_wordpress": True,
+    "jail_recidive": True,
     "ignoreip": "",
 }
+# Cloudflare's edges (cloudflare.com/ips): a site behind Cloudflare logs
+# them, not its visitors, and banning one would cut off everyone it serves.
+CLOUDFLARE = (
+    "173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 "
+    "108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 "
+    "162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 "
+    "2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 "
+    "2a06:98c0::/29 2c0f:f248::/32"
+)
 try:
     raw = json.loads(Path(settings_path).read_text(encoding="utf-8"))
 except Exception:
@@ -5101,6 +5123,36 @@ if bool(cfg["jail_panel"]):
 else:
     lines += ["[opanel-panel]", "enabled = false", ""]
 
+if bool(cfg["jail_wordpress"]):
+    lines += [
+        "[opanel-wordpress]",
+        "enabled = true",
+        "filter = opanel-wordpress",
+        "# The sites' access logs, as files; a site added later is watched from",
+        "# fail2ban's next start (every save here restarts it).",
+        "backend = auto",
+        "logpath = /var/log/openlitespeed/*.access.log",
+        "ignoreip = " + " ".join(ignore) + " " + CLOUDFLARE,
+        "",
+    ]
+else:
+    lines += ["[opanel-wordpress]", "enabled = false", ""]
+
+if bool(cfg["jail_recidive"]):
+    lines += [
+        "# An address banned again and again, by any jail, is banned for a week.",
+        "[recidive]",
+        "enabled = true",
+        "backend = auto",
+        "logpath = /var/log/fail2ban.log",
+        "bantime = 604800",
+        "findtime = 86400",
+        "maxretry = 5",
+        "",
+    ]
+else:
+    lines += ["[recidive]", "enabled = false", ""]
+
 Path(jail_path).write_text("\n".join(lines), encoding="utf-8")
 print(f"wrote {jail_path}")
 PY
@@ -5155,7 +5207,7 @@ addon_fail2ban_uninstall() {
   # Stop first so fail2ban unwinds what it can while it still knows about it.
   systemctl disable --now fail2ban >/dev/null 2>&1 || true
   apt-get purge -y fail2ban >/dev/null 2>&1 || apt-get remove -y fail2ban >/dev/null 2>&1 || true
-  rm -f "$FAIL2BAN_JAIL_FILE" "$FAIL2BAN_FILTER_FILE"
+  rm -f "$FAIL2BAN_JAIL_FILE" "$FAIL2BAN_FILTER_FILE" "$FAIL2BAN_WP_FILTER_FILE"
   addon_fail2ban_remove_chains
   echo "fail2ban removed"
 }
@@ -5171,6 +5223,35 @@ addon_fail2ban_banned() {
       | sed -n 's/.*Banned IP list:[[:space:]]*//p' || true)"
     echo "${jail}: ${addresses}"
   done
+}
+
+# Each jail's figures: name|failed now|failed in all|banned now|banned in all.
+addon_fail2ban_stats() {
+  command -v fail2ban-client >/dev/null 2>&1 || deny "fail2ban is not installed"
+  local jails jail status
+  jails="$(fail2ban-client status 2>/dev/null \
+    | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' ' ' || true)"
+  for jail in $jails; do
+    [[ "$jail" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || continue
+    status="$(fail2ban-client status "$jail" 2>/dev/null || true)"
+    printf '%s|%s|%s|%s|%s\n' "$jail" \
+      "$(sed -n 's/.*Currently failed:[[:space:]]*//p' <<<"$status" | head -n1)" \
+      "$(sed -n 's/.*Total failed:[[:space:]]*//p' <<<"$status" | head -n1)" \
+      "$(sed -n 's/.*Currently banned:[[:space:]]*//p' <<<"$status" | head -n1)" \
+      "$(sed -n 's/.*Total banned:[[:space:]]*//p' <<<"$status" | head -n1)"
+  done
+}
+
+# An administrator's own ban, into one running jail, for its ban time.
+addon_fail2ban_ban() {
+  [[ $# -eq 2 ]] || deny "usage: addon-fail2ban-ban <jail> <address>"
+  local jail="$1" address="$2"
+  [[ "$jail" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || deny "invalid jail"
+  require_addon_ip "$address"
+  command -v fail2ban-client >/dev/null 2>&1 || deny "fail2ban is not installed"
+  fail2ban-client status "$jail" >/dev/null 2>&1 || deny "no running jail named $jail"
+  fail2ban-client set "$jail" banip "$address" >/dev/null || deny "could not ban $address"
+  echo "$address banned in $jail"
 }
 
 addon_fail2ban_log() {
@@ -8389,6 +8470,14 @@ EOF
 
   addon-fail2ban-banned)
     addon_fail2ban_banned
+    ;;
+
+  addon-fail2ban-stats)
+    addon_fail2ban_stats
+    ;;
+
+  addon-fail2ban-ban)
+    addon_fail2ban_ban "$@"
     ;;
 
   addon-fail2ban-unban)

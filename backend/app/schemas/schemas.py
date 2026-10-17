@@ -1575,7 +1575,14 @@ class Fail2banSettingsIn(BaseModel):
     findtime: Optional[int] = None
     jail_sshd: Optional[bool] = None
     jail_panel: Optional[bool] = None
+    jail_wordpress: Optional[bool] = None
+    jail_recidive: Optional[bool] = None
     ignoreip: Optional[str] = None
+
+
+class Fail2banBanIn(BaseModel):
+    jail: str
+    address: str
 
 
 class Fail2banUnbanIn(BaseModel):

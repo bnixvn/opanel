@@ -814,8 +814,13 @@ FAIL2BAN_DEFAULTS = {
     "findtime": 600,
     "jail_sshd": True,
     "jail_panel": True,
+    # WordPress sign-in failures in the sites' access logs, and an address
+    # banned again and again by any jail (a week).
+    "jail_wordpress": True,
+    "jail_recidive": True,
     "ignoreip": "",
 }
+JAIL_FLAGS = ("jail_sshd", "jail_panel", "jail_wordpress", "jail_recidive")
 
 # bantime -1 means "forever" in fail2ban; allow it, but nothing else negative.
 _MAX_BANTIME = 365 * 24 * 3600
@@ -873,14 +878,13 @@ def fail2ban_save_settings(payload: dict) -> dict:
         incoming["bantime"] = (
             -1 if str(value).strip() == "-1" else _coerce_int(value, "Ban time", 10, _MAX_BANTIME)
         )
-    if "jail_sshd" in payload:
-        incoming["jail_sshd"] = bool(payload["jail_sshd"])
-    if "jail_panel" in payload:
-        incoming["jail_panel"] = bool(payload["jail_panel"])
+    for flag in JAIL_FLAGS:
+        if flag in payload and payload[flag] is not None:
+            incoming[flag] = bool(payload[flag])
     if "ignoreip" in payload:
         incoming["ignoreip"] = _valid_ignoreip(payload["ignoreip"])
 
-    if not incoming["jail_sshd"] and not incoming["jail_panel"]:
+    if not any(incoming[flag] for flag in JAIL_FLAGS):
         raise ValueError("Enable at least one jail, or uninstall the addon instead")
 
     # The helper reads this on stdin as JSON and writes jail.local itself, so no
@@ -911,6 +915,41 @@ def fail2ban_banned() -> list[dict]:
         for address in addresses.split():
             banned.append({"jail": jail, "address": address})
     return banned
+
+
+def fail2ban_stats() -> list[dict]:
+    """Each running jail's figures: failures and bans, now and since it started."""
+    result = shell.privileged("addon-fail2ban-stats", check=False)
+    if result.returncode != 0:
+        return []
+    stats: list[dict] = []
+    for line in (result.stdout or "").splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 5 or not parts[0]:
+            continue
+
+        def number(text: str) -> int:
+            try:
+                return int(text.strip())
+            except ValueError:
+                return 0
+
+        stats.append({"jail": parts[0], "failed_now": number(parts[1]), "failed_total": number(parts[2]),
+                      "banned_now": number(parts[3]), "banned_total": number(parts[4])})
+    return stats
+
+
+def fail2ban_ban(jail: str, address: str) -> str:
+    """An administrator's own ban into one running jail."""
+    token = (address or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F:.]{3,49}", token):
+        raise ValueError("Not an address")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", jail or ""):
+        raise ValueError("Not a jail")
+    result = shell.privileged("addon-fail2ban-ban", helper_args=[jail, token], check=False)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "Could not ban").strip())
+    return (result.stdout or f"{token} banned").strip()
 
 
 def fail2ban_unban(address: str) -> str:

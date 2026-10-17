@@ -658,6 +658,9 @@ function App() {
   const [f2bDraft, setF2bDraft] = useState(null);
   const [f2bBanned, setF2bBanned] = useState([]);
   const [f2bLog, setF2bLog] = useState('');
+  // Each running jail's figures, and the administrator's own ban being typed.
+  const [f2bStats, setF2bStats] = useState([]);
+  const [f2bBan, setF2bBan] = useState({ jail: '', address: '' });
   // The Fail2ban addon's own status, for its section on the Firewall page.
   const [f2bAddon, setF2bAddon] = useState(null);
   const [showUpdateLog, setShowUpdateLog] = useState(false);
@@ -4299,14 +4302,16 @@ function App() {
   }
 
   async function loadFail2ban(silent = false) {
-    const [settings, banned, log] = await Promise.all([
+    const [settings, banned, log, stats] = await Promise.all([
       request('/addons/fail2ban/settings', { silent: true }),
       request('/addons/fail2ban/banned', { silent: true }),
       request('/addons/fail2ban/log?lines=40', { silent: true }),
+      request('/addons/fail2ban/stats', { silent: true }),
     ]);
     if (settings) { setF2bSettings(settings); setF2bDraft(prev => prev || settings); }
     if (banned) setF2bBanned(banned.banned || []);
     if (log) setF2bLog(log.log || '');
+    if (stats) setF2bStats(stats.jails || []);
   }
 
   async function loadF2bAddon() {
@@ -4332,6 +4337,15 @@ function App() {
       setNotice(tr("Fail2ban settings applied."));
       loadFail2ban(true);
     }
+  }
+
+  async function banAddress() {
+    const jail = f2bBan.jail || f2bStats[0]?.jail;
+    const address = f2bBan.address.trim();
+    if (!jail || !address) return;
+    if (!(await confirmDialog({ title: tr("Ban {0}?", address), message: tr("It is refused on every port for the jail's ban time."), subject: jail, danger: true, confirmLabel: tr("Ban") }))) return;
+    const data = await request('/addons/fail2ban/ban', { method: 'POST', body: JSON.stringify({ jail, address }) }, tr("Banning {0}...", address));
+    if (data) { setF2bBanned(data.banned || []); setF2bBan(prev => ({ ...prev, address: '' })); setNotice(data.message || tr("Banned.")); loadFail2ban(true); }
   }
 
   async function unbanAddress(address) {
@@ -5862,6 +5876,18 @@ function App() {
               <option value="on">{tr("On")}</option><option value="off">{tr("Off")}</option>
             </select>
           </label>
+          <label>
+            <span>{tr("Watch WordPress sign-ins")}</span>
+            <select value={draft.jail_wordpress === false ? 'off' : 'on'} onChange={e => setDraft({ jail_wordpress: e.target.value === 'on' })}>
+              <option value="on">{tr("On")}</option><option value="off">{tr("Off")}</option>
+            </select>
+          </label>
+          <label>
+            <span>{tr("Repeat offenders: a week")}</span>
+            <select value={draft.jail_recidive === false ? 'off' : 'on'} onChange={e => setDraft({ jail_recidive: e.target.value === 'on' })}>
+              <option value="on">{tr("On")}</option><option value="off">{tr("Off")}</option>
+            </select>
+          </label>
           <label className="addon-form-wide">
             <span>{tr("Never ban")}</span>
             <input type="text" placeholder="203.0.113.7 198.51.100.0/24" value={draft.ignoreip ?? ''}
@@ -5875,6 +5901,24 @@ function App() {
             onClick={() => setF2bDraft(f2bSettings)}><RotateCcw size={14}/> {tr("Discard changes")}</button>}
         </div>
       </div>
+
+      {f2bStats.length > 0 && <div className="addon-panel">
+        <div className="addon-panel-head"><strong>{tr("Jails")}</strong></div>
+        <table className="table addon-ban-table"><thead><tr><th>{tr("Jail")}</th><th>{tr("Failures now")}</th><th>{tr("Failures in all")}</th><th>{tr("Banned now")}</th><th>{tr("Banned in all")}</th></tr></thead>
+          <tbody>{f2bStats.map(row => <tr key={row.jail}>
+            <td><code>{row.jail}</code></td><td>{row.failed_now}</td><td>{row.failed_total}</td><td>{row.banned_now}</td><td>{row.banned_total}</td>
+          </tr>)}</tbody></table>
+        <p className="hint">{tr("opanel-wordpress counts wrong WordPress passwords in the sites' access logs; Cloudflare's addresses are never banned there. recidive bans for a week an address other jails keep banning. In all: since Fail2ban last started.")}</p>
+        <div className="addon-form f2b-ban-form">
+          <label><span>{tr("Ban an address yourself")}</span>
+            <input type="text" placeholder="203.0.113.7" value={f2bBan.address} onChange={e => setF2bBan(prev => ({ ...prev, address: e.target.value }))} /></label>
+          <label><span>{tr("Jail")}</span>
+            <select value={f2bBan.jail || f2bStats[0]?.jail || ''} onChange={e => setF2bBan(prev => ({ ...prev, jail: e.target.value }))}>
+              {f2bStats.map(row => <option key={row.jail} value={row.jail}>{row.jail}</option>)}
+            </select></label>
+          <button className="danger" disabled={!!loading || !f2bBan.address.trim()} onClick={banAddress}><Ban size={14}/> {tr("Ban")}</button>
+        </div>
+      </div>}
 
       <div className="addon-panel">
         <div className="addon-panel-head">

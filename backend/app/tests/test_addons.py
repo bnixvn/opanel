@@ -228,9 +228,10 @@ def test_never_ban_is_bounded(calls):
         addons.fail2ban_save_settings({"ignoreip": " ".join(["10.0.0.1"] * 65)})
 
 
-def test_turning_off_both_jails_is_refused(calls):
+def test_turning_off_every_jail_is_refused(calls):
     with pytest.raises(ValueError, match="at least one jail"):
-        addons.fail2ban_save_settings({"jail_sshd": False, "jail_panel": False})
+        addons.fail2ban_save_settings({"jail_sshd": False, "jail_panel": False,
+                                       "jail_wordpress": False, "jail_recidive": False})
 
 
 def test_unban_validates_the_address(calls):

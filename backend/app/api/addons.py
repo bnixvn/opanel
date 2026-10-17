@@ -10,7 +10,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.permissions import Role, ensure_role
 from app.models.entities import User
-from app.schemas.schemas import AddonServiceToggle, Fail2banSettingsIn, Fail2banUnbanIn
+from app.schemas.schemas import AddonServiceToggle, Fail2banBanIn, Fail2banSettingsIn, Fail2banUnbanIn
 from app.services import addons
 from app.services.audit import log_action
 
@@ -70,6 +70,30 @@ def post_fail2ban_unban(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     log_action(db, current_user.id, "addon_unban", payload.address, request=request)
+    return {"message": message, "banned": addons.fail2ban_banned()}
+
+
+@router.get("/fail2ban/stats")
+def get_fail2ban_stats(current_user: User = Depends(get_current_user)):
+    _admin(current_user)
+    return {"jails": addons.fail2ban_stats()}
+
+
+@router.post("/fail2ban/ban")
+def post_fail2ban_ban(
+    payload: Fail2banBanIn,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _admin(current_user)
+    try:
+        message = addons.fail2ban_ban(payload.jail, payload.address)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    log_action(db, current_user.id, "addon_ban", payload.address, payload.jail, request=request)
     return {"message": message, "banned": addons.fail2ban_banned()}
 
 
