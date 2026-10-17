@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Archive, Clock, Download, ExternalLink, FileText, FolderOpen, Globe, LayoutDashboard, Lock, LogIn, Plus, RefreshCw,
+  Archive, Clock, Download, Eraser, ExternalLink, FileText, FolderOpen, Gauge, Globe, LayoutDashboard, Lock, LogIn, Plus, RefreshCw,
   RotateCcw, Save, ShieldCheck, SlidersHorizontal, TerminalIcon, Trash2, Wrench, X, Code2,
 } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
@@ -12,6 +12,7 @@ import ActionMenu from '../components/ActionMenu.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import { Field } from '../components/Form.jsx';
 import { Terminal } from '../components/Terminal';
+import Switch from '../components/Switch.jsx';
 import { WordPressInstallDrawer, siteTypeLabel, sslLabel, useSiteMenu, useSiteOwners } from '../components/WebsiteParts.jsx';
 import './Websites.css';
 
@@ -66,11 +67,12 @@ export default function WebsiteDetailPage() {
     { id: 'domains', label: t('Domains'), icon: Globe, badge: (site.aliases || []).length || undefined },
     { id: 'ssl', label: 'SSL', icon: Lock },
     { id: 'php', label: 'PHP', icon: Code2 },
+    { id: 'cache', label: t('Cache'), icon: Gauge, hidden: site.app_type === 'static' },
     { id: 'security', label: t('Security'), icon: ShieldCheck },
     { id: 'logs', label: t('Logs'), icon: FileText },
     { id: 'advanced', label: t('Advanced'), icon: SlidersHorizontal },
   ].map((item) => ({ ...item, href: websiteRoute(site.domain, item.id) }));
-  const shownTab = tabs.some((item) => item.id === where.tab) ? where.tab : 'overview';
+  const shownTab = tabs.some((item) => item.id === where.tab && !item.hidden) ? where.tab : 'overview';
   function goTab(next, hash = '') {
     const url = `${websiteRoute(site.domain, next)}${hash ? `#${hash}` : ''}`;
     if (window.location.pathname + window.location.hash !== url) window.history.pushState({}, '', url);
@@ -97,6 +99,7 @@ export default function WebsiteDetailPage() {
     {shownTab === 'domains' && <DomainsTab site={site} goTab={goTab}/>}
     {shownTab === 'ssl' && <SslTab/>}
     {shownTab === 'php' && <PhpTab site={site}/>}
+    {shownTab === 'cache' && <CacheTab site={site}/>}
     {shownTab === 'security' && <SecurityTab site={site}/>}
     {shownTab === 'logs' && <LogsTab site={site}/>}
     {shownTab === 'advanced' && <AdvancedTab site={site}/>}
@@ -261,6 +264,40 @@ function PhpTab({ site }) {
       {dirty && <button type="button" className="secondary-light" disabled={!!loading} onClick={() => setWebsiteSettingsForm(base)}><RotateCcw size={14} aria-hidden="true"/> {t('Undo changes')}</button>}
       <button type="button" disabled={!ready || !dirty || !!loading} onClick={saveWebsiteSettings}><Save size={14} aria-hidden="true"/> {t('Save changes')}</button>
     </div>
+  </section>;
+}
+
+// LiteSpeed's page cache for the site, as SNPanel's Cache tab: on or off, and
+// emptied - the site's own cache folder, no other site's.
+function CacheTab({ site }) {
+  const t = useT();
+  const { loading, refreshAll, request, setNotice } = usePanel();
+  const on = site.lscache_enabled !== false;
+  const [pending, setPending] = useState(null);
+  async function toggle(next) {
+    setPending(next);
+    try {
+      const data = await request(`/websites/${site.id}/lscache`, { method: 'PUT', body: JSON.stringify({ on: next }) },
+        next ? t('Turning the page cache on...') : t('Turning the page cache off...'));
+      if (data) { setNotice(next ? t('The page cache is on for {domain}.', { domain: site.domain }) : t('The page cache is off for {domain}.', { domain: site.domain })); await refreshAll(); }
+    } finally { setPending(null); }
+  }
+  async function purge() {
+    const data = await request(`/websites/${site.id}/lscache/purge`, { method: 'POST' }, t('Clearing the cache...'));
+    if (data) setNotice(t('Cache cleared: {count} page(s) removed.', { count: data.files || 0 }));
+  }
+  return <section className="section">
+    <PageHeader title={t('Page cache')} subtitle={t('LiteSpeed keeps a copy of the pages the website marks cacheable and serves it without running PHP.')}/>
+    <div className="wsd-cache">
+      <Switch checked={pending ?? on} pending={pending !== null} disabled={!!loading} onChange={toggle}>
+        <span>{(pending ?? on) ? t('The page cache is on') : t('The page cache is off')}</span>
+      </Switch>
+      <button type="button" className="secondary-light" disabled={!!loading || !on} onClick={purge}><Eraser size={14} aria-hidden="true"/> {t('Clear cache')}</button>
+    </div>
+    <p className="hint">{site.app_type === 'wordpress'
+      ? t('WordPress decides what is cached through the LiteSpeed Cache plugin: install and turn it on in WordPress. Its own "Purge All" empties this same cache.')
+      : t('Only responses the application marks with an X-LiteSpeed-Cache-Control header are cached; everything else is served fresh.')}</p>
+    <p className="hint">{t('Turning it on or off empties what the site had stored. Logged-in visitors, form posts and URLs with a query string are never served from the cache.')}</p>
   </section>;
 }
 

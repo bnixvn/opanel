@@ -75,6 +75,17 @@ module mod_security {
 # OPANEL WAF END
 {% endif %}
 
+{% if app_type != "static" %}
+# OPANEL LSCACHE BEGIN
+module cache {
+    ls_enabled            {{ 1 if lscache else 0 }}
+{% if lscache %}    param                 <<<END_param
+storagePath {{ lscache_dir }}
+END_param
+{% endif %}}
+# OPANEL LSCACHE END
+{% endif %}
+
 {% if lsphp_app %}
 extprocessor {{ lsphp_app }} {
     type                  lsapi

@@ -462,6 +462,7 @@ def _build_context(
     waf_enabled: bool = False,
     linux_user: str | None = None,
     lsphp_socket_override: str | None = None,
+    lscache: bool = True,
 ) -> dict:
     """Build the template context for vhost rendering."""
     safe_domain = _safe_domain(domain)
@@ -537,6 +538,8 @@ def _build_context(
         "redirects": _safe_redirects(redirects, safe_domain),
         "waf_enabled": waf_enabled,
         "waf_rules_file": waf_rules_file(safe_domain) if waf_enabled else "",
+        "lscache": bool(lscache),
+        "lscache_dir": lscache_dir(safe_domain),
         "linux_user": site_user or "www-data",
         "access_log": _log_path(safe_domain, "access").as_posix(),
         "error_log": _log_path(safe_domain, "error").as_posix(),
@@ -600,6 +603,7 @@ def render_vhost(
     waf_enabled: bool = False,
     linux_user: str | None = None,
     lsphp_socket_override: str | None = None,
+    lscache: bool = True,
 ) -> str:
     """Render an OLS vhost config from the template."""
     ctx = _build_context(
@@ -618,6 +622,7 @@ def render_vhost(
         waf_enabled=waf_enabled,
         linux_user=linux_user,
         lsphp_socket_override=lsphp_socket_override,
+        lscache=lscache,
     )
     env = _get_jinja_env()
     template_name = f"{ctx['app_type']}.conf.j2"
@@ -835,6 +840,8 @@ def _rewrite_existing_vhost(domain: str, **overrides) -> str:
         ],
         "redirects": _redirects_from_config(existing, safe_domain),
         "waf_enabled": "# OPANEL WAF BEGIN" in existing,
+        # Off only where the vhost says so; a vhost from before the switch had it on.
+        "lscache": not re.search(r"(?s)# OPANEL LSCACHE BEGIN.*?ls_enabled\s+0", existing),
         "linux_user": _first_match(r"(?m)^\s*extUser\s+(.+?)\s*$", existing) or "www-data",
     }
     cert_path = _first_match(r"(?m)^\s*certFile\s+(.+?)\s*$", existing)
@@ -862,23 +869,19 @@ def update_custom_block(domain: str, custom_directives: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# LSCache (replaces FastCGI cache)
+# LSCache: LiteSpeed's page cache, per site
 # ---------------------------------------------------------------------------
-LSCACHE_REWRITE = (
-    "# OPANEL LSCACHE BEGIN\n"
-    "rewrite {\n"
-    "    enable              1\n"
-    "    rewriteRules        <<<END_RULES\n"
-    "RewriteCond %{REQUEST_METHOD} POST\n"
-    "RewriteRule .* - [E=Cache-Control:v=no-cache]\n"
-    "RewriteCond %{QUERY_STRING} !=\"\"\n"
-    "RewriteRule .* - [E=Cache-Control:v=no-cache]\n"
-    "RewriteCond %{HTTP_COOKIE} (comment_author|wordpress_[a-f0-9]+|wordpress_logged_in|wp-postpass) [NC]\n"
-    "RewriteRule .* - [E=Cache-Control:v=no-cache]\n"
-    "END_RULES\n"
-    "}\n"
-    "# OPANEL LSCACHE END"
-)
+# The cache module is on server-wide and caches what an application marks
+# cacheable (the LiteSpeed Cache plugin, an X-LiteSpeed-Cache-Control header).
+# Each vhost turns the lookup on or off and keeps what it stores in a folder of
+# its own, so one site's cache can be emptied alone - LiteSpeed sets the
+# folder's owner itself. Measured on OpenLiteSpeed 1.8 (2026-10-17): `ls_enabled
+# 0` in the vhost's module block turns it off; `storagePath` goes in `param`.
+LSCACHE_SITES_DIR = "/usr/local/lsws/cachedata/opanel-sites"
+
+
+def lscache_dir(domain: str) -> str:
+    return f"{LSCACHE_SITES_DIR}/{_safe_domain(domain)}"
 
 
 # ---------------------------------------------------------------------------
@@ -978,18 +981,12 @@ def read_site_log(domain: str, kind: str = "access", lines: int = 200) -> dict:
 # ---------------------------------------------------------------------------
 # Cache management
 # ---------------------------------------------------------------------------
-def clear_cache(domain: str | None = None) -> None:
-    """Clear LSCache for a domain or all domains."""
-    if domain:
-        safe_domain = _safe_domain(domain)
-        cache_dir = Path(f"/tmp/lscache/{safe_domain}")
-        if cache_dir.exists():
-            import shutil
-            shutil.rmtree(cache_dir)
-    else:
-        # Clear all OPanel-managed cache
-        cache_root = Path("/tmp/lscache")
-        if cache_root.exists():
-            import shutil
-            shutil.rmtree(cache_root)
-            cache_root.mkdir(parents=True, exist_ok=True)
+def purge_site_cache(domain: str) -> int:
+    """Empty one site's LiteSpeed page cache; how many cached pages it held."""
+    safe_domain = _safe_domain(domain)
+    result = shell.privileged("lscache-purge", helper_args=[safe_domain], fallback=["echo", '{"files": 0}'])
+    try:
+        import json as _json
+        return int(_json.loads((result.stdout or "").strip() or "{}").get("files", 0))
+    except (ValueError, TypeError, AttributeError):
+        return 0

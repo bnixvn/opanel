@@ -717,6 +717,10 @@ class CronDelete(BaseModel):
     index: int
 
 
+class WebsiteCacheUpdate(BaseModel):
+    on: bool
+
+
 class WebsiteOut(BaseModel):
     id: int
     domain: str
@@ -736,6 +740,7 @@ class WebsiteOut(BaseModel):
     ssl_reuse_name: Optional[str] = None
     ssl_updated_at: Optional[datetime] = None
     ssl_has_ca: bool = False
+    lscache_enabled: bool = True
     ssl_cert_path: Optional[str] = Field(default=None, exclude=True)
     ssl_key_path: Optional[str] = Field(default=None, exclude=True)
     ssl_ca_path: Optional[str] = Field(default=None, exclude=True)

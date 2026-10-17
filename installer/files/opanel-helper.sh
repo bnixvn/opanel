@@ -8089,6 +8089,21 @@ case "$cmd" in
     fi
     ;;
 
+  lscache-purge)
+    # One site's LiteSpeed page cache emptied: the pages it stored go, its
+    # cache manager's files stay for LiteSpeed. Prints {"files": N}.
+    [[ $# -eq 1 ]] || deny "usage: lscache-purge <domain>"
+    require_domain "$1"
+    cache_dir="/usr/local/lsws/cachedata/opanel-sites/$1"
+    if [[ ! -d "$cache_dir" || -L "$cache_dir" ]]; then
+      echo '{"files": 0}'
+      exit 0
+    fi
+    files="$(find "$cache_dir" -mindepth 2 -type f | wc -l)"
+    find "$cache_dir" -mindepth 1 -maxdepth 1 -type d -exec rm -rf -- {} +
+    printf '{"files": %s}\n' "$files"
+    ;;
+
   ols-vhost-delete)
     [[ $# -eq 1 ]] || deny "usage: ols-vhost-delete <domain>"
     safe_domain="$1"
@@ -8098,6 +8113,8 @@ case "$cmd" in
     # so they go with it. Leaving them behind accumulated orphaned rule files --
     # 42 of them on a box that had deleted that many sites.
     rm -f "/usr/local/lsws/conf/opanel/waf/sites/${safe_domain}.conf"
+    # And its page cache folder (openlitespeed.lscache_dir).
+    rm -rf "/usr/local/lsws/cachedata/opanel-sites/${safe_domain}"
     # Same for its logs: the vhost's access and error log, and the per-domain
     # directory holding its PHP error log. Every caller of this subcommand is
     # removing the site for good, and 54 deleted domains had left 162 of these.

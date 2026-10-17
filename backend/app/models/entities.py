@@ -83,6 +83,9 @@ class Website(Base):
     root_path: Mapped[str] = mapped_column(String(500))
     document_root: Mapped[str] = mapped_column(String(255), default="public_html")
     linux_user: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # LiteSpeed's page cache looked up for the site (what its application marks
+    # cacheable), in a folder of its own - openlitespeed.lscache_dir.
+    lscache_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
     app_type: Mapped[str] = mapped_column(String(32), default="wordpress")
     ssl_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

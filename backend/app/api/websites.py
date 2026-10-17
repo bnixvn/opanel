@@ -15,7 +15,7 @@ from app.core.access import can_access_owner, ensure_owner_access, scope_owner
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
-from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCreate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
+from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCacheUpdate, WebsiteCreate, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
 from app.services import dns_manager, file_manager, mail, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress, wp_manager
 from app.services.audit import log_action
 
@@ -203,6 +203,7 @@ def _rewrite_website_vhost(website: Website, **overrides) -> str:
         "rewrite_mode": overrides.pop("rewrite_mode", _website_rewrite_mode(website)),
         "aliases": overrides.pop("aliases", _alias_domains(website)),
         "redirects": overrides.pop("redirects", _redirect_domains(website)),
+        "lscache": overrides.pop("lscache", getattr(website, "lscache_enabled", True) is not False),
     }
     if overrides.pop("include_ssl", True):
         rewrite_kwargs.update(_rewrite_ssl_kwargs(website))
@@ -745,6 +746,48 @@ def set_website_waf(website_id: int, payload: WebsiteWafUpdate, request: Request
     db.refresh(website)
     log_action(db, current_user.id, "update_waf", website.domain, "enabled" if payload.waf_enabled else "disabled", request=request)
     return website
+
+
+@router.put("/{website_id}/lscache", response_model=WebsiteOut)
+def set_website_lscache(website_id: int, payload: WebsiteCacheUpdate, request: Request, db: Session = Depends(get_db),
+                        current_user: User = Depends(get_current_user)):
+    """LiteSpeed's page cache looked up for the site, or not. The site's owner or an administrator.
+
+    What is cached is what the application marks cacheable (the LiteSpeed
+    Cache plugin). A change empties what the site had stored: a page kept
+    while it was off must not be the first thing served once it is on.
+    """
+    website = _get_authorized_website(db, website_id, current_user)
+    if (website.app_type or "wordpress") not in {"wordpress", "php"}:
+        raise HTTPException(status_code=400, detail="The page cache is for PHP and WordPress sites")
+    before = getattr(website, "lscache_enabled", True) is not False
+    try:
+        _rewrite_website_vhost(website, lscache=payload.on)
+    except (RuntimeError, ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    website.lscache_enabled = payload.on
+    db.commit()
+    db.refresh(website)
+    if payload.on != before:
+        try:
+            openlitespeed.purge_site_cache(website.domain)
+        except (RuntimeError, ValueError):
+            pass
+    log_action(db, current_user.id, "website_lscache", website.domain, "on" if payload.on else "off", request=request)
+    return website
+
+
+@router.post("/{website_id}/lscache/purge")
+def purge_website_lscache(website_id: int, request: Request, db: Session = Depends(get_db),
+                          current_user: User = Depends(get_current_user)):
+    """Empty the site's page cache - its own folder, no other site's."""
+    website = _get_authorized_website(db, website_id, current_user)
+    try:
+        files = openlitespeed.purge_site_cache(website.domain)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    log_action(db, current_user.id, "website_lscache_purge", website.domain, f"{files} page(s)", request=request)
+    return {"ok": True, "files": files}
 
 
 @router.get("/{website_id}/logs", response_model=WebsiteLogOut)

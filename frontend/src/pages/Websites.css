@@ -82,6 +82,7 @@
 .wsd-danger{border-color:var(--danger-border)}
 .wsd-danger .sn-page-title{color:var(--danger-text,var(--danger))}
 
+.wsd-cache{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;margin:4px 0 12px}
 /* A website's WAF switch, on its Security tab and on the WAF page. */
 .waf-site-switch{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt);margin-top:4px}
 .waf-site-switch>div{display:grid;gap:2px;min-width:0}
