@@ -9950,8 +9950,8 @@ function App() {
           <label><span>{tr("Disk (MB)")}</span><input type="number" min="0" value={form.storage_limit_mb} onChange={number('storage_limit_mb')} /></label>
           <label><span>{tr("Databases")}</span><input type="number" min="0" value={form.database_limit} onChange={number('database_limit')} /></label>
           {mailInfo?.installed && <label><span>{tr("Mailboxes")}</span><input type="number" min="0" value={form.mailbox_limit} onChange={number('mailbox_limit')} /></label>}
-          {canGrantTerminal && <label className="check-line span-all"><input type="checkbox" checked={!!form.terminal_enabled} onChange={e => setForm(prev => ({ ...prev, terminal_enabled: e.target.checked }))} /> {tr("Browser terminal")}</label>}
         </div>
+        {canGrantTerminal && <label className="check-line"><input type="checkbox" checked={!!form.terminal_enabled} onChange={e => setForm(prev => ({ ...prev, terminal_enabled: e.target.checked }))} /> {tr("Browser terminal")}</label>}
       </fieldset>
       {limitsOn && renderLimitInputs(form, setForm)}
     </div>;
