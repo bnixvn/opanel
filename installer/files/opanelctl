@@ -403,6 +403,52 @@ PY
   echo "Admin password changed. Existing sessions were invalidated."
 }
 
+# An administrator locked out by a lost phone or passkey: their two-step
+# sign-in is turned off (the authenticator secret and every passkey go) and
+# their sessions end, so they sign in with the password alone and set it up
+# again. Root on the server is the proof of who is asking.
+reset_admin_2fa() {
+  ensure_env_file
+  local username="${1:-}" runner
+  if [[ -z "$username" ]]; then
+    read -rp "Administrator username [admin]: " username
+    username="${username:-admin}"
+  fi
+  [[ "$username" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || fail "Invalid username"
+  cd "$APP_DIR/backend"
+  if id -u opanel >/dev/null 2>&1; then
+    runner=(runuser -u opanel -- env HOME="$APP_DIR" "opanel_RESET_2FA_USER=$username" "$APP_DIR/backend/.venv/bin/python")
+  else
+    runner=(env HOME="$APP_DIR" "opanel_RESET_2FA_USER=$username" "$APP_DIR/backend/.venv/bin/python")
+  fi
+  "${runner[@]}" - <<'PY'
+import os
+from app.core.database import SessionLocal
+from app.models.entities import User, WebauthnCredential
+from app.services.audit import log_action
+
+username = os.environ["opanel_RESET_2FA_USER"]
+db = SessionLocal()
+try:
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise SystemExit(f"No account named {username}")
+    if user.role != "admin":
+        raise SystemExit(f"{username} is not an administrator: an administrator resets a customer's two-step sign-in in the panel")
+    passkeys = db.query(WebauthnCredential).filter(WebauthnCredential.user_id == user.id).delete(synchronize_session=False)
+    had_app = bool(user.totp_enabled)
+    user.totp_enabled = False
+    user.totp_secret = None
+    user.token_version = (user.token_version or 0) + 1
+    db.commit()
+    log_action(db, user.id, "reset_admin_2fa", user.username, "from the server's command line")
+    print(f"Two-step sign-in reset for {username}: authenticator app {'removed' if had_app else 'was not set'}, "
+          f"{passkeys} passkey(s) removed. Sign in with the password, then set it up again.")
+finally:
+    db.close()
+PY
+}
+
 root_password_hash() {
   local hash
   hash="$(getent shadow root 2>/dev/null | awk -F: '{print $2; exit}')"
@@ -623,6 +669,7 @@ menu() {
     echo "10) Update panel from release"
     echo "11) Change server IP"
     echo "12) Sync admin password from root"
+    echo "13) Reset an administrator's two-step sign-in"
     echo "0) Exit"
     read -rp "Choose: " choice
     case "$choice" in
@@ -638,6 +685,7 @@ menu() {
       10) run_panel_update ;;
       11) change_panel_ip ;;
       12) sync_admin_root_password ;;
+      13) reset_admin_2fa ;;
       0) exit 0 ;;
       *) echo "Invalid choice" ;;
     esac
@@ -657,9 +705,10 @@ case "${1:-menu}" in
   fix-permissions|--fix-permissions) fix_permissions ;;
   change-admin-password|--change-admin-password) change_admin_password ;;
   sync-admin-root-password|--sync-admin-root-password|admin-use-root-password|--admin-use-root-password) sync_admin_root_password ;;
+  reset-admin-2fa|--reset-admin-2fa) reset_admin_2fa "${2:-}" ;;
   status|--status) show_status ;;
   *)
-    echo "Usage: opanel [menu|login|status|logs|restart|repair-firewall|change-ip|set-panel-url|install-panel-ssl|fix-permissions|change-admin-password|sync-admin-root-password|update]"
+    echo "Usage: opanel [menu|login|status|logs|restart|repair-firewall|change-ip|set-panel-url|install-panel-ssl|fix-permissions|change-admin-password|sync-admin-root-password|reset-admin-2fa [username]|update]"
     exit 2
     ;;
 esac
