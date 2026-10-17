@@ -3243,4 +3243,12 @@ export default {
   "Repeat offenders: a week": "Vi phạm lặp lại: chặn một tuần",
   "Watch WordPress sign-ins": "Theo dõi đăng nhập WordPress",
   "opanel-wordpress counts wrong WordPress passwords in the sites' access logs; Cloudflare's addresses are never banned there. recidive bans for a week an address other jails keep banning. In all: since Fail2ban last started.": "opanel-wordpress đếm số lần nhập sai mật khẩu WordPress trong access log của các website; địa chỉ của Cloudflare không bao giờ bị chặn ở đó. recidive chặn một tuần địa chỉ bị các jail khác chặn nhiều lần. \"Tổng\": tính từ lần Fail2ban khởi động gần nhất.",
+  "Everyone may write here: anything that can reach it could change it. Use it only when an application asks for it.": "Ai cũng ghi được: bất cứ thứ gì truy cập được nó đều có thể thay đổi nó. Chỉ dùng khi ứng dụng yêu cầu.",
+  "Files ({0})": "File ({0})",
+  "Folders ({0})": "Thư mục ({0})",
+  "New files in the folder keep its group (setgid)": "File mới trong thư mục giữ nhóm của thư mục (setgid)",
+  "Permissions of {0} items changed.": "Đã đổi quyền của {0} mục.",
+  "Setuid and sticky bits are not offered, and a folder keeps its owner's execute bit, or the website could not open it. 644 for files and 755 for folders are the usual choices.": "Không có bit setuid và sticky, và thư mục luôn giữ quyền thực thi của chủ sở hữu, nếu không website sẽ không mở được nó. Thường dùng 644 cho file và 755 cho thư mục.",
+  "Symbolic form": "Dạng ký hiệu",
+  "{0} items": "{0} mục",
 };

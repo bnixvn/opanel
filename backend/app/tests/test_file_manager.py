@@ -367,15 +367,43 @@ def test_chmod_entry_accepts_read_only_file_mode(tmp_path):
     assert stat.S_IMODE(target.stat().st_mode) == 0o444
 
 
-def test_chmod_entry_rejects_executable_file_mode(tmp_path):
+def test_chmod_entry_refuses_setuid_sticky_and_a_files_setgid(tmp_path):
+    """Any read, write and execute bits may be set (as SNPanel's dialog), but
+    never setuid or sticky, setgid only on a folder, and a folder keeps its
+    owner's execute bit (2026-10-17)."""
     root = tmp_path / "site"
     public = root / "public_html"
-    public.mkdir(parents=True)
+    (public / "uploads").mkdir(parents=True)
     target = public / "index.php"
-    target.write_text("<?php echo 'ok';\n", encoding="utf-8")
+    target.write_text("<?php echo 'ok';", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="execute bits"):
-        file_manager.chmod_entry(_website(root), "public_html/index.php", "755")
+    for mode in ("4755", "1755"):
+        with pytest.raises(ValueError, match="Setuid and sticky"):
+            file_manager.chmod_entry(_website(root), "public_html/index.php", mode)
+    with pytest.raises(ValueError, match="folders only"):
+        file_manager.chmod_entry(_website(root), "public_html/index.php", "2644")
+    with pytest.raises(ValueError, match="execute permission"):
+        file_manager.chmod_entry(_website(root), "public_html/uploads", "644")
+    assert file_manager.check_mode("2775", True) == "2775"
+    assert file_manager.check_mode("0755", False) == "755"
+
+
+def test_several_items_get_their_kinds_mode(tmp_path, monkeypatch):
+    root = tmp_path / "site"
+    public = root / "public_html"
+    (public / "a").mkdir(parents=True)
+    (public / "b.txt").write_text("x", encoding="utf-8")
+    (public / "c.txt").write_text("y", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(file_manager, "_chmod_targets",
+                        lambda website, mode, targets: calls.append((mode, sorted(t.name for t in targets))))
+
+    result = file_manager.chmod_entries(_website(root), ["public_html/a", "public_html/b.txt", "public_html/c.txt"], "640", "750")
+
+    assert result == {"files": 2, "folders": 1, "mode": "640", "dir_mode": "750"}
+    assert calls == [("640", ["b.txt", "c.txt"]), ("750", ["a"])]
+    with pytest.raises(ValueError):
+        file_manager.chmod_entries(_website(root), ["public_html/../../etc"], "644")
 
 
 def test_write_text_file_clears_fastcgi_cache(tmp_path, monkeypatch):

@@ -102,7 +102,7 @@ export default function FilesPage() {
                   { label: t('Compress as {format}', { format: '.tar.gz' }), icon: Archive, onClick: () => archiveSelectedFiles('tar.gz') },
                 ]}/>
                 {selectedArchive && <button className="secondary-light" disabled={!!loading} onClick={() => extractArchive(selectedArchive)}><ArchiveRestore size={14} aria-hidden="true"/> {t('Extract')}</button>}
-                {selectedItems.length === 1 && <button className="secondary-light" disabled={!!loading} onClick={() => openChmod(selectedItems[0])}><Lock size={14} aria-hidden="true"/> {t('Permissions')}</button>}
+                <button className="secondary-light" disabled={!!loading} onClick={() => openChmod(selectedItems)}><Lock size={14} aria-hidden="true"/> {t('Permissions')}</button>
                 <button className="danger" disabled={!!loading} onClick={() => deleteSelectedFiles()}><Trash2 size={14} aria-hidden="true"/> {t('Delete')}</button>
               </div>
               <button type="button" className="secondary-light fm-selection-clear" onClick={clearFileSelection}><X size={14} aria-hidden="true"/> {t('Clear selection')}</button>

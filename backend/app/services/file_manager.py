@@ -324,47 +324,71 @@ def rename_entry(website: Website, relative_path: str, new_name: str, allow_exec
     return str(target)
 
 
-def chmod_entry(website: Website, relative_path: str, mode: str) -> str:
-    target = _safe_path(website, relative_path)
-    if not target.exists():
-        raise ValueError("File or folder not found")
-    if target.is_symlink():
-        raise ValueError("Symlinks are not allowed")
+def check_mode(mode: str, is_dir: bool) -> str:
+    """A mode the panel will set: any read, write and execute bits (as SNPanel).
+
+    Never setuid or sticky; setgid only on a folder (new files keep its
+    group). A folder keeps its owner's execute bit, or the site could no
+    longer open its own folder. World-writable is allowed - the page warns.
+    """
     clean_mode = (mode or "").strip()
     if len(clean_mode) not in {3, 4} or any(char not in "01234567" for char in clean_mode):
         raise ValueError("Mode must be octal, for example 644 or 755")
     numeric_mode = int(clean_mode, 8)
-    if numeric_mode > 0o7777:
-        raise ValueError("Mode is out of range")
-    is_dir = target.is_dir()
-    if is_dir:
-        if numeric_mode & 0o1000 or numeric_mode & 0o4000:
-            raise ValueError("Directory mode cannot include sticky or setuid bits")
-        if numeric_mode & 0o002:
-            raise ValueError("Directory mode cannot be world-writable")
-        if not numeric_mode & 0o100:
-            raise ValueError("Directory owner must have execute permission")
-        for read_bit, execute_bit in ((0o400, 0o100), (0o040, 0o010), (0o004, 0o001)):
-            if numeric_mode & read_bit and not numeric_mode & execute_bit:
-                raise ValueError("Directory read permission requires execute permission")
-    else:
-        if numeric_mode & 0o7000:
-            raise ValueError("File mode cannot include special bits")
-        if numeric_mode & 0o111:
-            raise ValueError("File mode cannot include execute bits")
-        if numeric_mode & 0o002:
-            raise ValueError("File mode cannot be world-writable")
+    if numeric_mode & 0o4000 or numeric_mode & 0o1000:
+        raise ValueError("Setuid and sticky bits are not allowed")
+    if numeric_mode & 0o2000 and not is_dir:
+        raise ValueError("Setgid is for folders only")
+    if is_dir and not numeric_mode & 0o100:
+        raise ValueError("A folder's owner must keep the execute permission, or the site cannot open it")
+    return f"{numeric_mode:04o}" if numeric_mode & 0o7000 else f"{numeric_mode:03o}"
+
+
+def _chmod_targets(website: Website, mode: str, targets: list[Path]) -> None:
+    if not targets:
+        return
     if website.linux_user:
         root = Path(website.root_path).resolve()
-        relative = str(target.relative_to(root)).replace("\\", "/") if target != root else "."
+        relatives = [str(target.relative_to(root)).replace("\\", "/") if target != root else "." for target in targets]
         shell.privileged(
             "terminal-exec",
-            helper_args=[website.linux_user, str(root), "chmod", clean_mode, relative],
-            fallback=["chmod", clean_mode, str(target)],
+            helper_args=[website.linux_user, str(root), "chmod", mode, "--", *relatives],
+            fallback=["chmod", mode, *[str(target) for target in targets]],
         )
-        return str(target)
-    target.chmod(numeric_mode)
+        return
+    for target in targets:
+        target.chmod(int(mode, 8))
+
+
+def _chmod_target(website: Website, relative_path: str) -> Path:
+    target = _safe_path(website, relative_path)
+    if target.is_symlink():
+        raise ValueError(f"{relative_path}: links are not changed")
+    if not target.exists():
+        raise ValueError(f"{relative_path}: not found")
+    return target
+
+
+def chmod_entry(website: Website, relative_path: str, mode: str) -> str:
+    target = _chmod_target(website, relative_path)
+    _chmod_targets(website, check_mode(mode, target.is_dir()), [target])
     return str(target)
+
+
+def chmod_entries(website: Website, relative_paths: list[str], mode: str, dir_mode: str | None = None) -> dict:
+    """Several items at once: files get `mode`, folders `dir_mode` (or `mode`)."""
+    if not relative_paths:
+        raise ValueError("Choose at least one file or folder")
+    if len(relative_paths) > 500:
+        raise ValueError("At most 500 items at once")
+    targets = [_chmod_target(website, path) for path in relative_paths]
+    files = [target for target in targets if not target.is_dir()]
+    folders = [target for target in targets if target.is_dir()]
+    file_mode = check_mode(mode, False) if files else None
+    folder_mode = check_mode(dir_mode or mode, True) if folders else None
+    _chmod_targets(website, file_mode, files)
+    _chmod_targets(website, folder_mode, folders)
+    return {"files": len(files), "folders": len(folders), "mode": file_mode, "dir_mode": folder_mode}
 
 
 def read_text_file(website: Website, relative_path: str, allow_sensitive: bool = False) -> str:

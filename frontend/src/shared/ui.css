@@ -580,6 +580,14 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .chmod-mode-row input{font-family:var(--font-mono);font-size:15px;letter-spacing:.12em}
 .chmod-presets{display:flex;gap:6px;flex-wrap:wrap}
 .chmod-presets .mini{font-family:var(--font-mono)}
+.chmod-card{width:min(460px,calc(100vw - 32px))}
+.chmod-card .modal-body{max-height:min(70vh,640px);overflow:auto}
+.chmod-section + .chmod-section{margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}
+.chmod-section h4{margin:0 0 6px;font-size:13.5px;color:var(--text)}
+.chmod-symbolic{align-self:center;font-size:13.5px;color:var(--text);background:var(--surface-alt);padding:4px 8px;border-radius:var(--radius-sm)}
+.chmod-setgid{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text)}
+.chmod-setgid input{width:16px;height:16px;flex:none}
+.chmod-warning{margin:8px 0 0;padding:8px 10px;border:1px solid var(--warning-border);border-radius:var(--radius-md);background:var(--warning-bg);color:var(--warning-text);font-size:13px}
 .modal-card > .modal-actions{padding:0 20px 18px}
 
 /* Malware: one scan on its own page. */

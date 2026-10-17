@@ -3195,8 +3195,19 @@ function App() {
 
   async function saveFilePermissions() {
     if (!chmodTarget) return;
-    const data = await request('/maintenance/files/chmod', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: chmodTarget.path, mode: chmodTarget.mode }) }, tr("Changing permissions..."));
-    if (data) { setChmodTarget(null); setNotice(tr("Permissions of {0} set to {1}.", chmodTarget.name, chmodTarget.mode)); await listFiles(fileListPath); }
+    const { items, mode } = chmodTarget;
+    const dirMode = `${chmodTarget.setgid ? '2' : ''}${chmodTarget.dirMode}`;
+    const data = items.length === 1
+      ? await request('/maintenance/files/chmod', { method: 'POST', body: JSON.stringify({
+        website_id: Number(selectedWebsiteId), path: items[0].path, mode: items[0].is_dir ? dirMode : mode }) }, tr("Changing permissions..."))
+      : await request('/maintenance/files/chmod-many', { method: 'POST', body: JSON.stringify({
+        website_id: Number(selectedWebsiteId), paths: items.map(item => item.path), mode, dir_mode: dirMode }) }, tr("Changing permissions..."));
+    if (data) {
+      setChmodTarget(null);
+      setNotice(items.length === 1 ? tr("Permissions of {0} set to {1}.", items[0].name, items[0].is_dir ? dirMode : mode)
+        : tr("Permissions of {0} items changed.", items.length));
+      await listFiles(fileListPath);
+    }
   }
 
   async function renameFileItem(item) {
@@ -3297,9 +3308,18 @@ function App() {
     setFileJobs(prev => prev.filter(item => item.job_id !== jobId));
   }
 
-  // A file's or a folder's permissions, in the dialog at the root.
-  function openChmod(item) {
-    setChmodTarget({ path: item.path, name: item.name, is_dir: item.is_dir, mode: (item.mode || (item.is_dir ? '755' : '644')).slice(-3) });
+  // One item's permissions, or several items', in the dialog at the root.
+  function openChmod(target) {
+    const items = (Array.isArray(target) ? target : [target])
+      .map(item => ({ path: item.path, name: item.name, is_dir: item.is_dir, mode: item.mode || (item.is_dir ? '755' : '644') }));
+    if (!items.length) return;
+    const file = items.find(item => !item.is_dir);
+    const dir = items.find(item => item.is_dir);
+    const dirFull = dir?.mode || '755';
+    setChmodTarget({
+      items, mode: (file?.mode || '644').slice(-3), dirMode: dirFull.slice(-3),
+      setgid: dirFull.length === 4 && (parseInt(dirFull[0], 8) & 2) !== 0,
+    });
   }
 
   async function loadFileJob(jobId) {
@@ -9095,52 +9115,75 @@ function App() {
       </div>
     </div>}
     {chmodTarget && (() => {
-      // Three-digit octal mode edited as a grid of checkboxes. The server
-      // refuses what is unsafe (execute bits on files, world-writable
-      // anything), so those boxes are locked here rather than failing later.
-      const digits = (chmodTarget.mode.padStart(3, '0').slice(-3)).split('').map(d => parseInt(d, 8) || 0);
-      const valid = /^[0-7]{3}$/.test(chmodTarget.mode);
-      const setBit = (who, bit, on) => {
-        const next = [...digits];
-        next[who] = on ? (next[who] | bit) : (next[who] & ~bit);
-        setChmodTarget(prev => ({ ...prev, mode: next.join('') }));
+      // The permissions of one item or several, as SNPanel's dialog: a grid of
+      // read, write and execute for owner, group and everyone, the octal and
+      // symbolic forms, presets, setgid on folders. Files and folders each get
+      // their own mode when both are chosen. The server refuses setuid and
+      // sticky; a folder keeps its owner's execute bit; world-writable is
+      // allowed with a warning.
+      const files = chmodTarget.items.filter(item => !item.is_dir);
+      const dirs = chmodTarget.items.filter(item => item.is_dir);
+      const digitsOf = (mode) => (mode || '').padStart(3, '0').slice(-3).split('').map(d => parseInt(d, 8) || 0);
+      const symbolic = (mode, isDir, setgid) => {
+        const d = digitsOf(mode);
+        const part = (n, who) => `${n & 4 ? 'r' : '-'}${n & 2 ? 'w' : '-'}${who === 1 && setgid ? (n & 1 ? 's' : 'S') : (n & 1 ? 'x' : '-')}`;
+        return `${isDir ? 'd' : '-'}${d.map(part).join('')}`;
       };
-      const locked = (who, bit) => (bit === 2 && who === 2) || (!chmodTarget.is_dir && bit === 1) || (chmodTarget.is_dir && who === 0 && bit === 1);
-      const presets = chmodTarget.is_dir ? ['755', '750', '711', '700'] : ['644', '640', '600', '444'];
+      const valid = (mode) => /^[0-7]{3}$/.test(mode || '');
+      const grid = (key, isDir) => {
+        const mode = chmodTarget[key];
+        const digits = digitsOf(mode);
+        const setBit = (who, bit, on) => {
+          const next = [...digits];
+          next[who] = on ? (next[who] | bit) : (next[who] & ~bit);
+          setChmodTarget(prev => ({ ...prev, [key]: next.join('') }));
+        };
+        const presets = isDir ? ['755', '750', '711', '700'] : ['644', '640', '600', '755'];
+        const worldWritable = valid(mode) && (digits[2] & 2) !== 0;
+        return <div className="chmod-section" key={key}>
+          {files.length > 0 && dirs.length > 0 && <h4>{isDir ? tr("Folders ({0})", dirs.length) : tr("Files ({0})", files.length)}</h4>}
+          <table className="chmod-grid">
+            <thead><tr><th></th><th>{tr("Read")}</th><th>{tr("Write")}</th><th>{tr("Execute")}</th></tr></thead>
+            <tbody>
+              {[tr("Owner"), tr("Group"), tr("Public")].map((label, who) => <tr key={label}>
+                <th scope="row">{label}</th>
+                {[4, 2, 1].map(bit => <td key={bit}>
+                  <input type="checkbox" checked={(digits[who] & bit) !== 0} disabled={isDir && who === 0 && bit === 1}
+                    onChange={e => setBit(who, bit, e.target.checked)} aria-label={`${label} ${bit === 4 ? tr("Read") : bit === 2 ? tr("Write") : tr("Execute")}`} />
+                </td>)}
+              </tr>)}
+            </tbody>
+          </table>
+          <div className="chmod-mode-row">
+            <label><span>{tr("Numeric mode")}</span>
+              <input value={mode} maxLength={3} inputMode="numeric" onChange={e => setChmodTarget(prev => ({ ...prev, [key]: e.target.value.replace(/[^0-7]/g, '').slice(0, 3) }))} />
+            </label>
+            <code className="chmod-symbolic" aria-label={tr("Symbolic form")}>{valid(mode) ? symbolic(mode, isDir, isDir && chmodTarget.setgid) : '?'}</code>
+            <div className="chmod-presets">
+              {presets.map(preset => <button key={preset} type="button" className={`mini ${mode === preset ? 'toggle-on' : 'secondary'}`} onClick={() => setChmodTarget(prev => ({ ...prev, [key]: preset }))}>{preset}</button>)}
+            </div>
+          </div>
+          {isDir && <label className="chmod-setgid"><input type="checkbox" checked={!!chmodTarget.setgid} onChange={e => setChmodTarget(prev => ({ ...prev, setgid: e.target.checked }))}/>
+            <span>{tr("New files in the folder keep its group (setgid)")}</span></label>}
+          {worldWritable && <p className="chmod-warning" role="alert">{tr("Everyone may write here: anything that can reach it could change it. Use it only when an application asks for it.")}</p>}
+        </div>;
+      };
+      const ready = (!files.length || valid(chmodTarget.mode)) && (!dirs.length || valid(chmodTarget.dirMode));
+      const title = chmodTarget.items.length === 1 ? chmodTarget.items[0].name : tr("{0} items", chmodTarget.items.length);
       return <div className="modal-overlay" onClick={() => setChmodTarget(null)}>
         <div className="modal-card chmod-card" onClick={e => e.stopPropagation()}>
           <div className="modal-header">
-            <h3>{tr("Permissions")} — {chmodTarget.name}</h3>
+            <h3>{tr("Permissions")} — {title}</h3>
             <button className="secondary-light" onClick={() => setChmodTarget(null)} aria-label={tr("Close")}><X size={16}/></button>
           </div>
           <div className="modal-body">
-            <table className="chmod-grid">
-              <thead><tr><th></th><th>{tr("Read")}</th><th>{tr("Write")}</th><th>{tr("Execute")}</th></tr></thead>
-              <tbody>
-                {[tr("Owner"), tr("Group"), tr("Public")].map((label, who) => <tr key={label}>
-                  <th scope="row">{label}</th>
-                  {[4, 2, 1].map(bit => <td key={bit}>
-                    <input type="checkbox" checked={(digits[who] & bit) !== 0} disabled={locked(who, bit)}
-                      onChange={e => setBit(who, bit, e.target.checked)} aria-label={`${label} ${bit === 4 ? tr("Read") : bit === 2 ? tr("Write") : tr("Execute")}`} />
-                  </td>)}
-                </tr>)}
-              </tbody>
-            </table>
-            <div className="chmod-mode-row">
-              <label><span>{tr("Numeric mode")}</span>
-                <input value={chmodTarget.mode} maxLength={3} inputMode="numeric" onChange={e => setChmodTarget(prev => ({ ...prev, mode: e.target.value.replace(/[^0-7]/g, '').slice(0, 3) }))} />
-              </label>
-              <div className="chmod-presets">
-                {presets.map(mode => <button key={mode} type="button" className={`mini ${chmodTarget.mode === mode ? 'toggle-on' : 'secondary'}`} onClick={() => setChmodTarget(prev => ({ ...prev, mode }))}>{mode}</button>)}
-              </div>
-            </div>
-            <p className="hint">{chmodTarget.is_dir
-              ? tr("Folders need execute for anyone who may read them, and cannot be writable by everyone.")
-              : tr("Files cannot be executable or writable by everyone. 644 is the usual choice; 600 keeps a file private to the site.")}</p>
+            {files.length > 0 && grid('mode', false)}
+            {dirs.length > 0 && grid('dirMode', true)}
+            <p className="hint">{tr("Setuid and sticky bits are not offered, and a folder keeps its owner's execute bit, or the website could not open it. 644 for files and 755 for folders are the usual choices.")}</p>
           </div>
           <div className="modal-actions">
             <button className="secondary-light" onClick={() => setChmodTarget(null)}>{tr("Cancel")}</button>
-            <button disabled={!!loading || !valid} onClick={saveFilePermissions}><Save size={14}/> {tr("Apply")}</button>
+            <button disabled={!!loading || !ready} onClick={saveFilePermissions}><Save size={14}/> {tr("Apply")}</button>
           </div>
         </div>
       </div>;

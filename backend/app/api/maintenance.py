@@ -92,6 +92,14 @@ class FileChmod(BaseModel):
     mode: str
 
 
+class FileChmodMany(BaseModel):
+    website_id: int
+    paths: list[str]
+    # Files get `mode`; folders `dir_mode`, or `mode` when it is left out.
+    mode: str
+    dir_mode: str | None = None
+
+
 class FileBulkDelete(BaseModel):
     website_id: int
     paths: list[str]
@@ -2529,6 +2537,19 @@ def chmod_entry(payload: FileChmod, db: Session = Depends(get_db), current_user:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     log_action(db, current_user.id, "chmod_file", website.domain, f"{target} {payload.mode}")
     return {"target": target, "mode": payload.mode}
+
+
+@router.post("/files/chmod-many")
+def chmod_entries(payload: FileChmodMany, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.end_user)
+    website = get_owned_website(db, current_user, payload.website_id)
+    try:
+        result = file_manager.chmod_entries(website, payload.paths, payload.mode, payload.dir_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_action(db, current_user.id, "chmod_files", website.domain,
+               f"{len(payload.paths)} item(s) files={result['mode']} folders={result['dir_mode']}")
+    return result
 
 
 @router.post("/files/delete")
