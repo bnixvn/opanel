@@ -3,6 +3,7 @@ import contextlib
 import tempfile
 from pathlib import Path
 import os
+import re
 import secrets
 import string
 import subprocess
@@ -226,6 +227,149 @@ def database_sizes(db_names) -> Dict[str, Dict[str, int]]:
         except ValueError:
             continue
     return sizes
+
+
+
+# --- Databases MariaDB has and the panel does not --------------------------------
+# Made with the mysql client, left by an import or a removed website's owner:
+# an administrator lists them and adopts each into an account.
+
+# Schemas nobody adopts: MariaDB's own, and phpMyAdmin's configuration storage.
+SYSTEM_SCHEMAS = frozenset({"information_schema", "mysql", "performance_schema", "sys", "phpmyadmin"})
+
+
+class MariaDBError(RuntimeError):
+    """MariaDB could not be asked."""
+
+
+def _rows(sql: str) -> list[list[str]]:
+    # --raw: a grant on `shop\_db` comes back as written, not with doubled backslashes.
+    result = shell.run([*_mysql_args(), "-N", "-B", "--raw"], check=False, input=sql, sensitive=True)
+    if getattr(result, "returncode", 1) != 0:
+        raise MariaDBError((result.stderr or result.stdout or "mysql failed").strip()[:300])
+    return [line.split("\t") for line in (result.stdout or "").splitlines() if line]
+
+
+def valid_identifier(value: str) -> bool:
+    try:
+        _validate_identifier(value)
+    except ValueError:
+        return False
+    return True
+
+
+def grant_matches(db_name: str, pattern: str) -> bool:
+    r"""Whether a database-level grant on `pattern` reaches `db_name`.
+
+    The grant names a LIKE pattern: `_` and `%` are wildcards, `\_` and `\%`
+    the characters themselves.
+    """
+    out, i = [], 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < len(pattern):
+            out.append(re.escape(pattern[i + 1]))
+            i += 2
+            continue
+        out.append("." if ch == "_" else ".*" if ch == "%" else re.escape(ch))
+        i += 1
+    return re.fullmatch("".join(out), db_name, re.S) is not None
+
+
+def grant_is_literal(db_name: str, pattern: str) -> bool:
+    """A grant on this name, as the panel writes it or with `_` escaped."""
+    return pattern in (db_name, db_name.replace("_", "\\_"))
+
+
+def schemas() -> list[dict]:
+    """Every database with its bytes and table count, the system's own left out."""
+    rows = _rows(
+        "SELECT s.SCHEMA_NAME, COALESCE(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0), COUNT(t.TABLE_NAME) "
+        "FROM information_schema.SCHEMATA s LEFT JOIN information_schema.TABLES t "
+        "ON t.TABLE_SCHEMA = s.SCHEMA_NAME GROUP BY s.SCHEMA_NAME ORDER BY s.SCHEMA_NAME;"
+    )
+    out = []
+    for row in rows:
+        if len(row) != 3 or row[0] in SYSTEM_SCHEMAS:
+            continue
+        try:
+            out.append({"name": row[0], "size_bytes": int(float(row[1])), "tables": int(row[2])})
+        except ValueError:
+            continue
+    return out
+
+
+def db_grants() -> list[dict]:
+    """The database-level grants: who reaches which name pattern."""
+    return [{"user": row[0], "host": row[1], "db": row[2]}
+            for row in _rows("SELECT User, Host, Db FROM mysql.db;") if len(row) == 3]
+
+
+def schema_exists(db_name: str) -> bool:
+    return bool(_rows(
+        f"SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = {_quote_sql_string(db_name)};"
+    ))
+
+
+def account_hosts(db_user: str) -> list[str]:
+    return sorted(row[0] for row in _rows(
+        f"SELECT Host FROM mysql.user WHERE User = {_quote_sql_string(db_user)};"
+    ) if row)
+
+
+_GRANT_LINE = re.compile(r"^GRANT (?P<privs>.+?) ON (?P<object>.+?) TO ", re.S)
+
+
+def reaches_beyond(db_user: str, db_name: str) -> list[str]:
+    """What else `db_user`@localhost may do besides this one database.
+
+    Adopting an account hands the new owner all of it, so anything listed
+    here means a new account has to be made instead.
+    """
+    rows = _rows(f"SHOW GRANTS FOR {_quote_sql_string(_validate_identifier(db_user))}@'localhost';")
+    beyond = []
+    for row in rows:
+        line = row[0]
+        match = _GRANT_LINE.match(line)
+        if not match:
+            beyond.append(line.split(" TO ")[0][:80])
+            continue
+        privs, target = match.group("privs").strip(), match.group("object").strip()
+        if target == "*.*":
+            if privs.upper() != "USAGE":
+                beyond.append("*.*")
+            continue
+        named = re.match(r"`((?:[^`]|``)+)`\.", target)
+        pattern = named.group(1).replace("``", "`") if named else target
+        if not named or not grant_is_literal(db_name, pattern):
+            beyond.append(pattern)
+    return beyond
+
+
+def adopt_account(db_name: str, db_user: str, db_password: str, *, existing: bool) -> None:
+    """Give a database an account the panel knows the password of.
+
+    An `existing` account gets a new password and a grant on the database; a
+    new one is made. The database itself is not touched.
+    """
+    db_name, db_user = _validate_identifier(db_name), _validate_identifier(db_user)
+    who = f"{_quote_sql_string(db_user)}@'localhost'"
+    verb = "ALTER USER" if existing else "CREATE USER"
+    _run_sql(
+        f"{verb} {who} IDENTIFIED BY {_quote_sql_string(db_password)};\n"
+        f"GRANT ALL PRIVILEGES ON {_quote_identifier(db_name)}.* TO {who};\n"
+        "FLUSH PRIVILEGES;\n"
+    )
+
+
+def revoke_db_grant(user: str, host: str, pattern: str) -> None:
+    """Take a database-level grant away from an account, as MariaDB names it."""
+    target = "`" + pattern.replace("`", "``") + "`.*"
+    who = f"{_quote_sql_string(user)}@{_quote_sql_string(host)}"
+    _run_sql(f"REVOKE ALL PRIVILEGES ON {target} FROM {who};\n")
+    # A grant made WITH GRANT OPTION keeps that part apart from ALL PRIVILEGES.
+    _run_sql(f"REVOKE GRANT OPTION ON {target} FROM {who};\n", check=False)
+    _run_sql("FLUSH PRIVILEGES;\n")
 
 
 def drop_database(db_name: str, db_user: str):

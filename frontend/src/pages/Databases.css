@@ -21,6 +21,7 @@
 .dbt-muted{color:var(--text-muted)}
 .dbt-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px}
 .dbt-actions>button:first-child{white-space:nowrap}
+.db-warnings{margin:0;padding-left:18px;color:var(--warning-text,var(--text));font-size:13px}
 @media (max-width:900px){
   .dbt{border:0;background:transparent;gap:10px;overflow:visible}
   .dbt-head{display:none}

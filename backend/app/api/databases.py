@@ -17,8 +17,8 @@ from app.core.access import ensure_owner_access, scope_owner
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website
-from app.schemas.schemas import DatabaseCreate, DatabaseCreatedOut, DatabaseOut, DatabaseOwnerUpdate, DatabasePasswordUpdate
-from app.services import mariadb, panel_urls
+from app.schemas.schemas import DatabaseAdopt, DatabaseCreate, DatabaseCreatedOut, DatabaseOut, DatabaseOwnerUpdate, DatabasePasswordUpdate
+from app.services import da_import, mariadb, panel_urls, site_users
 from app.services.audit import log_action
 from app.services.sso_tokens import consume_phpmyadmin_token, create_phpmyadmin_token
 
@@ -63,6 +63,192 @@ def list_database_sizes(db: Session = Depends(get_db), current_user: User = Depe
     items = scope_owner(db.query(DatabaseAccount), DatabaseAccount.owner_id, db, current_user).all()
     sizes = mariadb.database_sizes(item.db_name for item in items)
     return {str(item.id): sizes[item.db_name] for item in items if item.db_name in sizes}
+
+
+# ---------------------------------------------------------------------------
+# Databases MariaDB has and the panel does not
+# ---------------------------------------------------------------------------
+@router.get("/unmanaged")
+def list_unmanaged_databases(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The databases nobody in the panel owns, with who can reach each one.
+
+    Made with the mysql client, or left by an import. Each comes with its size
+    and the accounts whose grants reach it, and whether each of those could be
+    adopted along with it: a local account the panel does not already use,
+    granted on exactly this name.
+    """
+    ensure_role(current_user.role, Role.admin)
+    try:
+        schemas, grants = mariadb.schemas(), mariadb.db_grants()
+    except mariadb.MariaDBError as exc:
+        raise HTTPException(status_code=502, detail=f"MariaDB error: {exc}") from exc
+    rows = db.query(DatabaseAccount.db_name, DatabaseAccount.db_user).all()
+    managed_names = {row.db_name for row in rows}
+    managed_users = {row.db_user for row in rows}
+    out = []
+    for schema in schemas:
+        name = schema["name"]
+        if name in managed_names:
+            continue
+        valid = mariadb.valid_identifier(name)
+        grantees = []
+        for grant in grants:
+            if not mariadb.grant_matches(name, grant["db"]):
+                continue
+            managed = grant["user"] in managed_users
+            grantees.append({
+                **grant,
+                "managed": managed,
+                "adoptable": (valid and not managed and grant["host"] == "localhost"
+                              and mariadb.grant_is_literal(name, grant["db"])
+                              and mariadb.valid_identifier(grant["user"])),
+            })
+        out.append({
+            "db_name": name, "size_bytes": schema["size_bytes"], "tables": schema["tables"],
+            "grantees": grantees, "adoptable": valid,
+            "reason": None if valid else "The name has characters the panel does not use; rename it in MariaDB first",
+        })
+    return {"databases": out}
+
+
+def _point_site_configs(website: Website, db_name: str, db_user: str, db_password: str) -> list[str]:
+    """Give the website's apps that use this database its new account.
+
+    Only a config that already names the database is changed - a second app
+    in a subfolder has a database of its own.
+    """
+    if settings.command_dry_run or not website.linux_user:
+        return []
+    root = Path(website.root_path).resolve()
+    public = site_users.document_root(root)
+    write = da_import._site_config_writer(str(root), website.linux_user)
+    changed: list[Path] = []
+    for directory in da_import._candidate_config_dirs(public):
+        if da_import._config_targets_database(directory, db_name):
+            changed += da_import._update_config_dir(directory, db_name, db_user, db_password, write)
+    return [str(path.relative_to(root)).replace("\\", "/") if path.is_relative_to(root) else str(path)
+            for path in changed]
+
+
+@router.post("/adopt")
+def adopt_database(payload: DatabaseAdopt, request: Request, db: Session = Depends(get_db),
+                   current_user: User = Depends(get_current_user)):
+    """Make a database MariaDB has, and the panel does not, an account's.
+
+    It is reached through an account it already has (`db_user`: local only,
+    not another panel database's, and reaching nothing else - adopting it
+    hands the new owner all it can do) or a new one (`new_user`, by default
+    the database's name). Either way it gets a password the panel knows,
+    shown once. Other accounts' grants on exactly this database are taken
+    away unless `revoke_others` is off; one that reaches it through a wider
+    pattern is only named in `warnings`. On a website, the configs that use
+    the database are given the new account.
+    """
+    ensure_role(current_user.role, Role.admin)
+    db_name = payload.db_name
+    if not mariadb.valid_identifier(db_name) or db_name in mariadb.SYSTEM_SCHEMAS:
+        raise HTTPException(status_code=400, detail="This database cannot be adopted")
+    if payload.db_user and payload.new_user:
+        raise HTTPException(status_code=400, detail="Adopt an existing account or make a new one, not both")
+    owner = db.query(User).filter(User.id == payload.owner_id, User.is_active.is_(True)).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found or inactive")
+    website = None
+    if payload.website_id is not None:
+        website = db.query(Website).filter(Website.id == payload.website_id).first()
+        if not website or website.owner_id != owner.id:
+            raise HTTPException(status_code=400, detail="Choose one of the owner's websites")
+    if db.query(DatabaseAccount).filter(DatabaseAccount.db_name == db_name).first():
+        raise HTTPException(status_code=409, detail="The panel already manages this database")
+    if not payload.force and not is_admin_role(owner.role):
+        limit = getattr(owner, "database_limit", 0) or 0
+        owned = db.query(DatabaseAccount).filter(DatabaseAccount.owner_id == owner.id).count()
+        if limit > 0 and owned >= limit:
+            raise HTTPException(status_code=403, detail=f"Database limit reached ({owned}/{limit}).")
+
+    existing = bool(payload.db_user)
+    db_user = payload.db_user or payload.new_user or db_name
+    if not mariadb.valid_identifier(db_user):
+        raise HTTPException(status_code=400, detail=f"'{db_user}' cannot be used as the account")
+    if db.query(DatabaseAccount).filter(DatabaseAccount.db_user == db_user).first():
+        raise HTTPException(status_code=409, detail="That account belongs to another panel database")
+
+    try:
+        if not mariadb.schema_exists(db_name):
+            raise HTTPException(status_code=404, detail="MariaDB has no database of that name")
+        hosts = mariadb.account_hosts(db_user)
+        if existing:
+            if hosts != ["localhost"]:
+                raise HTTPException(status_code=409, detail=(
+                    f"MariaDB has no account '{db_user}'" if not hosts else
+                    f"'{db_user}' exists as {', '.join(f'{db_user}@{h}' for h in hosts)}; only an account "
+                    "on localhost alone can be adopted - make a new account instead"))
+            beyond = mariadb.reaches_beyond(db_user, db_name)
+            if beyond:
+                raise HTTPException(status_code=409, detail=(
+                    f"'{db_user}' also has privileges on {', '.join(beyond)}; adopting it would hand those "
+                    "over too - make a new account instead"))
+        elif hosts:
+            raise HTTPException(status_code=409, detail=(
+                f"MariaDB account '{db_user}' already exists. Choose another name, or adopt it."))
+        db_password = mariadb.random_password()
+        mariadb.adopt_account(db_name, db_user, db_password, existing=existing)
+    except mariadb.MariaDBError as exc:
+        raise HTTPException(status_code=502, detail=f"MariaDB error: {exc}") from exc
+    except RuntimeError as exc:
+        logger.exception("Adopting %s failed", db_name)
+        raise HTTPException(status_code=500, detail=f"MariaDB error: {exc}") from exc
+
+    item = DatabaseAccount(owner_id=owner.id, website_id=website.id if website else None,
+                           db_name=db_name, db_user=db_user, db_password=encrypt(db_password))
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+
+    revoked, warnings = [], []
+    try:
+        grants = mariadb.db_grants()
+    except mariadb.MariaDBError as exc:
+        grants = []
+        warnings.append(f"Other accounts' access was not checked: {exc}")
+    for grant in grants:
+        if not mariadb.grant_matches(db_name, grant["db"]):
+            continue
+        if grant["user"] == db_user and grant["host"] == "localhost":
+            continue
+        who = f"{grant['user']}@{grant['host']}"
+        if not mariadb.grant_is_literal(db_name, grant["db"]):
+            warnings.append(f"{who} still reaches this database through its grant on `{grant['db']}`, "
+                            "which covers other names too.")
+        elif not payload.revoke_others:
+            warnings.append(f"{who} can still reach this database.")
+        else:
+            try:
+                mariadb.revoke_db_grant(grant["user"], grant["host"], grant["db"])
+                revoked.append(who)
+            except RuntimeError as exc:
+                warnings.append(f"{who} kept its access: {exc}")
+
+    configs_updated = []
+    if website:
+        try:
+            configs_updated = _point_site_configs(website, db_name, db_user, db_password)
+        except Exception as exc:  # the database is adopted either way
+            logger.exception("Updating %s's configs for %s failed", website.domain, db_name)
+            warnings.append(f"{website.domain}: its config could not be given the new password ({exc}).")
+
+    log_action(db, current_user.id, "adopt_database", db_name,
+               f"owner={owner.username} website={website.domain if website else '-'} user={db_user} "
+               f"account={'existing' if existing else 'new'} revoked={','.join(revoked) or 'none'}",
+               request=request)
+    return {
+        **DatabaseOut.model_validate(item).model_dump(),
+        "db_password": db_password,
+        "adopted_account": "existing" if existing else "new",
+        "revoked": revoked,
+        "warnings": warnings,
+        "configs_updated": configs_updated,
+    }
 
 
 @router.post("", response_model=DatabaseCreatedOut)

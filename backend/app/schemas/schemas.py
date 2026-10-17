@@ -628,6 +628,19 @@ class DatabasePasswordUpdate(BaseModel):
     password: str = Field(min_length=12)
 
 
+class DatabaseAdopt(BaseModel):
+    """A database MariaDB has and the panel does not, made an account's."""
+    db_name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+    owner_id: int = Field(gt=0)
+    website_id: Optional[int] = Field(default=None, gt=0)
+    # The account it is reached through: one it already has, or a new one
+    # (the database's name when neither is given).
+    db_user: Optional[str] = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+    new_user: Optional[str] = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+    revoke_others: bool = True
+    force: bool = False
+
+
 class DatabaseOwnerUpdate(BaseModel):
     owner_id: int = Field(gt=0)
     # One of the new owner's websites to put the database on, or none.

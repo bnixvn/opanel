@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, Database, Download, ExternalLink, KeyRound, Plus, Search, Trash2, UserCog, X } from 'lucide-react';
+import { Check, Copy, Database, DatabaseZap, Download, ExternalLink, KeyRound, Plus, Search, Trash2, UserCog, X } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
 import PageHeader from '../components/PageHeader.jsx';
+import Tabs from '../components/Tabs.jsx';
 import Drawer from '../components/Drawer.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import EmptyState from '../components/EmptyState.jsx';
@@ -12,7 +13,9 @@ import './Databases.css';
 // The databases, as SNPanel's (pages/Databases.jsx there): one table row
 // each - its name, user, website, owner and size - with phpMyAdmin as the
 // one button and the rest (SQL download, password, owner, delete) in a
-// labelled "…" menu. A new database and a change of owner are side sheets.
+// labelled "…" menu. A new database, a change of owner and an adoption are
+// side sheets; an administrator also sees the databases MariaDB has and the
+// panel does not, and adopts them into an account.
 export default function DatabasesPage() {
   const t = useT();
   const {
@@ -35,6 +38,24 @@ export default function DatabasesPage() {
     if (data) setSizes(data);
   }
   useEffect(() => { loadSizes(); }, [databases.length]);
+
+  // Administrators: the databases nobody in the panel owns, asked for when
+  // their tab is opened; and the one being adopted, with the choices so far.
+  const [tab, setTab] = useState('managed');
+  const [unmanaged, setUnmanaged] = useState(null);
+  const [unmanagedLoading, setUnmanagedLoading] = useState(false);
+  const [adopting, setAdopting] = useState(null);
+  async function loadUnmanaged() {
+    setUnmanagedLoading(true);
+    try {
+      const data = await request('/databases/unmanaged', {}, t('Looking for databases the panel does not manage...'));
+      if (data) setUnmanaged(data.databases || []);
+    } finally { setUnmanagedLoading(false); }
+  }
+  function showTab(next) {
+    setTab(next);
+    if (next === 'unmanaged' && unmanaged === null) loadUnmanaged();
+  }
 
   const creating = !!showCreateDb;
   function closeCreate() {
@@ -80,6 +101,7 @@ export default function DatabasesPage() {
   }
 
   async function refresh() {
+    if (tab === 'unmanaged') { await loadUnmanaged(); return; }
     setRefreshing(true);
     try { await Promise.all([refreshAll(), loadSizes()]); } finally { setRefreshing(false); }
   }
@@ -116,6 +138,36 @@ export default function DatabasesPage() {
   const createOwner = String(newDatabase.owner_id || currentUser?.id || '');
   const sitesOf = (ownerId) => websites.filter((site) => String(site.owner_id) === String(ownerId));
 
+  function startAdopting(item) {
+    // Its own account when it has one the panel could take over.
+    const own = item.grantees.find((g) => g.adoptable && g.user === item.db_name) || item.grantees.find((g) => g.adoptable);
+    setAdopting({
+      item, db_name: item.db_name, owner_id: String(owners[0]?.id || ''), website_id: '',
+      account: own ? own.user : '', new_user: item.db_name, revoke_others: true, force: false,
+    });
+  }
+  async function adopt(event) {
+    event?.preventDefault();
+    const body = {
+      db_name: adopting.db_name,
+      owner_id: Number(adopting.owner_id),
+      ...(adopting.website_id ? { website_id: Number(adopting.website_id) } : {}),
+      ...(adopting.account ? { db_user: adopting.account } : { new_user: adopting.new_user.trim() || adopting.db_name }),
+      revoke_others: adopting.revoke_others,
+      force: adopting.force,
+    };
+    const data = await request('/databases/adopt', { method: 'POST', body: JSON.stringify(body) }, t('Adopting {name}...', { name: adopting.db_name }));
+    if (!data) return;
+    const owner = owners.find((user) => user.id === data.owner_id);
+    setNotice(t('{name} now belongs to {owner}.', { name: data.db_name, owner: owner?.username || `#${data.owner_id}` }));
+    setCreatedDbInfo({
+      title: t('Database adopted'), db_name: data.db_name, db_user: data.db_user, db_password: data.db_password,
+      revoked: data.revoked || [], configs_updated: data.configs_updated || [], warnings: data.warnings || [],
+    });
+    setAdopting(null);
+    await Promise.all([loadUnmanaged(), refreshAll()]);
+  }
+
   function rowMenu(db) {
     return [
       { label: t('Download as SQL'), icon: Download, disabled: !!loading, onClick: () => downloadDatabase(db.id, db.db_name) },
@@ -133,18 +185,28 @@ export default function DatabasesPage() {
   };
 
   return <>
-    <PageHeader subtitle={subtitle} onRefresh={refresh} refreshing={refreshing} refreshDisabled={!!loading}
-      actions={<button type="button" onClick={() => setShowCreateDb(true)}><Plus size={15} aria-hidden="true"/> {t('New database')}</button>}/>
+    <PageHeader subtitle={subtitle} onRefresh={refresh} refreshing={tab === 'unmanaged' ? unmanagedLoading : refreshing} refreshDisabled={!!loading}
+      actions={tab === 'managed' && <button type="button" onClick={() => setShowCreateDb(true)}><Plus size={15} aria-hidden="true"/> {t('New database')}</button>}/>
     <section className="section dbt-section">
+      {isAdmin && <Tabs label={t('Database sections')} value={tab} onChange={showTab} tabs={[
+        { id: 'managed', icon: Database, label: t('Managed databases') },
+        { id: 'unmanaged', icon: DatabaseZap, label: t('Unmanaged databases'), badge: unmanaged?.length || undefined },
+      ]}/>}
       {createdDbInfo && <div className="info-box db-created-box">
-        <div className="db-created-head"><strong>{t('Database created')}</strong>
+        <div className="db-created-head"><strong>{createdDbInfo.title || t('Database created')}</strong>
           <button type="button" className="mini secondary-light" onClick={() => setCreatedDbInfo(null)} aria-label={t('Close')}><X size={13}/></button></div>
         <div className="db-created-grid">
           <label>{t('Database')}</label><span>{createdDbInfo.db_name} {copyButton(createdDbInfo.db_name, 'db_name')}</span>
           <label>{t('User')}</label><span>{createdDbInfo.db_user} {copyButton(createdDbInfo.db_user, 'db_user')}</span>
           <label>{t('Password')}</label><span><code>{createdDbInfo.db_password}</code> {copyButton(createdDbInfo.db_password, 'db_password')}</span>
         </div>
+        {createdDbInfo.title && <p className="hint">{t('This password is shown once. The previous one no longer works.')}</p>}
+        {createdDbInfo.revoked?.length > 0 && <p className="hint">{t('Access taken away from: {names}', { names: createdDbInfo.revoked.join(', ') })}</p>}
+        {createdDbInfo.configs_updated?.length > 0 && <p className="hint">{t('Given the new password: {names}', { names: createdDbInfo.configs_updated.join(', ') })}</p>}
+        {createdDbInfo.warnings?.length > 0 && <ul className="db-warnings">{createdDbInfo.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
       </div>}
+      {tab === 'unmanaged' && renderUnmanaged()}
+      {tab === 'managed' && <>
       {databases.length > 0 && <div className="list-search">
         <Search size={16} aria-hidden="true"/>
         <input value={databaseSearch} onChange={(e) => setDatabaseSearch(e.target.value)}
@@ -180,6 +242,7 @@ export default function DatabasesPage() {
         </div>)}
       </div>}
       <p className="hint">{t('phpMyAdmin signs you in directly; the link works for 60 seconds.')}</p>
+      </>}
     </section>
 
     <Drawer open={creating} onClose={closeCreate} title={t('New database')} subtitle={t('A MariaDB database, with a user of its own.')}
@@ -240,5 +303,71 @@ export default function DatabasesPage() {
         </Field>
       </form>}
     </Drawer>
+
+    <Drawer open={!!adopting} onClose={() => setAdopting(null)} title={adopting ? t('Adopt {name}', { name: adopting.db_name }) : ''}
+      subtitle={t('The database keeps its name. Its account gets a new password, shown once, and the chosen website\'s configuration is updated to it.')}
+      footer={<>
+        <button type="button" className="secondary-light" onClick={() => setAdopting(null)}>{t('Cancel')}</button>
+        <button type="submit" form="db-adopt-form" disabled={!!loading || !adopting?.owner_id}><UserCog size={15} aria-hidden="true"/> {t('Adopt')}</button>
+      </>}>
+      {adopting && <form id="db-adopt-form" onSubmit={adopt}>
+        <div className="sn-drawer-grid">
+          <Field label={t('Owner')}>
+            <select value={adopting.owner_id} onChange={(e) => setAdopting((prev) => ({ ...prev, owner_id: e.target.value, website_id: '' }))}>
+              {owners.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+            </select>
+          </Field>
+          <Field label={t('Website')} hint={t('Its backups include the database.')}>
+            <select value={adopting.website_id} onChange={(e) => setAdopting((prev) => ({ ...prev, website_id: e.target.value }))}>
+              <option value="">{t('No website')}</option>
+              {sitesOf(adopting.owner_id).map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}
+            </select>
+          </Field>
+          <Field label={t('Database account')}>
+            <select value={adopting.account} onChange={(e) => setAdopting((prev) => ({ ...prev, account: e.target.value }))}>
+              {adopting.item.grantees.filter((g) => g.adoptable).map((g) => <option key={g.user} value={g.user}>{t('Adopt {name}', { name: g.user })}</option>)}
+              <option value="">{t('Create a new account')}</option>
+            </select>
+          </Field>
+          {!adopting.account && <Field label={t('New account name')} hint={t('Letters, digits and underscores.')}>
+            <input value={adopting.new_user} onChange={(e) => setAdopting((prev) => ({ ...prev, new_user: e.target.value }))}
+              placeholder={adopting.db_name} autoComplete="off" spellCheck={false}/>
+          </Field>}
+        </div>
+        <Checkbox checked={adopting.revoke_others} onChange={(on) => setAdopting((prev) => ({ ...prev, revoke_others: on }))}
+          label={t('Take away the other accounts\' access to this database')}/>
+        <Checkbox checked={adopting.force} onChange={(on) => setAdopting((prev) => ({ ...prev, force: on }))}
+          label={t('Ignore the package\'s database limit')}/>
+      </form>}
+    </Drawer>
   </>;
+
+  // Administrators: what MariaDB has that the panel does not, and adopting it.
+  function renderUnmanaged() {
+    if (unmanaged === null) return <p className="hint">{unmanagedLoading ? t('Looking for databases the panel does not manage...') : ''}</p>;
+    return <>
+      <p className="hint">{t('Databases in MariaDB that no panel account owns: made by hand or left by an import. Adopting one gives it to an account and sets a new password the panel knows.')}</p>
+      {unmanaged.length === 0 && <EmptyState icon={Database} message={t('Every database in MariaDB is managed by the panel.')}/>}
+      {unmanaged.length > 0 && <div className="dbt dbt-unmanaged" role="table" aria-label={t('Unmanaged databases')}>
+        <div className="dbt-row dbt-head" role="row">
+          <span role="columnheader">{t('Database')}</span>
+          <span role="columnheader">{t('Accounts that can reach it')}</span>
+          <span role="columnheader">{t('Size')}</span>
+          <span role="columnheader"><span className="sr-only">{t('Actions')}</span></span>
+        </div>
+        {unmanaged.map((item) => <div className="dbt-row" role="row" key={item.db_name}>
+          <span role="cell" className="dbt-name"><Database size={15} aria-hidden="true"/><strong>{item.db_name}</strong>
+            {!item.adoptable && <small className="hint">{t(item.reason)}</small>}</span>
+          <span role="cell" data-label={t('Accounts that can reach it')}>{item.grantees.length
+            ? item.grantees.map((g) => `${g.user}@${g.host}${g.managed ? ` (${t('another panel database')})` : ''}`).join(', ')
+            : <span className="dbt-muted">{t('No account can reach it')}</span>}</span>
+          <span role="cell" data-label={t('Size')}>{formatBytes(Number(item.size_bytes || 0))}<small> · {t('{count} tables', { count: item.tables })}</small></span>
+          <span role="cell" className="dbt-actions">
+            <button type="button" className="secondary-light" disabled={!!loading || !item.adoptable || owners.length === 0}
+              onClick={() => startAdopting(item)}><UserCog size={14} aria-hidden="true"/> {t('Adopt')}</button>
+          </span>
+        </div>)}
+      </div>}
+    </>;
+  }
 }
