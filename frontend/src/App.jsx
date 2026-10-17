@@ -28,6 +28,7 @@ import BackupsPage from './pages/Backups';
 import UsersPage from './pages/Users';
 import ProcessesPage from './pages/Processes';
 import AuditLogPage from './pages/AuditLog';
+import MysqlPage from './pages/Mysql';
 import WordPressPage from './pages/WordPress';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import OlsThrottle from './components/OlsThrottle.jsx';
@@ -114,6 +115,7 @@ const PAGE_ROUTES = {
   git: '/git',
   terminal: '/terminal',
   auditLog: '/activity-log',
+  mysql: '/mysql',
   wordpress: '/wordpress',
   // The hubs' own addresses (lib/navigation.jsx): each opens its first tab.
   server: '/server',
@@ -8835,6 +8837,7 @@ function App() {
     if (page === 'settings') return renderPanelSettings();
     if (page === 'users') return <UsersPage/>;
     if (page === 'auditLog') return isAdmin ? <AuditLogPage/> : <DashboardPage/>;
+    if (page === 'mysql') return isAdmin ? <MysqlPage/> : <DashboardPage/>;
     if (page === 'wordpress') return <WordPressPage/>;
     if (page === 'usage') return renderResourceUsage();
     if (page === 'processes') return isAdmin ? <ProcessesPage/> : <DashboardPage/>;

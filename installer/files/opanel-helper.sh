@@ -8168,6 +8168,35 @@ case "$cmd" in
     fi
     ;;
 
+  mariadb-limits-apply)
+    # MariaDB's share of the server (services/mysql_limits.py): CPU, IO and
+    # memory on its unit, kept by systemd across restarts; and the statistics
+    # and per-account connection backstop in an option file for its next
+    # start (the panel sets both on the running server itself).
+    [[ $# -eq 6 ]] || deny "usage: mariadb-limits-apply <cpu%> <cpu-weight> <io-weight> <memory-mb> <max-user-connections> <userstat 0|1>"
+    for value in "$@"; do
+      [[ "$value" =~ ^[0-9]{1,7}$ ]] || deny "MariaDB limits are whole numbers"
+    done
+    [[ "$6" == 0 || "$6" == 1 ]] || deny "userstat is 0 or 1"
+    (( $2 >= 1 && $2 <= 10000 && $3 >= 1 && $3 <= 10000 )) || deny "weights are 1-10000"
+    mariadb_unit=mariadb.service
+    systemctl cat "$mariadb_unit" >/dev/null 2>&1 || mariadb_unit=mysql.service
+    mariadb_props=("CPUWeight=$2" "IOWeight=$3")
+    if (( $1 > 0 )); then mariadb_props+=("CPUQuota=$1%"); else mariadb_props+=("CPUQuota="); fi
+    if (( $4 > 0 )); then mariadb_props+=("MemoryMax=$4M"); else mariadb_props+=("MemoryMax=infinity"); fi
+    systemctl set-property "$mariadb_unit" "${mariadb_props[@]}" || deny "systemd refused MariaDB's limits"
+    install -d -m 0755 /etc/mysql/mariadb.conf.d
+    cat > /etc/mysql/mariadb.conf.d/91-opanel-limits.cnf <<EOF
+# Written by OPanel (Server > MySQL). The panel also sets these on the
+# running server, so they hold from now and after MariaDB's next start.
+[mariadb]
+userstat = $6
+max_user_connections = $5
+EOF
+    chmod 0644 /etc/mysql/mariadb.conf.d/91-opanel-limits.cnf
+    echo "{\"unit\": \"$mariadb_unit\"}"
+    ;;
+
   ols-throttle-get)
     [[ $# -eq 0 ]] || deny "usage: ols-throttle-get"
     ols_throttle get
