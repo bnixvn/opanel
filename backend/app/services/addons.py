@@ -946,6 +946,8 @@ def fail2ban_ban(jail: str, address: str) -> str:
         raise ValueError("Not an address")
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", jail or ""):
         raise ValueError("Not a jail")
+    if jail not in {row["jail"] for row in fail2ban_stats()}:
+        raise ValueError(f"No running jail named {jail}")
     result = shell.privileged("addon-fail2ban-ban", helper_args=[jail, token], check=False)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "Could not ban").strip())
