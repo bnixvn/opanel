@@ -5535,11 +5535,8 @@ function App() {
     ];
     const stepTwoTitle = { local: tr("Backups on this server"), target: tr("Destination"), remote: tr("Connection") }[restoreSource];
 
+    // Its title and what it does are the Backups page's head.
     return <div className="backup-tab-panel restore-wizard">
-      <div className="backup-panel-title">
-        <div><h3>{tr("Restore")}</h3><p className="hint">{tr("OPanel and DirectAdmin backups: choose where they are, pick the accounts, then restore.")}</p></div>
-      </div>
-
       <section className="restore-step">
         <h4><span className="restore-step-no">1</span>{tr("Source")}</h4>
         <div className="restore-sources" role="radiogroup" aria-label={tr("Source")}>
