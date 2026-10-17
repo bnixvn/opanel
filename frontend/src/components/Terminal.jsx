@@ -92,7 +92,8 @@ export function Terminal({ websiteId = null, apiBase = '/api' }) {
 
     const term = new XTerminal({
       cursorBlink: true,
-      fontSize: 14,
+      // A phone gets a few more columns.
+      fontSize: window.innerWidth < 600 ? 12 : 14,
       fontFamily: 'Consolas, "Liberation Mono", Menlo, monospace',
       scrollback: 5000,
       theme: XTERM_THEME,
