@@ -51,6 +51,9 @@ def test_frontend_has_no_hard_coded_installed_list():
     assert "useState({ installed: [], supported: [] })" in source
     # ...and the fetch must not be gated on the admin role any more.
     assert "role === 'admin') loadPhpVersions()" not in source
-    # Selects render through the helper that keeps the value in use visible.
-    assert "phpVersions.installed.map" not in source
-    assert source.count("phpVersionOptions(phpVersions.installed") == 3
+    # Selects render through the helper that keeps the value in use visible:
+    # one in App, and the website pages' (create, and a website's PHP tab).
+    pages = FRONTEND_APP.parent / "pages"
+    sources = [source] + [(pages / name).read_text(encoding="utf-8") for name in ("Websites.jsx", "WebsiteDetail.jsx")]
+    assert not any("phpVersions.installed.map" in text for text in sources)
+    assert sum(text.count("phpVersionOptions(phpVersions.installed") for text in sources) == 3

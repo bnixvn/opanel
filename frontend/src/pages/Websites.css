@@ -1,0 +1,101 @@
+/* The website list (pages/Websites.jsx) and one website's page
+   (pages/WebsiteDetail.jsx), as SNPanel's. Not in a cascade layer: OPanel's
+   own element rules are unlayered and would win over a layered class. */
+
+.link-button{background:none;border:0;padding:0;min-height:0;height:auto;color:var(--primary-ink,var(--primary));font-weight:700;text-decoration:underline;text-underline-offset:2px;cursor:pointer;box-shadow:none}
+.link-button:hover:not(:disabled){background:none;color:var(--primary-hover)}
+
+/* ---- List ---- */
+.ws-list-section{display:grid;gap:12px}
+.ws-list-section .website-search{margin:0}
+.ws-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.ws-card{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1.6fr) auto;grid-template-areas:"main facts actions" "main tags actions";align-items:center;gap:6px 20px;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);min-width:0;transition:border-color .15s ease}
+.ws-card:hover{border-color:var(--border-hover)}
+.ws-card-main{grid-area:main;display:grid;grid-template-columns:minmax(0,auto) auto;justify-content:start;align-items:center;gap:2px 6px;min-width:0}
+.ws-domain{display:inline-flex;align-items:center;gap:7px;min-width:0;color:var(--text);font-size:15px;font-weight:700;text-decoration:none;overflow-wrap:anywhere}
+.ws-domain>svg{flex:none;color:var(--primary)}
+.ws-domain:hover{color:var(--primary-ink,var(--primary));text-decoration:underline;text-underline-offset:3px}
+.ws-visit{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:var(--radius-sm);color:var(--text-muted)}
+.ws-visit:hover{background:var(--surface-hover);color:var(--text)}
+.ws-path{grid-column:1/-1;color:var(--text-muted);font-size:12px;overflow-wrap:anywhere}
+.ws-facts{grid-area:facts;display:flex;flex-wrap:wrap;gap:6px 22px;margin:0;min-width:0}
+.ws-facts>div{display:grid;gap:2px;min-width:0}
+.ws-facts dt{color:var(--text-muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.ws-facts dd{margin:0;color:var(--text);font-size:13.5px;font-weight:600;overflow-wrap:anywhere}
+.ws-facts .badge{font-size:12px}
+.ws-tags{grid-area:tags;display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.ws-tags:empty{display:none}
+.ws-actions{grid-area:actions;display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.ws-actions>button:first-child{min-width:112px}
+.ws-create-ssl{display:grid;gap:8px}
+.ws-create-ssl .segmented{display:flex;flex-wrap:wrap;gap:6px}
+.ws-create-ssl .segmented button{flex:1 1 auto}
+.ws-create-ssl .hint{margin:0}
+.ws-create-certs{display:flex;gap:8px;align-items:center}
+.ws-create-certs select{flex:1;min-width:0}
+.ws-create-hint{padding:10px 12px;border-radius:var(--radius-md);background:var(--surface-alt);border:1px solid var(--border)}
+@media (max-width:1100px){
+  .ws-card{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"main actions" "facts facts" "tags tags"}
+}
+@media (max-width:640px){
+  .ws-card{grid-template-columns:minmax(0,1fr);grid-template-areas:"main" "facts" "tags" "actions";gap:10px;padding:12px}
+  .ws-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+  .ws-actions>button:first-child{flex:1}
+}
+
+/* ---- One website ---- */
+.wsd-tabs{margin-bottom:14px}
+.wsd-overview{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;align-items:start}
+.wsd-overview>.section{margin:0}
+.wsd-card{display:grid;gap:12px;align-content:start}
+.wsd-card .hint{margin:0}
+.wsd-shortcuts{grid-column:1/-1}
+.wsd-card-title{margin:0;font-size:15px;font-weight:700;color:var(--text)}
+.wsd-facts{display:grid;gap:0;margin:0}
+.wsd-facts>div{display:grid;grid-template-columns:minmax(120px,170px) minmax(0,1fr);gap:12px;align-items:baseline;padding:9px 0;border-top:1px solid var(--border)}
+.wsd-facts>div:first-child{border-top:0;padding-top:0}
+.wsd-facts dt{color:var(--text-muted);font-size:13px;font-weight:600}
+.wsd-facts dd{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;color:var(--text);font-size:13.5px;overflow-wrap:anywhere;min-width:0}
+.wsd-facts dd a{color:var(--primary-ink,var(--primary));font-weight:600;text-decoration:none;overflow-wrap:anywhere}
+.wsd-facts dd a:hover{text-decoration:underline}
+.wsd-facts dd small{color:var(--text-muted)}
+.wsd-actions{display:flex;flex-wrap:wrap;gap:8px}
+.wsd-domain-list{list-style:none;margin:12px 0 0;padding:0;display:grid;border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden}
+.wsd-domain-list li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border);min-width:0}
+.wsd-domain-list li:first-child{border-top:0;background:var(--surface-alt)}
+.wsd-domain-list li>svg{flex:none;color:var(--text-muted)}
+.wsd-domain-list li strong{flex:1;min-width:0;overflow-wrap:anywhere}
+.wsd-domain-form{display:grid;grid-template-columns:minmax(0,2fr) minmax(140px,1fr) auto;gap:12px;align-items:end;margin:16px 0 8px}
+.wsd-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px}
+.wsd-savebar{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+.wsd-savebar>[role=status]{margin-right:auto;color:var(--warning-text,var(--warning));font-size:13px;font-weight:600}
+.wsd-savebar>[role=status]:empty{visibility:hidden}
+.wsd-logs .log-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.wsd-logs .log-toolbar select{width:auto}
+.wsd-logs .log-output{margin:0;max-height:560px;overflow:auto}
+.wsd-advanced{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+.wsd-advanced>.section{margin:0}
+.wsd-advanced .code-editor{margin-top:12px;width:100%}
+.wsd-terminal{height:600px;margin-top:12px;min-width:0}
+.wsd-term-off{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px}
+.wsd-term-off .hint{margin:0}
+.wsd-danger{border-color:var(--danger-border)}
+.wsd-danger .sn-page-title{color:var(--danger-text,var(--danger))}
+
+/* A website's WAF switch, on its Security tab and on the WAF page. */
+.waf-site-switch{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt);margin-top:4px}
+.waf-site-switch>div{display:grid;gap:2px;min-width:0}
+.waf-site-switch strong{font-size:14px}
+.waf-site-switch small{font-size:13px;color:var(--text-secondary)}
+
+@media (max-width:900px){
+  .wsd-overview{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:640px){
+  .wsd-facts>div{grid-template-columns:minmax(0,1fr);gap:2px}
+  .wsd-domain-form{grid-template-columns:minmax(0,1fr)}
+  .wsd-domain-form>button{width:100%}
+  .wsd-actions>button,.wsd-actions>.button-link{flex:1 1 calc(50% - 8px)}
+  .wsd-savebar>button{flex:1}
+  .wsd-terminal{height:520px}
+}

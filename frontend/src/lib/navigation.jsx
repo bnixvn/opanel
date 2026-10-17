@@ -14,6 +14,7 @@ const msg = (text) => text;
 export const PAGE_TITLES = {
   dashboard: msg('Dashboard'),
   websites: msg('Websites'),
+  'website-detail': msg('Website'),
   ssl: msg('SSL'),
   databases: msg('Databases'),
   cron: msg('Cron'),
@@ -150,7 +151,7 @@ export function sidebarItems(ctx) {
 }
 
 // Pages that belong under a sidebar entry without being a tab of it.
-const PARENTS = { ssl: 'websites' };
+const PARENTS = { ssl: 'websites', 'website-detail': 'websites' };
 
 // The sidebar entry lit on a page: its hub's, its parent's, or the
 // Dashboard's - every other page is reached from there.

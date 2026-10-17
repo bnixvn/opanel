@@ -18,6 +18,10 @@ import { Terminal } from './components/Terminal';
 import { UsageChart } from './components/UsageChart';
 import HubTabs from './components/HubTabs';
 import DashboardPage from './pages/Dashboard';
+import WebsitesPage from './pages/Websites';
+import WebsiteDetailPage from './pages/WebsiteDetail';
+import Switch from './components/Switch';
+import { isWebsitePath } from './lib/websites';
 import { PanelContext } from './lib/panel-context';
 import { PAGE_TITLES, hubLanding, hubOf, isHubKey, sidebarItems, sidebarKeyOf } from './lib/navigation';
 import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
@@ -120,6 +124,7 @@ const ROUTE_PAGES = new Map([
 
 function pageFromPathname(pathname) {
   const normalized = `/${String(pathname || '').replace(/^\/+|\/+$/g, '')}`.toLowerCase();
+  if (isWebsitePath(normalized)) return 'website-detail';
   return ROUTE_PAGES.get(normalized) || 'dashboard';
 }
 
@@ -428,6 +433,9 @@ function App() {
   const [otpCode, setOtpCode] = useState('');
   const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
   const [page, setPage] = useState(() => pageFromPathname(window.location.pathname));
+  // Counts navigations to an address of a page's own (one website's): the
+  // page starts afresh for the next website.
+  const [routeKey, setRouteKey] = useState(0);
   const [domain, setDomain] = useState('');
   // Who a new website is for: '' is the account creating it.
   const [siteOwnerId, setSiteOwnerId] = useState('');
@@ -443,7 +451,6 @@ function App() {
   const [nginxCustomEditing, setNginxCustomEditing] = useState(null); // Website settings editor state
   const [websiteSettingsForm, setWebsiteSettingsForm] = useState(websiteConfigForm());
   const [logViewer, setLogViewer] = useState(null); // {id, domain, kind, lines, path, content, exists}
-  const [terminalViewer, setTerminalViewer] = useState(null); // {id, domain}
   const [websites, setWebsites] = useState([]);
   const [aliasDrafts, setAliasDrafts] = useState({});
   const [aliasModes, setAliasModes] = useState({});
@@ -728,7 +735,7 @@ function App() {
   const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false });
   // WordPress manager
   const [wpManagerSite, setWpManagerSite] = useState(null);
-  const [wpManagerMode, setWpManagerMode] = useState('install'); // 'install' | 'update'
+  const [wpManagerMode, setWpManagerMode] = useState('install'); // the WordPress install sheet
   const [wpInstallForm, setWpInstallForm] = useState({ admin_user: 'admin', admin_email: '', admin_password: '', title: '' });
   const noticeTimer = useRef(null);
   const isAdmin = currentUser?.role === 'admin';
@@ -748,14 +755,20 @@ function App() {
   const navigateToPage = useCallback((nextPage, options = {}) => {
     // A hub's own address opens its first tab this role may see.
     if (isHubKey(nextPage)) nextPage = hubLanding(nextPage, navCtxRef.current) || 'dashboard';
-    const route = routeForPage(nextPage);
+    // `path`: an address of the page's own (/website/<domain>/<tab>);
+    // `hash`: a part of it to scroll to.
+    const route = options.path || routeForPage(nextPage);
     if (!route) return;
-    const nextUrl = route;
-    if (!options.replace && window.location.pathname !== route) {
+    const nextUrl = `${route}${options.hash ? `#${options.hash}` : ''}`;
+    const here = window.location.pathname + window.location.hash;
+    if (!options.replace && here !== nextUrl) {
       window.history.pushState({}, '', nextUrl);
-    } else if (options.replace && window.location.pathname !== route) {
+      // A new page opens at its top, as a link's would.
+      if (!options.hash) window.scrollTo(0, 0);
+    } else if (options.replace && here !== nextUrl) {
       window.history.replaceState({}, '', nextUrl);
     }
+    if (options.path) setRouteKey(key => key + 1);
     // Opening Email from the sidebar leaves a DNS records sub-page.
     if (nextPage === 'mail') setMailDns(null);
     if (nextPage === 'dns') { setDnsZone(null); setDnsTab('zones'); }
@@ -2356,16 +2369,12 @@ function App() {
     setWpInstallForm({ admin_user: 'admin', admin_email: currentUser?.email || '', admin_password: '', title: site.domain });
   }
 
-  function openWpUpdate(site) {
-    setWpManagerSite(site);
-    setWpManagerMode('update');
-  }
-
   async function installWpOnSite() {
     if (!wpManagerSite || wpManagerMode !== 'install') return;
     if (!wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12) { setError(tr("WP admin password must be at least 12 characters.")); return; }
+    const { tried, ...form } = wpInstallForm;
     const data = await request(`/maintenance/wordpress/${wpManagerSite.id}/install`, {
-      method: 'POST', body: JSON.stringify(wpInstallForm),
+      method: 'POST', body: JSON.stringify(form),
     }, tr("Installing WordPress on {0}...", wpManagerSite.domain));
     if (data?.message) {
       setNotice(tr("{0}\nAdmin: {1} | Password: {2}", data.message, data.admin_user, wpInstallForm.admin_password));
@@ -2374,15 +2383,15 @@ function App() {
     }
   }
 
-  async function updateWpOnSite() {
-    if (!wpManagerSite || wpManagerMode !== 'update') return;
-    const data = await request(`/maintenance/wordpress/${wpManagerSite.id}/update-all`, {
+  // WordPress core, every plugin and every theme to their latest, from the
+  // website's "…" menu or its page.
+  async function updateWordPressAll(site) {
+    if (!site) return;
+    if (!confirm(tr("Update WordPress core, all plugins, and all themes on {0} to the latest version?", site.domain))) return;
+    const data = await request(`/maintenance/wordpress/${site.id}/update-all`, {
       method: 'POST',
-    }, tr("Updating WordPress on {0}...", wpManagerSite.domain));
-    if (data?.message) {
-      setNotice(data.message);
-      setWpManagerSite(null);
-    }
+    }, tr("Updating WordPress on {0}...", site.domain));
+    if (data?.message) setNotice(data.message);
   }
 
   async function createPlan() {
@@ -2709,7 +2718,9 @@ function App() {
       }
       if (installSslAfterCreate) await applySslForNewSite(data.id, cleanDomain);
       refreshAll();
+      return true;
     }
+    return false;
   }
 
   // Wildcard certificates: over this server's zone when DNS Manager is on,
@@ -2768,9 +2779,10 @@ function App() {
   }, [domain, createSslMode, installSslAfterCreate]);
 
   async function deleteWebsite(id) {
-    if (!confirm(tr("Delete this website including files, vhost, and database?"))) return;
+    if (!confirm(tr("Delete this website including files, vhost, and database?"))) return false;
     const data = await request(`/websites/${id}?delete_files=true&delete_database=true`, { method: 'DELETE' }, tr("Deleting website..."));
     if (data) refreshAll();
+    return !!data;
   }
 
   async function enableSsl(id) {
@@ -2873,9 +2885,8 @@ function App() {
     }
   }
 
-  async function openNginxCustom(site) {
-    setLogViewer(null);
-    setTerminalViewer(null);
+  // The settings of the website whose page is open (its PHP and Advanced tabs).
+  function openNginxCustom(site) {
     setWebsiteSettingsForm(websiteConfigForm(site));
     setNginxCustomEditing({
       id: site.id,
@@ -2941,19 +2952,6 @@ function App() {
         exists: !!data.exists,
       });
     }
-  }
-
-  async function openWebsiteLogs(site) {
-    setNginxCustomEditing(null);
-    setTerminalViewer(null);
-    setLogViewer({ id: site.id, domain: site.domain, kind: 'access', lines: 200, path: '', content: '', exists: true });
-    await loadWebsiteLog(site, 'access', 200, site.domain);
-  }
-
-  function openWebsiteTerminal(site) {
-    setNginxCustomEditing(null);
-    setLogViewer(null);
-    setTerminalViewer({ id: site.id, domain: site.domain });
   }
 
   async function toggleWebsiteWaf(site) {
@@ -4524,7 +4522,7 @@ function App() {
 
   useEffect(() => {
     if (isAuthenticated && page === 'users') { loadUsers(); loadPlans(); if (currentUser?.role === 'reseller') loadResellerPool(); }
-    if (isAuthenticated && page === 'websites' && ['admin', 'reseller'].includes(currentUser?.role) && users.length === 0) loadUsers();
+    if (isAuthenticated && (page === 'websites' || page === 'website-detail') && ['admin', 'reseller'].includes(currentUser?.role) && users.length === 0) loadUsers();
     // The databases page shows an owner per row for admins, and offers to
     // hand one over, so it needs the account list too.
     if (isAuthenticated && page === 'databases' && currentUser?.role === 'admin') loadUsers();
@@ -4767,6 +4765,19 @@ function App() {
       appVersion, currentUser, formatBytes, formatPercent, isAdmin, isReseller, loadResourceUsage,
       navCtx: pageNavCtx, navigateToPage, request, resellerPool, resourceUsage, routeForPage,
       runBefore: (name) => beforeActions[name]?.(), storageLimitBytes, usageHistory, websites,
+      // The website list and one website's page (pages/Websites.jsx, pages/WebsiteDetail.jsx).
+      API, NGINX_REWRITE_MODES, addWebsiteAlias, adminEmail, aliasDrafts, aliasModes, canManageUsers, canOpenTerminal,
+      createSslCerts, createSslForm, createSslMode, createWordPress, deleteWebsite, deleteWebsiteAlias, domain,
+      fixNginxSecurity, fixWordPressPermissions, installSslAfterCreate, installWordPress, installWpOnSite,
+      loadCreateSslCerts, loadUsers, loadWebsiteLog, loadWebsiteWafConfig, loading, logViewer, nginxCustomEditing,
+      openNginxCustom, openWebsiteFileManager, openWpInstall, phpVersion, phpVersionOptions, phpVersions, quickLoginUser,
+      refreshAll, renderSslManage, renderWafSite, renderWildcardProvider, saveWebsiteSettings, selectedWafWebsiteId,
+      setAdminEmail, setAliasDrafts, setAliasModes, setBackupTab, setCreateSslForm, setCreateSslMode, setDomain,
+      setInstallSslAfterCreate, setInstallWordPress, setNginxCustomEditing, setPhpVersion, setSelectedWebsiteId,
+      setShowCreateSite, setSiteOwnerId, setSiteType, setWebsiteSearch, setWebsiteSettingsForm, setWpAdminPassword,
+      setWpAdminUser, setWpInstallForm, setWpManagerSite, showCreateSite, siteOwnerId, siteType, updateWordPressAll,
+      users, viewFullNginxConfig, wafSiteConfig, websiteConfigForm, websiteSearch, websiteSettingsForm, websiteUrl,
+      wildcardProvider, wpAdminPassword, wpAdminUser, wpInstallForm, wpManagerMode, wpManagerSite,
     };
   }
   const sideItems = sidebarItems(navCtx);
@@ -5263,121 +5274,6 @@ function App() {
     </section>;
   }
 
-  function renderNginxEditor() {
-    if (!nginxCustomEditing) return null;
-    const fullConfig = nginxCustomEditing.mode === 'full';
-    const selectedAppType = websiteSettingsForm.app_type || nginxCustomEditing.site?.app_type || 'wordpress';
-    const rewriteDisabled = selectedAppType !== 'php';
-    const settingsSite = nginxCustomEditing.site || {};
-    const siteDomains = settingsSite.aliases || [];
-    const aliasMode = aliasModes[nginxCustomEditing.id] || 'alias';
-    return <section className="section nginx-modal inline-nginx-editor">
-      <div className="section-title">
-        <div className="nginx-config-title">
-          <h2>{fullConfig ? tr("VHost Config") : tr("Website settings")} - {nginxCustomEditing.domain}</h2>
-          <p className="hint">{fullConfig
-            ? tr("This is read-only. opanel manages the main vhost template.")
-            : tr("Managed settings rewrite the main vhost safely.")}</p>
-        </div>
-        <div className="actions">
-          {!fullConfig && isAdmin && <button className="secondary-light" disabled={!!loading} onClick={viewFullNginxConfig}><FileText size={14}/> {tr("View all")}</button>}
-          {fullConfig && <button className="secondary-light" disabled={!!loading} onClick={() => setNginxCustomEditing(prev => ({ ...prev, mode: 'settings', content: '' }))}><SettingsIcon size={14}/> {tr("Settings")}</button>}
-          <button className="secondary-light" onClick={() => setNginxCustomEditing(null)}><X size={14}/> {tr("Close")}</button>
-        </div>
-      </div>
-      {!fullConfig && <div className="website-settings-grid">
-        <label><span>{tr("Website mode")}</span><select
-          value={websiteSettingsForm.app_type}
-          onChange={e => setWebsiteSettingsForm(prev => ({
-            ...prev,
-            app_type: e.target.value,
-            nginx_rewrite_mode: e.target.value === 'php' ? prev.nginx_rewrite_mode || 'none' : e.target.value === 'wordpress' ? 'front_controller' : 'none',
-          }))}
-          disabled={!!loading}
-        >
-          <option value="wordpress">{tr("WordPress")}</option>
-          <option value="php">{tr("PHP")}</option>
-          <option value="static">{tr("Static")}</option>
-        </select></label>
-        {selectedAppType !== 'static' && <label><span>{tr("PHP version")}</span><select
-          value={websiteSettingsForm.php_version}
-          onChange={e => setWebsiteSettingsForm(prev => ({ ...prev, php_version: e.target.value }))}
-          disabled={!!loading}
-        >
-          {phpVersionOptions(phpVersions.installed, websiteSettingsForm.php_version).map(v => <option key={v} value={v}>{tr("PHP")} {v}</option>)}
-        </select></label>}
-        <label><span>{tr("Webserver rewrite")}</span><select
-          value={rewriteDisabled ? (selectedAppType === 'wordpress' ? 'front_controller' : 'none') : websiteSettingsForm.nginx_rewrite_mode}
-          onChange={e => setWebsiteSettingsForm(prev => ({ ...prev, nginx_rewrite_mode: e.target.value }))}
-          disabled={!!loading || rewriteDisabled}
-        >
-          {NGINX_REWRITE_MODES.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
-        </select></label>
-        <div className="website-settings-actions">
-          <button disabled={!!loading} onClick={saveWebsiteSettings}><Save size={14}/> {tr("Save settings")}</button>
-        </div>
-      </div>}
-      {!fullConfig && <div className="site-aliases settings-domain-manager">
-        <div className="domain-manager-head">
-          <h3>{tr("Domains")}</h3>
-          <p className="hint">{tr("Alias serves the same app. Redirect sends visitors to")} {nginxCustomEditing.domain}.</p>
-        </div>
-        <div className="alias-list">
-          <span className="alias-chip primary-domain"><Globe size={12}/>{nginxCustomEditing.domain}<span>{tr("Main")}</span></span>
-          {siteDomains.length === 0
-            ? <span className="alias-empty">{tr("No extra domains")}</span>
-            : siteDomains.map(alias => <span className="alias-chip" key={alias.id}>
-              <Globe size={12}/>{alias.domain}<span>{alias.mode === 'redirect' ? tr("Redirect") : tr("Alias")}</span>
-              <button type="button" disabled={!!loading} title={tr("Remove {0}", alias.domain)} aria-label={tr("Remove {0}", alias.domain)} onClick={() => deleteWebsiteAlias(settingsSite, alias)}><X size={12}/></button>
-            </span>)}
-        </div>
-        <div className="alias-form settings-domain-form">
-          <input
-            value={aliasDrafts[nginxCustomEditing.id] || ''}
-            onChange={e => setAliasDrafts(prev => ({ ...prev, [nginxCustomEditing.id]: e.target.value }))}
-            onKeyDown={e => { if (e.key === 'Enter') addWebsiteAlias(settingsSite); }}
-            placeholder="domain-alias.com"
-            disabled={!!loading}
-          />
-          <select
-            value={aliasMode}
-            onChange={e => setAliasModes(prev => ({ ...prev, [nginxCustomEditing.id]: e.target.value }))}
-            disabled={!!loading}
-          >
-            <option value="alias">{tr("Alias")}</option>
-            <option value="redirect">{tr("Redirect")}</option>
-          </select>
-          <button className="secondary-light" disabled={!!loading || !(aliasDrafts[nginxCustomEditing.id] || '').trim()} onClick={() => addWebsiteAlias(settingsSite)}><Plus size={14}/> {tr("Add domain")}</button>
-        </div>
-      </div>}
-      {fullConfig && <div className="custom-nginx-block">
-        <textarea
-          className="code-editor"
-          value={nginxCustomEditing.content}
-          placeholder={tr("docRoot                   /home/site/{0}/public_html", nginxCustomEditing.domain)}
-          spellCheck={false}
-          rows={18}
-          readOnly
-        />
-      </div>}
-      <div className="actions">
-        <button className="secondary-light" disabled={!!loading} onClick={() => setNginxCustomEditing(null)}>{fullConfig ? tr("Close") : tr("Cancel")}</button>
-      </div>
-    </section>;
-  }
-
-
-  function renderWebsiteTerminal() {
-    if (!terminalViewer) return null;
-    return <section className="section nginx-modal terminal-modal">
-      <div className="section-title">
-        <h2>{tr("Terminal -")} {terminalViewer.domain}</h2>
-        <button className="secondary-light" onClick={() => setTerminalViewer(null)}><X size={14}/> {tr("Close")}</button>
-      </div>
-      <Terminal websiteId={terminalViewer.id} apiBase={API} />
-    </section>;
-  }
-
   // The account's own terminal, in its home. From a website's row it starts in
   // the website's folder with the website's PHP instead.
   function renderTerminalPage() {
@@ -5389,206 +5285,14 @@ function App() {
     }
     return <section className="section">
       <div className="section-title"><div><h2>{tr("Terminal")}</h2>
-        <p className="hint">{tr("A shell in your home folder. To start in a website's folder with its PHP version, open the terminal from the website's row.")}</p></div></div>
+        <p className="hint">{tr("A shell in your home folder. To start in a website's folder with its PHP version, open the terminal from the website's Advanced tab.")}</p></div></div>
       <Terminal apiBase={API} />
     </section>;
   }
 
-  function renderWebsiteLogViewer() {
-    if (!logViewer) return null;
-    return <section className="section nginx-modal log-viewer">
-      <div className="section-title">
-        <div className="nginx-config-title">
-          <h2>{tr("Webserver logs -")} {logViewer.domain}</h2>
-          <p className="hint">{logViewer.path || `/var/log/nginx/${logViewer.domain}.${logViewer.kind}.log`}</p>
-        </div>
-        <button className="secondary-light" onClick={() => setLogViewer(null)}><X size={14}/> {tr("Close")}</button>
-      </div>
-      <div className="log-toolbar">
-        <div className="segmented-control">
-          <button className={logViewer.kind === 'access' ? 'active' : ''} disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, 'access', logViewer.lines, logViewer.domain)}>{tr("Access")}</button>
-          <button className={logViewer.kind === 'error' ? 'active' : ''} disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, 'error', logViewer.lines, logViewer.domain)}>{tr("Errors (PHP + server)")}</button>
-        </div>
-        <select value={logViewer.lines} onChange={e => loadWebsiteLog(logViewer.id, logViewer.kind, Number(e.target.value), logViewer.domain)} disabled={!!loading}>
-          <option value={100}>{tr("100 lines")}</option>
-          <option value={200}>{tr("200 lines")}</option>
-          <option value={500}>{tr("500 lines")}</option>
-          <option value={1000}>{tr("1000 lines")}</option>
-          <option value={2000}>{tr("2000 lines")}</option>
-        </select>
-        <button className="secondary" disabled={!!loading} onClick={() => loadWebsiteLog(logViewer.id, logViewer.kind, logViewer.lines, logViewer.domain)}><RefreshCw size={14}/> {tr("Refresh")}</button>
-      </div>
-      <pre className="log-output">{logViewer.exists
-        ? (logViewer.content || tr("Log is empty."))
-        : (logViewer.kind === 'error' ? tr("No errors logged yet.") : tr("Log file has not been created yet."))}</pre>
-    </section>;
-  }
-
-  function renderWebsites() {
-    const wpFieldsEnabled = siteType === 'wordpress' && installWordPress;
-    const wsQuery = websiteSearch.trim().toLowerCase();
-    const filteredWebsites = wsQuery
-      ? websites.filter(s => (s.domain || '').toLowerCase().includes(wsQuery)
-          || (s.aliases || []).some(a => (a.domain || '').toLowerCase().includes(wsQuery)))
-      : websites;
-    const createOpen = showCreateSite || websites.length === 0;
-    const openCreate = () => {
-      setShowCreateSite(true);
-      setTimeout(() => { const el = document.getElementById('create-website-domain'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); }, 0);
-    };
-    return <>
-      {createOpen && <section className="section create-panel">
-        <div className="section-title">
-          <h2>{tr("Create website")}</h2>
-          {websites.length > 0 && <button type="button" className="secondary icon-only mini" onClick={() => setShowCreateSite(false)} aria-label={tr("Close")} title={tr("Close")}><X size={15}/></button>}
-        </div>
-        <div className="form-row create-site-row">
-          <input id="create-website-domain" value={domain} onChange={e => setDomain(e.target.value)} placeholder="domain.com" />
-          {canManageUsers && users.length > 0 && <select value={siteOwnerId} onChange={e => setSiteOwnerId(e.target.value)} aria-label={tr("Owner")} title={tr("Owner")}>
-            <option value="">{tr("For yourself")}</option>
-            {users.filter(u => u.id !== currentUser?.id && u.role !== 'admin').map(u => <option key={u.id} value={u.id}>{tr("For {0}", u.username)}</option>)}
-          </select>}
-          <select value={siteType} onChange={e => setSiteType(e.target.value)}>
-            <option value="wordpress">{tr("WordPress")}</option>
-            <option value="php">{tr("PHP")}</option>
-          </select>
-          <select value={phpVersion} onChange={e => setPhpVersion(e.target.value)}>
-            {phpVersionOptions(phpVersions.installed, phpVersion).map(v => <option key={v} value={v}>{tr("PHP")} {v}</option>)}
-          </select>
-          {wpFieldsEnabled && <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="admin@domain.com" />}
-          {wpFieldsEnabled && <input value={wpAdminUser} onChange={e => setWpAdminUser(e.target.value)} placeholder={tr("WP admin user")} />}
-          {wpFieldsEnabled && <input value={wpAdminPassword} onChange={e => setWpAdminPassword(e.target.value)} placeholder={tr("WP admin password")} type="password" />}
-          <button disabled={!!loading || !domain} onClick={createWordPress}><Plus size={15}/> {tr("Create")}</button>
-        </div>
-        {siteType === 'wordpress' && <label className="check-line">
-          <input type="checkbox" checked={installWordPress} onChange={e => setInstallWordPress(e.target.checked)} />
-          {tr("Install WordPress (creates database, downloads WP, configures vhost)")}
-        </label>}
-        <label className="check-line">
-          <input type="checkbox" checked={installSslAfterCreate} onChange={e => setInstallSslAfterCreate(e.target.checked)} />
-          {tr("Set up SSL after creating")}
-        </label>
-        {installSslAfterCreate && <div className="create-ssl-box">
-          <div className="segmented ssl-mode-tabs">
-            <button className={createSslMode === 'letsencrypt' ? 'active' : ''} onClick={() => setCreateSslMode('letsencrypt')}><Lock size={13}/> {tr("Let's Encrypt")}</button>
-            <button className={createSslMode === 'wildcard' ? 'active' : ''} onClick={() => setCreateSslMode('wildcard')}><Globe size={13}/> {dnsInfo?.installed ? tr("Wildcard") : tr("Wildcard (Cloudflare)")}</button>
-            <button className={createSslMode === 'existing' ? 'active' : ''} onClick={() => { setCreateSslMode('existing'); loadCreateSslCerts(); }}><RefreshCw size={13}/> {tr("Use existing")}</button>
-            <button className={createSslMode === 'manual' ? 'active' : ''} onClick={() => setCreateSslMode('manual')}><KeyRound size={13}/> {tr("Manual")}</button>
-          </div>
-          {createSslMode === 'letsencrypt' && <p className="hint">{tr("certbot HTTP-01 — the domain must point to this server's IP first.")}</p>}
-          {createSslMode === 'wildcard' && wildcardProvider(createSslForm.provider) === 'opanel' && <div className="create-ssl-fields">
-            {renderWildcardProvider('opanel', provider => setCreateSslForm(p => ({ ...p, provider })))}
-            <input type="email" autoComplete="off" placeholder={tr("Contact email (optional)")} value={createSslForm.email} onChange={e => setCreateSslForm(p => ({ ...p, email: e.target.value }))} />
-            <p className="hint">{tr("The challenge record goes into this server's zone for the domain, created with the website. The domain's nameservers must point at this server. One cert for the domain and *.domain; renewals need nothing.")}</p>
-          </div>}
-          {createSslMode === 'wildcard' && wildcardProvider(createSslForm.provider) !== 'opanel' && <div className="create-ssl-fields">
-            {renderWildcardProvider('cloudflare', provider => setCreateSslForm(p => ({ ...p, provider })))}
-            <input type="password" autoComplete="off" placeholder={tr("Cloudflare API Token")} value={createSslForm.api_token} onChange={e => setCreateSslForm(p => ({ ...p, api_token: e.target.value }))} />
-            <input type="email" autoComplete="off" placeholder={tr("Contact email (optional)")} value={createSslForm.email} onChange={e => setCreateSslForm(p => ({ ...p, email: e.target.value }))} />
-            <p className="hint">{tr("A scoped")} <strong>{tr("API Token")}</strong> {tr("(My Profile → API Tokens → Create Token),")} <strong>{tr("not")}</strong> {tr("the Global API Key. Permission")} <code>Zone → DNS → Edit</code> {tr("for the zone(s) you issue certs for. Stored encrypted for renewal. Issues one cert for the domain and *.domain — no DNS record or port 80 needed.")}</p>
-          </div>}
-          {createSslMode === 'existing' && <div className="create-ssl-fields">
-            <div className="form-row">
-              <select value={createSslForm.reuse_name} onChange={e => setCreateSslForm(p => ({ ...p, reuse_name: e.target.value }))}>
-                <option value="">{tr("— pick a certificate on this server —")}</option>
-                {createSslCerts.map(c => <option key={c.name} value={c.name}>{c.domains.join(', ')} ({c.source})</option>)}
-              </select>
-              <button className="secondary-light" type="button" onClick={loadCreateSslCerts}><RefreshCw size={13}/> {tr("Refresh")}</button>
-            </div>
-            <p className="hint">{!domain.trim()
-              ? tr("Type the domain above first — this list shows only certificates that cover it.")
-              : createSslCerts.length === 0
-                ? tr("No certificate on this server covers {0}. Note a *.example.com wildcard covers x.example.com but not example.com itself. Issue a Let's Encrypt or wildcard cert first.", domain.trim().toLowerCase())
-                : tr("A *.example.com wildcard issued earlier covers every x.example.com.")}</p>
-          </div>}
-          {createSslMode === 'manual' && <div className="create-ssl-fields">
-            <textarea rows={4} placeholder={tr("-----BEGIN CERTIFICATE-----")} value={createSslForm.certificate} onChange={e => setCreateSslForm(p => ({ ...p, certificate: e.target.value }))} />
-            <textarea rows={4} placeholder={tr("-----BEGIN PRIVATE KEY-----")} value={createSslForm.private_key} onChange={e => setCreateSslForm(p => ({ ...p, private_key: e.target.value }))} />
-            <textarea rows={3} placeholder={tr("CA bundle (optional)")} value={createSslForm.ca_bundle} onChange={e => setCreateSslForm(p => ({ ...p, ca_bundle: e.target.value }))} />
-          </div>}
-        </div>}
-        <p className="hint">{wpFieldsEnabled
-          ? tr("WordPress will be installed and the panel will show the URL, admin account, and password after creation.")
-          : tr("A virtual host will be created with public_html/ folder. Upload your PHP, HTML, or static files via File Manager.")}</p>
-      </section>}
-      <section className="section">
-        <div className="section-title">
-          <h2>{tr("Website list")}</h2>
-          <div className="actions">
-            <button className="secondary" disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> {tr("Refresh")}</button>
-            {!createOpen && <button type="button" onClick={openCreate}><Plus size={15}/> {tr("New website")}</button>}
-          </div>
-        </div>
-        {websites.length > 0 && <div className="website-search">
-          <Search size={15}/>
-          <input value={websiteSearch} onChange={e => setWebsiteSearch(e.target.value)} placeholder={tr("Filter domains…")} />
-          {websiteSearch && <button className="mini secondary-light" onClick={() => setWebsiteSearch('')}><X size={13}/></button>}
-          <span className="hint">{wsQuery ? tr("{0} of {1}", filteredWebsites.length, websites.length) : (websites.length === 1 ? tr("{0} website", websites.length) : tr("{0} websites", websites.length))}</span>
-        </div>}
-        {websites.length === 0 && <EmptyState icon={Globe} message={tr("No websites yet.")} action={{ label: tr("New website"), icon: Plus, onClick: openCreate }} />}
-        {websites.length > 0 && filteredWebsites.length === 0 && <EmptyState icon={Globe} message={tr("No domain matches “{0}”.", websiteSearch)} />}
-        <div className="site-grid">
-          {filteredWebsites.map(site => <div className="site-stack" key={site.id}>
-          <article className="site-card">
-            <div className="site-head">
-              <div>
-                <a className="site-link" href={websiteUrl(site)} target="_blank" rel="noopener noreferrer">{site.domain}</a>
-                <small>{site.root_path}</small>
-              </div>
-            </div>
-            <div className="site-meta">
-              <span className={`badge site-ssl-badge ${site.ssl_enabled ? 'ok' : ''}`}>{site.ssl_wildcard ? tr("Wildcard") : site.ssl_mode === 'reuse' ? tr("Shared cert") : site.ssl_enabled ? tr("SSL OK") : tr("No SSL")}</span>
-              <span>{({ wordpress: tr("WordPress"), php: tr("PHP"), static: tr("Static") })[site.app_type || 'wordpress'] || site.app_type}</span>
-              <span>{tr("PHP")} <strong>{site.php_version}</strong></span>
-              {site.app_type === 'php' && site.nginx_rewrite_mode && site.nginx_rewrite_mode !== 'none' && <span>{tr("Rewrite")} <strong>{site.nginx_rewrite_mode}</strong></span>}
-              {site.waf_enabled && <span className="badge ok">{tr("WAF")}</span>}
-              {(site.aliases || []).length > 0 && <span>{tr("Domains")} <strong>{(site.aliases || []).length + 1}</strong></span>}
-            </div>
-            <div className="site-actions" aria-label={tr("Website actions for {0}", site.domain)}>
-              <div className="site-feature-actions">
-                <button className="site-icon-button secondary-light" data-tooltip="Files" title={tr("Files")} aria-label={tr("Open file manager for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteFileManager(site)}><FolderOpen size={15}/></button>
-                <button className="site-icon-button secondary-light" data-tooltip="Logs" title={tr("Logs")} aria-label={tr("View logs for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteLogs(site)}><FileText size={15}/></button>
-                {canOpenTerminal && <button className="site-icon-button secondary-light" data-tooltip="Terminal" title={tr("Terminal")} aria-label={tr("Open terminal for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteTerminal(site)}><TerminalIcon size={15}/></button>}
-                <button className="site-icon-button secondary-light" data-tooltip="Settings" title={tr("Settings")} aria-label={tr("Edit settings for {0}", site.domain)} disabled={!!loading} onClick={() => openNginxCustom(site)}><SettingsIcon size={15}/></button>
-                {!site.wp_installed && <button className="site-icon-button secondary-light" data-tooltip={tr("Install WP")} title={tr("Install WordPress")} aria-label={tr("Install WordPress on {0}", site.domain)} disabled={!!loading} onClick={() => openWpInstall(site)}><Download size={15}/></button>}
-                {site.wp_installed && <button className="site-icon-button secondary-light" data-tooltip={tr("Update WP")} title={tr("Update WordPress")} aria-label={tr("Update WordPress on {0}", site.domain)} disabled={!!loading} onClick={() => openWpUpdate(site)}><RefreshCw size={15}/></button>}
-                <button className="site-icon-button danger" data-tooltip="Delete" title={tr("Delete")} aria-label={tr("Delete {0}", site.domain)} disabled={!!loading} onClick={() => deleteWebsite(site.id)}><Trash2 size={15}/></button>
-              </div>
-            </div>
-          </article>
-          {nginxCustomEditing?.id === site.id && renderNginxEditor()}
-          {logViewer?.id === site.id && renderWebsiteLogViewer()}
-          {terminalViewer?.id === site.id && renderWebsiteTerminal()}
-          {wpManagerSite?.id === site.id && <div className="wp-manager-panel">
-            <div className="user-edit-heading">
-              <strong>{wpManagerMode === 'install' ? tr("Install WordPress on {0}", site.domain) : tr("Update WordPress on {0}", site.domain)}</strong>
-              <button className="user-edit-close secondary-light" onClick={() => setWpManagerSite(null)}><X size={16}/></button>
-            </div>
-            {wpManagerMode === 'install' ? <div className="user-edit-grid">
-              <p className="hint">{tr("Creates a database, downloads WordPress, configures vhost.")}</p>
-              <label><span>{tr("Site title")}</span><input value={wpInstallForm.title} onChange={e => setWpInstallForm(prev => ({ ...prev, title: e.target.value }))} /></label>
-              <label><span>{tr("Admin username")}</span><input value={wpInstallForm.admin_user} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_user: e.target.value }))} /></label>
-              <label><span>{tr("Admin email")}</span><input type="email" value={wpInstallForm.admin_email} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_email: e.target.value }))} /></label>
-              <label><span>{tr("Admin password")}</span><input type="password" value={wpInstallForm.admin_password} onChange={e => setWpInstallForm(prev => ({ ...prev, admin_password: e.target.value }))} placeholder={tr("Min 12 characters")} /></label>
-              <div className="user-edit-actions">
-                <button className="secondary-light" onClick={() => setWpManagerSite(null)}>{tr("Cancel")}</button>
-                <button disabled={!!loading || !wpInstallForm.admin_password || wpInstallForm.admin_password.length < 12} onClick={installWpOnSite}><Download size={14}/> {tr("Install WordPress")}</button>
-              </div>
-            </div> : <div>
-              <p className="hint">{tr("Updates WordPress core, all plugins, and all themes to the latest version.")}</p>
-              <div className="user-edit-actions">
-                <button className="secondary-light" onClick={() => setWpManagerSite(null)}>{tr("Cancel")}</button>
-                <button disabled={!!loading} onClick={updateWpOnSite}><RefreshCw size={14}/> {tr("Update All")}</button>
-              </div>
-            </div>}
-          </div>}
-          </div>)}
-        </div>
-      </section>
-    </>;
-  }
-
-  function renderSsl() {
+  // One website's certificate: on the SSL page with a website picker, and as
+  // the SSL tab of the website's own page (embedded: that website's).
+  function renderSslManage(embedded = false) {
     const sslLabel = currentSite?.ssl_mode === 'manual'
       ? tr("Manual SSL")
       : currentSite?.ssl_mode === 'reuse'
@@ -5599,18 +5303,9 @@ function App() {
             ? tr("SSL Enabled")
             : tr("SSL Disabled");
     const sslUpdated = currentSite?.ssl_updated_at ? new Date(currentSite.ssl_updated_at).toLocaleString() : '';
-    // Unsecured sites first, then the rest by name, so the ones that need a
-    // certificate are at the top of the overview.
-    const sslSites = [...websites].sort((a, b) => (a.ssl_enabled === b.ssl_enabled ? (a.domain || '').localeCompare(b.domain || '') : a.ssl_enabled ? 1 : -1));
-    const securedCount = websites.filter(site => site.ssl_enabled).length;
-    const siteSslLabel = site => site.ssl_mode === 'manual' ? tr("Manual SSL")
-      : site.ssl_mode === 'reuse' ? tr("Shared cert")
-        : site.ssl_wildcard ? tr("Wildcard")
-          : site.ssl_enabled ? tr("SSL OK") : tr("No SSL");
-    return <>
-    <section className="section" id="ssl-manage">
+    return <section className="section" id="ssl-manage">
       <h2>{tr("SSL Certificate")}</h2>
-      <WebsiteSelect />
+      {!embedded && <WebsiteSelect />}
       {currentSite && <div className="info-box" style={{marginTop:8}}>
         <strong>{currentSite.domain}</strong>
         <span className={currentSite.ssl_enabled ? 'badge ok' : 'badge'} style={{justifySelf:'start'}}>{sslLabel}</span>
@@ -5677,7 +5372,20 @@ function App() {
         <textarea rows={7} disabled={!!manualSslFiles.ca_bundle} value={manualSslForm.ca_bundle} onChange={e => setManualSslForm(prev => ({ ...prev, ca_bundle: e.target.value }))} placeholder={tr("Optional CA bundle")} />
         <button className="manual-ssl-submit" disabled={!selectedWebsiteId || !!loading} onClick={installManualSsl}><Upload size={15}/> {tr("Install Manual SSL")}</button>
       </div>}
-    </section>
+    </section>;
+  }
+
+  function renderSsl() {
+    // Unsecured sites first, then the rest by name, so the ones that need a
+    // certificate are at the top of the overview.
+    const sslSites = [...websites].sort((a, b) => (a.ssl_enabled === b.ssl_enabled ? (a.domain || '').localeCompare(b.domain || '') : a.ssl_enabled ? 1 : -1));
+    const securedCount = websites.filter(site => site.ssl_enabled).length;
+    const siteSslLabel = site => site.ssl_mode === 'manual' ? tr("Manual SSL")
+      : site.ssl_mode === 'reuse' ? tr("Shared cert")
+        : site.ssl_wildcard ? tr("Wildcard")
+          : site.ssl_enabled ? tr("SSL OK") : tr("No SSL");
+    return <>
+    {renderSslManage()}
     {websites.length > 0 && <section className="section">
       <div className="section-title">
         <div><h2>{tr("All websites")}</h2><p className="hint">{tr("{0} of {1} secured", securedCount, websites.length)}</p></div>
@@ -8483,13 +8191,6 @@ function App() {
     // The status probe prints "installed" or "not-installed"; that is all the page needs to say.
     const wafProbe = `${wafRules.status?.stdout || ''}`;
     const wafEngine = /not-installed/.test(wafProbe) ? 'off' : /\binstalled\b/.test(wafProbe) ? 'on' : 'unknown';
-    const selectedSite = websites.find(site => String(site.id) === String(selectedWafWebsiteId));
-    const groupedRules = (wafSiteConfig?.default_rules || wafRules.default_rule_definitions || []).reduce((groups, rule) => {
-      const category = rule.category || 'General';
-      groups[category] = groups[category] || [];
-      groups[category].push(rule);
-      return groups;
-    }, {});
     return <>
       {!wafSiteConfig && <>
         {isAdmin && <section className="section">
@@ -8529,78 +8230,94 @@ function App() {
         </section>
       </>}
 
-      {wafSiteConfig && <>
-        <section className="section">
-          <div className="section-title waf-detail-head">
-            <div className="waf-detail-title">
-              <button className="secondary-light" onClick={closeWafSiteConfig}><ArrowLeft size={14}/> {tr("All websites")}</button>
-              <div><h2>{wafSiteConfig.domain}</h2><p className="hint">{tr("WAF configuration for this website.")}</p></div>
-            </div>
-            <div className="waf-detail-actions">
-              <span className={selectedSite?.waf_enabled ? 'badge ok' : 'badge'}>{selectedSite?.waf_enabled ? tr("WAF on") : tr("WAF off")}</span>
-              <button disabled={!!loading} onClick={() => selectedSite && toggleWebsiteWaf(selectedSite)}>
-                <Shield size={14}/> {selectedSite?.waf_enabled ? tr("Disable WAF") : tr("Enable WAF")}
-              </button>
-            </div>
-          </div>
-        </section>
+      {wafSiteConfig && renderWafSite()}
+    </>;
+  }
 
-        <section className="section">
-          <div className="section-title">
-            <div>
-              <h2>{tr("Bad bot")}</h2>
-              <p className="hint">
-                {wafSiteConfig.bot_blocking_enabled
-                  ? tr("Global list ({0}) plus anything below.", (wafSiteConfig.global_bad_bots || []).length)
-                  : tr("Off — the global list is ignored on this website.")}
-              </p>
-            </div>
-            <span className={wafSiteConfig.bot_blocking_enabled ? 'badge ok' : 'badge'}>
-              {wafSiteConfig.bot_blocking_enabled ? tr("On") : tr("Off")}
-            </span>
+  // One website's WAF: on the WAF page under "All websites", and as the
+  // Security tab of the website's own page (embedded: no way back to a list).
+  function renderWafSite(embedded = false) {
+    const selectedSite = websites.find(site => String(site.id) === String(selectedWafWebsiteId));
+    const wafOn = !!selectedSite?.waf_enabled;
+    const groupedRules = (wafSiteConfig?.default_rules || wafRules.default_rule_definitions || []).reduce((groups, rule) => {
+      const category = rule.category || 'General';
+      groups[category] = groups[category] || [];
+      groups[category].push(rule);
+      return groups;
+    }, {});
+    return <>
+      <section className="section">
+        <div className="section-title waf-detail-head">
+          <div className="waf-detail-title">
+            {!embedded && <button className="secondary-light" onClick={closeWafSiteConfig}><ArrowLeft size={14}/> {tr("All websites")}</button>}
+            <div><h2>{embedded ? tr("Web application firewall (WAF)") : wafSiteConfig.domain}</h2><p className="hint">{tr("WAF configuration for this website.")}</p></div>
           </div>
-          <label className="check-line">
-            <input type="checkbox" checked={!!wafSiteConfig.bot_blocking_enabled}
-              onChange={e => setWafSiteConfig(prev => ({ ...prev, bot_blocking_enabled: e.target.checked }))} />
-            {tr("Block bad bots on this website")}
-          </label>
-          <label className="badbot-site-extra"><span>{tr("Extra bots, this website only")}</span>
-            <textarea className="code-editor badbot-input" value={wafBotExtra} onChange={e => setWafBotExtra(e.target.value)}
-              spellCheck={false} placeholder={tr("ScrapyBot\nSomeOtherBot")} />
-          </label>
-          <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}><Shield size={14}/> {tr("Save bad bot config")}</button></div>
-        </section>
+        </div>
+        <div className="waf-site-switch">
+          <Switch checked={wafOn} disabled={!selectedSite || !!loading} onChange={() => selectedSite && toggleWebsiteWaf(selectedSite)}
+            label={tr("WAF for {0}", selectedSite?.domain || '')}/>
+          <div>
+            <strong>{wafOn ? tr("WAF on") : tr("WAF off")}</strong>
+            <small>{wafOn ? tr("Requests to this website are checked against the rules below.") : tr("Requests reach this website without being checked.")}</small>
+          </div>
+        </div>
+      </section>
 
-        <section className="section waf-rules-grid">
-          <div className="waf-rule-panel">
-            <div className="section-title"><h2>{tr("Default rules")}</h2></div>
-            <div className="waf-default-groups">
-              {Object.entries(groupedRules).map(([category, rules]) => <div className="waf-rule-group" key={category}>
-                <h3>{tr(category)}</h3>
-                {rules.map(rule => <label className="waf-rule-toggle" key={rule.id}>
-                  <input type="checkbox" checked={!!rule.enabled} onChange={e => toggleWafDefaultRule(rule.id, e.target.checked)} />
-                  <span><strong>{tr(rule.title)}</strong><small>{tr(rule.description)}</small></span>
-                </label>)}
-              </div>)}
-            </div>
+      <section className="section">
+        <div className="section-title">
+          <div>
+            <h2>{tr("Bad bot")}</h2>
+            <p className="hint">
+              {wafSiteConfig.bot_blocking_enabled
+                ? tr("Global list ({0}) plus anything below.", (wafSiteConfig.global_bad_bots || []).length)
+                : tr("Off — the global list is ignored on this website.")}
+            </p>
           </div>
-          <div className="waf-rule-panel">
-            <div className="section-title"><h2>{tr("Custom rules")}</h2></div>
-            {isAdmin
-              ? <>
-                  <textarea className="code-editor" value={wafCustomRules} onChange={e => setWafCustomRules(e.target.value)} rows={14} spellCheck={false} placeholder={tr("SecRule ...")} />
-                  <p className="hint">{tr("Saved into")} {wafSiteConfig.rules_file}</p>
-                </>
-              : <>
-                  {wafCustomRules
-                    ? <pre className="code-editor waf-custom-readonly">{wafCustomRules}</pre>
-                    : <p className="hint">{tr("No custom rules on this website.")}</p>}
-                  <p className="hint">{tr("Custom rules are written by an administrator. Everything else on this page is yours to change.")}</p>
-                </>}
-            <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}>{tr("Save website WAF rules")}</button></div>
+          <span className={wafSiteConfig.bot_blocking_enabled ? 'badge ok' : 'badge'}>
+            {wafSiteConfig.bot_blocking_enabled ? tr("On") : tr("Off")}
+          </span>
+        </div>
+        <label className="check-line">
+          <input type="checkbox" checked={!!wafSiteConfig.bot_blocking_enabled}
+            onChange={e => setWafSiteConfig(prev => ({ ...prev, bot_blocking_enabled: e.target.checked }))} />
+          {tr("Block bad bots on this website")}
+        </label>
+        <label className="badbot-site-extra"><span>{tr("Extra bots, this website only")}</span>
+          <textarea className="code-editor badbot-input" value={wafBotExtra} onChange={e => setWafBotExtra(e.target.value)}
+            spellCheck={false} placeholder={tr("ScrapyBot\nSomeOtherBot")} />
+        </label>
+        <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}><Shield size={14}/> {tr("Save bad bot config")}</button></div>
+      </section>
+
+      <section className="section waf-rules-grid">
+        <div className="waf-rule-panel">
+          <div className="section-title"><h2>{tr("Default rules")}</h2></div>
+          <div className="waf-default-groups">
+            {Object.entries(groupedRules).map(([category, rules]) => <div className="waf-rule-group" key={category}>
+              <h3>{tr(category)}</h3>
+              {rules.map(rule => <label className="waf-rule-toggle" key={rule.id}>
+                <input type="checkbox" checked={!!rule.enabled} onChange={e => toggleWafDefaultRule(rule.id, e.target.checked)} />
+                <span><strong>{tr(rule.title)}</strong><small>{tr(rule.description)}</small></span>
+              </label>)}
+            </div>)}
           </div>
-        </section>
-      </>}
+        </div>
+        <div className="waf-rule-panel">
+          <div className="section-title"><h2>{tr("Custom rules")}</h2></div>
+          {isAdmin
+            ? <>
+                <textarea className="code-editor" value={wafCustomRules} onChange={e => setWafCustomRules(e.target.value)} rows={14} spellCheck={false} placeholder={tr("SecRule ...")} />
+                <p className="hint">{tr("Saved into")} {wafSiteConfig.rules_file}</p>
+              </>
+            : <>
+                {wafCustomRules
+                  ? <pre className="code-editor waf-custom-readonly">{wafCustomRules}</pre>
+                  : <p className="hint">{tr("No custom rules on this website.")}</p>}
+                <p className="hint">{tr("Custom rules are written by an administrator. Everything else on this page is yours to change.")}</p>
+              </>}
+          <div className="actions"><button disabled={!!loading} onClick={saveWebsiteWafRules}>{tr("Save website WAF rules")}</button></div>
+        </div>
+      </section>
     </>;
   }
 
@@ -9682,7 +9399,8 @@ function App() {
   }
 
   function renderPage() {
-    if (page === 'websites') return renderWebsites();
+    if (page === 'websites') return <WebsitesPage/>;
+    if (page === 'website-detail') return <WebsiteDetailPage key={routeKey}/>;
     if (page === 'ssl') return renderSsl();
     if (page === 'databases') return renderDatabases();
     if (page === 'cron') return renderCron();
