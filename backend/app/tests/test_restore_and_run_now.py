@@ -571,7 +571,8 @@ def test_a_run_started_from_a_schedule_reports_on_that_schedule():
 def test_the_schedule_row_matches_its_own_run():
     from pathlib import Path
 
-    app = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    # The Backup & Restore page is its own file (pages/Backups.jsx, as SNPanel's, 2026-10-17).
+    page = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "pages" / "Backups.jsx").read_text(encoding="utf-8")
 
-    assert "backupJobs.find(job => job.schedule_id === item.id" in app
-    assert "job.status === 'running' || job.status === 'queued'" in app
+    assert "const liveJobs = backupJobs.filter((job) => job.status === 'queued' || job.status === 'running');" in page
+    assert "const live = liveJobs.find((job) => job.schedule_id === item.id);" in page

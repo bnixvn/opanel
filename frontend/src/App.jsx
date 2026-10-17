@@ -17,12 +17,14 @@ import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, 
 import { Terminal } from './components/Terminal';
 import { UsageChart } from './components/UsageChart';
 import HubTabs from './components/HubTabs';
+import PageHeader from './components/PageHeader';
 import DashboardPage from './pages/Dashboard';
 import WebsitesPage from './pages/Websites';
 import WebsiteDetailPage from './pages/WebsiteDetail';
 import DatabasesPage from './pages/Databases';
 import FilesPage from './pages/Files';
 import SftpPage from './pages/Sftp';
+import BackupsPage from './pages/Backups';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import Switch from './components/Switch';
 import { isWebsitePath } from './lib/websites';
@@ -3575,7 +3577,7 @@ function App() {
 
   async function createBackupSchedule() {
     const selectedUserIds = (newBackupSchedule.user_ids || []).map(Number).filter(Boolean);
-    if (!newBackupSchedule.all_users && selectedUserIds.length === 0) return;
+    if (!newBackupSchedule.all_users && selectedUserIds.length === 0) return false;
     const body = {
       user_id: selectedUserIds[0] || null,
       user_ids: newBackupSchedule.all_users ? [] : selectedUserIds,
@@ -3589,16 +3591,21 @@ function App() {
     if (data) {
       setNotice(tr("Backup schedule saved."));
       await loadBackupSchedules();
+      return true;
     }
+    return false;
   }
 
-  // `who` is passed in: the label helper is local to renderBackups, and
+  // `who` is passed in: the label helper is the Backups page's, and
   // reaching for it here threw before the confirm ever opened, which is why
   // the button appeared to do nothing.
   async function runBackupScheduleNow(item, who) {
     // The same run the timer would do, just early: same rotation slot, same
     // retention. Worth saying so, because it overwrites today's slot.
-    if (!confirm(tr("Run this schedule now?\n\n{0} - {1}\n\nIt writes today's rotation slot, overwriting last week's copy for that day.", who, item.schedule))) return;
+    if (!(await confirmDialog({
+      title: tr("Run this schedule now?"), subject: `${who} · ${cronScheduleLabel(item.schedule)}`,
+      message: tr("It writes today's rotation slot, overwriting last week's copy for that day."), confirmLabel: tr("Run now"),
+    }))) return;
     const data = await request(`/maintenance/backup-schedules/${item.id}/run`, { method: 'POST' }, tr("Starting schedule..."));
     if (data) {
       setNotice(tr("Schedule started. Watch Backup logs for progress."));
@@ -3607,7 +3614,7 @@ function App() {
   }
 
   async function deleteBackupSchedule(id) {
-    if (!confirm(tr("Delete this backup schedule?"))) return;
+    if (!(await confirmDialog({ title: tr("Delete this backup schedule?"), message: tr("The backups it made stay."), danger: true, confirmLabel: tr("Delete schedule") }))) return;
     const data = await request(`/maintenance/backup-schedules/${id}`, { method: 'DELETE' }, tr("Deleting backup schedule..."));
     if (data) await loadBackupSchedules();
   }
@@ -3633,11 +3640,14 @@ function App() {
       setNotice(tr("Saved {0} destination {1}", data.kind === 's3' ? 'S3' : tr("SFTP"), data.name));
       setNewSftpTarget(BLANK_TARGET);
       await loadSftpTargets();
+      return true;
     }
+    return false;
   }
 
   async function deleteSftpTarget(id) {
-    if (!confirm(tr("Delete this backup destination?"))) return;
+    const target = sftpTargets.find(item => item.id === id);
+    if (!(await confirmDialog({ title: tr("Delete this backup destination?"), subject: target?.name, message: tr("The backups already there stay; schedules that send to it stop doing so."), danger: true, confirmLabel: tr("Delete destination") }))) return;
     const data = await request(`/maintenance/backup-targets/${id}`, { method: 'DELETE' }, tr("Deleting destination..."));
     if (data) await loadSftpTargets();
   }
@@ -3649,7 +3659,7 @@ function App() {
   }
 
   async function deleteTargetObject(id, key) {
-    if (!confirm(tr("Delete this backup from the bucket?\n{0}", key))) return;
+    if (!(await confirmDialog({ title: tr("Delete this backup from the bucket?"), subject: key, danger: true, confirmLabel: tr("Delete") }))) return;
     const data = await request(`/maintenance/backup-targets/${id}/objects?key=${encodeURIComponent(key)}`,
       { method: 'DELETE' }, tr("Deleting from bucket..."));
     if (data?.deleted) {
@@ -3679,7 +3689,7 @@ function App() {
   }
 
   async function restoreBackup(file) {
-    if (!confirm(tr("Restore this backup to the current website?\n{0}", file))) return;
+    if (!(await confirmDialog({ title: tr("Restore this backup to the current website?"), subject: file.split('/').pop(), message: tr("The website's files and database are replaced by the backup's."), danger: true, confirmLabel: tr("Restore") }))) return;
     await request('/maintenance/restore', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), backup_file: file }) }, tr("Restoring backup..."));
   }
 
@@ -3717,7 +3727,7 @@ function App() {
   }
 
   async function restoreUserBackup(file) {
-    if (!confirm(tr("Restore this full user backup? Missing panel user and websites will be created.\n{0}", file))) return;
+    if (!(await confirmDialog({ title: tr("Restore this full user backup?"), subject: file.split('/').pop(), message: tr("Missing panel user and websites will be created."), confirmLabel: tr("Restore user") }))) return;
     const data = await request('/maintenance/user-restore', { method: 'POST', body: JSON.stringify({ backup_file: file }) }, tr("Restoring full user backup..."));
     if (data) {
       const parts = [
@@ -3749,14 +3759,14 @@ function App() {
     // "monday.tar.gz", so the account folder is what tells them apart.
     const found = await request(`/maintenance/backup-remote-copies?backup_file=${encodeURIComponent(file)}`, {}, '');
     const copies = found?.items || [];
-    if (copies.length === 0) {
-      return { ok: confirm(tr("Delete this backup?\n{0}", name)), alsoRemote: true };
-    }
-    const where = copies.map(item => `  - ${item.target} (${item.bucket}/${item.key})`).join('\n');
-    return {
-      ok: confirm(tr("Delete this backup?\n{0}\n\nThis also removes the copy on:\n{1}", name, where)),
-      alsoRemote: true,
-    };
+    const ok = await confirmDialog({
+      title: tr("Delete this backup?"), subject: name, danger: true, confirmLabel: tr("Delete"),
+      ...(copies.length ? {
+        message: tr("This also removes the copy on:"),
+        consequences: copies.map(item => `${item.target} (${item.bucket}/${item.key})`),
+      } : {}),
+    });
+    return { ok, alsoRemote: true };
   }
 
   async function deleteUserBackup(file) {
@@ -4787,6 +4797,13 @@ function App() {
       selectedFilePaths, selectedWebsiteId, storageUsageText, toggleAllFiles, toggleFileSelection, uploadProgress, uploadSiteFile,
       // SFTP (pages/Sftp.jsx).
       createSftpAccount, loadSftp, openProfileModal, renderCopyBlock, setSftpForm, setShowCreateSftp, sftpForm, sftpInfo, showCreateSftp,
+      // Backup & Restore (pages/Backups.jsx).
+      backupJobs, backupSchedules, backupTab, backups, createBackup, createBackupSchedule, createSftpTarget, createUserBackup,
+      cronScheduleLabel, deleteBackup, deleteBackupSchedule, deleteSftpTarget, deleteTargetObject, deleteUserBackup, downloadBackup,
+      downloadUserBackup, loadBackupJobs, loadSftpTargets, loadTargetObjects, newBackupSchedule, newSftpTarget, refreshBackupArea,
+      refreshScheduledBackupArea, refreshUserBackupArea, renderRestoreWizard, renderSchedulePicker, restoreBackup, restoreUserBackup,
+      runBackupScheduleNow, selectedBackupUserId, selectedSftpTargetId, setNewBackupSchedule, setNewSftpTarget, setSelectedBackupUserId,
+      setSelectedSftpTargetId, sftpTargets, targetObjects, testBackupTarget, uploadBackup, userBackups,
     };
   }
   const sideItems = sidebarItems(navCtx);
@@ -5292,11 +5309,10 @@ function App() {
           ? tr("Administrators and resellers open a customer's terminal by logging in as the customer.")
           : tr("The terminal is not part of this account's package.")}</p></section>;
     }
-    return <section className="section">
-      <div className="section-title"><div><h2>{tr("Terminal")}</h2>
-        <p className="hint">{tr("A shell in your home folder. To start in a website's folder with its PHP version, open the terminal from the website's Advanced tab.")}</p></div></div>
-      <Terminal apiBase={API} />
-    </section>;
+    return <>
+      <PageHeader subtitle={tr("A shell in your home folder. To start in a website's folder with its PHP version, open the terminal from the website's Advanced tab.")}/>
+      <section className="section"><Terminal apiBase={API} /></section>
+    </>;
   }
 
   // One website's certificate: on the SSL page with a website picker, and as
@@ -5707,273 +5723,6 @@ function App() {
         </div>}
       </section>
     </div>;
-  }
-
-  function renderBackups() {
-    const selectedBackupUser = users.find(user => String(user.id) === String(selectedBackupUserId));
-    const userNameById = id => users.find(user => String(user.id) === String(id))?.username || `User #${id}`;
-    const scheduleUserLabel = item => {
-      if (item.all_users) return tr("All users");
-      const ids = (item.user_ids && item.user_ids.length > 0) ? item.user_ids : (item.user_id ? [item.user_id] : []);
-      return ids.length ? ids.map(userNameById).join(', ') : 'No users';
-    };
-    const jobTitle = job => ({ site_backup: tr("Website backup"), user_backup: tr("Full user backup"), sftp_backup: tr("SFTP backup") }[job.kind] || tr("Backup task"));
-    const jobDetail = job => job.error || job.remote_file || job.backup_file || job.message || job.status;
-    const jobTimestamp = job => {
-      const stamp = job.finished_at || job.started_at || job.created_at || '';
-      if (!stamp) return 'No timestamp';
-      const date = new Date(stamp);
-      return Number.isNaN(date.getTime()) ? stamp : new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Asia/Ho_Chi_Minh',
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      }).format(date).replace(',', '');
-    };
-    const backupTabs = isAdmin
-      ? [
-        ['website', tr("Backup website"), Globe],
-        ['user', tr("Backup user"), Users],
-        ['restore', tr("Restore"), RotateCcw],
-        ['schedule', tr("Scheduled backups"), Clock],
-        ['destination', tr("Backup Destination"), Network],
-        ['logs', tr("Backup logs"), FileText],
-      ]
-      : [
-        ['website', tr("Backup website"), Globe],
-        ['logs', tr("Backup logs"), FileText],
-      ];
-    const activeBackupTab = backupTabs.some(([id]) => id === backupTab) ? backupTab : 'website';
-
-    return <section className="section backups-page">
-      <h2>{tr("Backups")}</h2>
-      <div className="segmented-control backup-tabs" role="tablist" aria-label={tr("Backup sections")}>
-        {backupTabs.map(([id, label, Icon]) => <button
-          key={id}
-          type="button"
-          role="tab"
-          aria-selected={activeBackupTab === id}
-          className={activeBackupTab === id ? 'active' : ''}
-          onClick={() => setBackupTab(id)}
-        ><Icon size={14}/>{label}</button>)}
-      </div>
-
-      {activeBackupTab === 'logs' && <div className="backup-tab-panel backup-logs-panel">
-        <div className="backup-panel-title">
-          <div><h3>{tr("Backup logs")}</h3><p className="hint">{tr("Recent queued, running, completed, and failed backup tasks.")}</p></div>
-          <button className="secondary" disabled={!!loading} onClick={() => loadBackupJobs(true)}><RefreshCw size={14}/> {tr("Refresh")}</button>
-        </div>
-        {backupJobs.length === 0 && <EmptyState icon={FileText} message={tr("No backup logs found.")} />}
-        {backupJobs.length > 0 && <div className="backup-job-list">
-          {backupJobs.map(job => <div className={`backup-job ${job.status}`} key={job.job_id}>
-            <Clock size={14}/>
-            <span>
-              <strong>{jobTitle(job)}</strong>
-              <small>{jobDetail(job)}</small>
-              {(job.status === 'running' || job.status === 'queued') && <span className="job-progress">
-                <span className={`progress-bar${job.progress_percent == null ? ' indeterminate' : ''}`}>
-                  <span className="progress-bar-fill" style={job.progress_percent == null ? undefined : { width: `${job.progress_percent}%` }} />
-                </span>
-                {/* No number when nothing countable is happening -- taring one
-                    site's tree has no milestones to report. */}
-                {job.progress_percent != null && <small className="job-progress-pct">{Math.round(job.progress_percent)}%</small>}
-              </span>}
-              <small className="backup-job-time">{jobTimestamp(job)}</small>
-            </span>
-            <span className={job.status === 'done' ? 'badge ok' : job.status === 'error' ? 'badge bad' : 'badge'}>{job.status}</span>
-          </div>)}
-        </div>}
-      </div>}
-
-      {activeBackupTab === 'website' && <div className="backup-tab-panel">
-        <div className="backup-panel-title">
-          <div><h3>{tr("Backup website")}</h3><p className="hint">{tr("Backups include website source files and a database SQL export.")}</p></div>
-        </div>
-        <WebsiteSelect />
-        <div className="actions backup-toolbar">
-          <button disabled={!selectedWebsiteId || !!loading} onClick={createBackup}><Plus size={14}/> {tr("Create backup")}</button>
-          <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={refreshBackupArea}><RefreshCw size={14}/> {tr("Refresh")}</button>
-          <label className="upload-button secondary">
-            <Upload size={14}/> {tr("Upload backup")}
-            <input type="file" accept=".tar.gz,application/gzip" onChange={e => { uploadBackup(e.target.files?.[0]); e.target.value = ''; }} />
-          </label>
-        </div>
-        {backups.length === 0 && selectedWebsiteId && <EmptyState icon={Archive} message={tr("No backups found for this website.")} action={{ label: tr("Create backup"), icon: Plus, onClick: () => { if (!loading) createBackup(); } }} />}
-        <div className="backup-list">
-          {backups.map(file => <div className="backup-item" key={file}>
-            <span>{file.split('/').pop()}</span>
-            <div className="actions">
-              <button className="secondary" disabled={!!loading} onClick={() => downloadBackup(file)}><Download size={14}/> {tr("Download")}</button>
-              <button className="secondary" disabled={!!loading} onClick={() => restoreBackup(file)}><RotateCcw size={14}/> {tr("Restore")}</button>
-              <button className="danger" disabled={!!loading} onClick={() => deleteBackup(file)}><Trash2 size={14}/></button>
-            </div>
-          </div>)}
-        </div>
-      </div>}
-
-      {isAdmin && activeBackupTab === 'user' && <div className="backup-tab-panel">
-        <div className="backup-panel-title">
-          <div><h3>{tr("Backup user")}</h3><p className="hint">{tr("Includes the panel user, all owned websites, source files, database dumps, and restore metadata.")}</p></div>
-          <button className="secondary" disabled={!!loading} onClick={refreshUserBackupArea}><RefreshCw size={14}/> {tr("Reload")}</button>
-        </div>
-        <div className="sftp-run-row user-backup-row backup-run-row">
-          <select value={selectedBackupUserId} onChange={e => setSelectedBackupUserId(e.target.value)}>
-            <option value="">{tr("Select user")}</option>
-            {users.map(user => <option key={user.id} value={user.id}>{user.username}</option>)}
-          </select>
-          <select value={selectedSftpTargetId} onChange={e => setSelectedSftpTargetId(e.target.value)}>
-            <option value="">{tr("Local only")}</option>
-            {sftpTargets.map(target => <option key={target.id} value={target.id}>{target.name}</option>)}
-          </select>
-          <button disabled={!selectedBackupUserId || !!loading} onClick={createUserBackup}><Archive size={14}/> {tr("Create backup")}</button>
-        </div>
-        {selectedBackupUser && <p className="hint">{tr("Current user:")} <strong>{selectedBackupUser.username}</strong></p>}
-        <div className="actions backup-subactions">
-          <button className="secondary" disabled={!selectedBackupUserId || !!loading} onClick={() => listUserBackups()}><RefreshCw size={14}/> {tr("Refresh list")}</button>
-        </div>
-        {selectedBackupUserId && userBackups.length === 0 && <EmptyState icon={Archive} message={tr("No user backups found.")} />}
-        <div className="backup-list">
-          {userBackups.map(file => <div className="backup-item" key={file}>
-            <span>{file.split('/').pop()}</span>
-            <div className="actions">
-              <button className="secondary" disabled={!!loading} onClick={() => downloadUserBackup(file)}><Download size={14}/> {tr("Download")}</button>
-              <button className="secondary" disabled={!!loading} onClick={() => restoreUserBackup(file)}><RotateCcw size={14}/> {tr("Restore user")}</button>
-              <button className="danger" disabled={!!loading} onClick={() => deleteUserBackup(file)}><Trash2 size={14}/></button>
-            </div>
-          </div>)}
-        </div>
-
-      </div>}
-
-      {isAdmin && activeBackupTab === 'restore' && renderRestoreWizard()}
-
-      {isAdmin && activeBackupTab === 'schedule' && <div className="backup-tab-panel">
-        <div className="backup-panel-title">
-          <div><h3>{tr("Scheduled backups")}</h3><p className="hint">{tr("Runs a full user backup on a schedule, with an optional off-server destination. A daily schedule rotates through seven files named for the day —")} <code>username-monday.tar.gz</code> {tr("and so on — so you keep a week and the eighth day overwrites the first. With a destination, that week is kept there: each archive is removed from this server once it has uploaded, and stays here only if the upload fails.")}</p></div>
-          <button className="secondary" disabled={!!loading} onClick={refreshScheduledBackupArea}><RefreshCw size={14}/> {tr("Refresh")}</button>
-        </div>
-        <div className="backup-schedule-builder">
-          <div className="field"><span className="field-label">{tr("Accounts")}</span>
-            <label className="check-line">
-              <input type="checkbox" checked={!!newBackupSchedule.all_users} onChange={e => setNewBackupSchedule(prev => ({ ...prev, all_users: e.target.checked }))} />
-              {tr("All users")}
-            </label>
-            {!newBackupSchedule.all_users && <select multiple value={newBackupSchedule.user_ids || []} onChange={e => setNewBackupSchedule(prev => ({ ...prev, user_ids: Array.from(e.target.selectedOptions, option => option.value) }))}>
-              {users.map(user => <option key={user.id} value={String(user.id)}>{user.username}</option>)}
-            </select>}
-          </div>
-          <div className="field"><span className="field-label">{tr("Schedule")}</span>{renderSchedulePicker('backup', newBackupSchedule.schedule, value => setNewBackupSchedule(prev => ({ ...prev, schedule: value })), 'backup-schedule-input')}</div>
-          <div className="field"><span className="field-label">{tr("Destination")}</span>
-            <select value={newBackupSchedule.target_id} onChange={e => setNewBackupSchedule(prev => ({ ...prev, target_id: e.target.value }))}>
-              <option value="">{tr("Local only")}</option>
-              {sftpTargets.map(target => <option key={target.id} value={target.id}>{target.name}</option>)}
-            </select>
-          </div>
-          <button className="backup-schedule-add" disabled={(!newBackupSchedule.all_users && (!newBackupSchedule.user_ids || newBackupSchedule.user_ids.length === 0)) || !!loading} onClick={createBackupSchedule}><Clock size={14}/> {tr("Schedule")}</button>
-        </div>
-        <div className="backup-list">
-          {backupSchedules.map(item => {
-            const scheduleTarget = sftpTargets.find(target => target.id === item.target_id);
-            return <div className="backup-item" key={item.id}>
-              <span>{scheduleUserLabel(item)} - {cronScheduleLabel(item.schedule)}{scheduleTarget ? ` - ${scheduleTarget.name}` : ''}
-                {(() => {
-                  // A run started from this row reports on this row. Sending
-                  // someone to another tab to find out whether their click did
-                  // anything is how it reads as doing nothing.
-                  const live = backupJobs.find(job => job.schedule_id === item.id
-                    && (job.status === 'running' || job.status === 'queued'));
-                  if (!live) return <small>{item.last_status}: {item.last_message || tr("not run yet")}</small>;
-                  return <>
-                    <small>{live.message || tr("Running")}</small>
-                    <span className="job-progress">
-                      <span className={`progress-bar${live.progress_percent == null ? ' indeterminate' : ''}`}>
-                        <span className="progress-bar-fill" style={live.progress_percent == null ? undefined : { width: `${live.progress_percent}%` }} />
-                      </span>
-                      {live.progress_percent != null && <small className="job-progress-pct">{Math.round(live.progress_percent)}%</small>}
-                    </span>
-                  </>;
-                })()}
-              </span>
-              <div className="actions">
-                <button className="secondary" disabled={!!loading} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14}/> {tr("Run now")}</button>
-                <button className="danger" disabled={!!loading} onClick={() => deleteBackupSchedule(item.id)}><Trash2 size={14}/></button>
-              </div>
-            </div>;
-          })}
-        </div>
-      </div>}
-
-      {isAdmin && activeBackupTab === 'destination' && <div className="backup-tab-panel">
-        <div className="backup-panel-title">
-          <div><h3>{tr("Backup Destination")}</h3><p className="hint">{tr("Where off-server backup copies are sent. SFTP, or any S3-compatible object storage.")}</p></div>
-          <button className="secondary" disabled={!!loading} onClick={loadSftpTargets}><RefreshCw size={14}/> {tr("Refresh")}</button>
-        </div>
-        <div className="sftp-form sftp-target-form">
-          <input value={newSftpTarget.name} onChange={e => setNewSftpTarget(prev => ({ ...prev, name: e.target.value }))} placeholder={tr("Destination name")} />
-          <select value={newSftpTarget.kind} onChange={e => setNewSftpTarget(prev => ({ ...prev, kind: e.target.value }))}>
-            <option value="sftp">{tr("SFTP")}</option>
-            <option value="s3">{tr("S3 compatible")}</option>
-          </select>
-
-          {newSftpTarget.kind === 'sftp' ? <>
-            <input value={newSftpTarget.host} onChange={e => setNewSftpTarget(prev => ({ ...prev, host: e.target.value }))} placeholder={tr("Host")} />
-            <input value={newSftpTarget.port} onChange={e => setNewSftpTarget(prev => ({ ...prev, port: e.target.value }))} placeholder="22" inputMode="numeric" />
-            <input value={newSftpTarget.username} onChange={e => setNewSftpTarget(prev => ({ ...prev, username: e.target.value }))} placeholder={tr("Username")} />
-            <input value={newSftpTarget.password} onChange={e => setNewSftpTarget(prev => ({ ...prev, password: e.target.value }))} placeholder={tr("Password")} type="password" />
-            <input value={newSftpTarget.remote_path} onChange={e => setNewSftpTarget(prev => ({ ...prev, remote_path: e.target.value }))} placeholder="/backups/opanel" />
-            <textarea value={newSftpTarget.private_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, private_key: e.target.value }))} placeholder={tr("Private key (optional)")} rows={4} />
-          </> : <>
-            <input value={newSftpTarget.s3_bucket} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_bucket: e.target.value }))} placeholder={tr("Bucket")} />
-            <input value={newSftpTarget.s3_endpoint} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_endpoint: e.target.value }))} placeholder={tr("Endpoint - leave empty for AWS")} />
-            <input value={newSftpTarget.s3_region} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_region: e.target.value }))} placeholder={tr("us-east-1")} />
-            <input value={newSftpTarget.s3_access_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_access_key: e.target.value }))} placeholder={tr("Access key")} />
-            <input value={newSftpTarget.s3_secret_key} onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_secret_key: e.target.value }))} placeholder={tr("Secret key")} type="password" />
-            <input value={newSftpTarget.remote_path} onChange={e => setNewSftpTarget(prev => ({ ...prev, remote_path: e.target.value }))} placeholder={tr("Key prefix, e.g. opanel/backups")} />
-            <label className="check-line">
-              <input type="checkbox" checked={!!newSftpTarget.s3_use_path_style}
-                onChange={e => setNewSftpTarget(prev => ({ ...prev, s3_use_path_style: e.target.checked }))} />
-              {tr("Path-style addressing (MinIO, Ceph)")}
-            </label>
-          </>}
-
-          <button disabled={!!loading || !newSftpTarget.name || (newSftpTarget.kind === 's3'
-            ? (!newSftpTarget.s3_bucket || !newSftpTarget.s3_access_key || !newSftpTarget.s3_secret_key)
-            : (!newSftpTarget.host || !newSftpTarget.username || (!newSftpTarget.password && !newSftpTarget.private_key)))}
-            onClick={createSftpTarget}><Plus size={14}/> {tr("Save destination")}</button>
-        </div>
-        {sftpTargets.length === 0 && <EmptyState icon={Network} message={tr("No backup destinations found.")} />}
-        <div className="backup-list">
-          {sftpTargets.map(target => <div className="backup-item" key={target.id}>
-            <span>
-              <span className="badge">{target.kind === 's3' ? 'S3' : tr("SFTP")}</span>{' '}
-              {target.name} &mdash; {target.kind === 's3'
-                ? `${target.s3_bucket}/${target.remote_path.replace(/^\/+/, '')}${target.s3_endpoint ? ` @ ${target.s3_endpoint}` : ''}`
-                : `${target.username}@${target.host}:${target.remote_path}`}
-            </span>
-            <span className="backup-item-actions">
-              {target.kind === 's3' && <button className="secondary" disabled={!!loading} onClick={() => loadTargetObjects(target.id)}>
-                {targetObjects.id === target.id ? tr("Hide files") : tr("Files")}
-              </button>}
-              {target.kind === 's3' && <button className="secondary" disabled={!!loading} onClick={() => testBackupTarget(target.id)}>{tr("Test")}</button>}
-              <button className="danger" disabled={!!loading} onClick={() => deleteSftpTarget(target.id)}><Trash2 size={14}/></button>
-            </span>
-          </div>)}
-          {targetObjects.id && <div className="backup-list target-objects">
-            {targetObjects.items.length === 0
-              ? <p className="hint">{tr("Nothing in")} {targetObjects.bucket} {tr("under this prefix yet.")}</p>
-              : targetObjects.items.map(item => <div className="backup-item" key={item.key}>
-                  <span>{item.name} <small>{formatBytes(item.size)} &middot; {item.modified.slice(0, 19).replace('T', ' ')}</small></span>
-                  <button className="danger" disabled={!!loading}
-                    onClick={() => deleteTargetObject(targetObjects.id, item.key)}><Trash2 size={14}/></button>
-                </div>)}
-          </div>}
-        </div>
-      </div>}
-    </section>;
   }
 
   // Fail2ban is managed where the rest of the firewall is: its bans are
@@ -9161,7 +8910,7 @@ function App() {
     if (page === 'databases') return <DatabasesPage/>;
     if (page === 'cron') return renderCron();
     if (page === 'files') return <FilesPage/>;
-    if (page === 'backups') return renderBackups();
+    if (page === 'backups') return <BackupsPage/>;
     if (page === 'security') return renderSecurity();
     if (page === 'malware') return renderMalwareScanner();
     if (page === 'php') return renderPhpConfig();

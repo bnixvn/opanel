@@ -1,0 +1,32 @@
+/* Backup & Restore (pages/Backups.jsx), as SNPanel's: the labelled forms of
+   the backup tab, the sheets' user list, a backup's summary. The lists and
+   job rows are style.css's .backup-* rules. Not in a cascade layer: OPanel's
+   element rules are unlayered and would win over a layered class. */
+.backups-page{display:grid;gap:12px}
+.backups-page>.sn-tabs{margin-bottom:0}
+.bk-scope{justify-self:start;margin-bottom:12px}
+.bk-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;align-items:end;margin-bottom:12px}
+.bk-user-form{grid-template-columns:minmax(200px,1fr) minmax(200px,1fr) max-content}
+.bk-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}
+.bk-row-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.backups-page .bk-schedule-row>span,.backups-page .backup-item>span{word-break:normal;overflow-wrap:anywhere}
+.backups-page .backup-item code{font-family:var(--font-mono);font-size:13px;font-weight:600}
+.backups-page .backup-item small .badge{margin-right:4px}
+.backups-page .backup-item small{display:block}
+
+/* A backup's summary, in its confirm. */
+.bk-summary{display:grid;gap:8px;margin:0}
+.bk-summary>div{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px}
+.bk-summary dt{color:var(--text-muted);font-weight:600;font-size:13px}
+.bk-summary dd{margin:0;overflow-wrap:anywhere}
+
+/* The schedule sheet's users: every one a checkbox, in a box that scrolls. */
+.bk-users{display:grid;gap:8px}
+.bk-user-list{display:grid;gap:6px;max-height:220px;overflow:auto;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt)}
+
+@media (max-width:760px){
+  .bk-user-form{grid-template-columns:1fr}
+  .bk-actions{justify-content:stretch}
+  .bk-actions button,.bk-actions .upload-button{flex:1 1 auto}
+  .bk-summary>div{grid-template-columns:1fr;gap:2px}
+}
