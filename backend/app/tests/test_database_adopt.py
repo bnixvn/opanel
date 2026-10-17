@@ -151,3 +151,23 @@ def test_a_new_account_must_be_new_and_not_another_databases(env):
     assert client.post("/api/databases/adopt", json={"db_name": "carol_main", "owner_id": carol}).status_code == 409
     assert client.post("/api/databases/adopt", json={"db_name": "gone", "owner_id": carol}).status_code == 404
     assert env.maria.adopted == []
+
+
+def test_only_the_config_that_names_the_database_is_given_the_password(tmp_path, monkeypatch):
+    root = tmp_path / "carol.example"
+    (root / "public_html" / "blog").mkdir(parents=True)
+    (root / "public_html" / "wp-config.php").write_text(
+        "<?php\ndefine('DB_NAME', 'legacy');\ndefine('DB_USER', 'old');\ndefine('DB_PASSWORD', 'old');\n", encoding="utf-8")
+    (root / "public_html" / "blog" / "wp-config.php").write_text(
+        "<?php\ndefine('DB_NAME', 'blogdb');\ndefine('DB_USER', 'blog');\ndefine('DB_PASSWORD', 'keep');\n", encoding="utf-8")
+    monkeypatch.setattr(databases_api.settings, "command_dry_run", False)
+    monkeypatch.setattr(databases_api.da_import, "_site_config_writer",
+                        lambda root_path, user: lambda path, text: path.write_text(text, encoding="utf-8"))
+    site = SimpleNamespace(root_path=str(root), linux_user="carol", document_root="public_html", domain="carol.example")
+
+    changed = databases_api._point_site_configs(site, "legacy", "carol_legacy", "N3w-pass")
+
+    assert changed == ["public_html/wp-config.php"]
+    main = (root / "public_html" / "wp-config.php").read_text(encoding="utf-8")
+    assert "'carol_legacy'" in main and "'N3w-pass'" in main
+    assert "'keep'" in (root / "public_html" / "blog" / "wp-config.php").read_text(encoding="utf-8")

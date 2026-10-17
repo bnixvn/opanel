@@ -142,7 +142,8 @@ export default function DatabasesPage() {
     // Its own account when it has one the panel could take over.
     const own = item.grantees.find((g) => g.adoptable && g.user === item.db_name) || item.grantees.find((g) => g.adoptable);
     setAdopting({
-      item, db_name: item.db_name, owner_id: String(owners[0]?.id || ''), website_id: '',
+      // Whose it becomes is chosen, never taken from the top of the list.
+      item, db_name: item.db_name, owner_id: '', website_id: '',
       account: own ? own.user : '', new_user: item.db_name, revoke_others: true, force: false,
     });
   }
@@ -314,6 +315,7 @@ export default function DatabasesPage() {
         <div className="sn-drawer-grid">
           <Field label={t('Owner')}>
             <select value={adopting.owner_id} onChange={(e) => setAdopting((prev) => ({ ...prev, owner_id: e.target.value, website_id: '' }))}>
+              <option value="" disabled>{t('Choose an account')}</option>
               {owners.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
             </select>
           </Field>

@@ -120,7 +120,7 @@ def _point_site_configs(website: Website, db_name: str, db_user: str, db_passwor
     if settings.command_dry_run or not website.linux_user:
         return []
     root = Path(website.root_path).resolve()
-    public = site_users.document_root(root)
+    public = site_users.document_root(root, website.document_root or site_users.PUBLIC_DIR)
     write = da_import._site_config_writer(str(root), website.linux_user)
     changed: list[Path] = []
     for directory in da_import._candidate_config_dirs(public):
