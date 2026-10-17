@@ -22,6 +22,7 @@ import WebsitesPage from './pages/Websites';
 import WebsiteDetailPage from './pages/WebsiteDetail';
 import DatabasesPage from './pages/Databases';
 import FilesPage from './pages/Files';
+import SftpPage from './pages/Sftp';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import Switch from './components/Switch';
 import { isWebsitePath } from './lib/websites';
@@ -623,7 +624,6 @@ function App() {
   const [gitBranchPick, setGitBranchPick] = useState('');
   const [gitOpLog, setGitOpLog] = useState(null);
   const [gitSettings, setGitSettings] = useState(null);
-  const [sftpPasswordFor, setSftpPasswordFor] = useState(null);
   // Create forms stay folded until asked for, so each page opens on its list.
   const [showCreateSite, setShowCreateSite] = useState(false);
   const [showCreateDb, setShowCreateDb] = useState(false);
@@ -2184,19 +2184,6 @@ function App() {
       setShowCreateSftp(false);
       await loadSftp();
     }
-  }
-
-  async function saveSftpPassword() {
-    if (!sftpPasswordFor) return;
-    const { account, password } = sftpPasswordFor;
-    const data = await request(`/sftp/accounts/${account.id}/password`, { method: 'POST', body: JSON.stringify({ password }) }, tr("Changing password..."));
-    if (data) { setSftpPasswordFor(null); setNotice(tr("Password of {0} changed.", account.username)); }
-  }
-
-  async function deleteSftpAccount(account) {
-    if (!confirm(tr("Delete SFTP account {0}? Files in its folder are kept.", account.username))) return;
-    const data = await request(`/sftp/accounts/${account.id}`, { method: 'DELETE' }, tr("Deleting SFTP account..."));
-    if (data) { setNotice(tr("SFTP account {0} deleted.", account.username)); await loadSftp(); }
   }
 
   async function loadGitInfo() {
@@ -4798,6 +4785,8 @@ function App() {
       downloadFile, extractArchive, fileBreadcrumbs, fileJobs, fileListPath, files, formatFileTime, isExtractableArchive, isTextEditable,
       listFiles, makeFile, makeFileDirectory, moveSelectedFiles, openChmod, openFileEditorTab, parentFilePath, renameFileItem,
       selectedFilePaths, selectedWebsiteId, storageUsageText, toggleAllFiles, toggleFileSelection, uploadProgress, uploadSiteFile,
+      // SFTP (pages/Sftp.jsx).
+      createSftpAccount, loadSftp, openProfileModal, renderCopyBlock, setSftpForm, setShowCreateSftp, sftpForm, sftpInfo, showCreateSftp,
     };
   }
   const sideItems = sidebarItems(navCtx);
@@ -6427,99 +6416,6 @@ function App() {
         <button type="button" disabled={!!loading || !form.name.trim()} onClick={saveGitSettings}><Save size={14}/> {tr("Save")}</button>
       </div>
     </section>;
-  }
-
-  function renderSftp() {
-    const info = sftpInfo || {};
-    const host = info.host || window.location.hostname;
-    const port = info.port || 22;
-    const accounts = info.accounts || [];
-    const endUsers = users.filter(user => user.role !== 'admin');
-    const ownerId = isAdmin ? Number(sftpForm.owner_id) || null : currentUser?.id;
-    const owner = isAdmin ? endUsers.find(user => user.id === ownerId) : currentUser;
-    const ownerSites = websites.filter(site => ownerId && site.owner_id === ownerId);
-    const prefix = owner ? `${owner.username.toLowerCase()}_` : '';
-    const canCreate = !!owner && /^[a-z0-9]{1,16}$/.test(sftpForm.suffix.trim().toLowerCase()) && sftpForm.password.length >= 12;
-    const createOpen = showCreateSftp || (!isAdmin && sftpInfo && accounts.length === 0);
-    return <>
-      <section className="section">
-        <div className="section-title">
-          <div><h2>{tr("SFTP connection")}</h2>
-            <p className="hint">{tr("Use FileZilla, WinSCP, Cyberduck or any SFTP client. SSH shells are not available; each login only sees its own folder.")}</p></div>
-          <button className="secondary" disabled={!!loading} onClick={loadSftp}><RefreshCw size={14}/> {tr("Refresh")}</button>
-        </div>
-        <div className="sftp-connect-grid">
-          {renderCopyBlock(tr("Host"), host)}
-          {renderCopyBlock(tr("Port"), String(port))}
-          {info.primary && renderCopyBlock(tr("Username"), info.primary.username)}
-        </div>
-        {info.primary && <div className="info-box sftp-primary">
-          <strong>{tr("Your main login")}</strong>
-          <p className="hint">{tr("Password: the same as your panel password. It opens at / — your whole account, one folder per website (for example /{0}/public_html).", websites[0]?.domain || 'example.com')}</p>
-          <div className="actions"><button className="mini secondary" onClick={openProfileModal}><KeyRound size={13}/> {tr("Change password")}</button></div>
-        </div>}
-        {info.primary && renderCopyBlock(tr("Command line"), `sftp -P ${port} ${info.primary.username}@${host}`)}
-      </section>
-
-      <section className="section">
-        <div className="section-title">
-          <div><h2>{tr("Extra SFTP accounts")}</h2>
-            <p className="hint">{tr("A separate login and password for one folder — for a developer or designer who should see one website and nothing else. Up to {0} per account.", info.max_accounts || 10)}</p></div>
-          <div className="actions">
-            {!createOpen && <button type="button" onClick={() => setShowCreateSftp(true)}><Plus size={15}/> {tr("New SFTP account")}</button>}
-          </div>
-        </div>
-
-        {createOpen && <div className="create-inline">
-          <div className="create-inline-head">
-            <strong>{tr("New SFTP account")}</strong>
-            {(accounts.length > 0 || isAdmin) && <button type="button" className="secondary icon-only mini" onClick={() => setShowCreateSftp(false)} aria-label={tr("Close")} title={tr("Close")}><X size={15}/></button>}
-          </div>
-          <div className="sftp-create-grid">
-            {isAdmin && <div className="field"><span className="field-label">{tr("Hosting account")}</span>
-              <select value={sftpForm.owner_id} onChange={e => setSftpForm(prev => ({ ...prev, owner_id: e.target.value, website_id: '' }))}>
-                <option value="">{tr("-- Select account --")}</option>
-                {endUsers.map(user => <option key={user.id} value={user.id}>{user.username}</option>)}
-              </select>
-            </div>}
-            <div className="field"><span className="field-label">{tr("Name")}</span>
-              <div className="prefixed-input"><span>{prefix || '…_'}</span>
-                <input value={sftpForm.suffix} maxLength={16} placeholder="dev" onChange={e => setSftpForm(prev => ({ ...prev, suffix: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '') }))} />
-              </div>
-            </div>
-            <div className="field"><span className="field-label">{tr("Folder")}</span>
-              <select value={sftpForm.website_id} disabled={!owner} onChange={e => setSftpForm(prev => ({ ...prev, website_id: e.target.value }))}>
-                <option value="">{tr("Whole account")}</option>
-                {ownerSites.map(site => <option key={site.id} value={site.id}>{site.domain}</option>)}
-              </select>
-            </div>
-            <div className="field"><span className="field-label">{tr("Subfolder (optional)")}</span>
-              <input value={sftpForm.subpath} placeholder={sftpForm.website_id ? 'public_html' : ''} onChange={e => setSftpForm(prev => ({ ...prev, subpath: e.target.value }))} />
-            </div>
-            <div className="field"><span className="field-label">{tr("Password")}</span>
-              <div className="password-with-generate">
-                <input value={sftpForm.password} placeholder={tr("Min 12 characters")} onChange={e => setSftpForm(prev => ({ ...prev, password: e.target.value }))} />
-                <button type="button" className="secondary icon-only" title={tr("Generate random password")} aria-label={tr("Generate random password")} onClick={() => setSftpForm(prev => ({ ...prev, password: generateRandomPassword() }))}><Dices size={15}/></button>
-              </div>
-            </div>
-            <button className="sftp-create-submit" disabled={!canCreate || !!loading} onClick={createSftpAccount}><Plus size={14}/> {tr("Create")}</button>
-          </div>
-          <p className="hint">{tr("Copy the password now — it is not shown again. Files uploaded through this login belong to the hosting account, so the website can use them.")}</p>
-        </div>}
-
-        {sftpInfo && accounts.length === 0 && !createOpen && <EmptyState icon={KeyRound} message={tr("No extra SFTP accounts yet.")} />}
-        {accounts.length > 0 && <div className="table">
-          {accounts.map(account => <div className="row sftp-row" key={account.id}>
-            <span className="sftp-row-name"><strong>{account.username}</strong>{isAdmin && account.owner && <small>{tr("Account")}: {account.owner}</small>}</span>
-            <span className="sftp-row-folder"><code>{account.directory}</code>{account.domain && <small>{account.domain}</small>}</span>
-            <span className="row-actions">
-              <button className="mini secondary" disabled={!!loading} onClick={() => setSftpPasswordFor({ account, password: generateRandomPassword() })}><KeyRound size={13}/> {tr("Change password")}</button>
-              <button className="mini danger" disabled={!!loading} onClick={() => deleteSftpAccount(account)} aria-label={tr("Delete {0}", account.username)} title={tr("Delete")}><Trash2 size={13}/></button>
-            </span>
-          </div>)}
-        </div>}
-      </section>
-    </>;
   }
 
   // --- Email page ---
@@ -9280,7 +9176,7 @@ function App() {
     if (page === 'mail') return renderMail();
     if (page === 'dns') return renderDns();
     if (page === 'notifications') return isAdmin ? renderNotificationCenter() : <DashboardPage/>;
-    if (page === 'sftp') return renderSftp();
+    if (page === 'sftp') return <SftpPage/>;
     if (page === 'git') return renderGit();
     if (page === 'terminal') return renderTerminalPage();
     if (page === 'services') return isAdmin ? renderServices() : <DashboardPage/>;
@@ -9494,26 +9390,6 @@ function App() {
         <div className="modal-actions">
           <button className="secondary-light" onClick={() => setForwarderEdit(null)}>{tr("Cancel")}</button>
           <button disabled={!!loading || splitAddresses(forwarderEdit.destinations).length === 0} onClick={saveForwarderEdit}><Save size={14}/> {tr("Save")}</button>
-        </div>
-      </div>
-    </div>}
-    {sftpPasswordFor && <div className="modal-overlay" onClick={() => setSftpPasswordFor(null)}>
-      <div className="modal-card" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>{tr("New password")} — {sftpPasswordFor.account.username}</h3>
-          <button className="secondary-light" onClick={() => setSftpPasswordFor(null)} aria-label={tr("Close")}><X size={16}/></button>
-        </div>
-        <div className="modal-body">
-          <div className="password-with-generate">
-            <input value={sftpPasswordFor.password} onChange={e => setSftpPasswordFor(prev => ({ ...prev, password: e.target.value }))} />
-            <button type="button" className="secondary icon-only" title={tr("Generate random password")} aria-label={tr("Generate random password")} onClick={() => setSftpPasswordFor(prev => ({ ...prev, password: generateRandomPassword() }))}><Dices size={15}/></button>
-            <button type="button" className="secondary icon-only" title={tr("Copy")} aria-label={tr("Copy")} onClick={() => { copyToClipboard(sftpPasswordFor.password); setNotice(tr("Copied to clipboard.")); }}><Copy size={15}/></button>
-          </div>
-          <p className="hint">{tr("Copy it before saving — it is not shown again. Open sessions of this login keep running until they disconnect.")}</p>
-        </div>
-        <div className="modal-actions">
-          <button className="secondary-light" onClick={() => setSftpPasswordFor(null)}>{tr("Cancel")}</button>
-          <button disabled={!!loading || sftpPasswordFor.password.length < 12} onClick={saveSftpPassword}><Save size={14}/> {tr("Save")}</button>
         </div>
       </div>
     </div>}
