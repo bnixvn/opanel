@@ -341,3 +341,28 @@ def test_the_error_tab_reads_the_new_location_and_delete_removes_it():
     text = _helper_text()
     start = text.index("  ols-vhost-delete)")
     assert '"${PHP_LOG_ROOT:?}/${safe_domain}"' in text[start:text.index(";;", start)]
+
+
+def test_a_wordpress_in_a_folder_gets_its_own_pretty_links_first(tmp_path):
+    """/blog/hello-world/ went to the root's front controller, and the root WordPress answered."""
+    root = tmp_path / "example.test"
+    (root / "public_html" / "blog.v2").mkdir(parents=True)
+    (root / "public_html" / "blog.v2" / "wp-settings.php").write_text("<?php")
+    (root / "public_html" / "images").mkdir()
+    rule = "RewriteRule ^blog\\.v2/ /blog.v2/index.php [QSA,L]"
+    # The website's own WordPress keeps its rules in `context /`: the folder's go before them.
+    rendered = openlitespeed.render_vhost(
+        "example.test", str(root), app_type="wordpress", php_version="8.4", rewrite_mode="front_controller")
+    context = _context_block(rendered)
+    assert rule in context and "RewriteRule ^blog\\.v2/xmlrpc\\.php$ - [F,L]" in context
+    assert context.index(rule) < context.index("RewriteRule . /index.php [L]")
+    assert "images" not in context
+    # A PHP website has its rules at vhost scope.
+    for mode in ("front_controller", "none"):
+        rendered = openlitespeed.render_vhost(
+            "example.test", str(root), app_type="php", php_version="8.4", rewrite_mode=mode)
+        scope = _vhost_scope(rendered)
+        assert rule in scope and "images" not in scope
+        if mode == "front_controller":
+            assert scope.index(rule) < scope.index("RewriteRule ^(.*)$ /index.php")
+        assert openlitespeed._rewrite_mode_from_config(rendered, "php") == mode

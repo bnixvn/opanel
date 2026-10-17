@@ -435,6 +435,40 @@ REWRITE_RULE_LINES = {
 }
 
 
+# A WordPress in a first-level folder of the website (example.com/blog).
+WP_FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+MAX_WP_FOLDERS = 20
+
+
+def _wordpress_folders(root_path: str, document_root: str) -> list[str]:
+    """The folders right under the public folder that hold a WordPress of their own."""
+    try:
+        base = Path(root_path) / document_root
+        found = [
+            entry.name for entry in sorted(base.iterdir(), key=lambda item: item.name)
+            if WP_FOLDER_RE.fullmatch(entry.name) and not entry.is_symlink()
+            and entry.is_dir() and (entry / "wp-settings.php").is_file()
+        ]
+    except OSError:
+        return []
+    return found[:MAX_WP_FOLDERS]
+
+
+def _wordpress_folder_rules(folders: list[str]) -> str:
+    """Each folder's pretty links to its own index.php; real files and folders
+    still win. Its xmlrpc.php is refused as the website's own is."""
+    rules = []
+    for folder in folders:
+        pattern = folder.replace(".", "\\.")
+        rules.append(
+            f"RewriteRule ^{pattern}/xmlrpc\\.php$ - [F,L]\n"
+            "RewriteCond %{REQUEST_FILENAME} !-f\n"
+            "RewriteCond %{REQUEST_FILENAME} !-d\n"
+            f"RewriteRule ^{pattern}/ /{folder}/index.php [QSA,L]"
+        )
+    return "\n".join(rules)
+
+
 # ---------------------------------------------------------------------------
 # Core rendering
 # ---------------------------------------------------------------------------
@@ -544,6 +578,18 @@ def _build_context(
     # is handed to index.php. Measured on a live install for all four modes.
     rewrite_block = ""
     vhost_rewrite_rules = REWRITE_RULE_LINES.get(checked_rewrite, "")
+    # A WordPress in a folder of the website answers its own pretty links. The
+    # site's front controller took /blog/hello-world/ and the root WordPress
+    # answered it -- found live on .41 -- and a plain PHP site had no rule at
+    # all. The folder's rule goes first: in `context /` beside the website's own
+    # WordPress rules, at vhost scope beside the other front controllers.
+    wp_folder_rules = ""
+    if checked_app != "static":
+        folder_rules = _wordpress_folder_rules(_wordpress_folders(root_path, safe_doc_root))
+        if checked_app == "wordpress":
+            wp_folder_rules = folder_rules
+        elif folder_rules:
+            vhost_rewrite_rules = folder_rules + ("\n" + vhost_rewrite_rules if vhost_rewrite_rules else "")
 
     # Resolve the site's own uid before anything reads it. `linux_user or
     # "www-data"` was the last place in the codebase that still elected the
@@ -584,6 +630,7 @@ def _build_context(
         "rewrite_mode": checked_rewrite,
         "rewrite_block": rewrite_block,
         "vhost_rewrite_rules": vhost_rewrite_rules,
+        "wp_folder_rules": wp_folder_rules,
         "custom_directives": "",
         "ssl_enabled": ssl_enabled,
         "has_ssl": has_ssl,
