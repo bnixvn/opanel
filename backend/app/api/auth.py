@@ -26,7 +26,7 @@ from app.core.permissions import Role, ensure_role, is_admin_role, is_reseller_r
 from app.core.security import create_access_token, hash_password, needs_rehash, verify_password
 from app.core.secrets import decrypt, encrypt
 from app.core.step_up import require_current_password, require_sensitive_action_step_up, verify_totp
-from app.services import demo_mode, notifications, passkeys
+from app.services import demo_mode, notifications, passkeys, terminal
 from app.models.entities import RevokedToken, User
 from app.schemas.schemas import (
     LoginResponse,
@@ -630,6 +630,10 @@ def session_status(
         # Set while an admin is logged in as this user: the panel offers the
         # way back.
         "impersonator": _impersonator(request) or None,
+        # The browser terminal: a customer whose package has it, or an admin
+        # or reseller logged in as one.
+        "terminal": terminal.access_problem(current_user) is None,
+        "terminal_enabled": bool(current_user.terminal_enabled),
     }
     user_data.update(storage_quota.storage_usage_summary(db, current_user))
     return {"authenticated": True, "user": user_data}

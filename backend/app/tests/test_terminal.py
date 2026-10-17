@@ -1,231 +1,296 @@
-"""Tests for terminal service."""
+"""The browser terminal (operator, 2026-10-17): a real shell, a sandbox per session.
+
+What must hold:
+- only a hosting customer whose package has it opens one; an administrator or
+  a reseller only by logging in as that customer, never as itself, never root;
+- at most two at once per account, closed when idle for 30 minutes, after
+  eight hours, when the browser goes away, and when the account loses it;
+- the sandbox is the helper's: the account's own user and slice, its own home
+  only, a private /tmp, its own processes only, a read-only system, no way up;
+- opening and closing are audited, keystrokes are not.
+"""
+import inspect
+import re
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from app.services import terminal as terminal_service
-from app.services.terminal import (
-    ALLOWED_COMMANDS,
-    MAX_OUTPUT_BYTES,
-    CommandResult,
-    _truncate_output,
-    exec_batch,
-    exec_command,
-    default_cwd,
-    is_command_allowed,
-    resolve_cwd,
-    split_command,
-)
+from app.api import terminal as terminal_api
+from app.api.deps import get_current_user
+from app.core.database import Base, get_db
+from app.core.security import create_access_token, hash_password
+from app.main import app
+from app.models.entities import AuditLog, HostingPlan, User, Website
+from app.services import provisioning, terminal
 
-
-class TestIsCommandAllowed:
-    """Tests for command whitelist validation."""
-
-    def test_allowed_commands(self):
-        """All whitelisted commands should be allowed."""
-        allowed = [
-            "php",
-            "composer",
-            "wp",
-            "node",
-            "npm",
-            "yarn",
-            "git",
-            "ls",
-            "cat",
-            "mkdir",
-            "rm",
-            "cp",
-            "mv",
-            "chmod",
-            "chown",
-            "pwd",
-            "touch",
-            "grep",
-            "find",
-            "tar",
-            "zip",
-            "unzip",
-            "curl",
-            "wget",
-            "diff",
-            "head",
-            "tail",
-            "less",
-        ]
-        for cmd in allowed:
-            assert is_command_allowed(cmd), f"Command {cmd} should be allowed"
-
-    def test_disallowed_commands(self):
-        """Commands not in whitelist should not be allowed.
-
-        Note: is_command_allowed only checks the first word (the executable).
-        Full command safety is enforced in opanel-helper.sh.
-        """
-        dangerous = [
-            "dd if=/dev/zero of=/dev/sda",
-            "nc -e /bin/bash",
-            "python -c 'import os'",
-            "bash -c 'rm -rf /'",
-            "sh -c 'cat /etc/passwd'",
-            "sudo su",
-            "vim",
-            "nano",
-            "emacs",
-            "chroot",
-        ]
-        for cmd in dangerous:
-            assert not is_command_allowed(cmd), f"Command {cmd} should NOT be allowed"
-
-    def test_empty_command(self):
-        """Empty command should not be allowed."""
-        assert not is_command_allowed("")
-        assert not is_command_allowed("   ")
-
-    def test_artisan_command(self):
-        """Artisan should be allowed (it's a PHP script executed via php)."""
-        assert is_command_allowed("artisan")
-
-    def test_multi_word_command(self):
-        """Only the executable is checked; args are passed without a shell."""
-        assert is_command_allowed("php artisan migrate --force")
-        assert split_command("composer create-project laravel/laravel .") == [
-            "composer",
-            "create-project",
-            "laravel/laravel",
-            ".",
-        ]
-
-    def test_invalid_shell_syntax(self):
-        """Malformed quoting is rejected before reaching the helper."""
-        assert not is_command_allowed("composer install '")
-
-    def test_phpunit_command(self):
-        """PHPUnit should be allowed."""
-        assert is_command_allowed("phpunit")
-
-    def test_whitelist_size(self):
-        """Whitelist should contain a reasonable number of commands."""
-        assert len(ALLOWED_COMMANDS) >= 20
-        assert len(ALLOWED_COMMANDS) <= 50
-        assert "wp" in ALLOWED_COMMANDS
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+HELPER = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+SESSION_FN = HELPER[HELPER.index("terminal_session() {"):HELPER.index("require_terminal_cwd() {")]
 
 
-class TestTruncateOutput:
-    """Tests for output truncation."""
-
-    def test_small_output_not_truncated(self):
-        """Small output should not be truncated."""
-        small = "Hello, World!"
-        assert _truncate_output(small) == small
-
-    def test_exact_limit_not_truncated(self):
-        """Output at exact limit should not be truncated."""
-        exact = "x" * MAX_OUTPUT_BYTES
-        assert _truncate_output(exact) == exact
-
-    def test_large_output_truncated(self):
-        """Large output should be truncated with notice."""
-        large = "x" * (MAX_OUTPUT_BYTES + 1000)
-        result = _truncate_output(large)
-        assert "..." in result
-        assert len(result.encode("utf-8")) <= MAX_OUTPUT_BYTES + 50  # Small buffer for notice
+def account(role="end_user", **extra):
+    defaults = dict(username="alice", email="a@example.test", role=role, is_active=True,
+                    hashed_password="x", terminal_enabled=False, token_version=0)
+    defaults.update(extra)
+    return User(**defaults)
 
 
-class TestCommandResult:
-    """Tests for CommandResult dataclass."""
-
-    def test_command_result_fields(self):
-        """CommandResult should have correct fields."""
-        result = CommandResult(exit_code=0, stdout="hello", stderr="")
-        assert result.exit_code == 0
-        assert result.stdout == "hello"
-        assert result.stderr == ""
-
-    def test_command_result_with_stderr(self):
-        """CommandResult should capture stderr."""
-        result = CommandResult(exit_code=1, stdout="", stderr="error message")
-        assert result.exit_code == 1
-        assert result.stderr == "error message"
+@pytest.fixture(autouse=True)
+def no_sessions():
+    terminal._sessions.clear()
+    yield
+    terminal._sessions.clear()
 
 
-class TestExecCommand:
-    def test_exec_passes_cwd_and_split_argv(self, monkeypatch):
-        captured = {}
+# --- who may open one ------------------------------------------------------------
 
-        def fake_privileged(helper_command, helper_args=None, check=True, **kwargs):
-            captured["helper_command"] = helper_command
-            captured["helper_args"] = helper_args
-            captured["check"] = check
-            return type("Result", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
-
-        monkeypatch.setattr(terminal_service.shell, "privileged", fake_privileged)
-        result = exec_command("siteuser", "php artisan migrate --force", cwd="/home/siteuser/example.com")
-
-        assert result.exit_code == 0
-        assert captured == {
-            "helper_command": "terminal-exec",
-            "helper_args": ["siteuser", "/home/siteuser/example.com", "php", "artisan", "migrate", "--force"],
-            "check": False,
-        }
-
-    def test_exec_passes_php_version_before_command(self, monkeypatch):
-        captured = {}
-
-        def fake_privileged(helper_command, helper_args=None, check=True, **kwargs):
-            captured["helper_command"] = helper_command
-            captured["helper_args"] = helper_args
-            captured["check"] = check
-            return type("Result", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
-
-        monkeypatch.setattr(terminal_service.shell, "privileged", fake_privileged)
-        result = exec_command(
-            "siteuser",
-            "composer install --no-dev",
-            cwd="/home/siteuser/example.com/public_html",
-            php_version="8.3",
-        )
-
-        assert result.exit_code == 0
-        assert captured == {
-            "helper_command": "terminal-exec",
-            "helper_args": [
-                "siteuser",
-                "/home/siteuser/example.com/public_html",
-                "--php-version=8.3",
-                "composer",
-                "install",
-                "--no-dev",
-            ],
-            "check": False,
-        }
-
-    def test_exec_rejects_cd_outside_session(self):
-        result = exec_command("siteuser", "cd public_html", cwd="/home/siteuser/example.com")
-        assert result.exit_code == 2
+def test_a_customer_whose_package_has_it():
+    assert terminal.access_problem(account(terminal_enabled=True)) is None
+    assert terminal.access_problem(account()) == "disabled", "off unless the package turns it on"
 
 
-class TestResolveCwd:
-    def test_default_cwd_prefers_public_html(self, tmp_path):
-        root = tmp_path / "example.com"
-        public = root / "public_html"
-        public.mkdir(parents=True)
-        assert default_cwd(str(root)) == str(public.resolve())
+@pytest.mark.parametrize("role", ["admin", "reseller"])
+def test_administrators_and_resellers_log_in_as_the_customer(role):
+    assert terminal.access_problem(account(role=role, terminal_enabled=True)) == "impersonate"
 
-    def test_default_cwd_falls_back_to_site_root(self, tmp_path):
-        root = tmp_path / "example.com"
-        root.mkdir()
-        assert default_cwd(str(root)) == str(root.resolve())
 
-    def test_resolve_inside_site(self, tmp_path):
-        root = tmp_path / "example.com"
-        public = root / "public_html"
-        public.mkdir(parents=True)
-        assert resolve_cwd(str(root), str(root), "public_html") == str(public.resolve())
+def test_not_a_disabled_account_nor_the_demo(monkeypatch):
+    assert terminal.access_problem(account(terminal_enabled=True, is_active=False)) == "inactive"
+    monkeypatch.setattr(terminal.demo_mode, "is_demo_account", lambda user: True)
+    assert terminal.access_problem(account(terminal_enabled=True)) == "demo"
 
-    def test_rejects_outside_site(self, tmp_path):
-        root = tmp_path / "example.com"
-        other = tmp_path / "other"
-        root.mkdir()
-        other.mkdir()
-        with pytest.raises(ValueError):
-            resolve_cwd(str(root), str(root), "../other")
+
+# --- how many, how long ---------------------------------------------------------------
+
+def test_two_sessions_at_once_per_account():
+    first = terminal.reserve(1, "alice", "home")
+    second = terminal.reserve(1, "alice", "site.test")
+    assert first and second and first.unit != second.unit
+    assert terminal.reserve(1, "alice", "home") is None
+    assert terminal.reserve(2, "bob", "home") is not None, "another account has its own two"
+    terminal.release(first)
+    assert terminal.reserve(1, "alice", "home") is not None
+
+
+def test_the_limits():
+    assert terminal.MAX_SESSIONS_PER_ACCOUNT == 2
+    assert terminal.IDLE_SECONDS == 30 * 60
+    assert terminal.MAX_SECONDS == 8 * 3600
+    assert "-p RuntimeMaxSec=8h" in SESSION_FN, "the unit ends at eight hours even without the panel"
+
+
+def test_ending_an_accounts_sessions_stops_their_units(monkeypatch):
+    stopped, told = [], []
+    monkeypatch.setattr(terminal, "stop_unit", stopped.append)
+    one = terminal.reserve(1, "alice", "home")
+    one.close_request = told.append
+    terminal.reserve(2, "bob", "home")
+    assert terminal.end_sessions(1, "access-changed") == 1
+    assert stopped == [one.unit] and told == ["access-changed"]
+
+
+def test_the_socket_closes_on_idle_time_access_and_disconnect():
+    bridge = inspect.getsource(terminal_api._bridge)
+    for reason in ('"idle"', '"max-time"', '"access-changed"', '"closed"', '"exit"'):
+        assert reason in bridge
+    serve = inspect.getsource(terminal_api._serve)
+    assert serve.index("terminal.hang_up") < serve.rindex("terminal.release"), "the shell ends before the slot frees"
+
+
+def test_a_session_is_ended_when_its_browser_session_is():
+    still = inspect.getsource(terminal_api._still_allowed)
+    assert "token_version" in still and "RevokedToken" in still and "access_problem" in still
+
+
+# --- the sandbox -------------------------------------------------------------------
+
+def test_unit_names_are_the_helpers():
+    pattern = re.search(r"TERMINAL_UNIT_RE='([^']+)'", HELPER).group(1)
+    pattern = pattern.replace("[[:alnum:]]", "[A-Za-z0-9]")
+    assert re.fullmatch(pattern, terminal.unit_name("alice_01", "0123456789ab"))
+    assert '[[ "$unit" == "opanel-term-$user-"* ]]' in SESSION_FN, "a unit carries the name of its own user"
+
+
+@pytest.mark.parametrize("prop", [
+    "User=$user", "ProtectSystem=strict", "ProtectHome=tmpfs", "BindPaths=$home", "PrivateTmp=yes",
+    "PrivateIPC=yes", "ProtectProc=invisible", "ProcSubset=pid", "NoNewPrivileges=yes",
+    "RestrictSUIDSGID=yes", '"CapabilityBoundingSet="', "PrivateDevices=yes", "RestrictNamespaces=yes",
+    "InaccessiblePaths=", '--slice="$slice"',
+])
+def test_the_sandbox(prop):
+    assert prop in SESSION_FN
+
+
+def test_only_a_hosting_accounts_user():
+    check = HELPER[HELPER.index("require_terminal_user() {"):HELPER.index("terminal_prepare_home() {")]
+    assert "require_linux_user" in check, "root and the system users are refused by name"
+    assert "uid >= 1000 && uid < 60000" in check
+    assert "$opanel_SFTP_GROUP" in check
+    hidden = re.search(r'TERMINAL_HIDDEN_PATHS="([^"]+)"', HELPER).group(1).split()
+    for path in ("/opt/opanel", "/etc/opanel", "/var/lib/opanel-sftp", "/var/log", "/var/lib/mysql"):
+        assert path in hidden
+
+
+def test_the_panel_starts_the_helper_on_a_pty_and_never_a_shell():
+    spawn = inspect.getsource(terminal.spawn)
+    assert '["setsid", "-c", "sudo", "-n", HELPER_PATH, "terminal-session"' in spawn
+    assert "shell=True" not in spawn
+
+
+def test_the_old_command_list_is_gone():
+    assert not hasattr(terminal, "ALLOWED_COMMANDS")
+    assert not hasattr(terminal, "exec_command")
+    assert not any(getattr(route, "path", "").startswith("/api/terminal/exec") for route in app.routes)
+
+
+def test_a_window_size_stays_sane():
+    assert terminal.clamp_size(10, 1) == (20, 5)
+    assert terminal.clamp_size(9999, 9999) == (500, 200)
+    assert terminal.clamp_size("x", None) == (terminal.DEFAULT_COLS, terminal.DEFAULT_ROWS)
+
+
+# --- the socket -----------------------------------------------------------------------
+
+@pytest.fixture
+def env(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    people = {
+        "root_admin": account(role="admin", username="root_admin"),
+        "reseller": account(role="reseller", username="reseller", terminal_enabled=True),
+        "alice": account(username="alice", terminal_enabled=True),
+        "bob": account(username="bob"),
+    }
+    db.add_all(people.values())
+    db.commit()
+    db.add(Website(domain="bob.test", owner_id=people["bob"].id, root_path="/home/bob/bob.test", linux_user="bob"))
+    db.commit()
+    monkeypatch.setattr(terminal_api, "SessionLocal", Session)
+    monkeypatch.setattr(terminal, "available", lambda: True)
+    client = TestClient(app)
+
+    def connect(name, path="/api/terminal/ws"):
+        token = create_access_token(name, {"tv": 0})
+        client.cookies.set("opanel_session", token)
+        with client.websocket_connect(path) as ws:
+            return ws.receive_json()
+
+    yield SimpleNamespace(db=db, people=people, connect=connect, Session=Session)
+    db.close()
+
+
+def test_an_administrator_gets_no_shell_of_its_own(env):
+    assert env.connect("root_admin") == {"type": "closed", "reason": "impersonate", "code": 4003}
+    assert env.connect("reseller")["reason"] == "impersonate"
+
+
+def test_a_customer_without_it_in_the_package(env):
+    assert env.connect("bob")["reason"] == "disabled"
+
+
+def test_someone_elses_website(env):
+    site = env.db.query(Website).filter(Website.domain == "bob.test").one()
+    assert env.connect("alice", f"/api/terminal/ws/{site.id}")["reason"] == "not-found"
+
+
+def test_a_third_session(env):
+    alice = env.people["alice"]
+    terminal.reserve(alice.id, "alice", "home")
+    terminal.reserve(alice.id, "alice", "home")
+    assert env.connect("alice")["reason"] == "too-many"
+
+
+def test_signed_out(env):
+    with TestClient(app).websocket_connect("/api/terminal/ws") as ws:
+        assert ws.receive_json()["reason"] == "signed-out"
+
+
+def test_opening_and_closing_are_audited_not_the_keystrokes():
+    serve = inspect.getsource(terminal_api._serve)
+    assert '"terminal_open"' in serve and '"terminal_close"' in serve
+    assert "by={impersonator}" in serve, "a session opened by an administrator says so"
+    assert "log_action" not in inspect.getsource(terminal_api._bridge)
+
+
+# --- the setting ----------------------------------------------------------------------
+
+@pytest.fixture
+def api(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    people = {
+        "root_admin": account(role="admin", username="root_admin"),
+        "plain_reseller": account(role="reseller", username="plain_reseller"),
+        "alice": account(username="alice"),
+    }
+    db.add_all(people.values())
+    db.commit()
+    people["alice"].reseller_id = people["plain_reseller"].id
+    db.commit()
+    ended = []
+    from app.api import users as users_api
+    monkeypatch.setattr(users_api.terminal, "end_sessions", lambda user_id, reason: ended.append((user_id, reason)))
+    monkeypatch.setattr(users_api.resource_limits, "sync_in_background", lambda: None)
+
+    def get_test_db():
+        session = Session()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    state = {}
+    app.dependency_overrides[get_db] = get_test_db
+    app.dependency_overrides[get_current_user] = lambda: state["user"]
+
+    def as_user(name):
+        state["user"] = db.get(User, people[name].id)
+        return TestClient(app)
+
+    try:
+        yield SimpleNamespace(db=db, people=people, as_user=as_user, ended=ended)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(get_current_user, None)
+        db.close()
+
+
+def test_a_reseller_offers_it_only_if_the_administrator_gave_it(api):
+    alice = api.people["alice"]
+    response = api.as_user("plain_reseller").patch(f"/api/users/{alice.id}", json={"terminal_enabled": True})
+    assert response.status_code == 403
+    response = api.as_user("plain_reseller").post("/api/plans", json={"slug": "p", "name": "P", "terminal_enabled": True})
+    assert response.status_code == 403
+
+
+def test_turning_it_off_ends_the_open_sessions(api):
+    alice = api.people["alice"]
+    response = api.as_user("root_admin").patch(f"/api/users/{alice.id}", json={"terminal_enabled": True})
+    assert response.status_code == 200 and response.json()["terminal_enabled"] is True
+    assert api.ended == []
+    response = api.as_user("root_admin").patch(f"/api/users/{alice.id}", json={"terminal_enabled": False})
+    assert response.json()["terminal_enabled"] is False
+    assert api.ended == [(alice.id, "access-changed")]
+
+
+def test_a_package_carries_it_to_the_account(api):
+    plan = provisioning.create_plan(api.db, slug="shell", name="Shell", terminal_enabled=True)
+    assert plan.terminal_enabled is True
+    source = inspect.getsource(provisioning)
+    assert "terminal_enabled=bool(plan.terminal_enabled)" in source
+    assert "user.terminal_enabled = bool(plan.terminal_enabled)" in source
+
+
+def test_deleting_an_account_ends_its_sessions_before_userdel():
+    from app.api import users as users_api
+    delete = inspect.getsource(users_api.delete_user)
+    assert delete.index("terminal.end_sessions") < delete.index("site_users.delete_panel_user")

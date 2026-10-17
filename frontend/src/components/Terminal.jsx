@@ -1,353 +1,190 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { tr } from '../i18n';
 
-function normalizeOutput(value) {
-  return String(value || '').replace(/\r?\n/g, '\r\n');
-}
+// A real shell (bash on a PTY) in a sandbox of its own on the server; see
+// backend/app/services/terminal.py. Keystrokes go up as binary frames, the
+// window size as JSON; the output comes back as binary frames, the panel's
+// own messages ("ready", "closed") as JSON. Leaving the page closes the
+// socket, and the server ends the session with it.
 
-function shortPath(path) {
-  const parts = String(path || '').split('/').filter(Boolean);
-  if (parts.length >= 2) return `${parts.at(-2)}/${parts.at(-1)}`;
-  return parts.at(-1) || '~';
-}
-
-function terminalWebSocketUrl(apiBase, websiteId) {
+function terminalWebSocketUrl(apiBase, websiteId, cols, rows) {
   const base = String(apiBase || '/api');
-  const path = `/terminal/ws/${websiteId}`;
+  const path = websiteId ? `/terminal/ws/${websiteId}` : '/terminal/ws';
+  const query = `?cols=${cols}&rows=${rows}`;
   if (/^https?:\/\//i.test(base)) {
     const url = new URL(base);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.pathname = `${url.pathname.replace(/\/$/, '')}${path}`;
-    url.search = '';
+    url.search = query;
     url.hash = '';
     return url.toString();
   }
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${scheme}//${window.location.host}${base.replace(/\/$/, '')}${path}`;
+  return `${scheme}//${window.location.host}${base.replace(/\/$/, '')}${path}${query}`;
 }
 
-export function Terminal({ websiteId, apiBase = '/api' }) {
+// Why a session ended or never started, in words.
+function closedText(closed, rules) {
+  const idle = rules?.idle_minutes || 30;
+  const hours = rules?.max_hours || 8;
+  switch (closed?.reason) {
+    case 'exit': return closed.code ? tr("The shell has ended (exit code {0}).", closed.code) : tr("The shell has ended.");
+    case 'idle': return tr("Closed after {0} minutes without input.", idle);
+    case 'max-time': return tr("Closed: a session lasts at most {0} hours.", hours);
+    case 'access-changed': return tr("Closed: this browser was signed out, or the account no longer has the terminal.");
+    case 'account-deleted': return tr("Closed: the account was deleted.");
+    case 'too-many': return tr("This account already has {0} terminals open. Close one first.", rules?.max_sessions || 2);
+    case 'disabled': return tr("The terminal is not part of this account's package.");
+    case 'impersonate': return tr("Administrators and resellers open a customer's terminal by logging in as the customer.");
+    case 'demo': return tr("The terminal is not available in the demo.");
+    case 'signed-out': return tr("Your session has ended. Sign in again.");
+    case 'not-found': return tr("Website not found.");
+    case 'unavailable': return tr("The terminal works on the server only.");
+    case 'origin': return tr("This address may not open the terminal.");
+    case 'failed': return tr("The terminal could not start.");
+    case 'lost': return tr("The connection was lost.");
+    default: return tr("Disconnected.");
+  }
+}
+
+const XTERM_THEME = {
+  // Always dark, the panel's console tokens (--console-* in style.css); xterm
+  // needs literal colours. Neutral, with the cursor in brand blue.
+  background: '#111111',
+  foreground: '#f0f0f0',
+  cursor: '#4d9ee6',
+  selectionBackground: '#3a3a3a',
+  black: '#111111',
+  red: '#ef4444',
+  green: '#22c55e',
+  yellow: '#eab308',
+  blue: '#60a5fa',
+  magenta: '#c084fc',
+  cyan: '#2dd4bf',
+  white: '#e5e7eb',
+  brightBlack: '#8b93a1',
+  brightRed: '#f87171',
+  brightGreen: '#4ade80',
+  brightYellow: '#facc15',
+  brightBlue: '#93c5fd',
+  brightMagenta: '#d8b4fe',
+  brightCyan: '#5eead4',
+  brightWhite: '#ffffff',
+};
+
+export function Terminal({ websiteId = null, apiBase = '/api' }) {
   const containerRef = useRef(null);
-  const termRef = useRef(null);
-  const fitRef = useRef(null);
-  const wsRef = useRef(null);
-  const lineRef = useRef('');
-  const cursorRef = useRef(0);
-  const promptRef = useRef('$ ');
-  const promptVisibleRef = useRef(false);
-  const runningRef = useRef(false);
-  const historyRef = useRef([]);
-  const historyIndexRef = useRef(-1);
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState(null);
-
-  const writePrompt = useCallback(() => {
-    termRef.current?.write(promptRef.current);
-    promptVisibleRef.current = true;
-  }, []);
-
-  const redrawLine = useCallback(() => {
-    const term = termRef.current;
-    if (!term) return;
-    term.write('\r\x1b[K');
-    term.write(promptRef.current + lineRef.current);
-    const back = lineRef.current.length - cursorRef.current;
-    if (back > 0) term.write('\b'.repeat(back));
-  }, []);
-
-  const disconnect = useCallback(() => {
-    wsRef.current?.close(1000);
-    wsRef.current = null;
-    setConnected(false);
-  }, []);
-
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-    const ws = new WebSocket(terminalWebSocketUrl(apiBase, websiteId));
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setConnected(true);
-      setError(null);
-      lineRef.current = '';
-      cursorRef.current = 0;
-      runningRef.current = false;
-      promptVisibleRef.current = false;
-      termRef.current?.write('\x1b[1;32mConnected\x1b[0m\r\n');
-    };
-
-    ws.onmessage = (event) => {
-      let msg;
-      try {
-        msg = JSON.parse(event.data);
-      } catch {
-        termRef.current?.write(normalizeOutput(event.data));
-        return;
-      }
-
-      if (msg.type === 'output') {
-        termRef.current?.write(normalizeOutput(msg.data));
-      } else if (msg.type === 'exit') {
-        runningRef.current = false;
-        if (Number(msg.code) !== 0) {
-          termRef.current?.write(`\r\n\x1b[33m[exit code: ${msg.code}]\x1b[0m\r\n`);
-        }
-        writePrompt();
-      } else if (msg.type === 'cwd') {
-        promptRef.current = `${shortPath(msg.data)} $ `;
-        if (!runningRef.current && !promptVisibleRef.current) writePrompt();
-      } else if (msg.type === 'clear') {
-        termRef.current?.clear();
-      } else if (msg.type === 'error') {
-        termRef.current?.write(`\x1b[31m${normalizeOutput(msg.data)}\x1b[0m\r\n`);
-        writePrompt();
-      }
-    };
-
-    ws.onclose = (event) => {
-      setConnected(false);
-      wsRef.current = null;
-      if (event.code !== 1000) {
-        const detail = event.reason ? `${event.code}: ${event.reason}` : `code ${event.code}`;
-        setError(tr("Disconnected ({0})", detail));
-        termRef.current?.write(`\r\n\x1b[31mDisconnected (${detail})\x1b[0m\r\n`);
-      }
-    };
-
-    ws.onerror = () => {
-      setError(tr("Connection failed"));
-      setConnected(false);
-    };
-  }, [apiBase, websiteId, writePrompt]);
+  const socketRef = useRef(null);
+  const [state, setState] = useState('connecting'); // connecting | open | closed
+  const [info, setInfo] = useState(null);
+  const [closed, setClosed] = useState(null);
+  // A new attempt is a new session: a fresh terminal and a fresh socket.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!containerRef.current) return undefined;
+    setState('connecting');
+    setInfo(null);
+    setClosed(null);
 
     const term = new XTerminal({
       cursorBlink: true,
-      cursorStyle: 'block',
       fontSize: 14,
       fontFamily: 'Consolas, "Liberation Mono", Menlo, monospace',
-      scrollback: 2000,
-      // Always-dark surface matching the panel's console tokens (--console-* in
-      // style.css); xterm needs literal colours, not vars. Pure neutral, with
-      // the cursor in brand blue as the only colour that is not grey.
-      theme: {
-        background: '#111111',
-        foreground: '#f0f0f0',
-        cursor: '#4d9ee6',
-        selectionBackground: '#3a3a3a',
-        black: '#111111',
-        red: '#ef4444',
-        green: '#22c55e',
-        yellow: '#eab308',
-        blue: '#60a5fa',
-        magenta: '#c084fc',
-        cyan: '#2dd4bf',
-        white: '#e5e7eb',
-        brightBlack: '#6b7280',
-        brightRed: '#f87171',
-        brightGreen: '#4ade80',
-        brightYellow: '#facc15',
-        brightBlue: '#93c5fd',
-        brightMagenta: '#d8b4fe',
-        brightCyan: '#5eead4',
-        brightWhite: '#ffffff',
-      },
+      scrollback: 5000,
+      theme: XTERM_THEME,
     });
-
     const fit = new FitAddon();
-    fitRef.current = fit;
     term.loadAddon(fit);
     term.open(containerRef.current);
-    termRef.current = term;
+    try { fit.fit(); } catch {}
 
-    let resizeFrame = 0;
-    const fitTerminal = () => {
-      resizeFrame = 0;
-      fit.fit();
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    const ws = new WebSocket(terminalWebSocketUrl(apiBase, websiteId, term.cols, term.rows));
+    ws.binaryType = 'arraybuffer';
+    socketRef.current = ws;
+    const encoder = new TextEncoder();
+    let told = false;
+
+    ws.onmessage = (event) => {
+      if (typeof event.data !== 'string') {
+        term.write(new Uint8Array(event.data));
+        return;
+      }
+      let message;
+      try { message = JSON.parse(event.data); } catch { return; }
+      if (message.type === 'ready') {
+        setInfo(message);
+        setState('open');
+        term.focus();
+      } else if (message.type === 'closed') {
+        told = true;
+        setClosed(message);
+        setState('closed');
       }
     };
-    const scheduleFit = () => {
-      if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
-      resizeFrame = window.requestAnimationFrame(fitTerminal);
+    ws.onclose = (event) => {
+      if (!told) setClosed({ reason: event.code === 1000 ? 'closed' : 'lost', code: event.code });
+      setState('closed');
     };
-    const resizeObserver = typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(scheduleFit)
-      : null;
 
-    resizeObserver?.observe(containerRef.current);
-    scheduleFit();
-    const onResize = scheduleFit;
-    window.addEventListener('resize', onResize);
+    const send = (bytes) => { if (ws.readyState === WebSocket.OPEN) ws.send(bytes); };
+    const typed = term.onData(data => send(encoder.encode(data)));
+    // Mouse reports in some programs: one byte per character.
+    const binary = term.onBinary(data => send(Uint8Array.from(data, ch => ch.charCodeAt(0) & 255)));
 
-    term.onData((data) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        if (data === '\r') term.write('\r\n\x1b[31mNot connected.\x1b[0m\r\n');
-        return;
-      }
-
-      if (data === '\r' || data === '\n') {
-        submitLine();
-        return;
-      }
-
-      // Multi-line paste: split on newlines and submit each line
-      if (data.length > 1 && /[\r\n]/.test(data)) {
-        const segments = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-        for (let i = 0; i < segments.length; i++) {
-          const segment = segments[i];
-          if (segment) {
-            lineRef.current = lineRef.current.slice(0, cursorRef.current) + segment + lineRef.current.slice(cursorRef.current);
-            cursorRef.current += segment.length;
-            redrawLine();
-          }
-          if (i < segments.length - 1) {
-            submitLine();
-          }
-        }
-        return;
-      }
-
-      if (data === '\u007f' || data === '\b') {
-        if (cursorRef.current > 0) {
-          lineRef.current = lineRef.current.slice(0, cursorRef.current - 1) + lineRef.current.slice(cursorRef.current);
-          cursorRef.current -= 1;
-          if (cursorRef.current === lineRef.current.length) {
-            term.write('\b \b');
-          } else {
-            redrawLine();
-          }
-        }
-        return;
-      }
-
-      if (data === '\x1b[A') {
-        if (historyIndexRef.current < historyRef.current.length - 1) {
-          historyIndexRef.current += 1;
-          lineRef.current = historyRef.current[historyIndexRef.current] || '';
-          cursorRef.current = lineRef.current.length;
-          redrawLine();
-        }
-        return;
-      }
-
-      if (data === '\x1b[B') {
-        if (historyIndexRef.current > 0) {
-          historyIndexRef.current -= 1;
-          lineRef.current = historyRef.current[historyIndexRef.current] || '';
-        } else {
-          historyIndexRef.current = -1;
-          lineRef.current = '';
-        }
-        cursorRef.current = lineRef.current.length;
-        redrawLine();
-        return;
-      }
-
-      if (data === '\x1b[D') {
-        if (cursorRef.current > 0) {
-          cursorRef.current -= 1;
-          term.write('\b');
-        }
-        return;
-      }
-
-      if (data === '\x1b[C') {
-        if (cursorRef.current < lineRef.current.length) {
-          term.write(lineRef.current[cursorRef.current]);
-          cursorRef.current += 1;
-        }
-        return;
-      }
-
-      if (data === '\x03') {
-        term.write('^C\r\n');
-        lineRef.current = '';
-        cursorRef.current = 0;
-        writePrompt();
-        return;
-      }
-
-      if (data >= ' ') {
-        lineRef.current = lineRef.current.slice(0, cursorRef.current) + data + lineRef.current.slice(cursorRef.current);
-        cursorRef.current += data.length;
-        if (cursorRef.current === lineRef.current.length) {
-          term.write(data);
-        } else {
-          redrawLine();
-        }
-      }
-    });
-
-    function submitLine() {
-      const command = lineRef.current;
-      term.write('\r\n');
-      if (command.trim()) {
-        historyRef.current = [command, ...historyRef.current.filter(item => item !== command)].slice(0, 50);
-        historyIndexRef.current = -1;
-        lineRef.current = '';
-        cursorRef.current = 0;
-        runningRef.current = true;
-        promptVisibleRef.current = false;
-        wsRef.current?.send(JSON.stringify({ type: 'input', data: command }));
-      } else {
-        lineRef.current = '';
-        cursorRef.current = 0;
-      }
-    }
-
-    connect();
+    let frame = 0;
+    const resize = () => {
+      frame = 0;
+      try { fit.fit(); } catch { return; }
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    };
+    const scheduleResize = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(resize);
+    };
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleResize) : null;
+    observer?.observe(containerRef.current);
+    window.addEventListener('resize', scheduleResize);
+    ws.onopen = scheduleResize;
 
     return () => {
-      window.removeEventListener('resize', onResize);
-      resizeObserver?.disconnect();
-      if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
-      disconnect();
+      window.removeEventListener('resize', scheduleResize);
+      observer?.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+      typed.dispose();
+      binary.dispose();
+      ws.onclose = null;
+      ws.onmessage = null;
+      ws.close(1000);
+      socketRef.current = null;
       term.dispose();
-      termRef.current = null;
-      fitRef.current = null;
     };
-  }, [connect, disconnect, redrawLine, writePrompt]);
+  }, [apiBase, websiteId, attempt]);
 
+  const rules = info || closed;
   return (
-    <div className="terminal-wrapper">
-      <div className="terminal-toolbar">
-        <span className="terminal-status">
-          {connected ? <span className="status-connected">{tr("Connected")}</span> : error ? <span className="status-error">{error}</span> : <span className="status-disconnected">{tr("Disconnected")}</span>}
+    <div className="web-terminal">
+      <div className="web-terminal-bar">
+        <span className={`web-terminal-state is-${state}`}>
+          {state === 'open' ? tr("Connected") : state === 'connecting' ? tr("Connecting…") : tr("Closed")}
         </span>
-        {connected ? (
-          <button onClick={disconnect} className="terminal-btn disconnect">{tr("Disconnect")}</button>
-        ) : (
-          <button onClick={connect} className="terminal-btn connect">{tr("Connect")}</button>
-        )}
+        {info && <span className="web-terminal-where" title={info.cwd}>
+          {info.user}<span aria-hidden="true">:</span>{info.cwd}{info.php ? ` · PHP ${info.php}` : ''}
+        </span>}
+        <span className="web-terminal-actions">
+          {state === 'closed'
+            ? <button type="button" className="mini" onClick={() => setAttempt(n => n + 1)}>{tr("New session")}</button>
+            : <button type="button" className="mini secondary-light" onClick={() => socketRef.current?.close(1000)}>{tr("End session")}</button>}
+        </span>
       </div>
-      <div className="terminal-container">
-        <div ref={containerRef} className="terminal-fit" />
-      </div>
-      <style>{`
-        .terminal-wrapper { display:flex; flex-direction:column; height:100%; background:#17120f; border:1px solid #39302b; border-radius:10px; overflow:hidden; }
-        .terminal-toolbar { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:#221b17; border-bottom:1px solid #39302b; }
-        .terminal-status { font-size:13px; font-family:var(--font-mono); }
-        .status-connected { color:#4ade80; }
-        .status-disconnected { color:#a2938c; }
-        .status-error { color:#f87171; }
-        .terminal-btn { padding:5px 12px; border:1px solid transparent; border-radius:6px; font-size:12px; font-weight:600; line-height:1.4; cursor:pointer; transition:background-color .15s ease,color .15s ease,border-color .15s ease; }
-        .terminal-btn.connect { background:#ee3124; color:#fff; }
-        .terminal-btn.connect:hover { background:#ae271e; }
-        .terminal-btn.disconnect { background:transparent; color:#ff8a7d; border-color:rgba(255,138,125,.45); }
-        .terminal-btn.disconnect:hover { background:#b42318; color:#fff; border-color:#b42318; }
-        .terminal-container { flex:1; min-height:0; padding:8px; overflow:hidden; }
-        .terminal-fit { width:100%; height:100%; min-height:0; overflow:hidden; }
-        .terminal-fit .xterm { width:100%; height:100%; }
-        .terminal-fit .xterm-viewport { overflow-y:auto !important; }
-      `}</style>
+      {state === 'closed' && <p className="web-terminal-closed" role="status">{closedText(closed, rules)}</p>}
+      <div className="web-terminal-screen"><div ref={containerRef} className="web-terminal-fit" /></div>
+      <p className="hint web-terminal-rules">
+        {tr("Closes after {0} minutes without input and after {1} hours in any case. Leaving this page ends the session.", info?.idle_minutes || 30, info?.max_hours || 8)}
+      </p>
     </div>
   );
 }

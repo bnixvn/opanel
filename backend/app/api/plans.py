@@ -30,6 +30,8 @@ class PlanCreate(ResourceLimitsIn):
     process_limit: int = 0
     io_read_mbps: int = 0
     io_write_mbps: int = 0
+    # The browser terminal for accounts made from it.
+    terminal_enabled: bool = False
     php_version: str = "8.4"
     app_type: str = "php"
     auto_ssl: bool = False
@@ -47,6 +49,7 @@ class PlanUpdate(ResourceLimitsIn):
     process_limit: Optional[int] = None
     io_read_mbps: Optional[int] = None
     io_write_mbps: Optional[int] = None
+    terminal_enabled: Optional[bool] = None
     php_version: Optional[str] = None
     app_type: Optional[str] = None
     auto_ssl: Optional[bool] = None
@@ -63,6 +66,7 @@ def _plan_dict(plan) -> dict:
         "database_limit": plan.database_limit,
         "mailbox_limit": plan.mailbox_limit,
         **{field: int(getattr(plan, field) or 0) for field in RESOURCE_LIMIT_FIELDS},
+        "terminal_enabled": bool(plan.terminal_enabled),
         "php_version": plan.php_version,
         "app_type": plan.app_type,
         "auto_ssl": plan.auto_ssl,
@@ -76,6 +80,12 @@ def _owner(user: User):
     return user.id if is_reseller_role(user.role) else None
 
 
+def _check_terminal(user: User, wanted) -> None:
+    """A reseller hands out the terminal only if the administrator gave it to them."""
+    if wanted and is_reseller_role(user.role) and not user.terminal_enabled:
+        raise HTTPException(status_code=403, detail="The administrator has not allowed you to offer the terminal")
+
+
 @router.get("", response_model=List[Dict[str, Any]])
 def list_plans(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return [_plan_dict(p) for p in provisioning.list_plans(db, _owner(current_user))]
@@ -84,6 +94,7 @@ def list_plans(db: Session = Depends(get_db), current_user: User = Depends(get_c
 @router.post("", response_model=Dict[str, Any])
 def create_plan(payload: PlanCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     owner_id = _owner(current_user)
+    _check_terminal(current_user, payload.terminal_enabled)
     # Slugs are unique across the server: a reseller's carry its name, so two
     # resellers can both call a package "basic".
     slug = payload.slug
@@ -95,6 +106,7 @@ def create_plan(payload: PlanCreate, db: Session = Depends(get_db), current_user
             website_limit=payload.website_limit, storage_limit_mb=payload.storage_limit_mb,
             database_limit=payload.database_limit, mailbox_limit=payload.mailbox_limit,
             php_version=payload.php_version, app_type=payload.app_type, auto_ssl=payload.auto_ssl,
+            terminal_enabled=payload.terminal_enabled,
             owner_id=owner_id, **{field: getattr(payload, field) for field in RESOURCE_LIMIT_FIELDS},
         )
         if not payload.active:
@@ -110,6 +122,7 @@ def update_plan(plan_id: int, payload: PlanUpdate, db: Session = Depends(get_db)
     owner_id = _owner(current_user)
     if provisioning.get_plan(db, plan_id, owner_id) is None:
         raise HTTPException(status_code=404, detail="Plan not found")
+    _check_terminal(current_user, payload.terminal_enabled)
     try:
         plan = provisioning.update_plan(db, plan_id, owner_id, **payload.model_dump(exclude_unset=True))
     except ValueError as exc:

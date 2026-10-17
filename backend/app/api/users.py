@@ -22,7 +22,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, resource_limits, sftp_accounts, site_users, ssl, storage_quota, wordpress
+from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, resource_limits, sftp_accounts, site_users, ssl, storage_quota, terminal, wordpress
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -103,6 +103,12 @@ def _account_limits(source) -> dict:
     return {field: getattr(source, field) for field in ACCOUNT_LIMIT_FIELDS}
 
 
+def _check_terminal_grant(actor: User, wanted) -> None:
+    """A reseller hands out the terminal only if the administrator gave it to them."""
+    if wanted and is_reseller_role(actor.role) and not actor.terminal_enabled:
+        raise HTTPException(status_code=403, detail="The administrator has not allowed you to offer the terminal")
+
+
 def _reseller(db: Session, reseller_id: int) -> User:
     owner = db.query(User).filter(User.id == reseller_id).first()
     if owner is None or not is_reseller_role(owner.role):
@@ -131,6 +137,7 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         reseller_id = None
     if role != "reseller":
         pools = dict(reseller_pool.NO_POOL)
+    _check_terminal_grant(current_user, payload.terminal_enabled)
     # Only the username has to be unique -- one contact email may be shared by
     # several panel users.
     if db.query(User).filter(User.username == payload.username).first():
@@ -163,6 +170,9 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         **pools,
         **resources,
         **groups,
+        # An administrator never opens a shell as itself, so the setting means
+        # nothing on one.
+        terminal_enabled=bool(payload.terminal_enabled) and role != "admin",
     )
     db.add(user)
     db.commit()
@@ -262,6 +272,7 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         if any(getattr(payload, field) is not None for field in GROUP_LIMIT_FIELDS):
             raise HTTPException(status_code=403, detail="A reseller's group limits are set by the administrator")
 
+    _check_terminal_grant(current_user, payload.terminal_enabled)
     limit_changes = {field: getattr(payload, field) for field in ACCOUNT_LIMIT_FIELDS
                      if getattr(payload, field) is not None}
     pool_changes = {field: getattr(payload, field) for field in reseller_pool.SETTINGS
@@ -319,11 +330,20 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         for field in GROUP_LIMIT_FIELDS:
             setattr(user, field, 0)
 
+    if payload.terminal_enabled is not None:
+        user.terminal_enabled = bool(payload.terminal_enabled)
+    if new_role == "admin":
+        user.terminal_enabled = False
+
     if role_changed:
         # New role -> existing tokens with old role claim should be invalidated.
         user.token_version = (user.token_version or 0) + 1
 
     db.commit()
+    # A shell the account is no longer entitled to ends now, not when it is
+    # next idle.
+    if not user.is_active or not user.terminal_enabled or role_changed:
+        terminal.end_sessions(user.id, "access-changed")
     db.refresh(user)
     log_action(db, current_user.id, "update_user", user.username, request=request)
     # Its limits, its reseller or its role may have moved its slice.
@@ -362,6 +382,8 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
         db.query(McpToken).filter(McpToken.user_id == user.id).delete(synchronize_session=False)
         # A reseller's own packages go with it.
         db.query(HostingPlan).filter(HostingPlan.owner_id == user.id).delete(synchronize_session=False)
+        # userdel refuses a user with processes still running.
+        terminal.end_sessions(user.id, "account-deleted")
         site_users.delete_panel_user(user.username)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

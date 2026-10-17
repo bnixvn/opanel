@@ -53,6 +53,11 @@ class User(Base):
     group_process_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     group_io_read_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     group_io_write_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    # The browser terminal (services/terminal.py), off unless the package or
+    # the administrator turns it on. On a reseller it means "may hand it to
+    # customers": a reseller, like the administrator, opens a shell only by
+    # logging in as the customer.
+    terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # Bumped to invalidate previously-issued JWTs (logout-everywhere, role
     # change, password reset by admin, account disable, etc).
     token_version: Mapped[int] = mapped_column(Integer, default=0)
@@ -338,6 +343,8 @@ class HostingPlan(Base):
     process_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     io_read_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     io_write_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    # Copied to an account made from the plan, like the limits.
+    terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
     app_type: Mapped[str] = mapped_column(String(32), default="php")
     auto_ssl: Mapped[bool] = mapped_column(Boolean, default=False)

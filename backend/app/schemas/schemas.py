@@ -256,6 +256,8 @@ class UserCreate(ResourceLimitsIn, GroupLimitsIn):
     group_process_limit: int = 0
     group_io_read_mbps: int = 0
     group_io_write_mbps: int = 0
+    # The browser terminal; off unless the package says otherwise.
+    terminal_enabled: bool = False
 
     @field_validator("username")
     @classmethod
@@ -295,6 +297,7 @@ class UserUpdate(ResourceLimitsIn, GroupLimitsIn):
     group_process_limit: Optional[int] = None
     group_io_read_mbps: Optional[int] = None
     group_io_write_mbps: Optional[int] = None
+    terminal_enabled: Optional[bool] = None
 
 
 class UserPasswordUpdate(BaseModel):
@@ -332,6 +335,7 @@ class UserOut(BaseModel):
     group_process_limit: int = 0
     group_io_read_mbps: int = 0
     group_io_write_mbps: int = 0
+    terminal_enabled: bool = False
     # None means "not measured yet" -- the accounts list leaves these out so it
     # can paint without waiting on a du of every site. 0 would read as "uses
     # nothing", which is a different claim.

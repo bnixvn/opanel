@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from app.api import auth as auth_api
 from app.api import deps, maintenance, terminal
+from app.services import terminal as terminal_service
 from app.core.database import SessionLocal
 from app.core.security import hash_password, verify_password
 from app.models.entities import User
@@ -163,7 +164,8 @@ def test_every_authenticated_request_goes_through_the_guard():
 
 
 def test_the_terminal_and_remote_restore_listing_are_refused():
-    assert "demo_mode.is_demo_account(user)" in inspect.getsource(terminal.terminal_websocket)
+    assert "demo_mode.is_demo_account(user)" in inspect.getsource(terminal_service.access_problem)
+    assert "terminal.access_problem(user)" in inspect.getsource(terminal._serve)
     listing = inspect.getsource(maintenance.list_restore_source)
     assert 'payload.source != "local" and demo_mode.is_demo_request(request)' in listing
 

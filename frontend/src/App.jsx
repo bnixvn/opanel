@@ -93,6 +93,7 @@ const PAGE_ROUTES = {
   services: '/services',
   usage: '/resource-usage',
   git: '/git',
+  terminal: '/terminal',
   // The server's own pages, behind the top bar's status chips (admin only).
   processes: '/processes',
   ramUsage: '/ram-usage',
@@ -512,7 +513,7 @@ function App() {
   const [selectedFilePaths, setSelectedFilePaths] = useState([]);
   const [archiveFormat, setArchiveFormat] = useState('zip');
   const [editorCursor, setEditorCursor] = useState({ line: 1, column: 1 });
-  const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0 });
+  const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0, terminal_enabled: false });
   // A reseller's share of the server and what it has handed out (GET /users/pool).
   const [resellerPool, setResellerPool] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
@@ -723,7 +724,7 @@ function App() {
   const [plans, setPlans] = useState([]);
   const [editingPlan, setEditingPlan] = useState(null);
   const [editingPlanForm, setEditingPlanForm] = useState({ name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, php_version: '8.4', app_type: 'php', auto_ssl: false, active: true });
-  const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false });
+  const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false });
   // WordPress manager
   const [wpManagerSite, setWpManagerSite] = useState(null);
   const [wpManagerMode, setWpManagerMode] = useState('install'); // 'install' | 'update'
@@ -733,6 +734,11 @@ function App() {
   // A reseller manages its customers and packages, never the server.
   const isReseller = currentUser?.role === 'reseller';
   const canManageUsers = isAdmin || isReseller;
+  // The browser terminal: the server says whether this session may open one
+  // (a customer whose package has it, or an admin logged in as one). A reseller
+  // hands it out only if the administrator gave it the right to.
+  const canOpenTerminal = !!currentUser?.terminal;
+  const canGrantTerminal = isAdmin || (isReseller && !!currentUser?.terminal_enabled);
   const currentSite = websites.find(site => String(site.id) === String(selectedWebsiteId));
 
   const navigateToPage = useCallback((nextPage, options = {}) => {
@@ -1345,6 +1351,7 @@ function App() {
       website_limit: Number(newUser.website_limit), storage_limit_mb: Number(newUser.storage_limit_mb),
       database_limit: Number(newUser.database_limit), mailbox_limit: Number(newUser.mailbox_limit),
     };
+    if (canGrantTerminal) body.terminal_enabled = !!newUser.terminal_enabled;
     if (isAdmin && newUser.role === 'end_user' && newUser.reseller_id) body.reseller_id = Number(newUser.reseller_id);
     if (isAdmin && newUser.role === 'reseller') {
       POOL_FIELDS.forEach(field => { body[field] = Number(newUser[field]) || 0; });
@@ -1357,7 +1364,7 @@ function App() {
     const data = await request('/users', { method: 'POST', body: JSON.stringify(body) }, tr("Creating user..."));
     if (data) {
       setNotice(tr("Created user {0}", data.username));
-      setNewUser({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0 });
+      setNewUser({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0, terminal_enabled: false });
       await loadUsers();
       if (isReseller) await loadResellerPool();
     }
@@ -1377,6 +1384,7 @@ function App() {
       pool_user_limit: user.pool_user_limit ?? 0,
       pool_storage_limit_mb: user.pool_storage_limit_mb ?? 0,
       pool_oversell: !!user.pool_oversell,
+      terminal_enabled: !!user.terminal_enabled,
       ...Object.fromEntries(RL_FIELDS.flatMap(field => [[field, user[field] ?? 0], [`group_${field}`, user[`group_${field}`] ?? 0]])),
       _password: '',
       _planId: matchedPlan ? String(matchedPlan.id) : '',
@@ -1412,6 +1420,8 @@ function App() {
     }
     const databaseLimit = Number(editingUserForm.database_limit);
     if (Number.isInteger(databaseLimit) && databaseLimit >= 0 && databaseLimit <= 1000) payload.database_limit = databaseLimit;
+    // Left out when this caller may not set it, so saving keeps what is there.
+    if (canGrantTerminal && editingUser.id !== currentUser?.id) payload.terminal_enabled = !!editingUserForm.terminal_enabled;
     if (isAdmin) {
       if (editingUser.id !== currentUser?.id) payload.role = editingUserForm.role;
       if (editingUserForm.role === 'end_user') payload.reseller_id = Number(editingUserForm.reseller_id) || 0;
@@ -2367,14 +2377,14 @@ function App() {
     const data = await request('/plans', { method: 'POST', body: JSON.stringify({ ...newPlan, ...limitValues(newPlan) }) }, tr("Creating plan..."));
     if (data?.id) {
       setNotice(tr("Plan \"{0}\" created.", data.name));
-      setNewPlan({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false });
+      setNewPlan({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false });
       loadPlans();
     }
   }
 
   function startEditingPlan(plan) {
     setEditingPlan(plan);
-    setEditingPlanForm({ name: plan.name, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? 10, mailbox_limit: plan.mailbox_limit ?? 10, ...limitValues(plan), php_version: plan.php_version, app_type: plan.app_type, auto_ssl: plan.auto_ssl, active: plan.active });
+    setEditingPlanForm({ name: plan.name, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? 10, mailbox_limit: plan.mailbox_limit ?? 10, ...limitValues(plan), php_version: plan.php_version, app_type: plan.app_type, auto_ssl: plan.auto_ssl, active: plan.active, terminal_enabled: !!plan.terminal_enabled });
   }
 
   async function updatePlan() {
@@ -4762,6 +4772,7 @@ function App() {
       ['cron', tr("Cron"), Clock],
       ['files', tr("File manager"), FolderOpen],
       ['sftp', tr("SFTP accounts"), KeyRound],
+      ...(canOpenTerminal ? [['terminal', tr("Terminal"), TerminalIcon]] : []),
       ['backups', tr("Backups"), Archive],
       ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
       ...resellerNavItems,
@@ -5035,6 +5046,7 @@ function App() {
       { key: 'files', label: tr("File manager"), icon: FolderOpen, run: go('files') },
       { key: 'sftp', label: tr("SFTP accounts"), icon: KeyRound, run: go('sftp') },
       { key: 'sftp-new', label: tr("New SFTP account"), icon: Plus, run: go('sftp', () => setShowCreateSftp(true)) },
+      ...(canOpenTerminal ? [{ key: 'terminal', label: tr("Terminal"), icon: TerminalIcon, run: go('terminal') }] : []),
       ...(gitEnabled ? [{ key: 'git', label: tr("Git"), icon: GitBranch, run: go('git') }] : []),
       { key: 'backups', label: tr("Backups"), icon: Archive, run: go('backups') },
     ] });
@@ -5723,9 +5735,23 @@ function App() {
         <h2>{tr("Terminal -")} {terminalViewer.domain}</h2>
         <button className="secondary-light" onClick={() => setTerminalViewer(null)}><X size={14}/> {tr("Close")}</button>
       </div>
-      <div style={{ height: '500px', marginTop: '8px' }}>
-        <Terminal websiteId={terminalViewer.id} apiBase={API} />
-      </div>
+      <Terminal websiteId={terminalViewer.id} apiBase={API} />
+    </section>;
+  }
+
+  // The account's own terminal, in its home. From a website's row it starts in
+  // the website's folder with the website's PHP instead.
+  function renderTerminalPage() {
+    if (!canOpenTerminal) {
+      return <section className="section"><h2>{tr("Terminal")}</h2>
+        <p className="hint">{isAdmin || isReseller
+          ? tr("Administrators and resellers open a customer's terminal by logging in as the customer.")
+          : tr("The terminal is not part of this account's package.")}</p></section>;
+    }
+    return <section className="section">
+      <div className="section-title"><div><h2>{tr("Terminal")}</h2>
+        <p className="hint">{tr("A shell in your home folder, in a sandbox of its own. To start in a website's folder with its PHP version, open the terminal from the website's row.")}</p></div></div>
+      <Terminal apiBase={API} />
     </section>;
   }
 
@@ -5883,7 +5909,7 @@ function App() {
               <div className="site-feature-actions">
                 <button className="site-icon-button secondary-light" data-tooltip="Files" title={tr("Files")} aria-label={tr("Open file manager for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteFileManager(site)}><FolderOpen size={15}/></button>
                 <button className="site-icon-button secondary-light" data-tooltip="Logs" title={tr("Logs")} aria-label={tr("View logs for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteLogs(site)}><FileText size={15}/></button>
-                <button className="site-icon-button secondary-light" data-tooltip="Terminal" title={tr("Terminal")} aria-label={tr("Open terminal for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteTerminal(site)}><TerminalIcon size={15}/></button>
+                {canOpenTerminal && <button className="site-icon-button secondary-light" data-tooltip="Terminal" title={tr("Terminal")} aria-label={tr("Open terminal for {0}", site.domain)} disabled={!!loading} onClick={() => openWebsiteTerminal(site)}><TerminalIcon size={15}/></button>}
                 <button className="site-icon-button secondary-light" data-tooltip="Settings" title={tr("Settings")} aria-label={tr("Edit settings for {0}", site.domain)} disabled={!!loading} onClick={() => openNginxCustom(site)}><SettingsIcon size={15}/></button>
                 {!site.wp_installed && <button className="site-icon-button secondary-light" data-tooltip={tr("Install WP")} title={tr("Install WordPress")} aria-label={tr("Install WordPress on {0}", site.domain)} disabled={!!loading} onClick={() => openWpInstall(site)}><Download size={15}/></button>}
                 {site.wp_installed && <button className="site-icon-button secondary-light" data-tooltip={tr("Update WP")} title={tr("Update WordPress")} aria-label={tr("Update WordPress on {0}", site.domain)} disabled={!!loading} onClick={() => openWpUpdate(site)}><RefreshCw size={15}/></button>}
@@ -9711,7 +9737,7 @@ function App() {
     const self = !creating && user?.id === currentUser?.id;
     const pickPlan = planId => {
       const plan = plans.find(p => String(p.id) === planId);
-      if (plan) setForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? prev.database_limit, mailbox_limit: plan.mailbox_limit ?? prev.mailbox_limit, ...limitValues(plan) }));
+      if (plan) setForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? prev.database_limit, mailbox_limit: plan.mailbox_limit ?? prev.mailbox_limit, ...limitValues(plan), ...(canGrantTerminal ? { terminal_enabled: !!plan.terminal_enabled } : {}) }));
       else setForm(prev => ({ ...prev, _planId: '' }));
     };
     return <div className="form-sections">
@@ -9747,6 +9773,13 @@ function App() {
         </div>
       </fieldset>}
       {isAdmin && form.role === 'reseller' && renderPoolInputs(form, setForm)}
+      {form.role !== 'admin' && canGrantTerminal && !self && <fieldset className="form-section">
+        <legend>{tr("Terminal")}</legend>
+        <label className="check-line"><input type="checkbox" checked={!!form.terminal_enabled} onChange={e => set('terminal_enabled', e.target.checked)} /> {form.role === 'reseller' ? tr("May offer the terminal to its customers") : tr("Browser terminal")}</label>
+        <p className="hint">{form.role === 'reseller'
+          ? tr("A reseller, like an administrator, opens a customer's terminal by logging in as the customer.")
+          : tr("A real shell as this account's own Linux user, in a sandbox: its own home only, its own processes, no root.")}</p>
+      </fieldset>}
       {limitsOn && form.role !== 'admin' && renderLimitInputs(form, setForm)}
       {limitsOn && isAdmin && form.role === 'reseller' && renderLimitInputs(form, setForm, 'group_')}
     </div>;
@@ -9899,6 +9932,7 @@ function App() {
     if (mailInfo?.installed) chips.push([Mail, plan.mailbox_limit ? tr("{0} mailbox(es)", plan.mailbox_limit) : tr("Unlimited mailboxes")]);
     if (limitsOn && plan.cpu_percent) chips.push([Cpu, `CPU ${plan.cpu_percent}%`]);
     if (limitsOn && plan.memory_mb) chips.push([MemoryStick, `RAM ${formatMegabytes(plan.memory_mb)}`]);
+    if (plan.terminal_enabled) chips.push([TerminalIcon, tr("Terminal")]);
     return <div className="plan-chips">{chips.map(([Icon, text]) => <span className="plan-chip" key={text}><Icon size={13}/>{text}</span>)}</div>;
   }
 
@@ -9916,6 +9950,7 @@ function App() {
           <label><span>{tr("Disk (MB)")}</span><input type="number" min="0" value={form.storage_limit_mb} onChange={number('storage_limit_mb')} /></label>
           <label><span>{tr("Databases")}</span><input type="number" min="0" value={form.database_limit} onChange={number('database_limit')} /></label>
           {mailInfo?.installed && <label><span>{tr("Mailboxes")}</span><input type="number" min="0" value={form.mailbox_limit} onChange={number('mailbox_limit')} /></label>}
+          {canGrantTerminal && <label className="check-line span-all"><input type="checkbox" checked={!!form.terminal_enabled} onChange={e => setForm(prev => ({ ...prev, terminal_enabled: e.target.checked }))} /> {tr("Browser terminal")}</label>}
         </div>
       </fieldset>
       {limitsOn && renderLimitInputs(form, setForm)}
@@ -10048,6 +10083,7 @@ function App() {
     if (page === 'config') return renderSettingsHub();
     if (page === 'sftp') return renderSftp();
     if (page === 'git') return renderGit();
+    if (page === 'terminal') return renderTerminalPage();
     if (page === 'services') return isAdmin ? renderServices() : renderDashboard();
     if (page === 'settings') return renderPanelSettings();
     if (page === 'users') return renderUsers();

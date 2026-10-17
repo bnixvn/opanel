@@ -1163,3 +1163,21 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .page-crumbs button,.page-crumbs span[aria-hidden]{display:none}
   .top-stats{gap:4px}
 }
+
+/* Browser terminal: a real shell in its own sandbox (components/Terminal.jsx). */
+.web-terminal{display:flex;flex-direction:column;min-width:0}
+.web-terminal-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 12px;background:var(--console-surface);color:var(--console-muted);border:1px solid var(--console-border);border-bottom:0;border-radius:var(--radius-md) var(--radius-md) 0 0;font-family:var(--font-mono);font-size:12px;min-width:0}
+.web-terminal-state{font-weight:700;white-space:nowrap}
+.web-terminal-state.is-open{color:#4ade80}
+.web-terminal-state.is-closed{color:#fca5a5}
+.web-terminal-where{flex:1;min-width:0;color:var(--console-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.web-terminal-actions{margin-left:auto}
+.web-terminal-closed{margin:0;padding:8px 12px;background:var(--console-surface);color:#fde68a;border:1px solid var(--console-border);border-bottom:0;font-size:13px}
+.web-terminal-screen{height:min(70vh,640px);min-height:320px;padding:8px;background:var(--console-bg);border:1px solid var(--console-border);border-radius:0 0 var(--radius-md) var(--radius-md);overflow:hidden;min-width:0}
+.web-terminal-fit,.web-terminal-fit .xterm{width:100%;height:100%}
+.web-terminal-fit .xterm-viewport{scrollbar-color:var(--console-border) transparent}
+.web-terminal-rules{margin:8px 0 0}
+@media (max-width:600px){
+  .web-terminal-screen{height:60vh;padding:4px}
+  .web-terminal-where{flex-basis:100%;order:3}
+}
