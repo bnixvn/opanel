@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Globe, KeyRound, Lock, Plus, RefreshCw, Search, Settings as SettingsIcon, ExternalLink, X } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
@@ -40,10 +40,6 @@ export default function WebsitesPage() {
     setShowCreateSite(false);
     setCreateTried(false);
   }
-  // The first website: the sheet opens by itself, as the old page's form did.
-  useEffect(() => {
-    if (websites.length === 0 && !loading) setShowCreateSite(true);
-  }, []);
 
   const query = websiteSearch.trim().toLowerCase();
   const visibleWebsites = query

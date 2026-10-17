@@ -32,7 +32,7 @@
 
 .sn-check{display:inline-flex;align-items:flex-start;gap:9px;min-width:0;cursor:pointer;color:var(--text);font-size:13.5px;font-weight:500;line-height:1.4}
 .sn-check.is-disabled{cursor:not-allowed;color:var(--text-muted)}
-.sn-check>input{margin:1px 0 0}
+.sn-check>input{flex:none;width:auto;margin:1px 0 0}
 .sn-check>.sn-check-text{display:grid;gap:2px;min-width:0;font-size:inherit;color:inherit;font-weight:inherit}
 .sn-check-label{overflow-wrap:anywhere}
 .sn-check small{color:var(--text-muted);font-size:12px;font-weight:400;line-height:1.45}

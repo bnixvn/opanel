@@ -29,7 +29,7 @@
 .ws-actions>button:first-child{min-width:112px}
 .ws-create-ssl{display:grid;gap:8px}
 .ws-create-ssl .segmented{display:flex;flex-wrap:wrap;gap:6px}
-.ws-create-ssl .segmented button{flex:1 1 auto}
+.ws-create-ssl .segmented button{flex:0 0 auto}
 .ws-create-ssl .hint{margin:0}
 .ws-create-certs{display:flex;gap:8px;align-items:center}
 .ws-create-certs select{flex:1;min-width:0}
