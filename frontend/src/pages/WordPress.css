@@ -167,3 +167,6 @@
 .wpm-main{display:grid;gap:12px}
 .wpm-main .wpm-toolbar select{width:auto;min-width:160px}
 .wpm-manage .sn-tabs{margin-top:4px}
+
+/* On a wide screen a row's buttons stay on one line. */
+@media (min-width:761px){.wpm-row-actions{flex-wrap:nowrap}}
