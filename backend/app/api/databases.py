@@ -56,6 +56,15 @@ def list_databases(db: Session = Depends(get_db), current_user: User = Depends(g
     return query.order_by(DatabaseAccount.id.desc()).all()
 
 
+# How big each database the caller can see is: asked by the Databases page
+# only, apart from the list, which every page load fetches.
+@router.get("/sizes")
+def list_database_sizes(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    items = scope_owner(db.query(DatabaseAccount), DatabaseAccount.owner_id, db, current_user).all()
+    sizes = mariadb.database_sizes(item.db_name for item in items)
+    return {str(item.id): sizes[item.db_name] for item in items if item.db_name in sizes}
+
+
 @router.post("", response_model=DatabaseCreatedOut)
 def create_database(payload: DatabaseCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     db_name = payload.db_name

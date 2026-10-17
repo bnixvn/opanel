@@ -1,0 +1,34 @@
+/* The databases (pages/Databases.jsx), as SNPanel's: a table on a wide screen,
+   a card a row on a phone. Not in a cascade layer: OPanel's element rules are
+   unlayered and would win over a layered class. */
+.dbt-section{display:grid;gap:12px}
+.dbt-section>.sn-tabs{margin-bottom:0}
+.dbt-section .list-search{margin:0}
+.dbt{display:grid;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--surface)}
+.dbt-row{display:grid;grid-template-columns:minmax(160px,1.3fr) minmax(110px,1fr) minmax(130px,1.2fr) minmax(110px,.9fr) auto;align-items:center;gap:12px;padding:10px 14px;border-top:1px solid var(--border);min-width:0}
+.dbt.with-owner .dbt-row{grid-template-columns:minmax(160px,1.3fr) minmax(110px,1fr) minmax(130px,1.2fr) minmax(90px,.8fr) minmax(110px,.9fr) auto}
+.dbt.dbt-unmanaged .dbt-row{grid-template-columns:minmax(160px,1.1fr) minmax(200px,2fr) minmax(110px,.8fr) auto}
+.dbt-row:first-child{border-top:0}
+.dbt-row>span{min-width:0;overflow-wrap:anywhere;font-size:13.5px;color:var(--text)}
+.dbt-row>span small{color:var(--text-muted);font-size:12px}
+.dbt-row code{font-size:12.5px}
+.dbt-head{background:var(--surface-alt);padding-top:8px;padding-bottom:8px}
+.dbt-head>span{color:var(--text-muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.dbt-row:not(.dbt-head):hover{background:var(--surface-hover)}
+.dbt-name{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dbt-name>svg{flex:none;color:var(--tint-violet-fg,var(--primary))}
+.dbt-name small.hint{flex-basis:100%;margin:0}
+.dbt-muted{color:var(--text-muted)}
+.dbt-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.dbt-actions>button:first-child{white-space:nowrap}
+@media (max-width:900px){
+  .dbt{border:0;background:transparent;gap:10px;overflow:visible}
+  .dbt-head{display:none}
+  .dbt-row,.dbt.with-owner .dbt-row,.dbt.dbt-unmanaged .dbt-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;padding:12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface)}
+  .dbt-row:first-child{border-top:1px solid var(--border)}
+  .dbt-name{grid-column:1/-1;font-size:15px}
+  .dbt-row>span[data-label]{display:block}
+  .dbt-row>span[data-label]::before{content:attr(data-label);display:block;margin-bottom:2px;color:var(--text-muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+  .dbt-actions{grid-column:1/-1;justify-content:stretch}
+  .dbt-actions>button:first-child{flex:1}
+}

@@ -20,6 +20,8 @@ import HubTabs from './components/HubTabs';
 import DashboardPage from './pages/Dashboard';
 import WebsitesPage from './pages/Websites';
 import WebsiteDetailPage from './pages/WebsiteDetail';
+import DatabasesPage from './pages/Databases';
+import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import Switch from './components/Switch';
 import { isWebsitePath } from './lib/websites';
 import { PanelContext } from './lib/panel-context';
@@ -458,7 +460,6 @@ function App() {
   const [newDatabase, setNewDatabase] = useState({ db_name: '', db_user: '', db_password: '' });
   const [createdDbInfo, setCreatedDbInfo] = useState(null);
   // { db, ownerId } while the move-owner dialog is open.
-  const [dbOwnerModal, setDbOwnerModal] = useState(null);
   const [copiedField, setCopiedField] = useState(null);
   const [users, setUsers] = useState([]);
   const [usageLoading, setUsageLoading] = useState(false);
@@ -2779,7 +2780,12 @@ function App() {
   }, [domain, createSslMode, installSslAfterCreate]);
 
   async function deleteWebsite(id) {
-    if (!confirm(tr("Delete this website including files, vhost, and database?"))) return false;
+    const site = websites.find(item => String(item.id) === String(id));
+    if (!(await confirmDialog({
+      title: tr("Delete website"), subject: site?.domain, danger: true, typeToConfirm: site?.domain,
+      message: tr("Its files, its vhost, its certificate and its databases are deleted. This cannot be undone."),
+      confirmLabel: tr("Delete website"),
+    }))) return false;
     const data = await request(`/websites/${id}?delete_files=true&delete_database=true`, { method: 'DELETE' }, tr("Deleting website..."));
     if (data) refreshAll();
     return !!data;
@@ -2977,48 +2983,25 @@ function App() {
     if (data?.message) setNotice(data.message);
   }
 
-  function dbOwnerLabel(item) {
-    const owner = users.find(user => user.id === item.owner_id);
-    const site = websites.find(w => w.id === item.website_id);
-    if (site) return `${owner?.username || `user #${item.owner_id}`} · ${site.domain}`;
-    return `${owner?.username || `user #${item.owner_id}`} · no website`;
-  }
-
-  // Only offered for a database no website points at. One that belongs to a
-  // site moves with the site, so the two can never drift apart.
-  function dbOwnerChoices(item) {
-    return users.filter(user => user.id !== item?.owner_id);
-  }
-
-  function openDbOwnerModal(item) {
-    const choices = dbOwnerChoices(item);
-    if (choices.length === 0) { setError(tr("No other account to move it to.")); return; }
-    setDbOwnerModal({ db: item, ownerId: String(choices[0].id) });
-  }
-
-  async function submitDbOwnerChange() {
-    if (!dbOwnerModal) return;
-    const { db: item, ownerId } = dbOwnerModal;
-    const choice = users.find(user => String(user.id) === String(ownerId));
-    if (!choice) { setError(tr("Pick an account to move it to.")); return; }
-    const data = await request(`/databases/${item.id}/owner`, {
-      method: 'POST', body: JSON.stringify({ owner_id: choice.id }),
-    }, tr("Moving database..."));
-    if (data) {
-      setDbOwnerModal(null);
-      setNotice(tr("{0} now belongs to {1}.", item.db_name, choice.username));
-      await refreshAll();
-    }
-  }
-
   async function changeDbPassword(id) {
-    const newPass = prompt(tr("Enter a new database password, minimum 12 characters:"));
+    const item = databases.find(db => String(db.id) === String(id));
+    const newPass = await promptDialog({
+      title: tr("Change the database password"), subject: item ? item.db_user : undefined,
+      message: tr("A new password for the database, at least 12 characters:"),
+      label: tr("New password"), type: 'password', generate: true, minLength: 12, maxLength: 128,
+      validate: value => (/[^\x20-\x7E]/.test(value) ? tr("The password can only use plain ASCII characters.") : ''),
+      confirmLabel: tr("Change password"),
+    });
     if (!newPass) return;
-    await request(`/databases/${id}/password`, { method: 'POST', body: JSON.stringify({ password: newPass }) }, tr("Changing database password..."));
+    const data = await request(`/databases/${id}/password`, { method: 'POST', body: JSON.stringify({ password: newPass }) }, tr("Changing database password..."));
+    if (data) setNotice(tr("The password of {0} is changed.", data.db_user || item?.db_user || ''));
   }
 
   async function deleteDatabase(id, dbName) {
-    if (!confirm(tr("Delete database \"{0}\"? This action cannot be undone.", dbName))) return;
+    if (!(await confirmDialog({
+      title: tr("Delete database"), subject: dbName, danger: true, typeToConfirm: dbName,
+      message: tr("The database and its MySQL user are deleted. This cannot be undone."), confirmLabel: tr("Delete database"),
+    }))) return;
     const data = await request(`/databases/${id}`, { method: 'DELETE' }, tr("Deleting database..."));
     if (data) {
       setNotice(tr("Database \"{0}\" deleted successfully.", dbName));
@@ -3038,11 +3021,11 @@ function App() {
     const dbName = newDatabase.db_name.trim();
     const dbUser = newDatabase.db_user.trim();
     const dbPass = newDatabase.db_password.trim();
-    if (!dbName) { setError(tr("Please enter a database name.")); return; }
-    if (!validDbName.test(dbName)) { setError(tr("Database name can only contain letters, numbers and underscores (no spaces or special characters).")); return; }
-    if (dbUser && !validDbName.test(dbUser)) { setError(tr("Database user can only contain letters, numbers and underscores (no spaces or special characters).")); return; }
-    if (dbPass && dbPass.length < 12) { setError(tr("Password must be at least 12 characters.")); return; }
-    if (dbPass && /[^\x20-\x7E]/.test(dbPass)) { setError(tr("Password contains invalid characters. Use only ASCII characters.")); return; }
+    if (!dbName) { setError(tr("Please enter a database name.")); return false; }
+    if (!validDbName.test(dbName)) { setError(tr("Database name can only contain letters, numbers and underscores (no spaces or special characters).")); return false; }
+    if (dbUser && !validDbName.test(dbUser)) { setError(tr("Database user can only contain letters, numbers and underscores (no spaces or special characters).")); return false; }
+    if (dbPass && dbPass.length < 12) { setError(tr("Password must be at least 12 characters.")); return false; }
+    if (dbPass && /[^\x20-\x7E]/.test(dbPass)) { setError(tr("Password contains invalid characters. Use only ASCII characters.")); return false; }
     const body = {
       db_name: dbName,
       db_user: dbUser || null,
@@ -3053,7 +3036,9 @@ function App() {
       setCreatedDbInfo({ db_name: data.db_name, db_user: data.db_user, db_password: data.db_password });
       setNewDatabase({ db_name: '', db_user: '', db_password: '' });
       await refreshAll();
+      return true;
     }
+    return false;
   }
 
   async function addCron() {
@@ -4778,6 +4763,10 @@ function App() {
       setWpAdminUser, setWpInstallForm, setWpManagerSite, showCreateSite, siteOwnerId, siteType, updateWordPressAll,
       users, viewFullNginxConfig, wafSiteConfig, websiteConfigForm, websiteSearch, websiteSettingsForm, websiteUrl,
       wildcardProvider, wpAdminPassword, wpAdminUser, wpInstallForm, wpManagerMode, wpManagerSite,
+      // The Databases page (pages/Databases.jsx).
+      changeDbPassword, copiedField, createDatabase, createdDbInfo, databaseSearch, databases, deleteDatabase, downloadDatabase,
+      newDatabase, openPhpMyAdmin, setCopiedField, setCreatedDbInfo, setDatabaseSearch, setError, setNewDatabase, setNotice,
+      setShowCreateDb, showCreateDb,
     };
   }
   const sideItems = sidebarItems(navCtx);
@@ -5399,89 +5388,6 @@ function App() {
       </div>
     </section>}
     </>;
-  }
-
-  function renderDatabases() {
-    const dbQuery = databaseSearch.trim().toLowerCase();
-    const websiteById = new Map(websites.map(w => [w.id, w.domain]));
-    const filteredDatabases = dbQuery
-      ? databases.filter(db => (db.db_name || '').toLowerCase().includes(dbQuery)
-          || (db.db_user || '').toLowerCase().includes(dbQuery)
-          || (websiteById.get(db.website_id) || '').toLowerCase().includes(dbQuery))
-      : databases;
-    function copyToClipboard(text, field) {
-      const doCopy = navigator.clipboard ? navigator.clipboard.writeText(text) : new Promise((resolve, reject) => {
-        try { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); resolve(); } catch(e) { reject(e); }
-      });
-      doCopy.then(() => { setCopiedField(field); setTimeout(() => setCopiedField(null), 2000); }).catch(() => setError(tr("Copy failed.")));
-    }
-    const createOpen = showCreateDb || databases.length === 0;
-    const openCreate = () => {
-      setShowCreateDb(true);
-      setTimeout(() => { const el = document.getElementById('create-database-name'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.focus(); }, 0);
-    };
-    return <section className="section">
-      <div className="section-title">
-        <h2>{tr("Databases")}</h2>
-        <div className="actions">
-          <button className="secondary" disabled={!!loading} onClick={refreshAll}><RefreshCw size={15}/> {tr("Refresh")}</button>
-          {!createOpen && <button type="button" onClick={openCreate}><Plus size={15}/> {tr("New database")}</button>}
-        </div>
-      </div>
-      {createOpen && <div className="create-inline">
-        <div className="create-inline-head">
-          <strong>{tr("Create database")}</strong>
-          {databases.length > 0 && <button type="button" className="secondary icon-only mini" onClick={() => setShowCreateDb(false)} aria-label={tr("Close")} title={tr("Close")}><X size={15}/></button>}
-        </div>
-      <div className="form-row">
-        <input id="create-database-name" value={newDatabase.db_name} onChange={e => setNewDatabase(prev => ({ ...prev, db_name: e.target.value }))} placeholder="database_name" />
-        <input value={newDatabase.db_user} onChange={e => setNewDatabase(prev => ({ ...prev, db_user: e.target.value }))} placeholder={tr("db_user (default = db_name)")} />
-        <input value={newDatabase.db_password} onChange={e => setNewDatabase(prev => ({ ...prev, db_password: e.target.value }))} placeholder={tr("password (min 12 chars)")} />
-        <button className="mini secondary-light" title={tr("Generate random password")} onClick={() => setNewDatabase(prev => ({ ...prev, db_password: generateRandomPassword() }))}><Dices size={13}/></button>
-        <button disabled={!!loading || !newDatabase.db_name.trim()} onClick={createDatabase}><Plus size={15}/> {tr("Create database")}</button>
-      </div>
-      </div>}
-      {createdDbInfo && <div className="info-box db-created-box">
-        <div className="db-created-head"><strong>{tr("Database created successfully")}</strong><button className="mini secondary-light" onClick={() => setCreatedDbInfo(null)}><X size={13}/></button></div>
-        <div className="db-created-grid">
-          <label>{tr("Database")}</label><span>{createdDbInfo.db_name} <button className="mini secondary-light" title={copiedField === 'db_name' ? tr("Copied!") : tr("Copy")} onClick={() => copyToClipboard(createdDbInfo.db_name, 'db_name')}>{copiedField === 'db_name' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
-          <label>{tr("User")}</label><span>{createdDbInfo.db_user} <button className="mini secondary-light" title={copiedField === 'db_user' ? tr("Copied!") : tr("Copy")} onClick={() => copyToClipboard(createdDbInfo.db_user, 'db_user')}>{copiedField === 'db_user' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
-          <label>{tr("Password")}</label><span><code>{createdDbInfo.db_password}</code> <button className="mini secondary-light" title={copiedField === 'db_password' ? tr("Copied!") : tr("Copy")} onClick={() => copyToClipboard(createdDbInfo.db_password, 'db_password')}>{copiedField === 'db_password' ? <Check size={12} style={{color:'var(--success)'}}/> : <Copy size={12}/>}</button></span>
-        </div>
-      </div>}
-      {databases.length === 0 && !createdDbInfo && <EmptyState icon={Database} message={tr("No databases found.")} action={{ label: tr("New database"), icon: Plus, onClick: openCreate }} />}
-      {databases.length > 0 && <div className="list-search">
-        <Search size={15}/>
-        <input value={databaseSearch} onChange={e => setDatabaseSearch(e.target.value)} placeholder={tr("Filter databases…")} />
-        {databaseSearch && <button className="mini secondary-light" onClick={() => setDatabaseSearch('')}><X size={13}/></button>}
-        <span className="hint">{dbQuery ? tr("{0} of {1}", filteredDatabases.length, databases.length) : (databases.length === 1 ? tr("{0} database", databases.length) : tr("{0} databases", databases.length))}</span>
-      </div>}
-      {databases.length > 0 && filteredDatabases.length === 0 && <EmptyState icon={Database} message={tr("No database matches “{0}”.", databaseSearch)} />}
-      <div className="table">
-        {filteredDatabases.map(db => {
-          return <div className="row db-row" key={db.id}>
-          <span><strong>{db.db_name}</strong>{isAdmin && <small className="db-owner">{dbOwnerLabel(db)}</small>}</span>
-          <span className="db-user"><small>{tr("User")}</small> {db.db_user}</span>
-          <span className="db-actions">
-            <button className="mini secondary" disabled={!!loading} onClick={() => openPhpMyAdmin(db.id)}>{tr("phpMyAdmin")}</button>
-            <button className="mini secondary-light" disabled={!!loading} title={tr("Download SQL dump")}
-                    aria-label={tr("Download SQL dump of {0}", db.db_name)}
-                    onClick={() => downloadDatabase(db.id, db.db_name)}><Download size={14}/></button>
-            <button className="mini secondary-light" disabled={!!loading} title={tr("Change database password")}
-                    aria-label={tr("Change the password for {0}", db.db_name)}
-                    onClick={() => changeDbPassword(db.id)}><KeyRound size={14}/></button>
-            {isAdmin && !db.website_id && <button className="mini secondary-light" disabled={!!loading}
-                    title={tr("Move to another account")}
-                    aria-label={tr("Move {0} to another account", db.db_name)}
-                    onClick={() => openDbOwnerModal(db)}><MoveRight size={14}/></button>}
-            <button className="mini danger" disabled={!!loading} title={tr("Delete database")}
-                    aria-label={tr("Delete {0}", db.db_name)}
-                    onClick={() => deleteDatabase(db.id, db.db_name)}><Trash2 size={14}/></button>
-          </span>
-        </div>})}
-      </div>
-      <p className="hint">{tr("Click phpMyAdmin to sign in directly. Token expires after 60s.")}</p>
-    </section>;
   }
 
   function cronScheduleLabel(expr) {
@@ -9402,7 +9308,7 @@ function App() {
     if (page === 'websites') return <WebsitesPage/>;
     if (page === 'website-detail') return <WebsiteDetailPage key={routeKey}/>;
     if (page === 'ssl') return renderSsl();
-    if (page === 'databases') return renderDatabases();
+    if (page === 'databases') return <DatabasesPage/>;
     if (page === 'cron') return renderCron();
     if (page === 'files') return renderFiles();
     if (page === 'backups') return renderBackups();
@@ -9594,37 +9500,6 @@ function App() {
         </div>
       </div>
     </div>}
-    {dbOwnerModal && <div className="modal-overlay" onClick={() => setDbOwnerModal(null)}>
-      <div className="modal-card" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>{tr("Move database")}</h3>
-          <button className="secondary-light" onClick={() => setDbOwnerModal(null)} aria-label={tr("Close")}><X size={16}/></button>
-        </div>
-        <div className="modal-body">
-          <div className="modal-section">
-            <div className="move-db-summary">
-              <label>{tr("Database")}</label><strong>{dbOwnerModal.db.db_name}</strong>
-              <label>{tr("Currently")}</label>
-              <span>{users.find(u => u.id === dbOwnerModal.db.owner_id)?.username || tr("user #{0}", dbOwnerModal.db.owner_id)}</span>
-            </div>
-            <label>
-              <span>{tr("Move to")}</span>
-              <select value={dbOwnerModal.ownerId}
-                      onChange={e => setDbOwnerModal(prev => ({ ...prev, ownerId: e.target.value }))}>
-                {dbOwnerChoices(dbOwnerModal.db).map(user => (
-                  <option key={user.id} value={user.id}>{user.username}</option>
-                ))}
-              </select>
-            </label>
-            <p className="hint">{tr("The database, its MySQL user and its password do not change, so anything already connected keeps working.")}</p>
-          </div>
-          <div className="modal-actions">
-            <button className="secondary-light" onClick={() => setDbOwnerModal(null)}>{tr("Cancel")}</button>
-            <button disabled={!!loading || !dbOwnerModal.ownerId} onClick={submitDbOwnerChange}><MoveRight size={14}/> {tr("Move database")}</button>
-          </div>
-        </div>
-      </div>
-    </div>}
     {mailboxEdit && <div className="modal-overlay" onClick={() => setMailboxEdit(null)}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
@@ -9743,4 +9618,4 @@ function App() {
   </main>;
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(<><App /><DialogHost /></>);

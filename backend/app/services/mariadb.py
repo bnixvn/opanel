@@ -197,6 +197,37 @@ def identifier_in_use(db_name: str, db_user: str) -> str:
     return ""
 
 
+def database_sizes(db_names) -> Dict[str, Dict[str, int]]:
+    """Bytes (data and indexes) and table count of each named database.
+
+    One query for all of them. A name MariaDB has no tables for comes back as
+    0 bytes and 0 tables; a name that is not a valid identifier is left out.
+    An empty answer means MariaDB could not be asked.
+    """
+    names = sorted({str(name) for name in db_names if name and all(ch in IDENTIFIER_CHARS for ch in str(name))})
+    if not names:
+        return {}
+    sql = (
+        "SELECT TABLE_SCHEMA, COALESCE(SUM(DATA_LENGTH + INDEX_LENGTH), 0), COUNT(*) "
+        "FROM information_schema.TABLES WHERE TABLE_SCHEMA IN ("
+        + ", ".join(_quote_sql_string(name) for name in names)
+        + ") GROUP BY TABLE_SCHEMA;"
+    )
+    result = shell.run([*_mysql_args(), "-N", "-B"], check=False, input=sql, sensitive=True)
+    if getattr(result, "returncode", 1) != 0:
+        return {}
+    sizes = {name: {"size_bytes": 0, "tables": 0} for name in names}
+    for line in (result.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3 or parts[0] not in sizes:
+            continue
+        try:
+            sizes[parts[0]] = {"size_bytes": int(float(parts[1])), "tables": int(parts[2])}
+        except ValueError:
+            continue
+    return sizes
+
+
 def drop_database(db_name: str, db_user: str):
     sql = (
         f"DROP DATABASE IF EXISTS {_quote_identifier(db_name)};\n"

@@ -50,3 +50,28 @@ def test_the_old_inline_panels_are_gone():
     for name in ("function renderWebsites(", "function renderNginxEditor(", "function renderWebsiteTerminal(",
                  "function renderWebsiteLogViewer(", "terminalViewer"):
         assert name not in APP, name
+
+
+def test_database_sizes_are_one_query_for_the_names_given(monkeypatch):
+    from types import SimpleNamespace
+    from app.services import mariadb
+
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen["sql"] = kwargs["input"]
+        return SimpleNamespace(returncode=0, stdout="shop\t49152\t3\n")
+
+    monkeypatch.setattr(mariadb.shell, "run", fake_run)
+    sizes = mariadb.database_sizes(["shop", "blog", "bad name;"])
+    assert sizes == {"blog": {"size_bytes": 0, "tables": 0}, "shop": {"size_bytes": 49152, "tables": 3}}
+    # The bad name never reached the query.
+    assert "bad name" not in seen["sql"] and "'blog', 'shop'" in seen["sql"]
+
+
+def test_database_sizes_say_nothing_when_mariadb_cannot_be_asked(monkeypatch):
+    from types import SimpleNamespace
+    from app.services import mariadb
+
+    monkeypatch.setattr(mariadb.shell, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout=""))
+    assert mariadb.database_sizes(["shop"]) == {}
