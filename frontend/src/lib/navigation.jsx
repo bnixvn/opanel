@@ -23,6 +23,7 @@ export const PAGE_TITLES = {
   terminal: msg('Terminal'),
   backups: msg('Backup & Restore'),
   users: msg('Panel users'),
+  auditLog: msg('Activity log'),
   settings: msg('Panel settings'),
   security: msg('Account security'),
   malware: msg('Malware Scanner'),
@@ -74,6 +75,8 @@ export const HUBS = [
   ] },
   { key: 'users', title: msg('Users & packages'), roles: ['admin'], tabs: [
     { page: 'users', label: msg('Panel users') },
+    // Who did what in the panel (GET /users/audit/log).
+    { page: 'auditLog', label: msg('Activity log') },
   ] },
   { key: 'config', title: msg('Settings'), roles: ['admin'], tabs: [
     { page: 'settings', label: msg('Panel settings') },

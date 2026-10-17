@@ -27,6 +27,7 @@ import SftpPage from './pages/Sftp';
 import BackupsPage from './pages/Backups';
 import UsersPage from './pages/Users';
 import ProcessesPage from './pages/Processes';
+import AuditLogPage from './pages/AuditLog';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import Switch from './components/Switch';
 import { isWebsitePath } from './lib/websites';
@@ -110,6 +111,7 @@ const PAGE_ROUTES = {
   usage: '/resource-usage',
   git: '/git',
   terminal: '/terminal',
+  auditLog: '/activity-log',
   // The hubs' own addresses (lib/navigation.jsx): each opens its first tab.
   server: '/server',
   'security-center': '/security-center',
@@ -8763,6 +8765,7 @@ function App() {
     if (page === 'services') return isAdmin ? renderServices() : <DashboardPage/>;
     if (page === 'settings') return renderPanelSettings();
     if (page === 'users') return <UsersPage/>;
+    if (page === 'auditLog') return isAdmin ? <AuditLogPage/> : <DashboardPage/>;
     if (page === 'usage') return renderResourceUsage();
     if (page === 'processes') return isAdmin ? <ProcessesPage/> : <DashboardPage/>;
     if (page === 'ramUsage') return isAdmin ? renderRamUsage() : <DashboardPage/>;

@@ -1,0 +1,14 @@
+/* The activity log (pages/AuditLog.jsx), as SNPanel's. Not in a cascade
+   layer: OPanel's element rules are unlayered and would win over a layered
+   class. */
+.audit-filters{display:flex;flex-wrap:wrap;gap:12px;margin:0 0 14px}
+.audit-filters label{display:flex;flex-direction:column;gap:4px;min-width:200px;flex:1 1 220px;max-width:360px}
+.audit-filters label>span{font-size:12px;font-weight:600;color:var(--text-secondary)}
+.audit-table td{vertical-align:top}
+.audit-when{white-space:nowrap;font-variant-numeric:tabular-nums}
+.audit-target,.audit-detail{overflow-wrap:anywhere}
+.audit-detail{color:var(--text-secondary)}
+.audit-pager{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px}
+@media (max-width:760px){
+  .audit-filters label{max-width:none}
+}
