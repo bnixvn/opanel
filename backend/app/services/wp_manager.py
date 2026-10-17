@@ -425,7 +425,7 @@ def _handle_core(db: Session, task: _Task, params: dict) -> None:
         if value is None:
             raise WpError("Choose off, minor or all")
         task.stage("Setting automatic core updates")
-        wp(website, install.path, ["config", "set", "WP_AUTO_UPDATE_CORE", value, "--raw", "--type=constant"])
+        config_set(website, install.path, "WP_AUTO_UPDATE_CORE", value)
     else:
         raise WpError("Unknown core action")
     refresh_install(db, task, install, website)
@@ -441,7 +441,7 @@ def _handle_switch(constant_kind: str):
         else:
             task.stage("Debugging " + ("on" if on else "off"))
             for name, value in (("WP_DEBUG", on), ("WP_DEBUG_LOG", on), ("WP_DEBUG_DISPLAY", False)):
-                wp(website, install.path, ["config", "set", name, "true" if value else "false", "--raw", "--type=constant"])
+                config_set(website, install.path, name, "true" if value else "false")
         refresh_install(db, task, install, website)
     return handler
 
@@ -488,6 +488,35 @@ def _handle_update_everything(db: Session, task: _Task, params: dict) -> None:
         result = wp(website, install.path, args, check=False)
         task.log(_short(result.stdout or result.stderr))
     refresh_install(db, task, install, website)
+
+
+# Where `wp config set` adds a constant wp-config.php does not have yet:
+# WordPress's own marker, or - in a file without it, as OPanel wrote them
+# before 2026-10-17 - just before wp-settings.php is loaded. Whole lines only:
+# a constant put inside a line would break the file.
+CONFIG_ANCHORS = (
+    None,
+    "require_once ABSPATH . 'wp-settings.php';",
+    "require_once(ABSPATH . 'wp-settings.php');",
+    "require_once( ABSPATH . 'wp-settings.php' );",
+)
+
+
+def config_set(website: Website, path: str, name: str, value: str) -> None:
+    """Set a constant in wp-config.php, adding it where WP-CLI can."""
+    last = None
+    for anchor in CONFIG_ANCHORS:
+        args = ["config", "set", name, value, "--raw", "--type=constant"]
+        if anchor:
+            args += [f"--anchor={anchor}", "--placement=before"]
+        try:
+            wp(website, path, args)
+            return
+        except WpError as exc:
+            last = exc
+            if "transformation" not in str(exc) and "anchor" not in str(exc).lower():
+                raise
+    raise last
 
 
 def _short(text: str) -> str:

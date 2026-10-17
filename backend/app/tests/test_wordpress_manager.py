@@ -249,3 +249,26 @@ def test_a_task_a_restart_cut_short_says_so(env):
     wp_manager.settle_stale(env.db)
     env.db.refresh(job)
     assert job.status == "interrupted"
+
+
+def test_a_constant_is_added_above_wp_settings_when_the_marker_is_missing(env, monkeypatch):
+    """OPanel's wp-config.php had no "That's all, stop editing!" line, and
+    `wp config set` could not add WP_DEBUG_LOG to it."""
+    seen = []
+
+    def fake_wp(website, path, args, **kwargs):
+        seen.append(args)
+        if not any(arg.startswith("--anchor=") for arg in args):
+            raise wp_manager.WpError("Error: Could not process the 'wp-config.php' transformation.")
+        return SimpleNamespace(returncode=0, stdout="Success", stderr="")
+
+    monkeypatch.setattr(wp_manager, "wp", fake_wp)
+    wp_manager.config_set(env.sites["alice"], "/x", "WP_DEBUG_LOG", "true")
+    assert seen[-1][-2:] == ["--anchor=require_once ABSPATH . 'wp-settings.php';", "--placement=before"]
+
+
+def test_new_installs_carry_wordpress_s_own_marker():
+    from app.services import wordpress
+
+    text = wordpress._render_wp_config("db", "user", "pass")
+    assert text.index("That's all, stop editing!") < text.index("require_once ABSPATH . 'wp-settings.php';")
