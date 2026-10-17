@@ -162,3 +162,11 @@ def test_deleting_a_website_drops_every_database_it_carries():
 
 def test_deleting_an_account_clears_its_sites_aliases():
     assert "WebsiteAlias.website_id == website.id" in inspect.getsource(users_api._delete_owned_website)
+
+
+def test_user_removal_waits_for_the_users_processes_before_userdel():
+    """userdel refuses while an lsphp worker of the user is still exiting; the
+    refusal was swallowed and the Linux user stayed (seen on .41)."""
+    body = _function("delete_panel_user_runtime")
+    assert body.index('pkill -u "$user"') < body.index('pgrep -u "$user"') < body.index('userdel "$user"')
+    assert 'pkill -KILL -u "$user"' in body

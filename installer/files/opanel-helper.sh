@@ -4288,6 +4288,16 @@ delete_panel_user_runtime() {
   # below refuses (their primary group) and their jails keep a live mount.
   sftp_sub_delete_all_for_owner "$user"
   pkill -u "$user" 2>/dev/null || true
+  # userdel refuses while any process of the user is alive, and its error is
+  # swallowed below: lsphp workers that had just served the user's sites take
+  # a moment to go after TERM, and on .41 two deleted accounts kept their Linux
+  # user that way. Wait for them, then KILL what is left.
+  local tries
+  for tries in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    pgrep -u "$user" >/dev/null 2>&1 || break
+    (( tries == 6 )) && pkill -KILL -u "$user" 2>/dev/null
+    sleep 0.5
+  done
   userdel "$user" 2>/dev/null || true
   groupdel "$user" 2>/dev/null || true
   rm -rf "$HOME_ROOT/$user" 2>/dev/null || true
