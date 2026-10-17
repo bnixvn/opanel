@@ -297,7 +297,9 @@ function CacheTab({ site }) {
     <p className="hint">{site.app_type === 'wordpress'
       ? t('WordPress decides what is cached through the LiteSpeed Cache plugin: install and turn it on in WordPress. Its own "Purge All" empties this same cache.')
       : t('Only responses the application marks with an X-LiteSpeed-Cache-Control header are cached; everything else is served fresh.')}</p>
-    <p className="hint">{t('Turning it on or off empties what the site had stored. Logged-in visitors, form posts and URLs with a query string are never served from the cache.')}</p>
+    <p className="hint">{site.app_type === 'wordpress'
+      ? t('Turning it on or off empties what the site had stored. Logged-in visitors, form posts and URLs with a query string are never served from the cache.')
+      : t('Turning it on or off empties what the site had stored.')}</p>
   </section>;
 }
 

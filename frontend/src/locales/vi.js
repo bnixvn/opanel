@@ -3170,4 +3170,5 @@ export default {
   "Turning the page cache off...": "Đang tắt cache trang...",
   "Turning the page cache on...": "Đang bật cache trang...",
   "WordPress decides what is cached through the LiteSpeed Cache plugin: install and turn it on in WordPress. Its own \"Purge All\" empties this same cache.": "WordPress quyết định nội dung được cache qua plugin LiteSpeed Cache: hãy cài và bật nó trong WordPress. Nút \"Purge All\" của plugin cũng làm trống chính cache này.",
+  "Turning it on or off empties what the site had stored.": "Bật hoặc tắt sẽ làm trống những gì website đã lưu.",
 };
