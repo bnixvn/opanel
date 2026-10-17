@@ -506,7 +506,7 @@ function App() {
   const [restoreJobId, setRestoreJobId] = useState('');
   const [selectedBackupUserId, setSelectedBackupUserId] = useState('');
   const [backupSchedules, setBackupSchedules] = useState([]);
-  const [newBackupSchedule, setNewBackupSchedule] = useState({ user_ids: [], all_users: false, schedule: '0 2 * * *', target_id: '', retention: 7 });
+  const [newBackupSchedule, setNewBackupSchedule] = useState({ user_ids: [], all_users: false, schedule: '0 2 * * *', target_id: '', retention: 7, name_style: 'weekday', is_active: true });
   const [sftpTargets, setSftpTargets] = useState([]);
   const [selectedSftpTargetId, setSelectedSftpTargetId] = useState('');
   const BLANK_TARGET = {
@@ -3631,9 +3631,13 @@ function App() {
       schedule: newBackupSchedule.schedule,
       target_id: newBackupSchedule.target_id ? Number(newBackupSchedule.target_id) : null,
       retention: Number(newBackupSchedule.retention || 7),
-      is_active: true,
+      name_style: newBackupSchedule.name_style || 'weekday',
+      is_active: newBackupSchedule.is_active !== false,
     };
-    const data = await request('/maintenance/backup-schedules', { method: 'POST', body: JSON.stringify(body) }, tr("Saving backup schedule..."));
+    // With an id it is a saved schedule being changed.
+    const editing = newBackupSchedule.id;
+    const data = await request(editing ? `/maintenance/backup-schedules/${editing}` : '/maintenance/backup-schedules',
+      { method: editing ? 'PUT' : 'POST', body: JSON.stringify(body) }, tr("Saving backup schedule..."));
     if (data) {
       setNotice(tr("Backup schedule saved."));
       await loadBackupSchedules();
@@ -3648,9 +3652,14 @@ function App() {
   async function runBackupScheduleNow(item, who) {
     // The same run the timer would do, just early: same rotation slot, same
     // retention. Worth saying so, because it overwrites today's slot.
+    const writes = {
+      date: tr("It writes today's dated archive, replacing one made earlier today."),
+      timestamp: tr("It writes a new archive; the oldest past the schedule's retention are removed."),
+      none: tr("It replaces the account's archive."),
+    };
     if (!(await confirmDialog({
       title: tr("Run this schedule now?"), subject: `${who} · ${cronScheduleLabel(item.schedule)}`,
-      message: tr("It writes today's rotation slot, overwriting last week's copy for that day."), confirmLabel: tr("Run now"),
+      message: writes[item.name_style] || tr("It writes today's rotation slot, overwriting last week's copy for that day."), confirmLabel: tr("Run now"),
     }))) return;
     const data = await request(`/maintenance/backup-schedules/${item.id}/run`, { method: 'POST' }, tr("Starting schedule..."));
     if (data) {
@@ -3674,14 +3683,17 @@ function App() {
   }
 
   async function createSftpTarget() {
+    const { id: editing, ...fields } = newSftpTarget;
     const body = {
-      ...newSftpTarget,
+      ...fields,
       port: Number(newSftpTarget.port || 22),
       password: newSftpTarget.password || null,
       private_key: newSftpTarget.private_key || null,
       s3_secret_key: newSftpTarget.s3_secret_key || null,
     };
-    const data = await request('/maintenance/backup-targets', { method: 'POST', body: JSON.stringify(body) }, tr("Saving backup destination..."));
+    // With an id it is a saved destination being changed: secrets left empty stay.
+    const data = await request(editing ? `/maintenance/backup-targets/${editing}` : '/maintenance/backup-targets',
+      { method: editing ? 'PUT' : 'POST', body: JSON.stringify(body) }, tr("Saving backup destination..."));
     if (data) {
       setNotice(tr("Saved {0} destination {1}", data.kind === 's3' ? 'S3' : tr("SFTP"), data.name));
       setNewSftpTarget(BLANK_TARGET);
@@ -3716,7 +3728,11 @@ function App() {
 
   async function testBackupTarget(id) {
     const data = await request(`/maintenance/backup-targets/${id}/test`, { method: 'POST' }, tr("Testing destination..."));
-    if (data?.ok) setNotice(data.message || tr("Destination works."));
+    if (data?.ok) {
+      setNotice(data.message || tr("Destination works."));
+      // An SFTP test pins the server's key when none was saved.
+      if (data.host_key_fingerprint) await loadSftpTargets();
+    }
   }
 
   async function createSftpBackup() {

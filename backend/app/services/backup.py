@@ -260,6 +260,57 @@ def rotation_filenames(username: str) -> set:
             | {f"{username}{MANUAL_INFIX}{slot}.tar.gz" for slot in WEEKDAY_SLOTS})
 
 
+# How a schedule names its archives (SNPanel's file-name styles):
+#   weekday    <account>-monday.tar.gz - seven files, each overwritten a week on
+#   date       <account>-2026-10-17.tar.gz - one a day, kept to the retention
+#   timestamp  user-<account>-20261017020000.tar.gz - one a run, kept likewise
+#   none       <account>.tar.gz - the one file, replaced by every run
+NAME_STYLES = ("weekday", "date", "timestamp", "none")
+_STAMP_RE = re.compile(r"\d{14}")
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def archive_filename(username: str, style: str, when: datetime | None = None) -> str:
+    """The name a scheduled run writes for this account."""
+    when = when or datetime.now()
+    if style == "date":
+        return f"{username}-{when.strftime('%Y-%m-%d')}.tar.gz"
+    if style == "timestamp":
+        return f"user-{username}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.tar.gz"
+    if style == "none":
+        return f"{username}.tar.gz"
+    return f"{username}-{weekday_slot(when)}.tar.gz"
+
+
+def in_family(name: str, username: str, style: str) -> bool:
+    """Whether a file is one `style` writes for this account - all a prune may touch.
+
+    Exact, not a prefix: accounts share a destination folder, and acme's must
+    never claim acme-shop's.
+    """
+    stem = (name or "").rsplit("/", 1)[-1]
+    if not stem.endswith(".tar.gz"):
+        return False
+    stem = stem[:-len(".tar.gz")]
+    if style == "timestamp":
+        lead = f"user-{username}-"
+        return stem.startswith(lead) and _STAMP_RE.fullmatch(stem[len(lead):]) is not None
+    if style == "none":
+        return stem == username
+    if not stem.startswith(f"{username}-"):
+        return False
+    rest = stem[len(username) + 1:]
+    if style == "date":
+        return _DATE_RE.fullmatch(rest) is not None
+    return rest in WEEKDAY_SLOTS
+
+
+def scheduled_filename_ok(username: str, filename: str) -> bool:
+    """A name some schedule style - or the manual rotation - writes for this account."""
+    return filename in rotation_filenames(username) or any(
+        in_family(filename, username, style) for style in NAME_STYLES)
+
+
 def is_manual_slot(name: str) -> bool:
     """A manual slot bounds itself, so retention must leave it alone.
 
@@ -305,7 +356,7 @@ def create_user_backup(user: User, db, filename: str | None = None,
     if filename:
         # <account>-<weekday>.tar.gz, so the name identifies the account even
         # when the file is looked at outside its folder.
-        if filename not in rotation_filenames(user.username):
+        if not scheduled_filename_ok(user.username, filename):
             raise ValueError("Invalid rotation filename")
         archive = backup_dir / filename
     else:
@@ -736,17 +787,73 @@ def discard_local_copy(archive: str) -> None:
         pass
 
 
-def prune_user_backups(username: str, keep: int) -> None:
-    """Hold the scheduled set at ``keep``. Manual slots are not counted.
+def prune_user_backups(username: str, keep: int, style: str = "weekday") -> None:
+    """Hold one schedule style's archives at ``keep``. Manual slots are not counted.
 
     They bound themselves at seven, and letting them share a schedule's budget
     means one evicts the other -- most likely deleting the copy somebody took
-    by hand right before a risky change.
+    by hand right before a risky change. Nor is another style's: a dated
+    schedule must not delete a week of weekday files.
     """
     keep = max(int(keep or 1), 1)
-    scheduled = [path for path in list_user_backups(username) if not is_manual_slot(path)]
+    scheduled = [path for path in list_user_backups(username)
+                 if not is_manual_slot(path) and in_family(Path(path).name, username, style)]
     for old_backup in scheduled[keep:]:
         Path(old_backup).unlink(missing_ok=True)
+
+
+def prune_sftp_backups(*, host: str, port: int, username: str, remote_path: str,
+                       password: Optional[str] = None, private_key: Optional[str] = None,
+                       expected_host_key_type: Optional[str] = None,
+                       expected_host_key_fingerprint: Optional[str] = None,
+                       family, keep: int) -> int:
+    """Keep the newest ``keep`` of one account's archives in an SFTP folder.
+
+    ``family`` says which names are this schedule's for this account; nothing
+    else in the folder - other accounts', other styles', anything else - is
+    looked at. Newest by name: the dates and stamps sort as text.
+    """
+    if keep < 1:
+        return 0
+    client = _sftp_client(host=host, port=port, username=username, password=password,
+                          private_key=private_key, expected_host_key_type=expected_host_key_type,
+                          expected_host_key_fingerprint=expected_host_key_fingerprint)
+    removed = 0
+    try:
+        remote_dir = posixpath.normpath(remote_path.strip() or ".")
+        with client.open_sftp() as sftp:
+            names = sorted((name for name in sftp.listdir(remote_dir) if family(name)), reverse=True)
+            for name in names[keep:]:
+                sftp.remove(posixpath.join(remote_dir, name))
+                removed += 1
+    finally:
+        client.close()
+    return removed
+
+
+def test_sftp_target(*, host: str, port: int, username: str, remote_path: str,
+                     password: Optional[str] = None, private_key: Optional[str] = None,
+                     expected_host_key_type: Optional[str] = None,
+                     expected_host_key_fingerprint: Optional[str] = None) -> dict:
+    """Sign in, write a small file in the folder and remove it again.
+
+    Returns the server's host key, for a destination that has none pinned yet.
+    """
+    client = _sftp_client(host=host, port=port, username=username, password=password,
+                          private_key=private_key, expected_host_key_type=expected_host_key_type,
+                          expected_host_key_fingerprint=expected_host_key_fingerprint)
+    try:
+        server_key = client.get_transport().get_remote_server_key()
+        remote_dir = posixpath.normpath(remote_path.strip() or ".")
+        probe = posixpath.join(remote_dir, f".opanel-test-{secrets.token_hex(6)}")
+        with client.open_sftp() as sftp:
+            _ensure_remote_dir(sftp, remote_dir)
+            with sftp.open(probe, "w") as handle:
+                handle.write("opanel destination test\n")
+            sftp.remove(probe)
+    finally:
+        client.close()
+    return {"host_key_type": server_key.get_name(), "host_key_fingerprint": _fingerprint(server_key)}
 
 
 def read_backup_skipped(backup_file: str) -> list:
@@ -1603,6 +1710,65 @@ class _PinnedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
         )
 
 
+def _sftp_client(*, host: str, port: int, username: str, password: Optional[str] = None,
+                 private_key: Optional[str] = None, expected_host_key_type: Optional[str] = None,
+                 expected_host_key_fingerprint: Optional[str] = None) -> paramiko.SSHClient:
+    """A signed-in SSH client for an SFTP destination, its host key checked.
+
+    Host key handling:
+      * If a fingerprint is pinned, the server's key is compared against it
+        before any auth bytes are sent. A mismatch raises
+        :class:`SftpHostKeyMismatch`.
+      * If no fingerprint is pinned yet (TOFU bootstrap), any key is taken;
+        the caller reads it off the transport and persists it.
+
+    The caller closes the client.
+    """
+    if not password and not private_key:
+        raise ValueError("SFTP password or private key is required")
+    pkey = _load_private_key(private_key, password=password) if private_key else None
+    client = paramiko.SSHClient()
+    # Note: we deliberately do NOT call load_system_host_keys() because the
+    # daemon runs as the opanel service user with no interactive shell
+    # history; trusting its known_hosts blindly would defeat the pinning model.
+    client.set_missing_host_key_policy(
+        _PinnedHostKeyPolicy(expected_host_key_type, expected_host_key_fingerprint)
+        if expected_host_key_fingerprint else _PinnedHostKeyPolicy(None, None)
+    )
+    try:
+        client.connect(
+            hostname=host,
+            port=port,
+            username=username,
+            password=password if not pkey else None,
+            pkey=pkey,
+            timeout=20,
+            banner_timeout=20,
+            auth_timeout=20,
+            allow_agent=False,
+            look_for_keys=False,
+        )
+        # Verify the server key we actually negotiated against the pin. The
+        # policy catches the "missing" case; this catches the case where the
+        # key was already in the local known_hosts and the policy was not
+        # called at all.
+        transport = client.get_transport()
+        if transport is None:
+            raise SSHException("SFTP transport unavailable")
+        server_key = transport.get_remote_server_key()
+        server_fp = _fingerprint(server_key)
+        if expected_host_key_fingerprint and server_fp != expected_host_key_fingerprint:
+            raise SftpHostKeyMismatch(
+                f"SFTP host key mismatch for {host}: "
+                f"expected {expected_host_key_type or '?'} {expected_host_key_fingerprint}, "
+                f"got {server_key.get_name()} {server_fp}"
+            )
+    except Exception:
+        client.close()
+        raise
+    return client
+
+
 def upload_to_sftp(
     local_file: str,
     *,
@@ -1633,75 +1799,15 @@ def upload_to_sftp(
     if not password and not private_key:
         raise ValueError("SFTP password or private key is required")
 
-    pkey = _load_private_key(private_key, password=password) if private_key else None
     remote_dir = posixpath.normpath(remote_path.strip() or ".")
     remote_file = posixpath.join(remote_dir, local_path.name)
-
-    captured_type: Optional[str] = expected_host_key_type
-    captured_fp: Optional[str] = expected_host_key_fingerprint
-
-    client = paramiko.SSHClient()
-    # Note: we deliberately do NOT call load_system_host_keys() because the
-        # daemon runs as the opanel service user with no interactive shell
-        # history; trusting its known_hosts blindly would defeat the pinning model.
-    if expected_host_key_fingerprint:
-        # Strict: the only acceptable key is the one pinned in the DB.
-        client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        try:
-            host_keys = client.get_host_keys()
-            host_key_obj = _decode_pinned_key(
-                expected_host_key_type or "", expected_host_key_fingerprint
-            )
-            if host_key_obj is not None:
-                host_keys.add(host, expected_host_key_type or host_key_obj.get_name(), host_key_obj)
-        except Exception:  # pragma: no cover - decoding fallback
-            pass
-        # Even if we could not pre-load the key (e.g. only fingerprint stored),
-        # the missing_host_key policy below performs the comparison itself.
-        client.set_missing_host_key_policy(
-            _PinnedHostKeyPolicy(expected_host_key_type, expected_host_key_fingerprint)
-        )
-    else:
-        # TOFU bootstrap path: capture the server key for the caller.
-        client.set_missing_host_key_policy(
-            _PinnedHostKeyPolicy(None, None)
-        )
-
+    client = _sftp_client(host=host, port=port, username=username, password=password,
+                          private_key=private_key, expected_host_key_type=expected_host_key_type,
+                          expected_host_key_fingerprint=expected_host_key_fingerprint)
     try:
-        client.connect(
-            hostname=host,
-            port=port,
-            username=username,
-            password=password if not pkey else None,
-            pkey=pkey,
-            timeout=20,
-            banner_timeout=20,
-            auth_timeout=20,
-            allow_agent=False,
-            look_for_keys=False,
-        )
-        # Verify the server key we actually negotiated against the pin. The
-        # policy catches the "missing" case; this catches the case where the
-        # key was already in the local known_hosts and the policy was not
-        # called at all.
-        transport = client.get_transport()
-        if transport is None:
-            raise SSHException("SFTP transport unavailable")
-        server_key = transport.get_remote_server_key()
-        server_fp = _fingerprint(server_key)
-        server_type = server_key.get_name()
-        if expected_host_key_fingerprint:
-            if server_fp != expected_host_key_fingerprint:
-                raise SftpHostKeyMismatch(
-                    f"SFTP host key mismatch for {host}: "
-                    f"expected {expected_host_key_type or '?'} {expected_host_key_fingerprint}, "
-                    f"got {server_type} {server_fp}"
-                )
-            captured_type = expected_host_key_type or server_type
-            captured_fp = expected_host_key_fingerprint
-        else:
-            captured_type = server_type
-            captured_fp = server_fp
+        server_key = client.get_transport().get_remote_server_key()
+        captured_type = expected_host_key_type or server_key.get_name()
+        captured_fp = expected_host_key_fingerprint or _fingerprint(server_key)
         with client.open_sftp() as sftp:
             _ensure_remote_dir(sftp, remote_dir)
             sftp.put(str(local_path), remote_file)
@@ -1966,8 +2072,12 @@ def prune_s3_backups(
     use_path_style: bool = False,
     keep: int = 7,
     name_prefix: str = "",
+    family=None,
 ) -> int:
     """Keep the newest ``keep`` archives under the prefix, delete the rest.
+
+    ``family``, when given, says which file names count - one schedule
+    style's for one account - and nothing else is touched.
 
     Object storage bills for every byte kept, so unlike the SFTP target this
     one prunes the far end. ``name_prefix`` scopes a prune to one account's
@@ -1983,6 +2093,8 @@ def prune_s3_backups(
     )
     if name_prefix:
         entries = [row for row in entries if row["key"].rsplit("/", 1)[-1].startswith(name_prefix)]
+    if family is not None:
+        entries = [row for row in entries if family(row["key"].rsplit("/", 1)[-1])]
     # A manual slot bounds itself at seven and is not part of any schedule's
     # budget; counting it would let the two evict each other.
     entries = [row for row in entries if not is_manual_slot(row["key"])]

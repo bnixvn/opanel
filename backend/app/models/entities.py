@@ -256,6 +256,9 @@ class BackupSchedule(Base):
     target_id: Mapped[Optional[int]] = mapped_column(ForeignKey("backup_targets.id"), nullable=True)
     schedule: Mapped[str] = mapped_column(String(100), default="0 2 * * *")
     retention: Mapped[int] = mapped_column(Integer, default=7)
+    # How its archives are named: weekday, date, timestamp or none
+    # (backup.NAME_STYLES).
+    name_style: Mapped[str] = mapped_column(String(16), default="weekday", server_default="weekday")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_status: Mapped[str] = mapped_column(String(32), default="pending")

@@ -638,8 +638,9 @@ def test_the_scheduler_names_the_archive_for_the_account_and_the_day():
 
     source = inspect.getsource(backup_scheduler.run_schedule)
 
-    assert 'filename=f"{user.username}-{slot}.tar.gz"' in source
-    assert "backup.weekday_slot(now)" in source
+    assert "filename=backup.archive_filename(user.username, style, now)" in source
+    from datetime import datetime
+    assert backup.archive_filename("acme", "weekday", datetime(2026, 10, 19)) == "acme-monday.tar.gz"
 
 
 def test_run_now_and_the_timer_share_one_code_path():
@@ -853,7 +854,8 @@ def test_the_prune_never_deletes_the_backup_just_taken(tmp_path, monkeypatch):
     """The regression this guards: on a box with the old timestamped archives,
     reverse-alphabetical order put every "user-acme-<stamp>" ahead of every
     rotation file, so the nightly prune deleted the archive it had just
-    written and kept seven stale ones."""
+    written and kept seven stale ones. A schedule's prune now counts only its
+    own style's names (2026-10-17), so those others are not touched at all."""
     import os as _os
 
     monkeypatch.setattr(backup, "_user_backup_dir", lambda name: tmp_path)
@@ -872,7 +874,7 @@ def test_the_prune_never_deletes_the_backup_just_taken(tmp_path, monkeypatch):
     backup.prune_user_backups("acme", 7)
 
     assert fresh.exists()
-    assert len(list(tmp_path.glob("*.tar.gz"))) == 7
+    assert len(list(tmp_path.glob("*.tar.gz"))) == 8
 
 
 def test_retention_leaves_manual_slots_alone(tmp_path, monkeypatch):

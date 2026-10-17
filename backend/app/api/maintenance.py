@@ -34,6 +34,7 @@ from app.schemas.schemas import (
     RestoreRunIn,
     RestoreSourceIn,
     BackupTargetCreate,
+    BackupTargetUpdate,
     BackupTargetOut,
     SftpBackupRun,
     UserBackupCreate,
@@ -1748,6 +1749,7 @@ def create_backup_schedule(payload: BackupScheduleCreate, request: Request, db: 
         target_id=payload.target_id,
         schedule=payload.schedule,
         retention=payload.retention,
+        name_style=payload.name_style,
         is_active=payload.is_active,
         last_status="pending",
     )
@@ -1756,6 +1758,47 @@ def create_backup_schedule(payload: BackupScheduleCreate, request: Request, db: 
     db.refresh(item)
     target = "all_users" if payload.all_users else ",".join(user.username for user in users)
     log_action(db, current_user.id, "create_backup_schedule", target, payload.schedule, request=request)
+    return item
+
+
+@router.put("/backup-schedules/{schedule_id}", response_model=BackupScheduleOut)
+def update_backup_schedule(schedule_id: int, payload: BackupScheduleCreate, request: Request,
+                           db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Change a schedule: who, when, where, how its archives are named and how many are kept.
+
+    The archives it already made stay where they are, under the names they
+    were written with.
+    """
+    ensure_role(current_user.role, Role.admin)
+    item = db.query(BackupSchedule).filter(BackupSchedule.id == schedule_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Backup schedule not found")
+    user_ids = [] if payload.all_users else (payload.user_ids or ([payload.user_id] if payload.user_id else []))
+    user_ids = sorted({int(user_id) for user_id in user_ids if int(user_id) > 0})
+    users = []
+    if not payload.all_users:
+        if not user_ids:
+            raise HTTPException(status_code=400, detail="Select at least one user")
+        users = db.query(User).filter(User.id.in_(user_ids)).all()
+        missing_ids = [str(user_id) for user_id in user_ids if user_id not in {user.id for user in users}]
+        if missing_ids:
+            raise HTTPException(status_code=404, detail=f"User not found: {', '.join(missing_ids)}")
+    if payload.target_id and not db.query(BackupTarget).filter(BackupTarget.id == payload.target_id, BackupTarget.is_active == True).first():  # noqa: E712
+        raise HTTPException(status_code=404, detail="Backup target not found")
+    item.user_id = user_ids[0] if user_ids else None
+    item.user_ids = json.dumps(user_ids)
+    item.all_users = payload.all_users
+    item.target_id = payload.target_id
+    item.schedule = payload.schedule
+    item.retention = payload.retention
+    item.name_style = payload.name_style
+    item.is_active = payload.is_active
+    db.commit()
+    db.refresh(item)
+    who = "all_users" if payload.all_users else ",".join(user.username for user in users)
+    log_action(db, current_user.id, "update_backup_schedule", str(item.id),
+               f"{who} {payload.schedule} {payload.name_style} keep={payload.retention}"
+               f"{'' if payload.is_active else ' paused'}", request=request)
     return item
 
 
@@ -1833,6 +1876,56 @@ def create_backup_target(
     return target
 
 
+@router.put("/backup-targets/{target_id}", response_model=BackupTargetOut)
+def update_backup_target(
+    target_id: int,
+    payload: BackupTargetUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Change a saved destination. A password, key or secret left empty keeps the saved one.
+
+    A different SFTP host or port is a different server: its pinned host key
+    is forgotten, and the next connection pins the new one.
+    """
+    ensure_role(current_user.role, Role.admin)
+    target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Backup target not found")
+    if payload.kind != (target.kind or "sftp"):
+        raise HTTPException(status_code=400, detail="A destination's kind cannot change; add a new one")
+    if payload.name != target.name and db.query(BackupTarget).filter(BackupTarget.name == payload.name).first():
+        raise HTTPException(status_code=409, detail="Backup target name already exists")
+    target.name = payload.name
+    target.remote_path = payload.remote_path
+    if target.kind == "s3":
+        target.s3_endpoint = payload.s3_endpoint
+        target.s3_region = payload.s3_region
+        target.s3_bucket = payload.s3_bucket
+        target.s3_access_key = payload.s3_access_key
+        target.s3_use_path_style = payload.s3_use_path_style
+        if payload.s3_secret_key:
+            target.s3_secret_key = encrypt(payload.s3_secret_key)
+    else:
+        if payload.host != target.host or payload.port != target.port or payload.reset_host_key:
+            target.host_key_type = None
+            target.host_key_fingerprint = None
+        target.host = payload.host
+        target.port = payload.port
+        target.username = payload.username
+        if payload.password:
+            target.password = encrypt(payload.password)
+        if payload.private_key:
+            target.private_key = encrypt(payload.private_key)
+        if not target.password and not target.private_key:
+            raise HTTPException(status_code=400, detail="SFTP password or private key is required")
+    db.commit()
+    db.refresh(target)
+    log_action(db, current_user.id, "update_backup_target", f"{target.kind}:{target.name}", request=request)
+    return target
+
+
 @router.post("/backup-targets/{target_id}/test")
 def test_backup_target(
     target_id: int,
@@ -1850,10 +1943,28 @@ def test_backup_target(
     if not target:
         raise HTTPException(status_code=404, detail="Backup target not found")
     if (target.kind or "sftp") != "s3":
-        raise HTTPException(
-            status_code=400,
-            detail="Only S3 targets can be tested. Run a backup to verify an SFTP target.",
-        )
+        # Sign in and write a small file in the folder, as a backup would.
+        try:
+            seen = backup.test_sftp_target(
+                host=target.host, port=target.port, username=target.username,
+                remote_path=target.remote_path,
+                password=_decrypted(target.password, "SFTP password") if target.password else None,
+                private_key=_decrypted(target.private_key, "SFTP private key") if target.private_key else None,
+                expected_host_key_type=target.host_key_type,
+                expected_host_key_fingerprint=target.host_key_fingerprint,
+            )
+        except HTTPException:
+            raise
+        except backup.SftpHostKeyMismatch as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"SFTP: {exc}") from exc
+        if not target.host_key_fingerprint:
+            target.host_key_type = seen["host_key_type"]
+            target.host_key_fingerprint = seen["host_key_fingerprint"]
+            db.commit()
+        return {"ok": True, "message": f"Signed in to {target.host} and wrote a test file in {target.remote_path}.",
+                "host_key_type": target.host_key_type, "host_key_fingerprint": target.host_key_fingerprint}
     try:
         backup.test_s3_target(
             endpoint=target.s3_endpoint,

@@ -1119,6 +1119,8 @@ class BackupScheduleCreate(BaseModel):
     schedule: str = "0 2 * * *"
     target_id: Optional[int] = None
     retention: int = Field(default=7, ge=1, le=365)
+    # How its archives are named (backup.NAME_STYLES).
+    name_style: Literal["weekday", "date", "timestamp", "none"] = "weekday"
     is_active: bool = True
 
     @field_validator("schedule")
@@ -1149,6 +1151,7 @@ class BackupScheduleOut(BaseModel):
     target_id: Optional[int] = None
     schedule: str
     retention: int
+    name_style: str = "weekday"
     is_active: bool
     last_run_at: Optional[datetime] = None
     last_status: str
@@ -1266,6 +1269,35 @@ class BackupTargetCreate(BaseModel):
                 raise ValueError("SFTP target needs a username")
             if not self.password and not self.private_key:
                 raise ValueError("SFTP password or private key is required")
+        return self
+
+
+class BackupTargetUpdate(BackupTargetCreate):
+    """A saved destination, changed. Its kind stays; a password, key or
+    secret left empty keeps the saved one."""
+
+    # A server that was rebuilt presents a new host key: the saved one is
+    # forgotten and the next connection pins what it sees.
+    reset_host_key: bool = False
+
+    @model_validator(mode="after")
+    def check_kind(self):
+        if self.kind == "s3":
+            from app.services.backup import s3_prefix_for
+
+            try:
+                s3_prefix_for(self.remote_path)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            missing = [label for label, value in (("bucket", self.s3_bucket), ("access key", self.s3_access_key))
+                       if not (value or "").strip()]
+            if missing:
+                raise ValueError("S3 target needs a " + ", ".join(missing))
+        else:
+            if not self.host.strip():
+                raise ValueError("SFTP target needs a host")
+            if not self.username.strip():
+                raise ValueError("SFTP target needs a username")
         return self
 
 

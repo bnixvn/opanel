@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Archive, Clock, Download, FileText, FolderOpen, Globe, History, Network, Play, Plus, RotateCcw, Trash2, Upload, Users, Zap } from 'lucide-react';
+import { Archive, Clock, Download, FileText, FolderOpen, Globe, History, Network, Pencil, Play, Plus, RotateCcw, Trash2, Upload, Users, Zap } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
 import { confirmDialog } from '../components/Dialog.jsx';
@@ -45,6 +45,35 @@ export default function BackupsPage() {
   const busy = !!loading;
   const [scheduleSheet, setScheduleSheet] = useState(false);
   const [targetSheet, setTargetSheet] = useState(false);
+  // How a schedule's archives are named (backup.NAME_STYLES on the server).
+  const nameStyles = [
+    { id: 'weekday', label: t('By weekday'), example: 'username-monday.tar.gz', hint: t('Seven files, each overwritten a week later.') },
+    { id: 'date', label: t('By date'), example: 'username-2026-10-17.tar.gz', hint: t('One a day, kept to the number below.') },
+    { id: 'timestamp', label: t('With a timestamp'), example: 'user-username-20261017020000.tar.gz', hint: t('One a run, kept to the number below.') },
+    { id: 'none', label: t('Account name only'), example: 'username.tar.gz', hint: t('One file, replaced by every run.') },
+  ];
+  const styleOf = (id) => nameStyles.find((style) => style.id === id) || nameStyles[0];
+  function openSchedule(item) {
+    setNewBackupSchedule(item ? {
+      id: item.id, all_users: !!item.all_users, schedule: item.schedule, target_id: item.target_id ? String(item.target_id) : '',
+      retention: item.retention, name_style: item.name_style || 'weekday', is_active: item.is_active !== false,
+      user_ids: ((item.user_ids && item.user_ids.length) ? item.user_ids : (item.user_id ? [item.user_id] : [])).map(String),
+    } : { user_ids: [], all_users: false, schedule: '0 2 * * *', target_id: '', retention: 7, name_style: 'weekday', is_active: true });
+    setScheduleSheet(true);
+  }
+  function openTarget(target) {
+    setNewSftpTarget(target ? {
+      id: target.id, name: target.name, kind: target.kind || 'sftp', remote_path: target.remote_path || '',
+      host: target.host || '', port: target.port || 22, username: target.username || '', password: '', private_key: '',
+      s3_endpoint: target.s3_endpoint || '', s3_region: target.s3_region || 'us-east-1', s3_bucket: target.s3_bucket || '',
+      s3_access_key: target.s3_access_key || '', s3_secret_key: '', s3_use_path_style: !!target.s3_use_path_style,
+      reset_host_key: false, pinned: target.host_key_fingerprint || '',
+    } : {
+      name: '', kind: 'sftp', remote_path: '/backups/opanel', host: '', port: 22, username: '', password: '', private_key: '',
+      s3_endpoint: '', s3_region: 'us-east-1', s3_bucket: '', s3_access_key: '', s3_secret_key: '', s3_use_path_style: false,
+    });
+    setTargetSheet(true);
+  }
   const [refreshing, setRefreshing] = useState(false);
 
   const tabs = [
@@ -142,13 +171,16 @@ export default function BackupsPage() {
     if (await createBackupSchedule()) setScheduleSheet(false);
   }
   const setTarget = (key) => (value) => setNewSftpTarget((prev) => ({ ...prev, [key]: value }));
+  // A saved destination keeps its secrets when they are left empty.
+  const editingTarget = !!newSftpTarget.id;
   const targetReady = !!newSftpTarget.name && (newSftpTarget.kind === 's3'
-    ? (newSftpTarget.s3_bucket && newSftpTarget.s3_access_key && newSftpTarget.s3_secret_key)
-    : (newSftpTarget.host && newSftpTarget.username && (newSftpTarget.password || newSftpTarget.private_key)));
+    ? (newSftpTarget.s3_bucket && newSftpTarget.s3_access_key && (editingTarget || newSftpTarget.s3_secret_key))
+    : (newSftpTarget.host && newSftpTarget.username && (editingTarget || newSftpTarget.password || newSftpTarget.private_key)));
   async function submitTarget(event) {
     event.preventDefault();
     if (targetReady && await createSftpTarget()) setTargetSheet(false);
   }
+  const keepHint = t('Saved secrets are kept when this is left empty.');
 
   function backupRows(files, { onDownload, onRestore, restoreLabel, onDelete }) {
     return <div className="backup-list">
@@ -167,8 +199,8 @@ export default function BackupsPage() {
 
   return <>
     <PageHeader subtitle={subtitles[active]} onRefresh={refreshers[active] ? refresh : undefined} refreshing={refreshing} refreshDisabled={busy}
-      actions={active === 'schedule' ? <button type="button" onClick={() => setScheduleSheet(true)}><Plus size={15} aria-hidden="true"/> {t('Add schedule')}</button>
-        : active === 'destination' ? <button type="button" onClick={() => setTargetSheet(true)}><Plus size={15} aria-hidden="true"/> {t('Add destination')}</button>
+      actions={active === 'schedule' ? <button type="button" onClick={() => openSchedule(null)}><Plus size={15} aria-hidden="true"/> {t('Add schedule')}</button>
+        : active === 'destination' ? <button type="button" onClick={() => openTarget(null)}><Plus size={15} aria-hidden="true"/> {t('Add destination')}</button>
           : null}/>
     <section className="section backups-page">
       <Tabs label={t('Backup sections')} value={active} onChange={setBackupTab} tabs={tabs}/>
@@ -227,7 +259,7 @@ export default function BackupsPage() {
 
       {isAdmin && active === 'schedule' && <div className="backup-tab-panel">
         {backupSchedules.length === 0 && <EmptyState compact icon={Clock} message={t('No backup schedules yet.')}
-          action={{ label: t('Add schedule'), icon: Plus, onClick: () => setScheduleSheet(true) }}/>}
+          action={{ label: t('Add schedule'), icon: Plus, onClick: () => openSchedule(null) }}/>}
         {backupSchedules.length > 0 && <div className="backup-list">
           {backupSchedules.map((item) => {
             // A run started from this row reports on this row.
@@ -235,6 +267,9 @@ export default function BackupsPage() {
             return <div className="backup-item bk-schedule-row" key={item.id}>
               <span>
                 {scheduleUserLabel(item)} · {cronScheduleLabel(item.schedule)} · {targetName(item.target_id)}
+                {item.is_active === false && <> <span className="badge">{t('Paused')}</span></>}
+                <small className="bk-schedule-naming">{styleOf(item.name_style).label} · <code>{styleOf(item.name_style).example}</code>
+                  {item.name_style !== 'none' && <> · {t('keeps {count}', { count: item.retention })}</>}</small>
                 {live
                   ? <><small>{live.message || t('Running')}</small><JobProgress job={live}/></>
                   : <small>
@@ -246,18 +281,20 @@ export default function BackupsPage() {
               <div className="actions bk-row-actions">
                 <button className="secondary-light" disabled={busy || !!live} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14} aria-hidden="true"/> {t('Run now')}</button>
                 <ActionMenu label={t('More actions for {name}', { name: scheduleUserLabel(item) })} items={[
+                  { label: t('Edit schedule'), icon: Pencil, disabled: busy, onClick: () => openSchedule(item) },
+                  'separator',
                   { label: t('Delete schedule'), icon: Trash2, danger: true, disabled: busy, onClick: () => deleteBackupSchedule(item.id) },
                 ]}/>
               </div>
             </div>;
           })}
         </div>}
-        <p className="hint">{t('A daily schedule rotates through seven files named for the day — {example} and so on — so you keep a week and the eighth day overwrites the first. With a destination, that week is kept there: each archive is removed from this server once it has uploaded, and stays here only if the upload fails.', { example: <code>username-monday.tar.gz</code> })}</p>
+        <p className="hint">{t('Each schedule names its archives one way: by weekday ({example}, a week of files, each overwritten a week later), by date or with a timestamp (kept to its number), or by the account name alone. With a destination, the archives are kept there: each is removed from this server once it has uploaded, and stays here only if the upload fails.', { example: <code>username-monday.tar.gz</code> })}</p>
       </div>}
 
       {isAdmin && active === 'destination' && <div className="backup-tab-panel">
         {sftpTargets.length === 0 && <EmptyState compact icon={Network} message={t('No backup destinations found.')}
-          action={{ label: t('Add destination'), icon: Plus, onClick: () => setTargetSheet(true) }}/>}
+          action={{ label: t('Add destination'), icon: Plus, onClick: () => openTarget(null) }}/>}
         {sftpTargets.length > 0 && <div className="backup-list">
           {sftpTargets.map((target) => <div className="backup-item" key={target.id}>
             <span>
@@ -265,12 +302,20 @@ export default function BackupsPage() {
               <small>{target.kind === 's3'
                 ? `${target.s3_bucket}/${String(target.remote_path || '').replace(/^\/+/, '')}${target.s3_endpoint ? ` @ ${target.s3_endpoint}` : ''}`
                 : `${target.username}@${target.host}:${target.remote_path}`}</small>
+              {target.kind !== 's3' && <small className="bk-host-key">{target.host_key_fingerprint
+                ? <>{t('Host key')}: <code>{target.host_key_type} {target.host_key_fingerprint}</code></>
+                : t('Host key: saved at the first connection')}</small>}
+              {(() => {
+                const users = backupSchedules.filter((item) => item.target_id === target.id).length;
+                return users > 0 && <small>{t('Used by {count} schedule(s)', { count: users })}</small>;
+              })()}
             </span>
             <div className="actions bk-row-actions">
               {target.kind === 's3' && <button className="secondary-light" disabled={busy} onClick={() => loadTargetObjects(target.id)}>
                 <FolderOpen size={14} aria-hidden="true"/> {targetObjects.id === target.id ? t('Hide files') : t('Files')}</button>}
               <ActionMenu label={t('More actions for {name}', { name: target.name })} items={[
-                { label: t('Test'), icon: Zap, hidden: target.kind !== 's3', disabled: busy, onClick: () => testBackupTarget(target.id) },
+                { label: t('Test'), icon: Zap, disabled: busy, onClick: () => testBackupTarget(target.id) },
+                { label: t('Edit destination'), icon: Pencil, disabled: busy, onClick: () => openTarget(target) },
                 'separator',
                 { label: t('Delete destination'), icon: Trash2, danger: true, disabled: busy, onClick: () => deleteSftpTarget(target.id) },
               ]}/>
@@ -306,10 +351,11 @@ export default function BackupsPage() {
       </div>}
     </section>
 
-    <Drawer open={scheduleSheet} onClose={() => setScheduleSheet(false)} title={t('Add schedule')} subtitle={t('Full user backups')}
+    <Drawer open={scheduleSheet} onClose={() => setScheduleSheet(false)} title={newBackupSchedule.id ? t('Edit schedule') : t('Add schedule')}
+      subtitle={t('Full user backups')}
       footer={<>
         <button type="button" className="secondary-light" onClick={() => setScheduleSheet(false)}>{t('Cancel')}</button>
-        <button type="submit" form="bk-schedule-form" disabled={!scheduleReady || busy}><Clock size={14} aria-hidden="true"/> {t('Add schedule')}</button>
+        <button type="submit" form="bk-schedule-form" disabled={!scheduleReady || busy}><Clock size={14} aria-hidden="true"/> {newBackupSchedule.id ? t('Save schedule') : t('Add schedule')}</button>
       </>}>
       <form id="bk-schedule-form" onSubmit={submitSchedule}>
         <div className="bk-users" role="group" aria-label={t('Users')}>
@@ -332,10 +378,22 @@ export default function BackupsPage() {
             {sftpTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
           </select>
         </Field>
+        <div className="sn-drawer-grid">
+          <Field label={t('File names')} hint={<>{styleOf(newBackupSchedule.name_style).hint} <code>{styleOf(newBackupSchedule.name_style).example}</code></>}>
+            <select value={newBackupSchedule.name_style || 'weekday'} onChange={(e) => setSchedule('name_style')(e.target.value)}>
+              {nameStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+            </select>
+          </Field>
+          {newBackupSchedule.name_style !== 'none' && <Field label={t('Archives to keep')} hint={t('Per account. The oldest past this are removed after each run.')}>
+            <input type="number" min={1} max={365} value={newBackupSchedule.retention}
+              onChange={(e) => setSchedule('retention')(Math.max(1, Math.min(365, Number(e.target.value) || 1)))}/>
+          </Field>}
+        </div>
+        <Checkbox checked={newBackupSchedule.is_active !== false} onChange={setSchedule('is_active')} label={t('Active: runs on its timetable')}/>
       </form>
     </Drawer>
 
-    <Drawer open={targetSheet} onClose={() => setTargetSheet(false)} title={t('Add destination')}
+    <Drawer open={targetSheet} onClose={() => setTargetSheet(false)} title={editingTarget ? t('Edit destination') : t('Add destination')}
       subtitle={t('Where off-server backup copies are sent. SFTP, or any S3-compatible object storage.')}
       footer={<>
         <button type="button" className="secondary-light" onClick={() => setTargetSheet(false)}>{t('Cancel')}</button>
@@ -344,8 +402,8 @@ export default function BackupsPage() {
       <form id="bk-target-form" onSubmit={submitTarget}>
         <div className="sn-drawer-grid">
           <Field label={t('Destination name')} required><input value={newSftpTarget.name} onChange={(e) => setTarget('name')(e.target.value)}/></Field>
-          <Field label={t('Kind')}>
-            <select value={newSftpTarget.kind} onChange={(e) => setTarget('kind')(e.target.value)}>
+          <Field label={t('Kind')} hint={editingTarget ? t('A destination\'s kind cannot change.') : undefined}>
+            <select value={newSftpTarget.kind} disabled={editingTarget} onChange={(e) => setTarget('kind')(e.target.value)}>
               <option value="sftp">SFTP</option>
               <option value="s3">{t('S3 compatible')}</option>
             </select>
@@ -356,10 +414,12 @@ export default function BackupsPage() {
             <Field label={t('Host')} required><input value={newSftpTarget.host} onChange={(e) => setTarget('host')(e.target.value)} autoCapitalize="none" spellCheck={false}/></Field>
             <Field label={t('Port')}><input value={newSftpTarget.port} onChange={(e) => setTarget('port')(e.target.value)} placeholder="22" inputMode="numeric"/></Field>
             <Field label={t('Username')} required><input value={newSftpTarget.username} onChange={(e) => setTarget('username')(e.target.value)} autoComplete="off"/></Field>
-            <Field label={t('Password')} hint={t('Or a private key below.')}><PasswordField value={newSftpTarget.password} onChange={setTarget('password')} autoComplete="off"/></Field>
+            <Field label={t('Password')} hint={editingTarget ? keepHint : t('Or a private key below.')}><PasswordField value={newSftpTarget.password} onChange={setTarget('password')} autoComplete="off"/></Field>
           </div>
           <Field label={t('Folder on the server')}><input value={newSftpTarget.remote_path} onChange={(e) => setTarget('remote_path')(e.target.value)} placeholder="/backups/opanel"/></Field>
-          <Field label={t('Private key')} optional><textarea value={newSftpTarget.private_key} onChange={(e) => setTarget('private_key')(e.target.value)} rows={4} spellCheck={false}/></Field>
+          <Field label={t('Private key')} optional hint={editingTarget ? keepHint : undefined}><textarea value={newSftpTarget.private_key} onChange={(e) => setTarget('private_key')(e.target.value)} rows={4} spellCheck={false}/></Field>
+          {editingTarget && newSftpTarget.pinned && <Checkbox checked={!!newSftpTarget.reset_host_key} onChange={setTarget('reset_host_key')}
+            label={t('Forget the saved host key ({key}): the server was rebuilt', { key: newSftpTarget.pinned })}/>}
         </> : <>
           <div className="sn-drawer-grid">
             <Field label={t('Bucket')} required><input value={newSftpTarget.s3_bucket} onChange={(e) => setTarget('s3_bucket')(e.target.value)}/></Field>
@@ -368,7 +428,7 @@ export default function BackupsPage() {
           <Field label={t('Endpoint')} hint={t('Leave empty for AWS.')}><input value={newSftpTarget.s3_endpoint} onChange={(e) => setTarget('s3_endpoint')(e.target.value)} autoCapitalize="none" spellCheck={false}/></Field>
           <div className="sn-drawer-grid">
             <Field label={t('Access key')} required><input value={newSftpTarget.s3_access_key} onChange={(e) => setTarget('s3_access_key')(e.target.value)} autoComplete="off"/></Field>
-            <Field label={t('Secret key')} required><PasswordField value={newSftpTarget.s3_secret_key} onChange={setTarget('s3_secret_key')} autoComplete="off"/></Field>
+            <Field label={t('Secret key')} required={!editingTarget} hint={editingTarget ? keepHint : undefined}><PasswordField value={newSftpTarget.s3_secret_key} onChange={setTarget('s3_secret_key')} autoComplete="off"/></Field>
           </div>
           <Field label={t('Key prefix')}><input value={newSftpTarget.remote_path} onChange={(e) => setTarget('remote_path')(e.target.value)} placeholder="opanel/backups"/></Field>
           <Checkbox checked={!!newSftpTarget.s3_use_path_style} onChange={setTarget('s3_use_path_style')} label={t('Path-style addressing (MinIO, Ceph)')}/>

@@ -52,6 +52,10 @@ _WEEKDAYS = "|".join(backup.WEEKDAY_SLOTS)
 # <account>-<weekday>.tar.gz and <account>-manual-<weekday>.tar.gz: the names
 # the panel writes, so the account is known without opening the archive.
 OPANEL_SLOT_RE = re.compile(rf"^(?P<user>.+?)-(?:manual-)?(?:{_WEEKDAYS})\.tar\.gz$")
+# What a schedule may name them instead: user-<account>-<stamp>.tar.gz and
+# <account>-<date>.tar.gz (backup.NAME_STYLES).
+OPANEL_STAMP_RE = re.compile(r"^user-(?P<user>.+)-\d{14}\.tar\.gz$")
+OPANEL_DATE_RE = re.compile(r"^(?P<user>.+)-\d{4}-\d{2}-\d{2}\.tar\.gz$")
 # user.<creator>.<account>.tar.zst (or .tar.gz and the rest): what DirectAdmin
 # writes for every account, whichever compression the box is set to.
 DA_NAME_RE = re.compile(
@@ -159,9 +163,10 @@ def account_of(kind: str, name: str, folder: str = "") -> str:
     if kind == KIND_DA:
         match = DA_NAME_RE.match(base)
         return match.group("user") if match else da_import._archive_username(base)
-    match = OPANEL_SLOT_RE.match(base)
-    if match:
-        return match.group("user")
+    for pattern in (OPANEL_SLOT_RE, OPANEL_STAMP_RE, OPANEL_DATE_RE):
+        match = pattern.match(base)
+        if match:
+            return match.group("user")
     return folder
 
 

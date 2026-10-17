@@ -99,7 +99,12 @@ def _account_prefix(target, username: str) -> str:
     return f"{base}/{username}" if base else username
 
 
-def _upload_to_s3(db, target, archive: str, keep: int, username: str) -> str:
+def _style(schedule: BackupSchedule) -> str:
+    style = getattr(schedule, "name_style", None)
+    return style if style in backup.NAME_STYLES else "weekday"
+
+
+def _upload_to_s3(db, target, archive: str, keep: int, username: str, style: str = "weekday") -> str:
     prefix = _account_prefix(target, username)
     result = backup.upload_to_s3(
         archive,
@@ -111,14 +116,14 @@ def _upload_to_s3(db, target, archive: str, keep: int, username: str) -> str:
         prefix=prefix,
         use_path_style=bool(target.s3_use_path_style),
     )
-    # With weekday slots the folder cannot grow past seven, so this is only
-    # here to clear archives written under the old timestamped scheme. It runs
-    # against the account's own folder and against the legacy flat names,
-    # anchored on the account prefix so a longer username is never swept up.
+    # The account's own folder holds the schedule's archives: only its style's
+    # names for this account count. The legacy flat names - archives written
+    # under the old timestamped scheme - are anchored on the account prefix so
+    # a longer username is never swept up.
     if keep and keep > 0:
-        for scope, name_prefix in (
-            (prefix, ""),
-            (target.remote_path, f"user-{username}-"),
+        for scope, name_prefix, family in (
+            (prefix, "", lambda name: backup.in_family(name, username, style)),
+            (target.remote_path, f"user-{username}-", None),
         ):
             try:
                 backup.prune_s3_backups(
@@ -131,6 +136,7 @@ def _upload_to_s3(db, target, archive: str, keep: int, username: str) -> str:
                     use_path_style=bool(target.s3_use_path_style),
                     keep=keep,
                     name_prefix=name_prefix,
+                    family=family,
                 )
             except Exception:
                 # The upload succeeded. A failed prune costs storage, not a
@@ -148,8 +154,9 @@ def _upload_if_configured(db, schedule: BackupSchedule, archive: str, username: 
     if not target:
         raise ValueError("Backup target not found")
 
+    style = _style(schedule)
     if (target.kind or "sftp") == "s3":
-        return _upload_to_s3(db, target, archive, schedule.retention, username)
+        return _upload_to_s3(db, target, archive, schedule.retention, username, style)
 
     try:
         password = decrypt(target.password) if target.password else None
@@ -178,6 +185,21 @@ def _upload_if_configured(db, schedule: BackupSchedule, archive: str, username: 
         target.host_key_type = result["host_key_type"]
         target.host_key_fingerprint = result["host_key_fingerprint"]
         db.commit()
+    # Dated and timestamped names never repeat, so the folder is held to the
+    # retention here; a weekday or a fixed name replaces itself.
+    if style in ("date", "timestamp") and schedule.retention:
+        try:
+            backup.prune_sftp_backups(
+                host=target.host, port=target.port, username=target.username,
+                remote_path=target.remote_path, password=password, private_key=private_key,
+                expected_host_key_type=target.host_key_type,
+                expected_host_key_fingerprint=target.host_key_fingerprint,
+                family=lambda name: backup.in_family(name, username, style),
+                keep=schedule.retention,
+            )
+        except Exception:
+            # The upload succeeded; a failed prune costs space, not a backup.
+            logger.warning("SFTP prune failed for target %s", target.name, exc_info=True)
     return f"{target.name}:{result['remote_file']}"
 
 
@@ -237,14 +259,14 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
         if on_progress:
             on_progress(index, len(users), user.username, 0, 0, "")
         try:
-            # DirectAdmin-style rotation: a week of dailies occupies seven
-            # files named for the day, each overwritten a week later, so the
-            # destination cannot grow without bound even if the prune below
-            # never succeeds.
-            slot = backup.weekday_slot(now)
+            # Named as the schedule says. The default is DirectAdmin-style
+            # rotation: a week of dailies occupies seven files named for the
+            # day, each overwritten a week later, so the destination cannot
+            # grow without bound even if the prune below never succeeds.
+            style = _style(schedule)
             skipped: list = []
             archive = backup.create_user_backup(
-                user, db, filename=f"{user.username}-{slot}.tar.gz", skipped=skipped,
+                user, db, filename=backup.archive_filename(user.username, style, now), skipped=skipped,
                 on_progress=(lambda done, total, label, _i=index:
                              on_progress(_i, len(users), user.username, done, total, label))
                 if on_progress else None,
@@ -255,7 +277,7 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
                 # doubled the disk a schedule with a destination was meant to
                 # spare. A failed upload raised above and leaves it in place.
                 backup.discard_local_copy(archive)
-            backup.prune_user_backups(user.username, schedule.retention)
+            backup.prune_user_backups(user.username, schedule.retention, style)
             messages.append(f"{user.username}: {target}")
             # An archive with a hole in it still ran, so it is not an error --
             # but the operator has to be told, or the gap only turns up when a
