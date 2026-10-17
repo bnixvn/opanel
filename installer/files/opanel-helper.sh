@@ -9582,6 +9582,9 @@ PY
     target=$(require_managed_path "$path" "$user")
     [[ "$point" =~ ^/home/${user}/\.opanel-wp-points/[a-f0-9]{16}/[0-9]{8}T[0-9]{6}$ ]] || deny "invalid restore point: $point"
     if [[ "$cmd" == "wp-point-create" ]]; then
+      # The home itself is root's (the SFTP jail): the account cannot make a
+      # folder at its top, so the points' folder is made for it, as its own.
+      install -d -o "$user" -g "$user" -m 0700 "$HOME_ROOT/$user/.opanel-wp-points"
       exec runuser -u "$user" -- bash -c '
         set -euo pipefail
         umask 077

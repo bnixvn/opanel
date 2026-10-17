@@ -316,6 +316,8 @@ def test_restore_points_are_made_and_put_back_as_the_site_user():
     assert '^/home/${user}/\\.opanel-wp-points/[a-f0-9]{16}/[0-9]{8}T[0-9]{6}$' in body
     assert 'exec runuser -u "$user" -- bash -c' in body and 'exec runuser -u "$user" -- tar -xzf' in body
     assert "--exclude=./wp-content/uploads" in body
+    # The home is root's (the SFTP jail): the points' folder is made for the account.
+    assert 'install -d -o "$user" -g "$user" -m 0700 "$HOME_ROOT/$user/.opanel-wp-points"' in body
     delete = _helper_case("wp-point-delete")
     assert 'exec runuser -u "$user" -- rm -rf -- "$point"' in delete
 
