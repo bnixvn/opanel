@@ -1,54 +1,65 @@
-"""The sidebar holds day-to-day hosting work; everything else is on Settings."""
+"""Navigation as SNPanel lays it out (operator, 2026-10-17: "Làm lại giao diện
+cho giống nó"): a short sidebar per role, hubs whose pages are tabs under
+one header, and addons reached from the Dashboard rather than the sidebar."""
 import re
 from pathlib import Path
 
-APP_JSX = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+FRONTEND = Path(__file__).resolve().parents[3] / "frontend" / "src"
+APP_JSX = (FRONTEND / "App.jsx").read_text(encoding="utf-8")
+NAV = (FRONTEND / "lib" / "navigation.jsx").read_text(encoding="utf-8")
 
 
-def _block(start: str, end: str) -> str:
-    begin = APP_JSX.index(start)
-    return APP_JSX[begin:APP_JSX.index(end, begin)]
+def _sidebar(role_marker: str) -> list[str]:
+    """The keys of one role's sidebar in sidebarItems()."""
+    block = NAV[NAV.index("export function sidebarItems(ctx) {"):]
+    if role_marker == "admin":
+        block = block[block.index("if (ctx.isAdmin) {"):block.index("if (ctx.isReseller) {")]
+    elif role_marker == "reseller":
+        block = block[block.index("if (ctx.isReseller) {"):]
+        block = block[:block.index("  }\n  return [")]
+    else:
+        block = block[block.index("  }\n  return ["):]
+        block = block[:block.index("];")]
+    return re.findall(r"\['([\w-]+)', msg\(", block)
 
 
-def test_the_sidebar_is_only_the_everyday_pages():
-    nav = _block("  const navSections = [", "  const navItems =")
-    keys = re.findall(r"\['(\w+)', tr\(", nav)
-    assert keys == ["dashboard", "websites", "ssl", "databases", "cron", "files", "sftp", "terminal", "backups", "users", "config"]
-    assert "...(isAdmin ? [['users', tr(\"Panel users\"), Users]] : [])" in nav
-    # The browser terminal (2026-10-17): only for a session that may open one.
-    assert "...(canOpenTerminal ? [['terminal', tr(\"Terminal\"), TerminalIcon]] : [])" in nav
-    # One list: no section headings, addons slot in before Settings.
-    assert "title:" not in nav
-    assert nav.index("...addonNavItems,") < nav.index("['config', tr(")
+def _hub(key: str) -> str:
+    start = NAV.index(f"{{ key: '{key}',")
+    return NAV[start:NAV.index("] },", start)]
 
 
-def test_everything_else_is_on_the_settings_page():
-    hub = _block("  const settingsGroups = [", "  const settingsItems =")
-    keys = re.findall(r"\['(\w+)', tr\(", hub)
-    # The Malware Scanner is an addon now: in the sidebar while it runs, not here.
-    # Panel settings leads the System group.
-    # Server status (1.32.0): the pages behind the top bar's chips, admin only.
-    assert keys == ["firewall", "waf", "wafLogs", "security", "processes", "ramUsage", "diskUsage", "traffic",
-                    "settings", "services", "php", "updates", "addons"]
-    assert "...(isAdmin ? [{ key: 'monitor'" in hub
-    for admin_only in ("firewall", "services", "php", "settings", "updates", "addons"):
-        index = hub.index(f"['{admin_only}', tr(")
-        assert "isAdmin ?" in hub[max(0, index - 20):index], admin_only
-    assert "  config: '/settings'," in APP_JSX and "  settings: '/panel-settings'," in APP_JSX
-    assert "if (page === 'config') return renderSettingsHub();" in APP_JSX
+def test_each_role_has_its_short_sidebar():
+    assert _sidebar("admin") == ["dashboard", "websites", "databases", "files", "backups", "users",
+                                 "server", "security-center", "config"]
+    assert _sidebar("reseller") == ["dashboard", "users", "websites", "databases", "files", "backups", "account"]
+    assert _sidebar("customer") == ["dashboard", "websites", "databases", "files", "backups", "account"]
 
 
-def test_addons_appear_only_while_turned_on():
-    addons = _block("  const addonNavItems = [", "  ];")
-    assert "...(mailInfo?.installed ? [['mail'" in addons
-    assert "...(mcpInfo?.enabled ? [['mcp'" in addons
-    # Git is an addon (2026-10-10): in the sidebar only while it is on.
-    assert "...(gitEnabled ? [['git'" in addons
-    assert "...(isAdmin && notifyInfo?.enabled ? [['notifications'" in addons
-    assert "...(isAdmin && malwareScanStatus?.enabled ? [['malware'" in addons
+def test_the_hubs_hold_the_rest_as_tabs():
+    server = re.findall(r"page: '(\w+)'", _hub("server"))
+    assert server == ["processes", "usage", "ramUsage", "diskUsage", "traffic", "php", "services", "updates"]
+    assert re.findall(r"page: '(\w+)'", _hub("security-center")) == ["firewall", "waf", "wafLogs", "malware"]
+    assert re.findall(r"page: '(\w+)'", _hub("config")) == ["settings", "addons", "notifications"]
+    assert re.findall(r"page: '(\w+)'", _hub("files")) == ["files", "sftp", "terminal"]
+    assert re.findall(r"page: '(\w+)'", _hub("account")) == ["security", "usage"]
+    # A tab whose addon is off is not shown.
+    assert "{ page: 'malware', label: msg('Malware Scanner'), when: (c) => c.malware }" in NAV
+    assert "{ page: 'terminal', label: msg('Terminal'), when: (c) => c.terminal }" in NAV
 
 
-def test_a_page_opened_from_settings_keeps_settings_lit_and_shows_the_way_back():
-    assert "const navKey = settingsPage ? 'config' : page === 'usage' ? 'dashboard' : page;" in APP_JSX
-    assert "className={navKey === key ? 'active' : ''}" in APP_JSX
-    assert "onClick={() => navigateToPage('config')}>{tr(\"Settings\")}</button>" in APP_JSX
+def test_an_addon_is_not_in_the_sidebar():
+    sidebars = NAV[NAV.index("export function sidebarItems(ctx) {"):NAV.index("const PARENTS")]
+    for addon in ("mail", "dns", "git", "mcp", "notifications", "malware"):
+        assert f"['{addon}'," not in sidebars, addon
+
+
+def test_the_shell_uses_the_navigation():
+    assert "const sideItems = sidebarItems(navCtx);" in APP_JSX
+    assert "<HubTabs found={activeHub} page={page} navigateToPage={navigateToPage} routeForPage={routeForPage}/>" in APP_JSX
+    # The hub's name, then the page, in the top bar.
+    assert "{tr(activeHub.hub.title)}</a>" in APP_JSX and 'className="page-crumb-current">{pageTitle}' in APP_JSX
+    # A hub's own address opens its first tab.
+    assert "if (isHubKey(nextPage)) nextPage = hubLanding(nextPage, navCtxRef.current) || 'dashboard';" in APP_JSX
+    for route in ("server: '/server'", "'security-center': '/security-center'", "account: '/account'", "config: '/settings'"):
+        assert route in APP_JSX, route
+    assert "renderSettingsHub" not in APP_JSX, "Settings is a hub of tabs now, not a page of tiles"

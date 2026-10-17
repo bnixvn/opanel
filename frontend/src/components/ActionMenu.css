@@ -1,0 +1,30 @@
+/* components/ActionMenu.jsx: the "…" button and its menu. */
+.sn-menu-trigger{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:38px;padding:0 9px}
+.sn-menu-trigger.has-text{padding:0 12px}
+.sn-menu-trigger[aria-expanded=true]{background:var(--surface-hover);border-color:var(--border-strong,var(--border))}
+
+.sn-menu{position:fixed;z-index:1080;min-width:220px;max-width:min(320px,calc(100vw - 16px));max-height:min(70vh,520px);overflow-y:auto;padding:6px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-lg);animation:sn-menu-in .12s ease-out}
+.sn-menu.is-up{animation-name:sn-menu-in-up}
+.sn-menu .sn-menu-item{display:flex;align-items:center;gap:10px;width:100%;height:auto;min-height:38px;margin:0;padding:8px 10px;background:transparent;color:var(--text);border:0;border-radius:var(--radius-sm);box-shadow:none;font-size:13.5px;font-weight:500;line-height:1.3;text-align:left;text-decoration:none;white-space:normal;justify-content:flex-start;cursor:pointer}
+.sn-menu .sn-menu-item>svg{flex:none;color:var(--text-muted)}
+.sn-menu .sn-menu-item:hover,.sn-menu .sn-menu-item:focus-visible{background:var(--surface-hover);color:var(--text);outline:none}
+.sn-menu .sn-menu-item:focus-visible{box-shadow:inset 0 0 0 2px var(--primary)}
+.sn-menu .sn-menu-item[aria-disabled=true]{opacity:.5;cursor:not-allowed;background:transparent}
+.sn-menu .sn-menu-item.is-danger,.sn-menu .sn-menu-item.is-danger>svg{color:var(--danger-text,var(--danger))}
+.sn-menu .sn-menu-item.is-danger:hover,.sn-menu .sn-menu-item.is-danger:focus-visible{background:var(--danger-bg);color:var(--danger-text,var(--danger))}
+.sn-menu-text{display:grid;gap:2px;min-width:0}
+.sn-menu-text small{color:var(--text-muted);font-size:12px;font-weight:400}
+.sn-menu-noicon{display:inline-block;width:15px;flex:none}
+.sn-menu-sep{height:1px;margin:5px 4px;background:var(--border)}
+@keyframes sn-menu-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@keyframes sn-menu-in-up{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){.sn-menu{animation:none}}
+@media (max-width:760px){
+  .sn-menu .sn-menu-item{min-height:44px}
+  .sn-menu-trigger{min-width:44px}
+}
+
+
+
+/* In a page's head, the "…" keeps its size beside the stretched buttons. */
+.sn-page-actions>.sn-menu-trigger{flex:0 0 auto;min-width:44px}

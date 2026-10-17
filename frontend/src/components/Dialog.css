@@ -1,0 +1,44 @@
+/* components/Dialog.jsx: the panel's confirm and prompt. A centred card on
+   a wide screen; a sheet from the bottom edge on a phone, its buttons
+   stacked and thumb-sized. */
+
+body.sn-dialog-open{overflow:hidden}
+
+.sn-dialog-backdrop{position:fixed;inset:0;z-index:1100;display:flex;align-items:center;justify-content:center;padding:24px 16px;background:var(--overlay,rgba(15,23,42,.45));backdrop-filter:blur(2px);animation:sn-dialog-fade .14s ease-out}
+.sn-dialog{display:flex;flex-direction:column;width:min(480px,100%);max-height:min(88vh,760px);margin:0;padding:0;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-xl,12px);box-shadow:var(--shadow-lg);overflow:hidden;animation:sn-dialog-rise .16s ease-out}
+.sn-dialog.is-wide{width:min(620px,100%)}
+
+.sn-dialog-head{display:flex;align-items:flex-start;gap:12px;padding:18px 18px 6px 20px}
+.sn-dialog-head h2{flex:1;min-width:0;margin:6px 0 0;font-size:16px;font-weight:700;line-height:1.35;color:var(--text);overflow-wrap:anywhere}
+.sn-dialog-icon{flex:none;display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--primary-light);color:var(--primary-ink)}
+.sn-dialog.is-danger .sn-dialog-icon{background:var(--danger-bg);color:var(--danger)}
+.sn-dialog .sn-dialog-x{flex:none;display:grid;place-items:center;width:34px;height:34px;min-height:34px;padding:0;margin:-2px -6px 0 0;background:transparent;color:var(--text-muted);border:1px solid transparent;border-radius:var(--radius-sm)}
+.sn-dialog .sn-dialog-x:hover:not(:disabled){background:var(--surface-hover);color:var(--text);border-color:var(--border)}
+
+.sn-dialog-body{display:grid;gap:14px;padding:4px 20px 18px 66px;overflow-y:auto;overscroll-behavior:contain}
+.sn-dialog-text{display:grid;gap:8px;color:var(--text-secondary);font-size:14px;line-height:1.55;overflow-wrap:anywhere}
+.sn-dialog-text:empty{display:none}
+.sn-dialog-text p{margin:0}
+.sn-dialog-subject{margin:0}
+.sn-dialog-subject strong{display:inline-block;max-width:100%;padding:3px 9px;border-radius:var(--radius-sm);background:var(--surface-alt);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.sn-dialog.is-danger .sn-dialog-subject strong{background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger-text)}
+.sn-dialog-consequences{margin:0;padding-left:18px;display:grid;gap:4px}
+.sn-dialog-options{display:grid;gap:10px;padding:12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt)}
+.sn-dialog-type code{font-family:var(--font-mono);font-weight:700;color:var(--text);background:var(--surface-alt);padding:1px 5px;border-radius:4px;user-select:all}
+.sn-dialog .sn-dialog-code{font-family:var(--font-mono);letter-spacing:.18em;font-size:16px}
+
+.sn-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--border);background:var(--surface-alt)}
+.sn-dialog-actions button{min-width:96px}
+
+@keyframes sn-dialog-fade{from{opacity:0}to{opacity:1}}
+@keyframes sn-dialog-rise{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){.sn-dialog-backdrop,.sn-dialog{animation:none}}
+
+@media (max-width:560px){
+  .sn-dialog-backdrop{align-items:flex-end;padding:0}
+  .sn-dialog,.sn-dialog.is-wide{width:100%;max-height:92vh;border-radius:16px 16px 0 0;border-bottom:0}
+  .sn-dialog-head{padding:16px 14px 4px 16px}
+  .sn-dialog-body{padding:4px 16px 16px}
+  .sn-dialog-actions{flex-direction:column-reverse;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px))}
+  .sn-dialog-actions button{width:100%;height:44px;min-height:44px}
+}

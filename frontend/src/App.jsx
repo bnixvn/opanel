@@ -16,11 +16,14 @@ import 'ace-builds/src-noconflict/theme-tomorrow_night';
 import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pause, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye, Mail, Inbox, Forward, Send, GitBranch, CloudDownload, CloudUpload, Rocket } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import { UsageChart } from './components/UsageChart';
+import HubTabs from './components/HubTabs';
+import { PAGE_TITLES, hubLanding, hubOf, isHubKey, sidebarItems, sidebarKeyOf } from './lib/navigation';
 import { LANGUAGES, currentLanguage, nextLanguage, setLanguage, tr } from './i18n';
 import './shared/style.css';
 import './shared/brand.css';
 import './shared/ui.css';
 import './shared/file-manager.css';
+import './shared/sn-local.css';
 
 const API = import.meta.env.VITE_API_URL || '/api';
 // What loadCurrentUser returns when the API did not answer at all.
@@ -94,6 +97,10 @@ const PAGE_ROUTES = {
   usage: '/resource-usage',
   git: '/git',
   terminal: '/terminal',
+  // The hubs' own addresses (lib/navigation.jsx): each opens its first tab.
+  server: '/server',
+  'security-center': '/security-center',
+  account: '/account',
   // The server's own pages, behind the top bar's status chips (admin only).
   processes: '/processes',
   ramUsage: '/ram-usage',
@@ -741,7 +748,12 @@ function App() {
   const canGrantTerminal = isAdmin || (isReseller && !!currentUser?.terminal_enabled);
   const currentSite = websites.find(site => String(site.id) === String(selectedWebsiteId));
 
+  // The role's navigation facts, kept current for navigateToPage, which is
+  // made once (see navCtx below).
+  const navCtxRef = useRef({});
   const navigateToPage = useCallback((nextPage, options = {}) => {
+    // A hub's own address opens its first tab this role may see.
+    if (isHubKey(nextPage)) nextPage = hubLanding(nextPage, navCtxRef.current) || 'dashboard';
     const route = routeForPage(nextPage);
     if (!route) return;
     const nextUrl = route;
@@ -4721,75 +4733,25 @@ function App() {
     return role === 'admin' ? tr("Admin") : tr("End user");
   }
 
-  // The sidebar in three labelled groups -- what a site needs, what guards it,
-  // and the server itself -- so nothing hides behind a collapsed "Settings".
-  // Everything that is not day-to-day hosting work lives on the Settings page
-  // rather than in the sidebar. Each entry: key, label, icon, one-line summary.
-  const settingsGroups = [
-    { key: 'security', title: tr("Security"), items: [
-      ...(isAdmin ? [['firewall', tr("Firewall"), BrickWall, tr("Open ports, blocked addresses and blocklists")]] : []),
-      ['waf', tr("WAF"), ShieldAlert, tr("Web application firewall for each website")],
-      ['wafLogs', tr("Access logs"), ScrollText, tr("Visitors and what the WAF blocked")],
-      ['security', tr("Account security"), LockKeyhole, tr("Password, two-factor authentication and passkeys")],
-    ] },
-    ...(isAdmin ? [{ key: 'monitor', title: tr("Server status"), items: [
-      ['processes', tr("Process monitor"), Cpu, tr("What is running now, as top -c shows it")],
-      ['ramUsage', tr("RAM usage"), MemoryStick, tr("Where the server's memory is")],
-      ['diskUsage', tr("Disk usage"), HardDrive, tr("Disks, and what takes the space")],
-      ['traffic', tr("Traffic"), Network, tr("Network traffic of each interface")],
-    ] }] : []),
-    { key: 'system', title: tr("System"), items: [
-      ...(isAdmin ? [['settings', tr("Panel settings"), SettingsIcon, tr("Branding, panel address and certificate")]] : []),
-      ...(isAdmin ? [['services', tr("Services"), Activity, tr("Start, stop and check the server's daemons")]] : []),
-      ...(isAdmin ? [['php', tr("PHP config"), Code2, tr("PHP versions, limits and extensions")]] : []),
-      ...(isAdmin ? [['updates', tr("Updates"), RefreshCw, tr("Panel and system updates")]] : []),
-      ...(isAdmin ? [['addons', tr("Addons"), PackageOpen, tr("Install and turn on optional features")]] : []),
-    ] },
-  ].filter(group => group.items.length > 0);
-  const settingsItems = settingsGroups.flatMap(group => group.items);
-
-  // An addon earns a sidebar entry only while it is turned on.
-  const addonNavItems = [
-    // Email is everyday work for every account, so it leads the addons.
-    ...(mailInfo?.installed ? [['mail', tr("Email"), Mail]] : []),
-    ...(dnsInfo?.installed ? [['dns', tr("DNS Manager"), Network]] : []),
-    ...(gitEnabled ? [['git', tr("Git"), GitBranch]] : []),
-    ...(mcpInfo?.enabled ? [['mcp', tr("AI assistants (MCP)"), Bot]] : []),
-    ...(isAdmin && notifyInfo?.enabled ? [['notifications', tr("Notifications"), Bell]] : []),
-    ...(isAdmin && malwareScanStatus?.enabled ? [['malware', tr("Malware Scanner"), Bug]] : []),
-  ];
-
-  // A reseller's accounts page is the same page: its customers.
-  const resellerNavItems = isReseller ? [['users', tr("Customers"), Users]] : [];
-
-  // One plain list, top to bottom: no section headings.
-  const navSections = [
-    { key: 'main', items: [
-      ['dashboard', tr("Dashboard"), Home],
-      ['websites', tr("Websites"), Globe],
-      ['ssl', tr("SSL"), Lock],
-      ['databases', tr("Databases"), Database],
-      ['cron', tr("Cron"), Clock],
-      ['files', tr("File manager"), FolderOpen],
-      ['sftp', tr("SFTP accounts"), KeyRound],
-      ...(canOpenTerminal ? [['terminal', tr("Terminal"), TerminalIcon]] : []),
-      ['backups', tr("Backups"), Archive],
-      ...(isAdmin ? [['users', tr("Panel users"), Users]] : []),
-      ...resellerNavItems,
-      ...addonNavItems,
-      ['config', tr("Settings"), SettingsIcon],
-    ] },
-  ];
-
-  const navItems = navSections.flatMap(section => section.items);
-  // A page reached from Settings keeps Settings lit in the sidebar.
-  const settingsPage = settingsItems.find(([key]) => key === page);
-  const navKey = settingsPage ? 'config' : page === 'usage' ? 'dashboard' : page;
-  // The scanner's page stays reachable by URL while its addon is off (it says
-  // how to turn it on), so it keeps its own title then too.
-  const activeNavItem = settingsPage || navItems.find(([key]) => key === navKey)
-    || (page === 'malware' && isAdmin ? ['malware', tr("Malware Scanner"), Bug] : null)
-    || (page === 'usage' && limitsOn && !isAdmin ? ['usage', tr("Resource usage"), Activity] : navItems[0]);
+  // The navigation (lib/navigation.jsx), as SNPanel lays it out: the role's
+  // sidebar, the entry lit on this page, the hub it is a tab of, its title.
+  const navCtx = {
+    isAdmin, isReseller, limits: limitsOn, terminal: canOpenTerminal,
+    malware: !!malwareScanStatus?.enabled, notifications: !!notifyInfo?.enabled,
+  };
+  navCtxRef.current = navCtx;
+  // A hub's own address typed or bookmarked (/server, /settings): its first
+  // tab, once the account is known.
+  useEffect(() => {
+    if (currentUser && isHubKey(page)) navigateToPage(page, { replace: true });
+  }, [page, currentUser, navigateToPage]);
+  const sideItems = sidebarItems(navCtx);
+  const sidebarPage = sidebarKeyOf(page, navCtx, sideItems);
+  const activeHub = hubOf(page, navCtx);
+  const litItem = sideItems.find(([key]) => key === sidebarPage) || sideItems[0];
+  const pageTitle = tr(PAGE_TITLES[page] || litItem?.[1] || 'Dashboard');
+  // A newer release waiting: a dot on the avatar and its line in the menu.
+  const panelWaiting = isAdmin && resourceUsage?.panel_update?.update_available === true;
 
   function renderNotifications() {
     const errorMessage = formatApiError(error, '').trim();
@@ -5154,19 +5116,6 @@ function App() {
         <Icon size={14}/><span className="top-stat-label">{label}</span><b>{value}</b>
       </button>)}
     </nav>;
-  }
-
-  // The version opens Updates for an administrator, with a dot while a newer
-  // release waits; a customer sees the number only.
-  function renderTopVersion() {
-    if (!isAdmin) return <span className="top-version" title={tr("Panel version")}>v{appVersion}</span>;
-    const waiting = resourceUsage?.panel_update?.update_available === true;
-    const latest = resourceUsage?.panel_update?.latest_version;
-    const title = waiting ? tr("Panel update {0} is available.", latest) : tr("Updates");
-    return <button type="button" className={`top-version${waiting ? ' has-update' : ''}${page === 'updates' ? ' active' : ''}`}
-      onClick={() => navigateToPage('updates')} title={title} aria-label={`${tr("Panel version")} ${appVersion}. ${title}`}>
-      v{appVersion}{waiting && <i className="top-version-dot" aria-hidden="true" />}
-    </button>;
   }
 
   function renderProcessMonitor() {
@@ -8133,23 +8082,6 @@ function App() {
     </div>;
   }
 
-  function renderSettingsHub() {
-    return <section className="section settings-hub">
-      <div className="section-title">
-        <div><h2>{tr("Settings")}</h2><p className="hint">{tr("Security, server and panel configuration.")}</p></div>
-      </div>
-      {settingsGroups.map(group => <div className="settings-hub-group" key={group.key}>
-        <h3>{group.title}</h3>
-        <div className="settings-hub-grid">
-          {group.items.map(([key, label, Icon, summary]) => <button key={key} type="button" className="settings-tile" onClick={() => navigateToPage(key)}>
-            <span className="settings-tile-icon"><Icon size={18}/></span>
-            <span className="settings-tile-text"><strong>{label}</strong><small>{summary}</small></span>
-          </button>)}
-        </div>
-      </div>)}
-    </section>;
-  }
-
   // Labels live here rather than in the API so the i18n check sees them.
   function notifyEventLabels() {
     return {
@@ -10080,7 +10012,6 @@ function App() {
     if (page === 'mail') return renderMail();
     if (page === 'dns') return renderDns();
     if (page === 'notifications') return isAdmin ? renderNotificationCenter() : renderDashboard();
-    if (page === 'config') return renderSettingsHub();
     if (page === 'sftp') return renderSftp();
     if (page === 'git') return renderGit();
     if (page === 'terminal') return renderTerminalPage();
@@ -10144,7 +10075,7 @@ function App() {
 
   if (standaloneEditor) return renderStandaloneEditor();
 
-  const ActiveIcon = activeNavItem?.[2] || Home;
+  const ActiveIcon = litItem?.[2] || Home;
 
   return <main className="app-shell">
     <section className="layout">
@@ -10161,49 +10092,60 @@ function App() {
           <button className="sidebar-close" onClick={() => setMobileMenuOpen(false)} aria-label={tr("Close menu")}><X size={18}/></button>
         </div>
         <nav className="sidebar-nav">
-          {navSections.map(section => <div className="sidebar-section" key={section.key}>
-            {section.title && <p className="sidebar-section-title">{section.title}</p>}
-            {section.items.map(([key, label, Icon]) => <button key={key} type="button" className={navKey === key ? 'active' : ''} onClick={() => navigateToPage(key)} aria-current={navKey === key ? 'page' : undefined}>
-              <Icon size={16}/><span>{label}</span>
-            </button>)}
-          </div>)}
-        </nav>
-        <div className="sidebar-foot">
-          <div className="user-menu sidebar-user" ref={userMenuRef}>
-            <button type="button" className="user-menu-trigger" onClick={() => setUserMenuOpen(open => !open)} aria-haspopup="menu" aria-expanded={userMenuOpen} title={tr("Logged in as")}>
-              <span className="user-avatar" aria-hidden="true">{(currentUser?.username || username || '?').slice(0, 1).toUpperCase()}</span>
-              <span className="user-menu-name">{currentUser?.username || username}</span>
-              <ChevronDown size={14} className="user-menu-chevron"/>
-            </button>
-            {userMenuOpen && <div className="user-menu-panel" role="menu">
-              <div className="user-menu-head">
-                <strong>{currentUser?.username || username}</strong>
-                <small>{currentUser?.email || roleLabel(currentUser?.role)}</small>
-              </div>
-              <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); openProfileModal(); }}><KeyRound size={15}/>{tr("Profile")}</button>
-              <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); navigateToPage('security'); }}><LockKeyhole size={15}/>{tr("Account security")}</button>
-              {currentUser?.impersonator && <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); returnToImpersonator(); }}><ArrowLeft size={15}/>{tr("Back to {0}", currentUser.impersonator)}</button>}
-              <button type="button" role="menuitem" className="user-menu-logout" onClick={() => { setUserMenuOpen(false); logout(); }}><LogOut size={15}/>{tr("Logout")}</button>
-              {appVersion && <small className="user-menu-version">{panelSettings.app_name || 'OPanel'} v{appVersion}</small>}
-            </div>}
+          <div className="sidebar-section">
+            {sideItems.map(([key, label, Icon]) => {
+              const current = sidebarPage === key;
+              return <button key={key} type="button" className={current ? 'active' : ''} onClick={() => navigateToPage(key)} aria-current={current ? 'page' : undefined}>
+                <Icon size={17}/><span>{tr(label)}</span>
+              </button>;
+            })}
           </div>
-          {renderLanguageToggle('sidebar-tool')}
-          <button type="button" className="sidebar-tool" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
-        </div>
+        </nav>
       </aside>
       <div className="content">
         <section className="topbar">
           <button className="mobile-nav-toggle" onClick={() => setMobileMenuOpen(o => !o)} aria-expanded={mobileMenuOpen} aria-label={tr("Toggle navigation")}>
-            <Menu size={20}/><span><ActiveIcon size={17}/>{activeNavItem?.[1] || tr("Menu")}</span>
+            <Menu size={20}/><span><ActiveIcon size={17}/>{pageTitle}</span>
           </button>
           <div className="page-title">
-            {settingsPage
-              ? <h1 className="page-crumbs"><button type="button" onClick={() => navigateToPage('config')}>{tr("Settings")}</button><span aria-hidden="true">›</span><span className="page-crumb-current">{settingsPage[1]}</span></h1>
-              : <h1>{page === 'usage' && limitsOn && !isAdmin ? tr("Resource usage") : activeNavItem?.[1] || panelSettings.app_name || tr("opanel")}</h1>}
+            {activeHub && activeHub.tabs.length > 1
+              ? <h1 className="page-crumbs">
+                {/* The hub, a link to its first tab; then the page. */}
+                <a href={routeForPage(activeHub.tabs[0].page)} onClick={event => { event.preventDefault(); navigateToPage(activeHub.tabs[0].page); }}>{tr(activeHub.hub.title)}</a>
+                <span aria-hidden="true">›</span>
+                <span className="page-crumb-current">{pageTitle}</span>
+              </h1>
+              : <h1>{pageTitle}</h1>}
           </div>
+          {/* The language, the theme and the account's menu, as SNPanel has
+              them. The server's figures are the Dashboard's; the version is in
+              the account's menu, and opens Updates. */}
           <div className="top-actions">
-            {isAdmin && renderTopStats()}
-            {appVersion && renderTopVersion()}
+            {renderLanguageToggle('top-tool')}
+            <button type="button" className="top-tool" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
+            <div className="user-menu top-user" ref={userMenuRef}>
+              <button type="button" className="user-menu-trigger" onClick={() => setUserMenuOpen(open => !open)} aria-haspopup="menu" aria-expanded={userMenuOpen} title={tr("Logged in as")}>
+                <span className="user-avatar" aria-hidden="true">{(currentUser?.username || username || '?').slice(0, 1).toUpperCase()}{panelWaiting && <i className="user-menu-dot"/>}</span>
+                <span className="user-menu-name">{currentUser?.username || username}</span>
+                <ChevronDown size={14} className="user-menu-chevron"/>
+              </button>
+              {userMenuOpen && <div className="user-menu-panel" role="menu">
+                <div className="user-menu-head">
+                  <strong>{currentUser?.username || username}</strong>
+                  <small>{currentUser?.email || roleLabel(currentUser?.role)}</small>
+                </div>
+                <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); openProfileModal(); }}><KeyRound size={15}/>{tr("Profile")}</button>
+                <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); navigateToPage('security'); }}><LockKeyhole size={15}/>{tr("Account security")}</button>
+                {currentUser?.impersonator && <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); returnToImpersonator(); }}><ArrowLeft size={15}/>{tr("Back to {0}", currentUser.impersonator)}</button>}
+                {appVersion && (isAdmin
+                  ? <button type="button" role="menuitem" className={`user-menu-version-item${panelWaiting ? ' has-update' : ''}`} onClick={() => { setUserMenuOpen(false); navigateToPage('updates'); }}>
+                    <RefreshCw size={15}/><span>{panelSettings.app_name || 'OPanel'} v{appVersion}</span>
+                    <small>{panelWaiting ? tr("Panel update {0} is available.", resourceUsage?.panel_update?.latest_version) : tr("Updates")}</small>
+                  </button>
+                  : <small className="user-menu-version">{panelSettings.app_name || 'OPanel'} v{appVersion}</small>)}
+                <button type="button" role="menuitem" className="user-menu-logout" onClick={() => { setUserMenuOpen(false); logout(); }}><LogOut size={15}/>{tr("Logout")}</button>
+              </div>}
+            </div>
           </div>
         </section>
         <div className="content-body">
@@ -10212,6 +10154,8 @@ function App() {
             <LogIn size={15}/> <span>{tr("You are logged in as {0}.", currentUser.username)}</span>
             <button type="button" className="mini" disabled={!!loading} onClick={returnToImpersonator}><ArrowLeft size={14}/> {tr("Back to {0}", currentUser.impersonator)}</button>
           </div>}
+          {/* The hub's pages as tabs, under the top bar. */}
+          <HubTabs found={activeHub} page={page} navigateToPage={navigateToPage} routeForPage={routeForPage}/>
           {renderPage()}
           {loading && <div className="loading"><span></span>{loading}</div>}
         </div>

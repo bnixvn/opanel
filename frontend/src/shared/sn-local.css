@@ -1,0 +1,244 @@
+/* ============================================================
+   SNPanel's pieces in the OPanel look (operator, 2026-10-17: the panel is
+   laid out as SNPanel is). From SNPanel's skin-local.css, unchanged; loaded
+   last, after OPanel's own stylesheets.
+   ============================================================ */
+
+/* The language and theme switches in the login page's top corner. */
+.login-corner{position:fixed;top:14px;right:16px;z-index:2;display:flex;gap:8px}
+.login-corner button{width:36px;height:36px;min-height:36px;padding:0;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text);box-shadow:var(--shadow-sm);font-size:12px;font-weight:700;display:inline-grid;place-items:center}
+.login-corner button:hover:not(:disabled){background:var(--surface-hover);border-color:var(--border-hover);color:var(--text)}
+
+/* "Keep me signed in": a quiet line under the fields. */
+.login-form label.login-remember{display:flex;grid-template-columns:none;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--text-secondary);cursor:pointer}
+.login-form label.login-remember input{width:16px;height:16px;min-height:0;margin:0;padding:0;flex:none}
+/* The login card's errors and news, by the form (LOG-01); the code step's
+   head and its way back; the password's show/hide inside the field - the
+   card's full-width button rule is not theirs. */
+.login-alert,.login-note{display:flex;align-items:flex-start;gap:8px;margin:0;padding:10px 12px;border-radius:var(--radius-md);font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.login-alert{background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger-text)}
+.login-note{background:var(--primary-light);border:1px solid var(--primary-soft);color:var(--text)}
+.login-alert svg,.login-note svg{flex:none;margin-top:1px}
+.login-step-head{display:grid;gap:4px}
+.login-step-head h2{margin:0;font-size:17px}
+.login-step-head p{margin:0;color:var(--text-secondary);font-size:13.5px}
+.login-form .login-code input{font-family:var(--font-mono);font-size:18px;letter-spacing:.2em}
+.login-form .login-code .hint{font-size:12px;color:var(--text-muted)}
+.login-form button.login-back{width:auto;justify-self:center;display:inline-flex;align-items:center;gap:6px;margin-top:2px;text-decoration:none;font-weight:600}
+.login-form .sn-password .sn-password-eye{width:32px;margin:0}
+.login-form .sn-check{font-size:13px;color:var(--text-secondary)}
+
+/* A WAF row of SNPanel's: its switch, the domain, the badges and Configure
+   - one more column than OPanel's row, which has no switch. */
+.waf-sites .waf-site-row{grid-template-columns:auto minmax(0,1fr) max-content max-content}
+.waf-sites .waf-site-row>button{width:auto}
+@media (width<=640px){.waf-sites .waf-site-row{grid-template-columns:auto minmax(0,1fr);}}
+
+/* The access log's filters: one wrapping row, as SNPanel lays them out. */
+.access-log-panel .access-log-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.access-log-panel .access-log-toolbar select{flex:1 1 150px;width:auto;min-width:0}
+.access-log-panel .access-log-toolbar input{flex:2 1 220px;width:auto;min-width:0}
+.access-log-panel .access-log-toolbar>button{width:auto}
+
+/* ---- Disabled looks disabled ----
+   OPanel's button:disabled sits in opanel-elements, beneath the unlayered
+   .secondary/.danger/.mini colours, which won: a disabled Delete stayed red
+   on white and a disabled Refresh looked pressable. One grey for every
+   disabled button and upload label - the one disabled primary buttons
+   already had. The crumb that marks the current folder keeps its own
+   (.crumb:disabled, more specific). */
+button:disabled,.upload-button.disabled,
+:is(.secondary,.secondary-light,.danger,.danger-light,.mini,.icon-button,.site-icon-button):disabled{
+  background:var(--disabled-bg);color:var(--disabled-fg);border-color:var(--disabled-border);
+  box-shadow:none;opacity:1;cursor:not-allowed}
+:is(button,.upload-button):is(:disabled,.disabled) svg{color:inherit}
+
+/* ---- Buttons that are labels ----
+   An upload is a <label class="upload-button">: OPanel's class rule gave it
+   36px and 13px/600 beside SNPanel's <button>s at 40px and 14px/700. Its
+   size follows theirs (brand.css); the file manager's toolbar, which sizes
+   all of its controls together, keeps its own. Only the label: a link drawn
+   as a button (.button-link) keeps its own size, a small one (.mini) too. */
+.upload-button{height:40px;min-height:40px;font-size:var(--text-base);font-weight:700}
+@media (width<=950px){.upload-button{height:42px;min-height:42px}}
+
+/* ---- A file field: OPanel's padding, so its 30px button fits ----
+   SNPanel's input padding (9px) is in a layer above OPanel's file rule and
+   cut the bottom off the "Choose file" button. */
+:not(.upload-button)>input[type=file]{padding:4px 12px 4px 4px;line-height:30px}
+
+/* ---- The website rows' icon tooltips ----
+   Every button clips (overflow:hidden), and these draw their tooltip above
+   themselves. */
+.site-icon-button{overflow:visible}
+
+/* ---- A title's icon button keeps its square ----
+   OPanel's phone rule gives a title's buttons width:auto, which left an
+   icon-only button 18px wide. */
+.section-title>button.icon-button{width:36px;min-width:36px;flex:none}
+
+/* ---- New website ----
+   OPanel's row has 110px for the PHP version; SNPanel's Application select
+   goes in that place and was cut to "Select an". The track grows to what it
+   holds. On a phone, one field to a line - OPanel's 1450px rule comes after
+   its 950px one and kept two. */
+@media (width>1450px){.create-site-row{grid-template-columns:1.4fr 1fr minmax(110px,max-content) 1.2fr 1fr 1fr auto}}
+@media (width<=640px){.create-site-row{grid-template-columns:minmax(0,1fr)}}
+
+/* ---- A website's log viewer: the controls side by side, at their width ---- */
+.log-toolbar{justify-content:start}
+
+/* ---- Cron: the Schedule field is a preset and an expression ----
+   OPanel's 150px column is for its one input; SNPanel's two were left 24px
+   and 128px. SNPanel's own columns (brand.css). */
+.cron-form{grid-template-columns:minmax(200px,1fr) minmax(300px,1.2fr) minmax(240px,1.3fr) max-content}
+@media (width<=1320px){
+  .cron-form{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cron-form .cron-command{grid-column:1 / -1}
+  .cron-form>button{justify-self:start}
+}
+@media (width<=950px){
+  .cron-form{grid-template-columns:minmax(0,1fr)}
+  .cron-form .cron-command{grid-column:auto}
+  .cron-form>button{justify-self:stretch}
+}
+
+/* ---- The file manager's list ----
+   SNPanel's headings sort and sit over their columns: the list is one grid
+   whose rows are subgrids of it (file-manager.css). OPanel's rules for its
+   flat list are unlayered and replaced that with a flex heading and a grid
+   per row, so the headings and the columns parted and the columns moved
+   with each row's buttons. Rows size to what they hold: at a capped height
+   they were squeezed to their 36px minimum and drawn over each other.
+   The columns in a line need 880px (an archive's four buttons, a little
+   more in Vietnamese); the list is that wide from 1251px, so up to 1280px a
+   row takes two lines, and wider its buttons wrap rather than run out of
+   the list. */
+.file-list{grid-auto-rows:max-content;row-gap:0;margin-top:8px;border-radius:var(--radius-sm)}
+.file-list .file-list-header{display:grid;justify-content:normal;margin:0;border:0;border-bottom:1px solid var(--border);border-radius:0;position:sticky;top:0;z-index:1}
+@media (width>1280px){
+  .file-list{grid-template-columns:28px minmax(240px,1fr) 92px 82px 126px auto;column-gap:8px}
+  .file-list .file-list-header,.file-list .file-item{grid-column:1 / -1;grid-template-columns:subgrid;column-gap:8px}
+  .file-list .file-item .file-row-actions{flex-wrap:wrap}
+}
+/* Narrower, two lines a row: the name and its buttons, then the
+   permissions, the size and the date. OPanel hid the date at 1100px and
+   below for a copy of it SNPanel does not draw. The headings left are the sorts. */
+@media (width<=1280px){
+  .file-list{grid-template-columns:minmax(0,1fr)}
+  .file-list .file-list-header{grid-template-columns:22px minmax(0,1fr) auto auto;column-gap:8px}
+  .file-list .file-list-header :is(.file-col-mode,.file-col-actions){display:none}
+  .file-list .file-item .file-date{display:inline}
+}
+@media (760px<width<=1280px){
+  .file-list .file-item{grid-template-columns:22px auto minmax(0,1fr) auto;gap:4px 8px}
+  .file-list .file-item>input[type=checkbox]{grid-area:1 / 1}
+  .file-list .file-item button.file-name{grid-area:1 / 2 / auto / span 2}
+  .file-list .file-item .file-row-actions{grid-area:1 / 4;justify-content:flex-end;flex-wrap:nowrap}
+  .file-list .file-item button.file-mode{grid-area:2 / 2;justify-self:start}
+  .file-list .file-item .file-facts{grid-area:2 / 3 / auto / -1;display:flex;align-items:center;gap:12px;min-width:0}
+}
+/* A phone: responsive.css's rows, which OPanel's rules for this width
+   overrode - the size and the date on a line under the name, the
+   permissions at its end, the buttons under them. */
+@media (width<=760px){
+  .file-list .file-item{grid-template-columns:18px minmax(0,1fr) auto;column-gap:8px}
+  .file-list .file-item button.file-name{grid-area:1 / 2 / auto / -1}
+  .file-list .file-item .file-facts{grid-area:2 / 2;display:flex;align-items:center;gap:10px;min-width:0}
+  .file-list .file-item button.file-mode{grid-area:2 / 3;justify-self:end}
+  .file-list .file-item .file-row-actions{grid-area:3 / 2 / auto / -1}
+  .file-list .file-list-header{grid-template-columns:18px minmax(0,1fr) auto auto}
+}
+
+/* ---- Access Logs ----
+   OPanel's widths are set by column position for its eight columns;
+   SNPanel's table has nine (Country has its own), so Reason got 76px and
+   the empty Country 280px. The columns size to what they hold, as
+   SNPanel's did; on a wide screen the duration beside the time. */
+.access-log-panel .access-log-table{table-layout:auto;min-width:960px}
+.access-log-panel .access-log-table :is(th,td):nth-child(n){width:auto}
+@media (width>950px){.access-log-panel .access-log-table td .access-log-time+small{display:inline;margin:0 0 0 6px}}
+/* Narrower, every entry is a card of label/value lines (brand.css): the
+   table's widths, padding and rules no longer apply to its cells. */
+@media (width<=950px){
+  .access-log-panel .access-log-table{min-width:0}
+  .access-log-panel .access-log-table :is(th,td):nth-child(n){width:100%;padding:7px 0;border-bottom:0}
+  .access-log-panel .access-log-table td .access-log-verdict{justify-self:start}
+  .access-log-panel .access-log-table td>small{grid-column:2;margin-top:0}
+}
+
+/* DNS records (MOD-DNS-02): OPanel's last column is auto, so a row whose
+   actions are a lock (SOA) laid its columns out apart from the others. One
+   width for every row, so they line up under their heads. */
+@media (width>760px){.dns-record-list .dns-record-row{grid-template-columns:minmax(90px,1fr) 70px 70px minmax(0,3fr) 76px}}
+
+/* The phone's drawer reaches the bottom of the screen: OPanel's
+   floating-panel rule would stop it 20px short. */
+@media (width<=950px){.sidebar{max-height:none}}
+
+/* The header's right end (owner, round 8): the language and theme switches
+   and the account's menu, moved up from the sidebar's foot - the switches
+   in the account button's height, on the page's surface. */
+.top-actions .top-tool{width:36px;min-width:36px;height:36px;min-height:36px;padding:0;display:inline-grid;place-items:center;flex:none;background:var(--surface);color:var(--text-secondary);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:none;font-size:12px;font-weight:700;letter-spacing:.04em}
+.top-actions .top-tool:hover:not(:disabled){background:var(--surface-hover);color:var(--text);border-color:var(--border-hover)}
+.top-actions .top-tool:focus-visible{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--ring)}
+.top-actions .top-tool svg{width:16px;height:16px}
+/* A newer panel is out: a dot on the avatar, and its line in the menu. */
+.user-avatar{position:relative}
+.user-menu-dot{position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;background:var(--warning);box-shadow:0 0 0 2px var(--surface)}
+.user-menu-panel .user-menu-version-item{font-variant-numeric:tabular-nums}
+.user-menu-panel .user-menu-version-item>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.user-menu-panel .user-menu-version-item>small{margin-left:auto;flex:none;color:var(--text-muted);font-size:12px;font-weight:500}
+.user-menu-panel .user-menu-version-item.has-update svg{color:var(--warning)}
+.user-menu-panel .user-menu-version-item.has-update>small{color:var(--warning-text);font-weight:600}
+
+/* The server's pages: on a phone a long label - in Vietnamese, "Số PHP
+   worker RAM chứa được" - must not make the card wider than the screen. */
+.section>.ram-breakdown,.section>.ram-facts,.section>.disk-fs,.section>.traffic-iface{min-width:0}
+/* ...and the value beside it goes on to a line of its own rather than being
+   cut short with "…", as OPanel's .info-row would: there is no pointer on a
+   phone to read the rest from its title. */
+@media (width<=600px){
+  .ram-facts .info-row,.traffic-iface .info-row{flex-wrap:wrap;row-gap:2px}
+  .ram-facts .info-row strong,.traffic-iface .info-row strong{margin-left:auto;white-space:normal;overflow-wrap:anywhere}
+}
+
+/* Process monitor on a phone: the filter and Pause share one full line, the
+   filter taking what Pause leaves - OPanel's actions keep their own width,
+   and a longer "Pause" (Vietnamese "Tạm dừng") would push past the card. */
+@media (width<=720px){
+  .section-title>.actions:has(>.process-filter){flex:1 1 100%;flex-wrap:nowrap}
+  .section-title>.actions>.process-filter{flex:1 1 auto;width:auto}
+}
+
+/* On a page of Settings the first crumb is a link, not OPanel's button - so
+   Settings opens in a new tab too - and looks like OPanel's button. */
+.topbar .page-crumbs a{flex:none;color:var(--text-muted);font:inherit;font-weight:500;text-decoration:none}
+.topbar .page-crumbs a:hover{color:var(--primary);text-decoration:underline}
+@media (width<=600px){.topbar .page-crumbs a{display:none}}
+
+/* Disk usage: the panel's part in a colour of its own - OPanel's --accent is
+   all but the --primary of the websites beside it. */
+:root{--part-panel:#7c4dcc}
+:root[data-theme=dark]{--part-panel:#a68af0}
+.ram-panel{background:var(--part-panel)}
+
+/* A measurement that failed, under Disk usage's title: said as an error,
+   not in the grey of a hint. */
+.hint.alarm{color:var(--danger-text);font-weight:600}
+
+/* On a phone the toasts come up from the bottom, as on a computer: at the
+   top they would cover the dashboard's first card - "Needs attention" -
+   just after logging in. */
+@media (width<=520px){.app-toast-stack{top:auto;bottom:10px}}
+
+/* "Back to <admin>" in the "logged in as" banner: its icon in the button's
+   own colour - the banner's icon colour would put it, blue, on blue. */
+.impersonation-banner button svg{color:currentColor}
+
+/* PasswordField (components/Form.jsx) inside OPanel rows whose rule makes
+   every button full width (.create-site-row button, and the like): its
+   show/hide stays inside the field, its tools their own width. Unlayered,
+   as those rules are. */
+.sn-password>.sn-password-input>.sn-password-eye{width:32px}
+.sn-password>.sn-password-tool{width:auto}

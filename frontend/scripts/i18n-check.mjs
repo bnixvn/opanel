@@ -26,7 +26,7 @@ for (const file of files(SRC)) {
   (function walk(node) {
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) { node.forEach(walk); return; }
-    if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'tr') {
+    if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && ['tr', 't', 'msg'].includes(node.callee.name)) {
       const arg = node.arguments[0];
       if (arg && arg.type === 'Literal' && typeof arg.value === 'string') used.add(arg.value);
     }

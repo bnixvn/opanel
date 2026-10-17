@@ -91,23 +91,20 @@ def test_traffic_reads_each_interface_but_lo(tmp_path, monkeypatch):
                                      "tx_bytes": 81000, "tx_packets": 300, "tx_errors": 0}]
 
 
-def test_the_shell_has_the_chips_on_top_and_the_account_below():
-    assert "{isAdmin && renderTopStats()}" in APP
-    assert 'className="top-version"' in APP
-    assert '<div className="sidebar-foot">' in APP and "renderLanguageToggle('sidebar-tool')" in APP
-    assert "renderLanguageToggle('secondary compact-btn top-lang')" not in APP
-    stats = APP.split("  function renderTopStats() {", 1)[1].split("\n  function ", 1)[0]
-    for page in ("processes", "ramUsage", "diskUsage", "traffic"):
-        assert f"['{page}'," in stats, page
+def test_the_top_bar_has_the_language_theme_and_account_as_snpanel():
+    # Operator, 2026-10-17: laid out as SNPanel. The server's figures leave the
+    # top bar for the Dashboard; the account menu moves up from the sidebar.
+    assert "{isAdmin && renderTopStats()}" not in APP
+    assert '<div className="sidebar-foot">' not in APP
+    assert "renderLanguageToggle('top-tool')" in APP and '<div className="user-menu top-user" ref={userMenuRef}>' in APP
     for route in ("processes: '/processes'", "ramUsage: '/ram-usage'", "diskUsage: '/disk-usage'", "traffic: '/traffic'"):
         assert route in APP, route
-    assert "dash-resources" not in APP, "the dashboard no longer carries the resource cards"
 
 
 def test_the_version_opens_updates_and_marks_a_waiting_release():
-    version = APP.split("  function renderTopVersion() {", 1)[1].split("\n  function ", 1)[0]
-    assert "if (!isAdmin) return <span" in version, "a customer sees the number only"
-    assert "navigateToPage('updates')" in version and "panel_update?.update_available === true" in version
+    assert "const panelWaiting = isAdmin && resourceUsage?.panel_update?.update_available === true;" in APP
+    assert "user-menu-version-item${panelWaiting ? ' has-update' : ''}" in APP and "navigateToPage('updates'); }}>" in APP
+    assert '<small className="user-menu-version">' in APP, "a customer sees the number only"
     from app.api import services
     source = inspect.getsource(services.get_resource_usage)
     assert "if is_admin_role(current_user.role):" in source and "updates.cached_release_summary()" in source, \

@@ -1,0 +1,42 @@
+/* components/Drawer.jsx: a create form's side sheet. From the right edge on
+   a wide screen; the whole screen on a phone, its buttons at the foot. */
+
+body.sn-drawer-open{overflow:hidden}
+
+.sn-drawer-backdrop{position:fixed;inset:0;z-index:1050;display:flex;justify-content:flex-end;background:var(--overlay,rgba(15,23,42,.45));animation:sn-drawer-fade .14s ease-out}
+.sn-drawer{display:flex;flex-direction:column;width:min(560px,100%);height:100%;max-height:100dvh;margin:0;background:var(--surface);color:var(--text);border-left:1px solid var(--border);box-shadow:var(--shadow-lg);outline:none;animation:sn-drawer-in .18s ease-out}
+.sn-drawer.is-wide{width:min(760px,100%)}
+
+.sn-drawer-head{display:flex;align-items:flex-start;gap:12px;padding:18px 18px 14px 22px;border-bottom:1px solid var(--border)}
+.sn-drawer-titles{flex:1;min-width:0;display:grid;gap:4px}
+.sn-drawer-head h2{margin:0;font-size:17px;font-weight:700;line-height:1.35;color:var(--text);overflow-wrap:anywhere}
+.sn-drawer-head p{margin:0;color:var(--text-muted);font-size:13px;line-height:1.5}
+.sn-drawer .sn-drawer-x{flex:none;display:grid;place-items:center;width:36px;height:36px;min-height:36px;padding:0;margin:-4px -6px 0 0;background:transparent;color:var(--text-muted);border:1px solid transparent;border-radius:var(--radius-sm)}
+.sn-drawer .sn-drawer-x:hover:not(:disabled){background:var(--surface-hover);color:var(--text);border-color:var(--border)}
+
+.sn-drawer-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:18px 22px 22px;display:grid;align-content:start;gap:14px}
+.sn-drawer-body>form{display:grid;gap:14px;align-content:start;min-width:0}
+.sn-drawer-body .hint{margin:0}
+/* Two fields a row where the sheet has the room. */
+.sn-drawer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.sn-drawer-grid>.is-wide,.sn-drawer-grid>.span-2{grid-column:1/-1}
+.sn-drawer-section{display:grid;gap:12px;padding:14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt)}
+.sn-drawer-section>h3{margin:0;font-size:13.5px;font-weight:700;color:var(--text)}
+
+.sn-drawer-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:14px 22px;border-top:1px solid var(--border);background:var(--surface-alt)}
+.sn-drawer-foot>button{min-width:110px}
+.sn-drawer-foot .sn-drawer-foot-note{margin-right:auto;color:var(--danger-text);font-size:13px;font-weight:600}
+
+@keyframes sn-drawer-fade{from{opacity:0}to{opacity:1}}
+@keyframes sn-drawer-in{from{transform:translateX(24px);opacity:.6}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion: reduce){.sn-drawer-backdrop,.sn-drawer{animation:none}}
+
+@media (max-width:640px){
+  .sn-drawer,.sn-drawer.is-wide{width:100%;border-left:0}
+  .sn-drawer-head{padding:14px 12px 12px 16px}
+  .sn-drawer-body{padding:16px}
+  .sn-drawer-grid{grid-template-columns:minmax(0,1fr)}
+  .sn-drawer-foot{flex-direction:column-reverse;align-items:stretch;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px))}
+  .sn-drawer-foot>button{width:100%;height:44px;min-height:44px}
+  .sn-drawer-foot .sn-drawer-foot-note{margin:0}
+}

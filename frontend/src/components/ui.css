@@ -1,0 +1,84 @@
+/* Shared layout pieces: PageHeader, Tabs, EmptyState (components/*.jsx). */
+
+/* ---- PageHeader ---- */
+.sn-page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin:0 0 14px;min-width:0}
+.section>.sn-page-header{margin:0}
+.sn-page-header-main{display:grid;gap:4px;flex:1 1 320px;min-width:0}
+.sn-page-title{margin:0;font-size:18px;font-weight:700;line-height:1.3;color:var(--text);overflow-wrap:anywhere}
+.sn-page-subtitle{margin:0;color:var(--text-muted);font-size:13.5px;line-height:1.5;max-width:78ch}
+.sn-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;flex:0 1 auto;margin-left:auto}
+.sn-page-actions>*{flex:none}
+.sn-crumbs ol{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;margin:0;padding:0;list-style:none;font-size:13px;color:var(--text-muted)}
+.sn-crumbs li{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.sn-crumbs li+li::before{content:'\203A';color:var(--text-muted)}
+.sn-crumbs a,.sn-crumbs .sn-crumb-button{color:var(--primary-ink);font-weight:600;text-decoration:none}
+.sn-crumbs a:hover,.sn-crumbs .sn-crumb-button:hover:not(:disabled){text-decoration:underline;background:none;color:var(--primary-ink-hover,var(--primary-ink))}
+.sn-crumbs .sn-crumb-button{height:auto;min-height:0;padding:0;border:0;background:none;font-size:inherit}
+.sn-crumbs [aria-current=page]{color:var(--text);font-weight:600;overflow-wrap:anywhere}
+@media (max-width:640px){
+  .sn-page-header{gap:10px}
+  .sn-page-actions{width:100%;justify-content:stretch;margin-left:0}
+  .sn-page-actions>button,.sn-page-actions>.button-link{flex:1 1 0;min-width:0}
+}
+
+/* ---- Tabs ---- */
+.sn-tabs{position:relative;margin:0 0 16px;min-width:0;border-bottom:1px solid var(--border)}
+.sn-tabs-list{display:flex;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;scroll-behavior:smooth;-webkit-overflow-scrolling:touch}
+.sn-tabs-list::-webkit-scrollbar{display:none}
+.sn-tabs .sn-tab{position:relative;flex:none;display:inline-flex;align-items:center;gap:7px;height:40px;min-height:40px;margin:0;padding:0 14px;background:transparent;color:var(--text-muted);border:0;border-radius:var(--radius-sm) var(--radius-sm) 0 0;box-shadow:none;font-size:13.5px;font-weight:600;white-space:nowrap;cursor:pointer}
+.sn-tabs .sn-tab::after{content:'';position:absolute;left:8px;right:8px;bottom:0;height:2px;border-radius:2px 2px 0 0;background:transparent;transition:background-color .15s ease}
+.sn-tabs .sn-tab:hover:not(:disabled){background:var(--surface-hover);color:var(--text)}
+.sn-tabs .sn-tab.is-active{color:var(--primary-ink)}
+.sn-tabs .sn-tab.is-active::after{background:var(--primary)}
+.sn-tabs .sn-tab.is-active:hover:not(:disabled){color:var(--primary-ink)}
+.sn-tabs .sn-tab:disabled{background:transparent;color:var(--text-muted);opacity:.5;cursor:not-allowed}
+.sn-tabs .sn-tab:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
+.sn-tab-badge{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--surface-alt);border:1px solid var(--border);color:var(--text-secondary);font-size:11.5px;font-weight:700}
+.sn-tab.is-active .sn-tab-badge{background:var(--primary-light);border-color:transparent;color:var(--primary-ink)}
+/* The edge that has more tabs fades out. */
+.sn-tabs::before,.sn-tabs::after{content:'';position:absolute;top:0;bottom:1px;width:36px;pointer-events:none;opacity:0;transition:opacity .15s ease;z-index:1}
+.sn-tabs::before{left:0;background:linear-gradient(to right,var(--tabs-bg,var(--surface)),transparent)}
+.sn-tabs::after{right:0;background:linear-gradient(to left,var(--tabs-bg,var(--surface)),transparent)}
+.sn-tabs.fade-start::before,.sn-tabs.fade-end::after{opacity:1}
+.content-body>.sn-tabs{--tabs-bg:var(--bg)}
+@media (max-width:760px){
+  .sn-tabs .sn-tab{height:44px;min-height:44px;padding:0 12px}
+}
+
+/* ---- EmptyState ---- */
+.sn-empty{color:var(--text-muted);text-align:center;place-items:center;gap:8px;padding:32px 16px;display:grid}
+.sn-empty>svg{opacity:.45}
+.sn-empty p{margin:0;font-weight:600;max-width:60ch}
+.sn-empty .sn-empty-title{color:var(--text);font-size:15px;font-weight:700}
+.sn-empty .sn-empty-message{font-weight:500}
+.sn-empty-action{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.sn-empty.is-compact{padding:18px 12px;gap:6px}
+
+
+
+/* ---- Toasts: info and warning, beside success and error (skin.css) ---- */
+.app-toast-info{border-left-color:var(--primary)}
+.app-toast-info .app-toast-icon{color:var(--primary-ink)}
+.app-toast-warning{border-left-color:var(--warning)}
+.app-toast-warning .app-toast-icon{color:var(--warning)}
+
+
+
+/* A card's head: its words take the room and wrap; its buttons stay at the
+   right on the same line, instead of dropping under a long description. */
+.section-title>div:first-child{flex:1 1 260px}
+.section-title>button,.section-title>.actions,.section-title>.list-head-actions{margin-left:auto}
+
+
+
+.sn-page-actions>:is(button,a.button-link,.button-link){height:38px;min-height:38px}
+
+
+
+/* Link-mode tabs (a hub's pages): links look like the tab buttons. */
+.sn-tabs a.sn-tab{text-decoration:none}
+.content-body>.sn-tabs.hub-tabs{--tabs-bg:var(--bg)}
+
+/* ---- TechDetails: a program's raw output, collapsed ---- */
+.tech-details{margin-top:8px;min-width:0}
+.tech-details>pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.5;max-height:240px;overflow:auto}
