@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     app_name: str = "OPanel"
     app_env: str = "development"
     secret_key: str = DEFAULT_SECRET_KEY
-    # Six hours without a request ends a session; any request past half of it
-    # renews the cookie (operator, 2026-10-16: two hours signed people out
-    # mid-work). Was 720, then 120.
+    # A session lasts six hours from sign-in (operator, 2026-10-16: two hours
+    # signed people out mid-work). It is not renewed while in use; BPanel's
+    # slide-session middleware has no counterpart here yet. Was 720, then 120.
     access_token_expire_minutes: int = 360
     database_url: str = "sqlite:///./opanel.db"
     command_dry_run: bool = True

@@ -2,7 +2,7 @@
 
 - A disk limit of 0 is unlimited (it already was here) and a restore keeps it.
 - Panel SSL takes admin@<panel host> over a placeholder like admin@example.com.
-- One sign-out ends one session; six hours idle; a refused credential is
+- One sign-out ends one session; six hours from sign-in; a refused credential is
   logged with its reason; a page opened while the API restarts waits for it.
 - No backup schedule is not a warning.
 - OPcache sizes can be set on the PHP page.
@@ -48,7 +48,7 @@ def test_signing_out_ends_this_session_only():
     assert "logout({ everywhere: true })" in APP
 
 
-def test_six_hours_idle():
+def test_six_hours_from_sign_in():
     assert settings.access_token_expire_minutes == 360
 
 
