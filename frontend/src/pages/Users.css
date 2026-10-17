@@ -1,0 +1,188 @@
+/* The users and packages page (pages/Users.jsx), as SNPanel's: SNPanel's
+   .ust table, its filter and sheets. The forms inside the sheets are OPanel's
+   own (form-section, form-grid). Not in a cascade layer: OPanel's element
+   rules are unlayered and would win over a layered class. */
+
+/* Seven resource limits: rows of three, two a row on a phone. After the
+   layer, as skin.css's own form-grid widths are. */
+.form-grid.six{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (width<=720px){.form-grid.six{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* OPanel's button and field sizes. Its rules for bare elements sit beneath
+   SNPanel's (see skin.css), whose buttons and fields are larger and bolder. */
+.users-item>.user-edit-panel button:not(.mini):not(.user-edit-close),
+.user-edit-panel.is-form button:not(.mini){height:36px;min-height:36px;padding:0 14px;font-size:13px;font-weight:600}
+.users-actions .mini,
+.user-edit-panel .mini{font-weight:600}
+.users-search input,
+.user-edit-panel :is(input:not([type=checkbox]):not([type=radio]),select){height:38px;min-height:38px;padding-top:0;padding-bottom:0;font-size:13.5px}
+
+/* A reseller's username prefix stands in front of the field, inside its
+   border, at the editor's field height. */
+.user-edit-panel .user-prefix-input>input.prefixed{height:36px;min-height:36px;border:0;box-shadow:none}
+
+/* The "Set password" button at the foot of its row of fields. */
+.form-grid>.users-form-action{display:flex;align-items:flex-end;min-width:0}
+.form-grid>.users-form-action button{white-space:nowrap}
+
+/* The SFTP block, in a form section of its own, keeps its own heading. */
+.users-item .form-section>.sftp-access{gap:10px}
+
+/* The list's toolbar: the filter, then the search, which takes the rest
+   of the line up to OPanel's 420 px. */
+.users-toolbar.ust-toolbar{align-items:center;margin-bottom:0}
+.ust-toolbar>.users-search{flex:1 1 240px}
+@media (width<=720px){
+  .users-toolbar.ust-toolbar{flex-direction:column;align-items:stretch}
+  .ust-toolbar>.users-search{flex:none;max-width:none}
+}
+
+/* ---- The filter: the Tabs component as segmented tabs - a grey track,
+   the chosen one raised on it, each with its count. ---- */
+.sn-tabs.ust-filter{flex:none;max-width:100%;margin:0;padding:3px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-alt);--tabs-bg:var(--surface-alt)}
+.sn-tabs.ust-filter .sn-tabs-list{gap:2px}
+.sn-tabs.ust-filter .sn-tab{height:32px;min-height:32px;padding:0 10px 0 12px;gap:6px;border-radius:calc(var(--radius-sm) - 2px);color:var(--text-secondary);font-size:13px;font-weight:600}
+.sn-tabs.ust-filter .sn-tab::after{display:none}
+.sn-tabs.ust-filter .sn-tab:hover:not(:disabled){background:var(--surface-hover);color:var(--text)}
+.sn-tabs.ust-filter .sn-tab.is-active,
+.sn-tabs.ust-filter .sn-tab.is-active:hover:not(:disabled){background:var(--surface);color:var(--text);box-shadow:0 0 0 1px var(--border),0 1px 2px rgb(15 23 42 / .08)}
+.sn-tabs.ust-filter .sn-tab-badge{min-width:18px;height:18px;padding:0 5px;border:0;background:transparent;color:var(--text-muted);font-size:11.5px}
+.sn-tabs.ust-filter .sn-tab.is-active .sn-tab-badge{background:var(--primary-light);color:var(--primary-ink)}
+.sn-tabs.ust-filter::before,.sn-tabs.ust-filter::after{top:3px;bottom:3px}
+/* On a phone the filter is the card's width, never wider (its words do
+   not widen the page: a narrower phone scrolls the row), and the header's
+   three buttons wrap rather than cut their words. */
+@media (width<=720px){
+  .sn-tabs.ust-filter{contain:inline-size}
+  .sn-tabs.ust-filter .sn-tabs-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .sn-tabs.ust-filter.is-four .sn-tabs-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sn-tabs.ust-filter .sn-tab{justify-content:center;height:38px;min-height:38px;padding:0 6px;gap:5px}
+  .sn-page-header.ust-header .sn-page-actions>button{flex:1 1 auto}
+}
+
+/* ---- The accounts (owner, round 7): Account, Role (an administrator's
+   list only), Package, Usage, Status, and Edit with the "…" menu. One grid
+   for the whole table - each row a subgrid of it - so every column lines
+   up whatever a row holds. ---- */
+.ust{display:grid;grid-template-columns:minmax(200px,1.6fr) minmax(110px,.8fr) minmax(170px,1.2fr) minmax(110px,auto) auto;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--surface);margin-top:12px}
+.ust.with-role{grid-template-columns:minmax(200px,1.6fr) minmax(120px,auto) minmax(110px,.8fr) minmax(170px,1.2fr) minmax(110px,auto) auto}
+.ust-row{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;column-gap:16px;padding:10px 14px;border-top:1px solid var(--border);min-width:0}
+.ust-row:first-child{border-top:0}
+.ust-meta{display:contents}
+.ust-row:not(.ust-head):hover{background:var(--surface-hover)}
+.ust-row.is-editing{background:var(--primary-light)}
+.ust-head{background:var(--surface-alt);padding-top:8px;padding-bottom:8px}
+.ust-head span[role=columnheader]{color:var(--text-muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.ust-row span[role=cell]{min-width:0;font-size:13.5px;color:var(--text)}
+.ust-muted{color:var(--text-muted)}
+
+/* Account: the avatar, the username and the e-mail under it. */
+.ust-account{display:flex;align-items:center;gap:10px}
+.ust-name{display:grid;gap:1px;min-width:0}
+.ust-name strong{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ust-name small{color:var(--text-muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ust-row.is-suspended .ust-name strong{color:var(--text-muted)}
+/* A reseller's customers, unfolded under it: indented, on a tint. */
+.ust-row.is-child{background:var(--surface-alt)}
+.ust-row.is-child .ust-account{padding-left:22px;position:relative}
+.ust-row.is-child .ust-account::before{content:'';position:absolute;left:8px;top:-12px;bottom:50%;width:9px;border-left:1.5px solid var(--border-hover);border-bottom:1.5px solid var(--border-hover);border-bottom-left-radius:6px}
+.ust-row.is-child .users-avatar{width:28px;height:28px;font-size:12.5px}
+
+/* Role: one badge; a reseller's customer with the reseller's name, muted;
+   a reseller with the way to its customers. */
+.ust-role{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px}
+.ust-role>small{color:var(--text-muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.ust-row .ust-role>.ust-expand{display:inline-flex;align-items:center;gap:3px;height:24px;min-height:24px;padding:0 6px 0 3px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--primary-ink);font-size:12.5px;font-weight:600;white-space:nowrap}
+.ust-row .ust-role>.ust-expand:hover:not(:disabled){background:var(--primary-light);color:var(--primary-ink)}
+.ust-role>.ust-expand svg{transition:transform .15s;transform:rotate(-90deg)}
+.ust-role>.ust-expand[aria-expanded=true] svg{transform:none}
+
+/* Usage: one line, websites then disk, and a thin bar for the disk. */
+.ust-use{display:grid;gap:5px;align-content:center}
+.ust-use-line{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ust-use-line .is-pending{color:var(--text-muted)}
+.ust-use-line .tone-warn{color:var(--warning-text)}
+.ust-use-line .tone-bad{color:var(--danger-text)}
+.ust-bar{display:block;height:4px;max-width:220px;border-radius:999px;background:var(--surface-alt);box-shadow:inset 0 0 0 1px var(--border);overflow:hidden}
+.ust-bar>span{display:block;height:100%;border-radius:inherit;background:var(--primary)}
+.ust-bar.tone-warn>span,.tone-warn>.ust-bar>span{background:var(--warning)}
+.ust-bar.tone-bad>span,.tone-bad>.ust-bar>span{background:var(--danger)}
+
+/* Status: a dot and a word; SFTP and two-step sign-in as small icons. */
+.ust-status{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.ust-state{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:13px}
+.ust-state>i{width:8px;height:8px;border-radius:50%;flex:none;background:var(--success)}
+.ust-state.is-on{color:var(--success-text)}
+.ust-state.is-off{color:var(--text-secondary)}
+.ust-state.is-off>i{background:var(--text-muted)}
+.ust-flag{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;color:var(--text-secondary);background:var(--surface-alt);cursor:help}
+.ust-flag.is-off{color:var(--text-muted);background:transparent;box-shadow:inset 0 0 0 1px var(--border)}
+
+.ust-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.ust-actions>button.secondary-light{height:34px;min-height:34px;padding:0 12px;font-size:13px}
+.ust-actions .sn-menu-trigger{height:34px;min-height:34px}
+
+/* The account's sheet: what it holds, a figure and a bar each; then the
+   way to its resources on the Server hub, on a line of its own. */
+.ust-usage{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.ust-usage-item{display:grid;gap:3px;align-content:start;padding:9px 11px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt);min-width:0}
+.ust-usage-item>span:first-child{color:var(--text-secondary);font-size:12px;font-weight:600}
+.ust-usage-item>strong{font-size:14px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.ust-usage-item>.ust-bar{margin-top:3px;max-width:none;background:var(--surface)}
+.ust-usage-item.tone-warn>strong{color:var(--warning-text)}
+.ust-usage-item.tone-bad>strong{color:var(--danger-text)}
+.ust-resources{justify-self:start;display:inline-flex;align-items:center;gap:6px;margin-top:4px}
+
+/* Packages use the same rows. */
+.ust.ust-plans{grid-template-columns:minmax(0,1fr) minmax(90px,auto) auto}
+.ust.ust-plans .ust-row>span{min-width:0;font-size:13.5px;color:var(--text)}
+.ust .plan-chips{margin-top:4px}
+.ust-pool-title{margin:0 0 4px;font-size:15px;font-weight:700}
+.ust-pool{display:grid;gap:8px}
+.ust-pool>.hint{margin:0}
+.ust-drawer .form-sections{display:grid;gap:14px}
+
+/* Narrower, a card a row: the account and its actions on top, then the
+   role, package, usage and state under it, each with its name. */
+@media (width<=1100px){
+  .ust,.ust.with-role,.ust.ust-plans{grid-template-columns:minmax(0,1fr);gap:10px;border:0;background:transparent;overflow:visible}
+  .ust-head{display:none}
+  .ust-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"account actions" "meta meta";row-gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface)}
+  .ust-row:first-child{border-top:1px solid var(--border)}
+  .ust.ust-plans .ust-row{grid-template-areas:none;grid-template-columns:minmax(0,1fr) auto auto}
+  .ust-row>.ust-account{grid-area:account}
+  .ust-row>.ust-actions{grid-area:actions}
+  .ust-meta{grid-area:meta;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px 20px;padding-left:44px;min-width:0}
+  .ust-meta>span[data-label]::before{content:attr(data-label);display:block;margin-bottom:3px;color:var(--text-muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+  .ust-meta>.ust-role,.ust-meta>.ust-status{align-content:flex-start;align-items:center}
+  .ust-meta>.ust-role::before,.ust-meta>.ust-status::before{flex-basis:100%}
+  .ust-meta>.ust-status{flex-wrap:wrap;row-gap:0}
+  .ust-row.is-child{margin-left:22px;background:var(--surface-alt)}
+  .ust-row.is-child .ust-account{padding-left:0}
+  .ust-row.is-child .ust-account::before{display:none}
+  .ust-row.is-child .ust-meta{padding-left:38px}
+}
+@media (width<=720px){
+  .ust-row{padding:12px}
+  .ust-meta{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:row dense;gap:10px 14px;padding-left:0}
+  .ust-row.is-child .ust-meta{padding-left:0}
+  .ust-meta>.ust-use{grid-column:1/-1}
+  .ust-bar{max-width:none}
+  .ust-actions>button.secondary-light,.ust-actions .sn-menu-trigger{height:40px;min-height:40px}
+  .ust-row.is-child{margin-left:12px}
+}
+
+/* In the account and package sheets, two fields a row and the resource
+   limits three. After the layer, as .form-grid.six above: skin.css's
+   form-grid widths are unlayered OPanel rules. */
+.ust-drawer .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.ust-drawer .form-grid.six{grid-template-columns:repeat(3,minmax(0,1fr))}
+.ust-drawer .form-grid>.span-2{grid-column:1/-1}
+@media (width<=640px){.ust-drawer .form-grid,.ust-drawer .form-grid.six{grid-template-columns:minmax(0,1fr)}}
+
+/* OPanel's lists add CPU and RAM now (the Resource limits addon): one more
+   column on a wide screen. */
+@media (width>1100px){
+  .ust.with-resources{grid-template-columns:minmax(200px,1.6fr) minmax(110px,.8fr) minmax(170px,1.2fr) minmax(150px,1fr) minmax(110px,auto) auto}
+  .ust.with-role.with-resources{grid-template-columns:minmax(200px,1.6fr) minmax(120px,auto) minmax(110px,.8fr) minmax(170px,1.2fr) minmax(150px,1fr) minmax(110px,auto) auto}
+}

@@ -25,6 +25,7 @@ import DatabasesPage from './pages/Databases';
 import FilesPage from './pages/Files';
 import SftpPage from './pages/Sftp';
 import BackupsPage from './pages/Backups';
+import UsersPage from './pages/Users';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import Switch from './components/Switch';
 import { isWebsitePath } from './lib/websites';
@@ -1398,7 +1399,9 @@ function App() {
       setNewUser({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0, terminal_enabled: false });
       await loadUsers();
       if (isReseller) await loadResellerPool();
+      return true;
     }
+    return false;
   }
 
   function startEditingUser(user) {
@@ -1474,13 +1477,17 @@ function App() {
       if (editingUserForm._password && editingUserForm._password.length >= 12) {
         const pwPayload = { password: editingUserForm._password };
         if (editingUser.id === currentUser?.id) {
-          const currentPassword = prompt(tr("Enter your current password to confirm:"));
-          if (!currentPassword) { setNotice(tr("User updated but password was not changed.")); cancelEditingUser(); await loadUsers(); return; }
-          pwPayload.current_password = currentPassword;
-          if (currentUser?.totp_enabled) {
-            const code = prompt(tr("Enter your 2FA code:"));
-            if (code) pwPayload.code = code.trim();
-          }
+          const proof = await promptDialog({
+            title: tr("Confirm it is you"), message: tr("Your own password changes: confirm with the current one."),
+            fields: [
+              { name: 'current_password', label: tr("Current password"), type: 'password', autoComplete: 'current-password' },
+              ...(currentUser?.totp_enabled ? [{ name: 'code', label: tr("2FA code"), type: 'code' }] : []),
+            ],
+            confirmLabel: tr("Change password"),
+          });
+          if (!proof?.current_password) { setNotice(tr("User updated but password was not changed.")); cancelEditingUser(); await loadUsers(); return; }
+          pwPayload.current_password = proof.current_password;
+          if (proof.code) pwPayload.code = String(proof.code).trim();
         }
         await request(`/users/${editingUser.id}/password`, { method: 'POST', body: JSON.stringify(pwPayload) }, tr("Changing password for {0}...", editingUser.username));
       }
@@ -1513,7 +1520,10 @@ function App() {
 
   async function deletePanelUser(user) {
     if (!user || user.id === currentUser?.id) return;
-    if (!confirm(tr("Delete panel user {0} and permanently delete all owned websites, files, databases, and Linux user data?", user.username))) return;
+    if (!(await confirmDialog({
+      title: tr("Delete panel user"), subject: user.username, danger: true, typeToConfirm: user.username,
+      message: tr("All its websites, files, databases and Linux user data are deleted for good."), confirmLabel: tr("Delete"),
+    }))) return;
     const data = await request(`/users/${user.id}`, { method: 'DELETE' }, tr("Deleting user {0}...", user.username));
     if (data) {
       const count = data.deleted_websites?.length || 0;
@@ -1526,7 +1536,11 @@ function App() {
   async function toggleUserActive(user) {
     if (!user) return;
     const action = user.is_active ? 'suspend' : 'unsuspend';
-    if (!confirm(`${action === 'suspend' ? tr("Suspend") : tr("Unsuspend")} ${user.username}?`)) return;
+    if (!(await confirmDialog({
+      title: action === 'suspend' ? tr("Suspend {0}?", user.username) : tr("Unsuspend {0}?", user.username),
+      message: action === 'suspend' ? tr("It cannot sign in to the panel until it is unsuspended; its websites keep running.") : undefined,
+      danger: action === 'suspend', confirmLabel: action === 'suspend' ? tr("Suspend") : tr("Unsuspend"),
+    }))) return;
     try {
       await request(`/users/${user.id}`, {
         method: 'PATCH',
@@ -1542,13 +1556,13 @@ function App() {
 
   async function quickLoginUser(user) {
     if (!user) return;
-    if (!confirm(tr("Login as {0}? New websites will belong to this user.", user.username))) return;
+    if (!(await confirmDialog({ title: tr("Log in as {0}?", user.username), message: tr("New websites will belong to this user."), confirmLabel: tr("Log in as") }))) return;
     // Impersonation re-prompts TOTP when the calling admin has 2FA enabled.
     // Try without the code first; if the backend says one is required, ask
     // and resend. Sending the OTP via FormData keeps it out of the URL.
     let body;
     if (currentUser?.totp_enabled) {
-      const code = prompt(tr("Enter the 6-digit code from your authenticator to confirm impersonation of {0}:", user.username));
+      const code = await promptDialog({ title: tr("Confirm it is you"), message: tr("Enter the 6-digit code from your authenticator to confirm impersonation of {0}:", user.username), label: tr("2FA code"), type: 'code' });
       if (!code) return;
       body = new URLSearchParams({ otp: code.trim() });
     }
@@ -1561,7 +1575,7 @@ function App() {
     );
     // Handle case where backend says 2FA is required (e.g., stale user object).
     if (data?.requires_2fa) {
-      const code = prompt(tr("Enter the 6-digit code from your authenticator to confirm impersonation of {0}:", user.username));
+      const code = await promptDialog({ title: tr("Confirm it is you"), message: tr("Enter the 6-digit code from your authenticator to confirm impersonation of {0}:", user.username), label: tr("2FA code"), type: 'code' });
       if (!code) return;
       const retryBody = new URLSearchParams({ otp: code.trim() });
       const retryData = await request(
@@ -2387,13 +2401,15 @@ function App() {
   }
 
   async function createPlan() {
-    if (!newPlan.slug.trim() || !newPlan.name.trim()) return;
+    if (!newPlan.slug.trim() || !newPlan.name.trim()) return false;
     const data = await request('/plans', { method: 'POST', body: JSON.stringify({ ...newPlan, ...limitValues(newPlan) }) }, tr("Creating plan..."));
     if (data?.id) {
       setNotice(tr("Plan \"{0}\" created.", data.name));
       setNewPlan({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false });
       loadPlans();
+      return true;
     }
+    return false;
   }
 
   function startEditingPlan(plan) {
@@ -2408,7 +2424,7 @@ function App() {
   }
 
   async function deletePlanItem(plan) {
-    if (!confirm(tr("Delete plan \"{0}\"?", plan.name))) return;
+    if (!(await confirmDialog({ title: tr("Delete plan \"{0}\"?", plan.name), message: tr("Accounts keep the limits it gave them."), danger: true, confirmLabel: tr("Delete") }))) return;
     const data = await request(`/plans/${plan.id}`, { method: 'DELETE' }, tr("Deleting plan..."));
     if (data?.ok) { setNotice(tr("Plan deleted.")); setEditingPlan(null); loadPlans(); }
   }
@@ -2462,7 +2478,7 @@ function App() {
   }
 
   async function resetUserTwoFactor(user) {
-    if (!confirm(tr("Reset 2FA for {0}?", user.username))) return;
+    if (!(await confirmDialog({ title: tr("Reset 2FA for {0}?", user.username), message: tr("It signs in with its password alone until it sets 2FA up again."), danger: true, confirmLabel: tr("Reset 2FA") }))) return;
     const data = await request(`/users/${user.id}/2fa/reset`, { method: 'POST' }, tr("Resetting 2FA for {0}...", user.username));
     if (data?.message) { setNotice(data.message); await loadUsers(); }
   }
@@ -2671,7 +2687,7 @@ function App() {
   }
 
   async function assignDomainToUser() {
-    if (!assignWebsiteId || !assignUserId) return;
+    if (!assignWebsiteId || !assignUserId) return false;
     const data = await request(`/websites/${assignWebsiteId}`, { method: 'PATCH', body: JSON.stringify({ owner_id: Number(assignUserId) }) }, tr("Assigning domain to user..."));
     if (data) {
       // Name the account, not its row id -- the operator picked a username from
@@ -2679,7 +2695,9 @@ function App() {
       const owner = users.find(user => String(user.id) === String(assignUserId));
       setNotice(tr("{0} now belongs to {1}.", data.domain, owner?.username || tr("user #{0}", assignUserId)));
       await refreshAll();
+      return true;
     }
+    return false;
   }
 
   async function createWordPress() {
@@ -4804,6 +4822,12 @@ function App() {
       refreshScheduledBackupArea, refreshUserBackupArea, renderRestoreWizard, renderSchedulePicker, restoreBackup, restoreUserBackup,
       runBackupScheduleNow, selectedBackupUserId, selectedSftpTargetId, setNewBackupSchedule, setNewSftpTarget, setSelectedBackupUserId,
       setSelectedSftpTargetId, sftpTargets, targetObjects, testBackupTarget, uploadBackup, userBackups,
+      // Users & packages (pages/Users.jsx).
+      assignDomainToUser, assignUserId, assignWebsiteId, cancelEditingUser, createPlan, createUser, deletePanelUser, deletePlanItem,
+      editingPlan, editingPlanForm, editingUser, editingUserForm, limitsOn, loadPlans, loadResellerPool, newPlan, newUser, planChips,
+      plans, renderPlanFields, renderResellerPool, renderUserDisk, renderUserFields, renderUserResources, resetUserTwoFactor, roleLabel,
+      setAssignUserId, setAssignWebsiteId, setEditingPlan, setEditingPlanForm, setEditingUserForm, setNewPlan, setNewUser, setUserSearch,
+      setUsersTab, startEditingPlan, startEditingUser, toggleUserActive, updatePanelUser, updatePlan, userSearch, usersTab,
     };
   }
   const sideItems = sidebarItems(navCtx);
@@ -8626,29 +8650,6 @@ function App() {
     </div>;
   }
 
-  function renderUsers() {
-    if (!canManageUsers) return <section className="section"><h2>{tr("Users")}</h2><p className="hint">{tr("No permission.")}</p></section>;
-    return <>
-      <section className="section">
-        <div className="section-title">
-          <div>{isReseller
-            ? <><h2>{tr("Customers")}</h2><p className="hint">{tr("Your customers' accounts, your packages, and new customers.")}</p></>
-            : <><h2>{tr("Panel Users")}</h2><p className="hint">{tr("Manage panel accounts, hosting packages, and create new users.")}</p></>}</div>
-          <button className="secondary" disabled={!!loading} onClick={() => { loadUsers(); if (isReseller) loadResellerPool(); }}><RefreshCw size={14}/> {tr("Refresh")}</button>
-        </div>
-        <div className="tab-bar">
-          <button className={usersTab === 'list' ? 'tab active' : 'tab'} onClick={() => setUsersTab('list')}><Users size={14}/> {tr("List Users")}</button>
-          <button className={usersTab === 'packages' ? 'tab active' : 'tab'} onClick={() => setUsersTab('packages')}><PackageOpen size={14}/> {tr("Packages")}</button>
-          <button className={usersTab === 'add' ? 'tab active' : 'tab'} onClick={() => setUsersTab('add')}><Plus size={14}/> {tr("Add User")}</button>
-        </div>
-      </section>
-      {renderResellerPool()}
-      {usersTab === 'list' && renderUsersListTab()}
-      {usersTab === 'packages' && renderUsersPackagesTab()}
-      {usersTab === 'add' && renderUsersAddTab()}
-    </>;
-  }
-
   // Disk used against the account's limit: a figure and, with a limit, a meter.
   function renderUserDisk(user) {
     const limit = storageLimitBytes(user);
@@ -8677,87 +8678,6 @@ function App() {
       <small> · </small>{formatMegabytes(usage.memory_mb)}{limits.memory_mb ? <small>/{formatMegabytes(limits.memory_mb)}</small> : null}
       <small className="users-sub">{tr("{0} processes", usage.processes ?? 0)}</small>
     </span>;
-  }
-
-  function renderUsersListTab() {
-    const query = userSearch.trim().toLowerCase();
-    const shown = query
-      ? users.filter(user => user.username.toLowerCase().includes(query) || (user.email || '').toLowerCase().includes(query))
-      : users;
-    return <>
-      <section className="section">
-        {users.length > 0 && <div className="users-toolbar">
-          <label className="users-search">
-            <Search size={15}/>
-            <input type="search" value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder={tr("Search by username or email")} aria-label={tr("Search by username or email")} />
-          </label>
-          <span className="users-count">{tr("{0} of {1}", shown.length, users.length)}</span>
-        </div>}
-        {users.length === 0 && <EmptyState icon={Users} message={tr("No users found.")} />}
-        {users.length > 0 && shown.length === 0 && <p className="hint">{tr("No account matches your search.")}</p>}
-        {shown.length > 0 && <div className={`users-table${limitsOn ? ' with-resources' : ''}`}>
-          <div className="users-row users-head" aria-hidden="true">
-            <span>{tr("Account")}</span><span>{tr("Role")}</span><span>{tr("Disk")}</span>{limitsOn && <span>{tr("CPU / RAM")}</span>}<span></span>
-          </div>
-          {shown.map(user => {
-            const self = user.id === currentUser?.id;
-            const editing = editingUser?.id === user.id;
-            return <div className={`users-item${editing ? ' is-editing' : ''}${user.is_active ? '' : ' is-suspended'}`} key={user.id}>
-              <div className="users-row">
-                <div className="users-account">
-                  <span className="users-avatar" aria-hidden="true">{(user.username || '?').slice(0, 1).toUpperCase()}</span>
-                  <div><strong>{user.username}</strong><small>{user.email || '—'}</small></div>
-                </div>
-                <div className="users-meta">
-                  <div className="users-badges" data-label={tr("Role")}>
-                    <span className={`badge role-${user.role}`}>{roleLabel(user.role)}</span>
-                    <span className={`badge ${user.is_active ? 'ok' : 'warn'}`}>{user.is_active ? tr("Active") : tr("Suspended")}</span>
-                    {isAdmin && user.reseller_id && <span className="badge" title={tr("Reseller")}>{tr("via {0}", resellerName(user.reseller_id))}</span>}
-                  </div>
-                  <div className="users-cell" data-label={tr("Disk")}>{renderUserDisk(user)}</div>
-                  {limitsOn && <div className="users-cell" data-label={tr("CPU / RAM")} title={tr("Resource use now")}>{renderUserResources(user)}</div>}
-                </div>
-                <div className="users-actions">
-                  <button type="button" className={`mini ${editing ? '' : 'secondary-light'}`} disabled={!!loading} onClick={() => editing ? cancelEditingUser() : startEditingUser(user)}><Pencil size={14}/> {tr("Edit")}</button>
-                  <button type="button" className="mini secondary-light" disabled={!!loading} onClick={() => quickLoginUser(user)}><LogIn size={14}/> {tr("Login as")}</button>
-                  {!self && user.totp_enabled && <button type="button" className="mini secondary-light icon-button" disabled={!!loading} onClick={() => resetUserTwoFactor(user)} title={tr("Reset 2FA")} aria-label={tr("Reset 2FA")}><KeyRound size={14}/></button>}
-                  {!self && <button type="button" className={`mini secondary-light icon-button${user.is_active ? ' is-suspend' : ''}`} disabled={!!loading} onClick={() => toggleUserActive(user)} title={user.is_active ? tr("Suspend") : tr("Unsuspend")} aria-label={user.is_active ? tr("Suspend") : tr("Unsuspend")}>{user.is_active ? <Ban size={14}/> : <CheckCircle size={14}/>}</button>}
-                  {!self && <button type="button" className="mini danger icon-button" disabled={!!loading} onClick={() => deletePanelUser(user)} title={tr("Delete")} aria-label={tr("Delete")}><Trash2 size={14}/></button>}
-                </div>
-              </div>
-              {editing && <div className="user-edit-panel">
-                <div className="user-edit-heading">
-                  <div><strong>{tr("Edit")} {user.username}</strong><small>
-                    {self ? tr("Role is locked for the active admin session.") : tr("Role changes sign the user out of existing sessions.")}
-                    {editingUserForm.role === 'admin' ? tr(" Admin accounts bypass website and storage limits.") : ''}
-                  </small></div>
-                  <button type="button" className="user-edit-close secondary-light" onClick={cancelEditingUser} aria-label={tr("Close user editor")} title={tr("Close user editor")}><X size={16}/></button>
-                </div>
-                {renderUserFields(editingUserForm, setEditingUserForm, { user })}
-                <div className="user-edit-actions">
-                  <button type="button" className="secondary-light" onClick={cancelEditingUser}>{tr("Cancel")}</button>
-                  <button type="button" disabled={!!loading || !editingUserForm.email.trim()} onClick={updatePanelUser}><Save size={14}/> {tr("Save changes")}</button>
-                </div>
-              </div>}
-            </div>;
-          })}
-        </div>}
-      </section>
-      {isAdmin && users.length > 0 && websites.length > 0 && <section className="section">
-        <div className="section-title"><div><h2>{tr("Assign domain to user")}</h2><p className="hint">{tr("Give a website to another account.")}</p></div></div>
-        <div className="assign-row">
-          <select value={assignWebsiteId} onChange={e => setAssignWebsiteId(e.target.value)} aria-label={tr("Select domain")}>
-            <option value="">{tr("Select domain")}</option>
-            {websites.map(site => <option key={site.id} value={site.id}>{site.domain}</option>)}
-          </select>
-          <select value={assignUserId} onChange={e => setAssignUserId(e.target.value)} aria-label={tr("Select user")}>
-            <option value="">{tr("Select user")}</option>
-            {users.map(user => <option key={user.id} value={user.id}>{user.username} ({roleLabel(user.role)})</option>)}
-          </select>
-          <button type="button" disabled={!assignWebsiteId || !assignUserId || !!loading} onClick={assignDomainToUser}>{tr("Assign")}</button>
-        </div>
-      </section>}
-    </>;
   }
 
   // A package's limits as short chips: what it gives at a glance.
@@ -8796,73 +8716,6 @@ function App() {
       </fieldset>
       {limitsOn && renderLimitInputs(form, setForm)}
     </div>;
-  }
-
-  function renderUsersPackagesTab() {
-    return <>
-      <section className="section">
-        <div className="section-title">
-          <div><h2>{tr("New package")}</h2><p className="hint">{isReseller ? tr("Your own packages: only you see them, to fill in your customers' limits.") : tr("Manage provisioning plans for WHMCS and billing systems.")}</p></div>
-        </div>
-        <div className="user-edit-panel is-form">
-          {renderPlanFields(newPlan, setNewPlan, { creating: true })}
-          <div className="user-edit-actions">
-            <button type="button" disabled={!!loading || !newPlan.name.trim()} onClick={createPlan}><Plus size={14}/> {tr("Add package")}</button>
-          </div>
-        </div>
-      </section>
-      <section className="section">
-        <div className="section-title">
-          <div><h2>{tr("Hosting Packages")}</h2></div>
-          <button type="button" className="secondary" disabled={!!loading} onClick={loadPlans}><RefreshCw size={14}/> {tr("Refresh")}</button>
-        </div>
-        {plans.length === 0 && <p className="hint">{tr("No packages yet. Create one above.")}</p>}
-        {plans.length > 0 && <div className="users-table plans">
-          {plans.map(plan => {
-            const editing = editingPlan?.id === plan.id;
-            return <div className={`users-item${editing ? ' is-editing' : ''}`} key={plan.id}>
-              <div className="users-row plan-row">
-                <div className="users-account">
-                  <span className="users-avatar" aria-hidden="true"><PackageOpen size={16}/></span>
-                  <div><strong>{plan.name}</strong>{planChips(plan)}</div>
-                </div>
-                <span className={plan.active ? 'badge ok' : 'badge'}>{plan.active ? tr("Active") : tr("Inactive")}</span>
-                <div className="users-actions">
-                  <button type="button" className={`mini ${editing ? '' : 'secondary-light'}`} onClick={() => editing ? setEditingPlan(null) : startEditingPlan(plan)}><Pencil size={14}/> {tr("Edit")}</button>
-                  <button type="button" className="mini danger icon-button" onClick={() => deletePlanItem(plan)} title={tr("Delete")} aria-label={tr("Delete")}><Trash2 size={14}/></button>
-                </div>
-              </div>
-              {editing && <div className="user-edit-panel">
-                <div className="user-edit-heading">
-                  <div><strong>{tr("Edit")} {plan.name}</strong></div>
-                  <button type="button" className="user-edit-close secondary-light" onClick={() => setEditingPlan(null)} aria-label={tr("Close")} title={tr("Close")}><X size={16}/></button>
-                </div>
-                {renderPlanFields(editingPlanForm, setEditingPlanForm)}
-                <label className="check-line"><input type="checkbox" checked={editingPlanForm.active} onChange={e => setEditingPlanForm(prev => ({ ...prev, active: e.target.checked }))} /> {tr("Active")}</label>
-                <div className="user-edit-actions">
-                  <button type="button" className="secondary-light" onClick={() => setEditingPlan(null)}>{tr("Cancel")}</button>
-                  <button type="button" disabled={!!loading} onClick={updatePlan}><Save size={14}/> {tr("Save")}</button>
-                </div>
-              </div>}
-            </div>;
-          })}
-        </div>}
-      </section>
-    </>;
-  }
-
-  function renderUsersAddTab() {
-    return <section className="section">
-      <div className="section-title">
-        <div><h2>{isReseller ? tr("Add customer") : tr("Add panel user")}</h2><p className="hint">{tr("Panel username is also the Linux user. Select a package to auto-fill limits.")}</p></div>
-      </div>
-      <div className="user-edit-panel is-form">
-        {renderUserFields(newUser, setNewUser, { creating: true })}
-        <div className="user-edit-actions">
-          <button type="button" disabled={!!loading || !newUser.username || !newUser.password} onClick={createUser}><Plus size={14}/> {isReseller ? tr("Create customer") : tr("Create user")}</button>
-        </div>
-      </div>
-    </section>;
   }
 
   function renderStandaloneEditor() {
@@ -8927,7 +8780,7 @@ function App() {
     if (page === 'terminal') return renderTerminalPage();
     if (page === 'services') return isAdmin ? renderServices() : <DashboardPage/>;
     if (page === 'settings') return renderPanelSettings();
-    if (page === 'users') return renderUsers();
+    if (page === 'users') return <UsersPage/>;
     if (page === 'usage') return renderResourceUsage();
     if (page === 'processes') return isAdmin ? renderProcessMonitor() : <DashboardPage/>;
     if (page === 'ramUsage') return isAdmin ? renderRamUsage() : <DashboardPage/>;
