@@ -1,0 +1,11 @@
+/* AutoSSL (components/AutoSsl.jsx, pages/AutoSsl.jsx). Not in a cascade layer:
+   OPanel's element rules are unlayered and would win over a layered class. */
+.autossl-site{display:grid;gap:10px}
+.autossl-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px}
+.autossl-head h3{display:flex;align-items:center;gap:8px;margin:0;font-size:15px}
+.autossl-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.autossl-reason{color:var(--text);font-size:13px}
+.autossl-names td{vertical-align:top}
+.autossl-settings{display:grid;gap:12px}
+.autossl-ips{display:grid;gap:6px;max-width:520px}
+.autossl-figures{display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--text);font-size:13.5px}

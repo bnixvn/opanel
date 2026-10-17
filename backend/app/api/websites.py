@@ -16,7 +16,7 @@ from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCacheUpdate, WebsiteCreate, WebsiteCustomRules, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
-from app.services import dns_manager, file_manager, mail, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress, wp_manager
+from app.services import autossl, dns_manager, file_manager, mail, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress, wp_manager
 from app.services.audit import log_action
 
 _PLACEHOLDER_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "openlitespeed"
@@ -466,6 +466,8 @@ def create_website_alias(
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Cannot write webserver config: {exc}") from exc
+    # AutoSSL looks at the website again on its next pass, for the new name.
+    autossl.reset_site(db, website.id)
     db.commit()
     db.refresh(alias)
     dns_manager.website_created(db, website, hosts=[payload.domain])
@@ -915,12 +917,22 @@ def fix_webserver_security(website_id: int, db: Session = Depends(get_db), curre
     return {"message": f"Rewrote webserver security template for {website.domain}", "path": target}
 
 
-@router.post("/{website_id}/ssl", response_model=WebsiteOut)
-def enable_ssl(website_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    website = db.query(Website).filter(Website.id == website_id).first()
-    if not website:
-        raise HTTPException(status_code=404, detail="Website not found")
-    ensure_owner_access(db, current_user, website.owner_id)
+class LetsEncryptError(RuntimeError):
+    """Let's Encrypt could not issue; `status` is the HTTP status it maps to."""
+
+    def __init__(self, message: str, status: int = 500):
+        super().__init__(message)
+        self.status = status
+
+
+def issue_letsencrypt(db: Session, website: Website, names: list[str] | None = None) -> None:
+    """A Let's Encrypt certificate for the website, and HTTPS on; commits.
+
+    `names` defaults to the website and every alias and redirect; AutoSSL
+    passes only the names it found pointing here. Raises LetsEncryptError,
+    with the vhost put back as it was.
+    """
+    extra = [name for name in (names or [website.domain, *_ssl_domains(website)]) if name != website.domain]
     previous_manual_paths = (website.ssl_cert_path, website.ssl_key_path, website.ssl_ca_path)
     previous_snapshot = ssl.snapshot_manual_ssl_domain(website.domain)
     try:
@@ -930,8 +942,8 @@ def enable_ssl(website_id: int, db: Session = Depends(get_db), current_user: Use
             include_ssl=False,
         )
     except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"Cannot prepare vhost config for Let's Encrypt: {exc}") from exc
-    result = ssl.issue_ssl(website.domain, _ssl_domains(website))
+        raise LetsEncryptError(f"Cannot prepare vhost config for Let's Encrypt: {exc}", 400) from exc
+    result = ssl.issue_ssl(website.domain, extra)
     if result.returncode != 0:
         if getattr(website, "ssl_mode", "none") == "manual":
             ssl.restore_manual_ssl(previous_snapshot)
@@ -944,7 +956,7 @@ def enable_ssl(website_id: int, db: Session = Depends(get_db), current_user: Use
             _rewrite_website_vhost(website)
         except (RuntimeError, ValueError):
             pass
-        raise HTTPException(status_code=500, detail=_command_error(result))
+        raise LetsEncryptError(_command_error(result), 500)
     website.ssl_enabled = True
     website.ssl_mode = "letsencrypt"
     website.ssl_wildcard = False
@@ -957,9 +969,21 @@ def enable_ssl(website_id: int, db: Session = Depends(get_db), current_user: Use
     try:
         _rewrite_website_vhost(website)
     except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"Cannot enable SSL in webserver config: {exc}") from exc
+        raise LetsEncryptError(f"Cannot enable SSL in webserver config: {exc}", 400) from exc
     db.commit()
     db.refresh(website)
+
+
+@router.post("/{website_id}/ssl", response_model=WebsiteOut)
+def enable_ssl(website_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+    ensure_owner_access(db, current_user, website.owner_id)
+    try:
+        issue_letsencrypt(db, website)
+    except LetsEncryptError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     log_action(db, current_user.id, "enable_ssl", website.domain)
     return website
 

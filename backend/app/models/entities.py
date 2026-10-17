@@ -202,6 +202,22 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class AutosslSite(Base):
+    """AutoSSL's state of one website (services/autossl.py)."""
+
+    __tablename__ = "autossl_sites"
+
+    website_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(16), default="")
+    names: Mapped[str] = mapped_column(Text, default="[]")
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    last_check: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    next_check: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_issued_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class RestoreJob(Base):
     """One restore run: its archives and how each went (services/restore_jobs.py)."""
 

@@ -26,6 +26,7 @@ export const PAGE_TITLES = {
   users: msg('Panel users'),
   auditLog: msg('Activity log'),
   mysql: 'MySQL',
+  autossl: 'AutoSSL',
   settings: msg('Panel settings'),
   security: msg('Account security'),
   malware: msg('Malware Scanner'),
@@ -74,6 +75,7 @@ export const HUBS = [
   { key: 'security-center', title: msg('Security'), roles: ['admin'], tabs: [
     { page: 'firewall', label: msg('Firewall') },
     { page: 'waf', label: 'WAF' },
+    { page: 'autossl', label: 'AutoSSL' },
     { page: 'wafLogs', label: msg('Access logs') },
     { page: 'malware', label: msg('Malware Scanner'), when: (c) => c.malware },
   ] },

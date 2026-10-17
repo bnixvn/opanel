@@ -13,6 +13,7 @@ import EmptyState from '../components/EmptyState.jsx';
 import { Field } from '../components/Form.jsx';
 import { Terminal } from '../components/Terminal';
 import Switch from '../components/Switch.jsx';
+import { AutoSslSite } from '../components/AutoSsl.jsx';
 import { WordPressInstallDrawer, siteTypeLabel, sslLabel, useSiteMenu, useSiteOwners } from '../components/WebsiteParts.jsx';
 import './Websites.css';
 
@@ -97,7 +98,7 @@ export default function WebsiteDetailPage() {
     <Tabs className="wsd-tabs" label={t('Website sections')} value={shownTab} onChange={(next) => goTab(next)} tabs={tabs}/>
     {shownTab === 'overview' && <OverviewTab site={site} owner={owner} goTab={goTab}/>}
     {shownTab === 'domains' && <DomainsTab site={site} goTab={goTab}/>}
-    {shownTab === 'ssl' && <SslTab/>}
+    {shownTab === 'ssl' && <SslTab site={site}/>}
     {shownTab === 'php' && <PhpTab site={site}/>}
     {shownTab === 'cache' && <CacheTab site={site}/>}
     {shownTab === 'security' && <SecurityTab site={site}/>}
@@ -216,9 +217,12 @@ function DomainsTab({ site, goTab }) {
 }
 
 // The SSL page's form, for this website only (App's renderSslManage).
-function SslTab() {
+function SslTab({ site }) {
   const { renderSslManage } = usePanel();
-  return renderSslManage(true);
+  return <>
+    <AutoSslSite site={site}/>
+    {renderSslManage(true)}
+  </>;
 }
 
 function PhpTab({ site }) {
