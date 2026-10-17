@@ -71,6 +71,21 @@ def create_database(payload: DatabaseCreate, db: Session = Depends(get_db), curr
     db_user = payload.db_user or db_name
     db_password = payload.db_password or mariadb.random_password()
 
+    # Whose database it is: the caller's, or an account the caller manages.
+    owner = current_user
+    if payload.owner_id is not None and payload.owner_id != current_user.id:
+        ensure_owner_access(db, current_user, payload.owner_id)
+        owner = db.query(User).filter(User.id == payload.owner_id, User.is_active.is_(True)).first()
+        if not owner:
+            raise HTTPException(status_code=404, detail="Owner not found or inactive")
+    # The website it belongs to: one of the owner's, whose backups then carry it.
+    website_id = None
+    if payload.website_id is not None:
+        site = db.query(Website).filter(Website.id == payload.website_id).first()
+        if not site or site.owner_id != owner.id:
+            raise HTTPException(status_code=400, detail="Choose one of the owner's websites")
+        website_id = site.id
+
     # Count quota. Databases were the one tenant resource with no cap: websites
     # are metered against owner.website_limit and bytes against
     # storage_limit_mb, both with non-zero defaults, while this path had
@@ -79,11 +94,13 @@ def create_database(payload: DatabaseCreate, db: Session = Depends(get_db), curr
     # grows with the number of accounts already present -- so an uncapped path
     # made every later create slower for every tenant on the instance.
     # 0 means unlimited, as it does for storage_limit_mb.
-    if not is_admin_role(current_user.role):
-        limit = getattr(current_user, "database_limit", 0) or 0
+    # The owner's package limit - which an administrator may choose to pass.
+    forced = payload.force and is_admin_role(current_user.role)
+    if not is_admin_role(owner.role) and not forced:
+        limit = getattr(owner, "database_limit", 0) or 0
         if limit > 0:
             owned = db.query(DatabaseAccount).filter(
-                DatabaseAccount.owner_id == current_user.id
+                DatabaseAccount.owner_id == owner.id
             ).count()
             if owned >= limit:
                 raise HTTPException(
@@ -110,7 +127,8 @@ def create_database(payload: DatabaseCreate, db: Session = Depends(get_db), curr
         raise HTTPException(status_code=500, detail=f"MariaDB error: {exc}") from exc
 
     item = DatabaseAccount(
-        owner_id=current_user.id,
+        owner_id=owner.id,
+        website_id=website_id,
         db_name=db_name,
         db_user=db_user,
         db_password=encrypt(db_password),
@@ -253,6 +271,12 @@ def change_database_owner(database_id: int, payload: DatabaseOwnerUpdate, reques
                 detail=(f"{item.db_name} belongs to {website.domain}. Reassign that website "
                         "instead and the database moves with it."),
             )
+    # A database on no website may be put on one of its new owner's.
+    if payload.website_id is not None and not item.website_id:
+        target = db.query(Website).filter(Website.id == payload.website_id).first()
+        if not target or target.owner_id != owner.id:
+            raise HTTPException(status_code=400, detail="Choose one of the new owner's websites")
+        item.website_id = target.id
 
     previous = item.owner_id
     item.owner_id = owner.id

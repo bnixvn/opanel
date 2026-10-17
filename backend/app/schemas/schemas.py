@@ -630,12 +630,20 @@ class DatabasePasswordUpdate(BaseModel):
 
 class DatabaseOwnerUpdate(BaseModel):
     owner_id: int = Field(gt=0)
+    # One of the new owner's websites to put the database on, or none.
+    website_id: Optional[int] = Field(default=None, gt=0)
 
 
 class DatabaseCreate(BaseModel):
     db_name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     db_user: Optional[str] = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     db_password: Optional[str] = Field(default=None, min_length=12, max_length=128)
+    # Whose it is (an administrator's or a reseller's choice; the caller's
+    # own when left out), the website it belongs to, and - an administrator
+    # only - past the owner's package limit.
+    owner_id: Optional[int] = Field(default=None, gt=0)
+    website_id: Optional[int] = Field(default=None, gt=0)
+    force: bool = False
 
     @field_validator("db_name", mode="before")
     @classmethod

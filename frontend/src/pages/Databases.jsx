@@ -6,7 +6,7 @@ import PageHeader from '../components/PageHeader.jsx';
 import Drawer from '../components/Drawer.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import EmptyState from '../components/EmptyState.jsx';
-import { Field, PasswordField } from '../components/Form.jsx';
+import { Checkbox, Field, PasswordField } from '../components/Form.jsx';
 import './Databases.css';
 
 // The databases, as SNPanel's (pages/Databases.jsx there): one table row
@@ -102,7 +102,7 @@ export default function DatabasesPage() {
     const choice = users.find((user) => String(user.id) === String(moving.owner_id));
     if (!choice) { setError(t('Pick an account to move it to.')); return; }
     const data = await request(`/databases/${moving.id}/owner`, {
-      method: 'POST', body: JSON.stringify({ owner_id: choice.id }),
+      method: 'POST', body: JSON.stringify({ owner_id: choice.id, ...(moving.website_id ? { website_id: Number(moving.website_id) } : {}) }),
     }, t('Moving database...'));
     if (data) {
       setMoving(null);
@@ -111,6 +111,10 @@ export default function DatabasesPage() {
     }
   }
   const moveChoices = (ownerId) => users.filter((user) => String(user.id) !== String(ownerId));
+  // Whose a new database is: the caller's own, or an account it manages.
+  const owners = currentUser && !users.some((user) => user.id === currentUser.id) ? [currentUser, ...users] : users;
+  const createOwner = String(newDatabase.owner_id || currentUser?.id || '');
+  const sitesOf = (ownerId) => websites.filter((site) => String(site.owner_id) === String(ownerId));
 
   function rowMenu(db) {
     return [
@@ -197,6 +201,21 @@ export default function DatabasesPage() {
           <PasswordField value={newDatabase.db_password} onChange={(value) => setNewDatabase((prev) => ({ ...prev, db_password: value }))}
             onBlur={() => setCreateTouched((s) => ({ ...s, password: true }))} generate copy/>
         </Field>
+        <div className="sn-drawer-grid">
+          {canSeeOwners && <Field label={t('Owner')}>
+            <select value={createOwner} onChange={(e) => setNewDatabase((prev) => ({ ...prev, owner_id: e.target.value, website_id: '' }))}>
+              {owners.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+            </select>
+          </Field>}
+          <Field label={t('Website')} hint={t('Its backups include the database.')}>
+            <select value={newDatabase.website_id || ''} onChange={(e) => setNewDatabase((prev) => ({ ...prev, website_id: e.target.value }))}>
+              <option value="">{t('No website')}</option>
+              {sitesOf(createOwner).map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}
+            </select>
+          </Field>
+        </div>
+        {isAdmin && <Checkbox checked={!!newDatabase.force} onChange={(on) => setNewDatabase((prev) => ({ ...prev, force: on }))}
+          label={t('Ignore the package\'s database limit')}/>}
       </form>
     </Drawer>
 
@@ -209,8 +228,14 @@ export default function DatabasesPage() {
       {moving && <form id="db-move-form" onSubmit={saveOwner}>
         <Field label={t('Currently')}><input value={userName.get(moving.from) || `#${moving.from}`} readOnly/></Field>
         <Field label={t('Move to')}>
-          <select value={moving.owner_id} onChange={(e) => setMoving((prev) => ({ ...prev, owner_id: e.target.value }))}>
+          <select value={moving.owner_id} onChange={(e) => setMoving((prev) => ({ ...prev, owner_id: e.target.value, website_id: '' }))}>
             {moveChoices(moving.from).map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+          </select>
+        </Field>
+        <Field label={t('Website')} hint={t('Its backups include the database.')}>
+          <select value={moving.website_id || ''} onChange={(e) => setMoving((prev) => ({ ...prev, website_id: e.target.value }))}>
+            <option value="">{t('No website')}</option>
+            {sitesOf(moving.owner_id).map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}
           </select>
         </Field>
       </form>}

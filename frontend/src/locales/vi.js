@@ -3061,4 +3061,6 @@ export default {
   "Why": "Lý do",
   "WordPress, every plugin and every theme are updated to their latest versions. A restore point is taken first.": "WordPress, mọi plugin và mọi giao diện được cập nhật lên bản mới nhất. Một điểm khôi phục được tạo trước.",
   "WordPress, every plugin and every theme are updated to their latest versions. A restore point of each is taken first.": "WordPress, mọi plugin và mọi giao diện được cập nhật lên bản mới nhất. Mỗi site được tạo một điểm khôi phục trước.",
+  "Ignore the package's database limit": "Bỏ qua giới hạn cơ sở dữ liệu của gói",
+  "Its backups include the database.": "Bản sao lưu của website sẽ gồm cả cơ sở dữ liệu này.",
 };

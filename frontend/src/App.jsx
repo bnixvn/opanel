@@ -3064,10 +3064,14 @@ function App() {
       db_user: dbUser || null,
       db_password: dbPass || null,
     };
+    // Whose it is, the website it belongs to, past the package limit (admin).
+    if (newDatabase.owner_id) body.owner_id = Number(newDatabase.owner_id);
+    if (newDatabase.website_id) body.website_id = Number(newDatabase.website_id);
+    if (isAdmin && newDatabase.force) body.force = true;
     const data = await request('/databases', { method: 'POST', body: JSON.stringify(body) }, tr("Creating database..."));
     if (data) {
       setCreatedDbInfo({ db_name: data.db_name, db_user: data.db_user, db_password: data.db_password });
-      setNewDatabase({ db_name: '', db_user: '', db_password: '' });
+      setNewDatabase(prev => ({ db_name: '', db_user: '', db_password: '', owner_id: prev.owner_id || '', website_id: '', force: false }));
       await refreshAll();
       return true;
     }
