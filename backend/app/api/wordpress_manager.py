@@ -71,6 +71,11 @@ class UserIn(BaseModel):
     user_id: Optional[int] = None
 
 
+class HardenIn(BaseModel):
+    item: str
+    revert: bool = False
+
+
 # --- Shapes ------------------------------------------------------------------------------
 
 def _job_out(job: WpJob) -> dict:
@@ -94,6 +99,7 @@ def _install_out(install: WpInstall, website: Optional[Website], owners: dict[in
         "plugins_total": install.plugins_total, "plugins_updates": install.plugins_updates,
         "themes_total": install.themes_total, "themes_updates": install.themes_updates,
         "checked": install.last_checked_at is not None,
+        "security_warnings": wp_manager.security_warnings(json.loads(install.inventory or "{}")),
         "last_checked_at": install.last_checked_at.isoformat() + "Z" if install.last_checked_at else None,
         "last_error": install.last_error,
     }
@@ -155,6 +161,8 @@ def detail(install_id: int, db: Session = Depends(get_db), current_user: User = 
     install, website = _install_for(db, current_user, install_id)
     out = _install_out(install, website, _owners(db, [install.owner_id]))
     out["inventory"] = json.loads(install.inventory or "{}")
+    out["security"] = {"items": wp_manager.security_items(out["inventory"]),
+                       "scanned_at": (out["inventory"].get("security_full") or {}).get("scanned_at")}
     jobs = db.query(WpJob).filter(WpJob.install_id == install.id).order_by(WpJob.id.desc()).limit(20).all()
     out["jobs"] = [_job_out(job) for job in jobs]
     return out
@@ -267,6 +275,18 @@ def plugins(install_id: int, payload: ItemsIn, request: Request, db: Session = D
 @router.post("/installs/{install_id}/themes")
 def themes(install_id: int, payload: ItemsIn, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return _items("theme", install_id, payload, request, db, current_user)
+
+
+@router.post("/installs/{install_id}/security/scan")
+def security_scan(install_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return _task(db, current_user, install_id, "security_scan", {}, request)
+
+
+@router.post("/installs/{install_id}/security/apply")
+def harden(install_id: int, payload: HardenIn, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if payload.item not in wp_manager.HARDEN_ITEMS:
+        raise HTTPException(status_code=400, detail="Unknown security item")
+    return _task(db, current_user, install_id, "harden", payload.model_dump(), request)
 
 
 # --- Answered at once ---------------------------------------------------------------------

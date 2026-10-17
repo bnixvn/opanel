@@ -272,3 +272,32 @@ def test_new_installs_carry_wordpress_s_own_marker():
 
     text = wordpress._render_wp_config("db", "user", "pass")
     assert text.index("That's all, stop editing!") < text.index("require_once ABSPATH . 'wp-settings.php';")
+
+
+def test_the_security_checks_say_what_is_wrong(env):
+    _scan(env)
+    row = env.db.query(WpInstall).one()
+    detail = env.as_user("alice").get(f"/api/wordpress/installs/{row.id}").json()
+    items = {item["id"]: item for item in detail["security"]["items"]}
+    # The fake site has debugging on, file editing allowed, an inactive plugin
+    # and updates waiting; nothing has been compared with wordpress.org yet.
+    assert items["debug"]["status"] == "warning" and items["debug"]["apply"]
+    assert items["file_edit"]["status"] == "warning"
+    assert items["inactive_plugins"] == {"id": "inactive_plugins", "status": "warning", "count": 1}
+    assert items["updates"]["status"] == "warning" and items["updates"]["count"] == 3
+    assert items["core_checksums"]["status"] == "unknown" and items["salts"]["status"] == "action"
+    listed = env.as_user("alice").get("/api/wordpress").json()["items"][0]
+    assert listed["security_warnings"] == 4
+
+
+def test_hardening_runs_only_known_items_as_the_site_user(env):
+    _scan(env)
+    row = env.db.query(WpInstall).one()
+    client = env.as_user("alice")
+    assert client.post(f"/api/wordpress/installs/{row.id}/security/apply", json={"item": "rm"}).status_code == 400
+    env.calls.clear()
+    answer = client.post(f"/api/wordpress/installs/{row.id}/security/apply", json={"item": "file_edit"})
+    assert answer.status_code == 200
+    sets = [call["args"][:4] for call in env.calls if call["args"][:2] == ["config", "set"]]
+    assert ["config", "set", "DISALLOW_FILE_EDIT", "true"] in sets
+    assert {call["user"] for call in env.calls} == {"alice"}

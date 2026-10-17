@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Activity, AlertTriangle, ArrowLeft, Bug, Copy, Download, ExternalLink, KeyRound, LogIn, Package, Palette, Plus, RefreshCw,
-  ScanSearch, Search, Settings2, Trash2, Wrench, X,
+  Activity, AlertTriangle, ArrowLeft, Bug, CheckCircle2, CircleHelp, Copy, Download, ExternalLink, KeyRound, LogIn, Package, Palette,
+  Plus, RefreshCw, RotateCcw, ScanSearch, Search, Settings2, ShieldCheck, Trash2, Wrench, X,
 } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
@@ -32,6 +32,22 @@ const JOB_LABELS = {
   maintenance: msg('Maintenance mode'),
   debug: msg('Debugging'),
   update: msg('Update everything'),
+  security_scan: msg('Security check'),
+  harden: msg('Hardening'),
+};
+
+// Each security check, in the words for when it is fine and when it is not.
+const SECURITY_TEXT = {
+  debug: [msg('Debugging is off'), msg('Debugging is on: errors may show details of the site. Turn it off on a live site.')],
+  file_edit: [msg('Editing plugin and theme files from wp-admin is off'), msg('Plugin and theme files can be edited from wp-admin (DISALLOW_FILE_EDIT is not set).')],
+  config_mode: [msg('wp-config.php is readable by the site only'), msg('wp-config.php can be read by other accounts.')],
+  admin_user: [msg('No administrator is called "admin"'), msg('An administrator is called "admin", the first name attackers try.')],
+  core_checksums: [msg('The core files match wordpress.org'), msg('Some core files differ from wordpress.org.')],
+  plugin_checksums: [msg('The plugins from wordpress.org match their originals'), msg('Some plugin files differ from wordpress.org.')],
+  updates: [msg('Everything is up to date'), msg('{count} update(s) waiting.')],
+  inactive_plugins: [msg('No inactive plugins'), msg('{count} inactive plugin(s): delete what is not used.')],
+  search_visibility: [msg('Search engines may index the site'), msg('Search engines are asked not to index the site.')],
+  salts: [msg('Security keys'), msg('Security keys')],
 };
 const JOB_STATUS = {
   queued: ['', msg('Queued')],
@@ -225,6 +241,7 @@ export default function WordPressPage() {
               <th scope="col">WordPress</th>
               <th scope="col">{t('Plugins')}</th>
               <th scope="col">{t('Themes')}</th>
+              <th scope="col">{t('Security')}</th>
               <th scope="col">{t('Last checked')}</th>
               <th scope="col"><span className="sr-only">{t('Actions')}</span></th>
             </tr></thead>
@@ -245,6 +262,9 @@ export default function WordPressPage() {
                   <td data-label="WordPress">{item.core_version || '-'} {item.core_update && <span className="badge warn">{t('Update {version}', { version: item.core_update })}</span>}</td>
                   <td data-label={t('Plugins')}>{item.checked ? <>{item.plugins_total} {item.plugins_updates > 0 && <span className="badge warn">{t('{count} update(s)', { count: item.plugins_updates })}</span>}</> : '-'}</td>
                   <td data-label={t('Themes')}>{item.checked ? <>{item.themes_total} {item.themes_updates > 0 && <span className="badge warn">{t('{count} update(s)', { count: item.themes_updates })}</span>}</> : '-'}</td>
+                  <td data-label={t('Security')}>{item.security_warnings == null ? <span className="data-table-muted">-</span>
+                    : item.security_warnings > 0 ? <span className="badge warn">{t('{count} warning(s)', { count: item.security_warnings })}</span>
+                    : <span className="badge ok">{t('OK')}</span>}</td>
                   <td className="wpm-when" data-label={t('Last checked')}>{job ? <span className="badge warn"><RefreshCw size={12} className="spin" aria-hidden="true"/> {t(JOB_LABELS[job.kind] || job.kind)}</span>
                     : item.last_error ? <span className="badge bad" title={item.last_error}>{t('Error')}</span>
                     : item.last_checked_at ? when(item.last_checked_at) : <span className="data-table-muted">{t('Not yet')}</span>}</td>
@@ -317,6 +337,7 @@ const TABS = [
   ['overview', Activity, msg('Overview')],
   ['plugins', Package, msg('Plugins')],
   ['themes', Palette, msg('Themes')],
+  ['security', ShieldCheck, msg('Security')],
   ['activity', ScanSearch, msg('Activity')],
 ];
 
@@ -356,6 +377,7 @@ function ManageView({ id, detail, back, reload, post, signIn, setSecret, busy })
       {tab === 'overview' && <Overview detail={detail} inv={inv} base={base} post={post} busy={busy || !usable} signIn={signIn} resetPassword={resetPassword}/>}
       {tab === 'plugins' && <Items kind="plugin" detail={detail} items={inv.plugins || []} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'themes' && <Items kind="theme" detail={detail} items={inv.themes || []} base={base} post={post} busy={busy || !usable}/>}
+      {tab === 'security' && <Security detail={detail} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'activity' && <ActivityTab detail={detail}/>}
     </section>
   </>;
@@ -537,6 +559,53 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
         })}</tbody>
       </table>
     </div>}
+  </div>;
+}
+
+// The security checks, as SNPanel's: each with what can be done about it.
+// The quick ones come with every refresh; the full check also compares the
+// files with wordpress.org.
+function Security({ detail, base, post, busy }) {
+  const t = useT();
+  const security = detail.security || {};
+  const items = security.items || [];
+  async function apply(item, revert) {
+    if (item.id === 'salts' && !(await confirmDialog({ title: t('Regenerate the security keys?'), message: t('Everyone signed in to this WordPress is signed out.'), confirmLabel: t('Regenerate') }))) return;
+    post(`${base}/security/apply`, { item: item.id, revert }, t('Starting...'));
+  }
+  const text = (item) => {
+    const pair = SECURITY_TEXT[item.id] || [item.id, item.id];
+    return t(item.status === 'ok' || item.status === 'action' ? pair[0] : pair[1], { count: item.count ?? 0 });
+  };
+  return <div className="wpm-tab">
+    <div className="wpm-toolbar">
+      <button type="button" disabled={busy} onClick={() => post(`${base}/security/scan`, {}, t('Starting...'))}><ShieldCheck size={15} aria-hidden="true"/> {t('Run a full check')}</button>
+      <span className="hint">{security.scanned_at ? t('Files last checked against wordpress.org: {when}', { when: when(security.scanned_at) }) : t('The full check also compares the files with wordpress.org.')}</span>
+    </div>
+    {items.length === 0 ? <p className="hint">{t('None found yet: refresh.')}</p> : <ul className="wpm-checks">
+      {items.map((item) => {
+        const icon = item.status === 'ok' ? <CheckCircle2 size={17} aria-hidden="true"/> : item.status === 'warning' ? <AlertTriangle size={17} aria-hidden="true"/>
+          : item.status === 'action' ? <KeyRound size={17} aria-hidden="true"/> : <CircleHelp size={17} aria-hidden="true"/>;
+        const files = item.detail ? [...(item.detail.modified || []), ...((item.detail.failures || []).map((f) => `${f.plugin}/${f.file}`))] : [];
+        return <li key={item.id} data-status={item.status}>
+          {icon}
+          <div>
+            <strong>{text(item)}</strong>
+            {item.id === 'config_mode' && item.mode && <small> ({item.mode})</small>}
+            {item.status === 'unknown' && <small>{t('Not checked yet: run a full check.')}</small>}
+            {item.id === 'salts' && <small>{t('New keys sign everyone out of this WordPress, attackers included.')}</small>}
+            {item.detail?.error && <small>{item.detail.error}</small>}
+            {files.length > 0 && <details><summary>{t('{count} file(s)', { count: item.count ?? files.length })}</summary><ul className="wpm-files">{files.slice(0, 50).map((f) => <li key={f}><code>{f}</code></li>)}</ul></details>}
+          </div>
+          <div className="wpm-row-actions">
+            {item.apply && item.id !== 'salts' && <button type="button" className="mini" disabled={busy} onClick={() => apply(item, false)}>{t('Apply')}</button>}
+            {item.revert && item.id === 'file_edit' && <button type="button" className="mini secondary-light" disabled={busy} onClick={() => apply(item, true)}><RotateCcw size={13} aria-hidden="true"/> {t('Revert')}</button>}
+            {item.id === 'search_visibility' && item.revert && <button type="button" className="mini secondary-light" disabled={busy} onClick={() => apply(item, true)}>{t('Hide from search engines')}</button>}
+            {item.id === 'salts' && <button type="button" className="mini secondary-light" disabled={busy} onClick={() => apply(item, false)}><RefreshCw size={13} aria-hidden="true"/> {t('Regenerate')}</button>}
+          </div>
+        </li>;
+      })}
+    </ul>}
   </div>;
 }
 

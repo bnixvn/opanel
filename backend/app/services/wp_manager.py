@@ -185,6 +185,13 @@ def read_inventory(website: Website, path: str) -> dict:
     debug = wp(website, path, ["config", "get", "WP_DEBUG", "--type=constant"], check=False).stdout.strip().lower()
     auto = wp(website, path, ["config", "get", "WP_AUTO_UPDATE_CORE", "--type=constant"], check=False)
     auto_value = auto.stdout.strip().lower() if auto.returncode == 0 else ""
+    file_edit = wp(website, path, ["config", "get", "DISALLOW_FILE_EDIT", "--type=constant"], check=False)
+    blog_public = wp(website, path, ["option", "get", "blog_public"], check=False).stdout.strip()
+    config_path = wp(website, path, ["config", "path"], check=False).stdout.strip()
+    try:
+        config_mode = oct(Path(config_path).stat().st_mode & 0o777)[2:] if config_path else ""
+    except OSError:
+        config_mode = ""
     return {
         "core_version": core_version,
         "core_update": latest,
@@ -199,6 +206,10 @@ def read_inventory(website: Website, path: str) -> dict:
         "debug": debug in {"1", "true"},
         # WordPress's own default is minor (security) releases.
         "auto_update_core": "all" if auto_value in {"1", "true"} else "off" if auto_value in {"false", "0"} else "minor",
+        "file_edit_disallowed": file_edit.returncode == 0 and file_edit.stdout.strip().lower() in {"1", "true"},
+        "blog_public": blog_public != "0",
+        "config_path": config_path,
+        "config_mode": config_mode,
     }
 
 
@@ -224,6 +235,9 @@ def apply_inventory(install: WpInstall, inventory: dict) -> None:
     install.plugins_updates = sum(1 for item in plugins if item["update"])
     install.themes_total = len(inventory["themes"])
     install.themes_updates = sum(1 for item in inventory["themes"] if item["update"])
+    previous = json.loads(install.inventory or "{}")
+    if previous.get("security_full") and "security_full" not in inventory:
+        inventory["security_full"] = previous["security_full"]
     install.inventory = json.dumps(inventory)
     install.last_checked_at = datetime.utcnow()
     install.last_error = ""
@@ -524,6 +538,106 @@ def _short(text: str) -> str:
     return "\n".join(lines[-12:])
 
 
+def security_items(inventory: dict) -> list[dict]:
+    """What the Security tab lists: each check, its state and what can be done.
+
+    status: ok | warning | action (nothing wrong, a thing to do) | unknown
+    (not checked yet: the full check compares files with wordpress.org).
+    """
+    if not inventory.get("core_version"):
+        return []
+    plugins = [item for item in inventory.get("plugins") or [] if item["status"] not in {"must-use", "dropin"}]
+    updates = sum(1 for item in plugins + (inventory.get("themes") or []) if item["update"]) + (1 if inventory.get("core_update") else 0)
+    inactive = sum(1 for item in plugins if item["status"] == "inactive")
+    mode = inventory.get("config_mode") or ""
+    world = bool(mode) and int(mode, 8) & 0o007 != 0
+    full = inventory.get("security_full") or {}
+    items = [
+        {"id": "debug", "status": "warning" if inventory.get("debug") else "ok", "apply": bool(inventory.get("debug"))},
+        {"id": "file_edit", "status": "ok" if inventory.get("file_edit_disallowed") else "warning",
+         "apply": not inventory.get("file_edit_disallowed"), "revert": bool(inventory.get("file_edit_disallowed"))},
+        {"id": "config_mode", "status": "warning" if world else ("ok" if mode else "unknown"), "mode": mode, "apply": world},
+        {"id": "admin_user", "status": "warning" if any(a.get("login") == "admin" for a in inventory.get("admins") or []) else "ok"},
+        {"id": "updates", "status": "warning" if updates else "ok", "count": updates},
+        {"id": "inactive_plugins", "status": "warning" if inactive else "ok", "count": inactive},
+        {"id": "search_visibility", "status": "ok" if inventory.get("blog_public", True) else "warning",
+         "apply": not inventory.get("blog_public", True), "revert": bool(inventory.get("blog_public", True))},
+    ]
+    for key in ("core_checksums", "plugin_checksums"):
+        result = full.get(key)
+        if result is None:
+            items.append({"id": key, "status": "unknown"})
+        else:
+            items.append({"id": key, "status": "ok" if not result.get("count") else "warning", "count": result.get("count", 0),
+                          "detail": result})
+    items.append({"id": "salts", "status": "action", "apply": True})
+    return items
+
+
+def security_warnings(inventory: dict) -> Optional[int]:
+    items = security_items(inventory)
+    return sum(1 for item in items if item["status"] == "warning") if items else None
+
+
+def _handle_security_scan(db: Session, task: _Task, params: dict) -> None:
+    install, website = _install_and_site(db, task.job)
+    refresh_install(db, task, install, website)
+    task.stage("Comparing WordPress's files with wordpress.org")
+    core = wp(website, install.path, ["core", "verify-checksums"], check=False)
+    core_files = sorted({line.split(":", 2)[-1].strip() for line in (core.stdout + core.stderr).splitlines()
+                         if line.startswith("Warning:") and ":" in line})[:200]
+    core_result = {"count": len(core_files) if core.returncode != 0 else 0, "modified": core_files if core.returncode != 0 else [],
+                   "error": "" if core.returncode == 0 or core_files else _clean_error(core.stderr or core.stdout)}
+    task.stage("Comparing the plugins' files with wordpress.org")
+    plugins = wp(website, install.path, ["plugin", "verify-checksums", "--all", "--format=json"], check=False)
+    failures = [{"plugin": str(item.get("plugin_name", "")), "file": str(item.get("file", "")), "message": str(item.get("message", ""))}
+                for item in (_json(plugins) or []) if isinstance(item, dict)]
+    # Plugins not on wordpress.org cannot be compared: not a finding.
+    failures = [item for item in failures if "Could not retrieve the checksums" not in item["message"]][:200]
+    inventory = json.loads(install.inventory or "{}")
+    inventory["security_full"] = {
+        "scanned_at": datetime.utcnow().isoformat() + "Z",
+        "core_checksums": core_result,
+        "plugin_checksums": {"count": len(failures), "failures": failures},
+    }
+    install.inventory = json.dumps(inventory)
+    db.commit()
+    task.log(f"Core: {core_result['count']} file(s) differ; plugins: {len(failures)} file(s) differ")
+
+
+HARDEN_ITEMS = {"debug", "file_edit", "config_mode", "search_visibility", "salts"}
+
+
+def _handle_harden(db: Session, task: _Task, params: dict) -> None:
+    install, website = _install_and_site(db, task.job)
+    item = params.get("item")
+    revert = bool(params.get("revert"))
+    if item not in HARDEN_ITEMS:
+        raise WpError("Unknown security item")
+    inventory = json.loads(install.inventory or "{}")
+    if item == "debug":
+        task.stage("Debugging off")
+        for name in ("WP_DEBUG", "WP_DEBUG_LOG"):
+            config_set(website, install.path, name, "false")
+    elif item == "file_edit":
+        task.stage("Editing files from wp-admin " + ("allowed" if revert else "blocked"))
+        config_set(website, install.path, "DISALLOW_FILE_EDIT", "false" if revert else "true")
+    elif item == "config_mode":
+        config_path = inventory.get("config_path") or ""
+        if not config_path.endswith("/wp-config.php"):
+            raise WpError("wp-config.php was not found: refresh first")
+        task.stage("wp-config.php readable by its owner only")
+        # As the site's own user, on its own file: chmod needs no privilege.
+        wp(website, install.path, ["eval", f"chmod({json.dumps(config_path)}, 0640); echo 'ok';"])
+    elif item == "search_visibility":
+        task.stage("Hidden from search engines" if revert else "Visible to search engines")
+        wp(website, install.path, ["option", "update", "blog_public", "0" if revert else "1"])
+    elif item == "salts":
+        task.stage("New security keys")
+        wp(website, install.path, ["config", "shuffle-salts"])
+    refresh_install(db, task, install, website)
+
+
 HANDLERS = {
     "scan": _handle_scan,
     "refresh": _handle_refresh,
@@ -533,6 +647,8 @@ HANDLERS = {
     "plugins": _handle_items("plugin"),
     "themes": _handle_items("theme"),
     "update": _handle_update_everything,
+    "security_scan": _handle_security_scan,
+    "harden": _handle_harden,
 }
 
 
