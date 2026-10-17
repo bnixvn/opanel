@@ -530,6 +530,9 @@ function App() {
   const [createSslCerts, setCreateSslCerts] = useState([]);
   const [cronSchedule, setCronSchedule] = useState('*/15 * * * *');
   const [cronCommand, setCronCommand] = useState('');
+  // Where a new job's output goes: thrown away, or a log file in the website's folder.
+  const [cronOutput, setCronOutput] = useState('discard');
+  const [cronLogPath, setCronLogPath] = useState('cron.log');
   const [cronItems, setCronItems] = useState([]);
   const [cronUser, setCronUser] = useState('');
   const [filePath, setFilePath] = useState(() => standaloneEditor?.path || 'public_html/index.html');
@@ -3079,7 +3082,10 @@ function App() {
   }
 
   async function addCron() {
-    const data = await request('/maintenance/cron', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), schedule: cronSchedule, command: cronCommand }) }, tr("Adding cron job..."));
+    const data = await request('/maintenance/cron', { method: 'POST', body: JSON.stringify({
+      website_id: Number(selectedWebsiteId), schedule: cronSchedule, command: cronCommand,
+      output: cronOutput, ...(cronOutput === 'log' ? { log_path: cronLogPath.trim() || 'cron.log' } : {}),
+    }) }, tr("Adding cron job..."));
     if (data) {
       if (data.cron_user) setCronUser(data.cron_user);
       setNotice(tr("Cron job added{0}.", data.cron_user ? tr(" as {0}", data.cron_user) : ''));
@@ -3095,7 +3101,8 @@ function App() {
   }
 
   async function deleteCron(index) {
-    if (!confirm(tr("Delete cron #{0}?", index))) return;
+    const item = cronItems.find((entry) => entry.index === Number(index));
+    if (!(await confirmDialog({ title: tr("Delete cron #{0}?", index), subject: item?.command, danger: true, confirmLabel: tr("Delete") }))) return;
     index = Number(index);
     if (Number.isNaN(index)) return;
     const data = await request('/maintenance/cron', { method: 'DELETE', body: JSON.stringify({ website_id: Number(selectedWebsiteId), index }) }, tr("Deleting cron job..."));
@@ -5540,14 +5547,25 @@ function App() {
         <div className="field"><span className="field-label">{tr("Command")}</span>
           <input value={cronCommand} spellCheck={false} onChange={e => setCronCommand(e.target.value)} placeholder={tr("wget -q -O - https://example.com/wp-cron.php")} />
         </div>
+        <div className="field"><span className="field-label">{tr("Output")}</span>
+          <select value={cronOutput} onChange={e => setCronOutput(e.target.value)}>
+            <option value="discard">{tr("Throw it away")}</option>
+            <option value="log">{tr("Append to a log file")}</option>
+          </select>
+        </div>
+        {cronOutput === 'log' && <div className="field"><span className="field-label">{tr("Log file")}</span>
+          <input value={cronLogPath} spellCheck={false} onChange={e => setCronLogPath(e.target.value)} placeholder="logs/cron.log" />
+          <small className="hint">{tr("In the website's folder, beside public_html - never inside it, where anyone could read it. It grows with every run: empty it in the file manager.")}</small>
+        </div>}
         <button className="cron-add" disabled={!selectedWebsiteId || !cronCommand.trim() || !!loading} onClick={addCron}><Plus size={14}/> {tr("Add cron")}</button>
       </div>
-      {selectedWebsiteId && <p className="hint">{tr("Cron runs as")} <strong>{cronUser || currentSite?.linux_user || tr("www-data")}</strong> {tr("for the selected website. Accepted commands:")} <code>wget</code>/<code>curl</code> {tr("to an http(s) URL, WP-CLI maintenance commands, or a")} <code>.php</code> {tr("file inside this website. Output is discarded automatically.")}</p>}
+      {selectedWebsiteId && <p className="hint">{tr("Cron runs as")} <strong>{cronUser || currentSite?.linux_user || tr("www-data")}</strong> {tr("for the selected website. Accepted commands:")} <code>wget</code>/<code>curl</code> {tr("to an http(s) URL, WP-CLI maintenance commands, or a")} <code>.php</code> {tr("file inside this website.")}</p>}
       <div className="cron-list">
         {selectedWebsiteId && cronItems.length === 0 && <EmptyState icon={Clock} message={tr("No cron jobs found for this website.")} />}
         {cronItems.map(item => <div className="cron-item" key={`${item.index}-${item.line}`}>
           <span className="badge">#{item.index}</span>
-          <span><strong>{cronScheduleLabel(item.schedule)} <code className="cron-expr">{item.schedule}</code></strong><small>{item.command || item.line}</small></span>
+          <span><strong>{cronScheduleLabel(item.schedule)} <code className="cron-expr">{item.schedule}</code></strong><small>{item.command || item.line}</small>
+            <small>{item.output === 'log' ? tr("Output: appended to {0}", item.log_path) : item.output === 'mail' ? tr("Output: cron's mail (added before output could be chosen)") : tr("Output: thrown away")}</small></span>
           <button className="mini danger" disabled={!!loading} onClick={() => deleteCron(item.index)} aria-label={tr("Delete")} title={tr("Delete")}><Trash2 size={13}/></button>
         </div>)}
       </div>

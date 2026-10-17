@@ -3146,4 +3146,13 @@ export default {
   "Your panel password itself is changed on your profile.": "Bản thân mật khẩu panel được đổi trong hồ sơ của bạn.",
   "a password of its own": "mật khẩu riêng",
   "the panel password": "mật khẩu panel",
+  "Append to a log file": "Ghi thêm vào file log",
+  "In the website's folder, beside public_html - never inside it, where anyone could read it. It grows with every run: empty it in the file manager.": "Trong thư mục của website, cạnh public_html - không bao giờ nằm trong đó, nơi ai cũng đọc được. File lớn dần sau mỗi lần chạy: hãy làm trống nó trong trình quản lý file.",
+  "Log file": "File log",
+  "Output": "Đầu ra",
+  "Output: appended to {0}": "Đầu ra: ghi thêm vào {0}",
+  "Output: cron's mail (added before output could be chosen)": "Đầu ra: thư của cron (tạo trước khi có tùy chọn đầu ra)",
+  "Output: thrown away": "Đầu ra: bỏ đi",
+  "Throw it away": "Bỏ đi",
+  "file inside this website.": "nằm trong website này.",
 };

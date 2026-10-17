@@ -40,6 +40,15 @@ FETCH_REDIRECT = ">/dev/null 2>&1"
 CRON_PATH_PREFIX_RE = re.compile(r"^env PATH=[\w/.:-]+\s+")
 TRAILING_REDIRECT_RE = re.compile(r"\s*(?:[12]?>>?\s*\S+|[12]>&[12])(?:\s*(?:[12]?>>?\s*\S+|[12]>&[12]))*\s*$")
 
+# Where a job's output goes (SNPanel's choice): thrown away, or appended to a
+# log file in the website's folder - never in public_html, where anyone could
+# read it. Before, only URL calls discarded theirs; WP-CLI and PHP output went
+# to cron's mail, which nobody read and which, with the Email addon, piled up.
+OUTPUTS = ("discard", "log")
+DEFAULT_LOG = "cron.log"
+LOG_PART_RE = re.compile(r"[A-Za-z0-9._-]+")
+LOG_REDIRECT_RE = re.compile(r">>\s*('[^']*'|\S+)\s+2>&1")
+
 
 def _validate_schedule(schedule: str) -> str:
     fields = schedule.split()
@@ -154,7 +163,9 @@ def _parse_cron_line(index: int, line: str) -> dict:
     # The command is shown back verbatim. Rewriting it for display made users
     # think their input had been swallowed, so they re-added the same job.
     command = command.replace(" --allow-root", "").strip()
-    return {"index": index, "schedule": schedule, "command": command, "line": line}
+    output, log_file = output_of(command)
+    return {"index": index, "schedule": schedule, "command": command, "line": line,
+            "output": output, "log_path": log_file}
 
 
 def cron_path(php_version: str | None) -> str:
@@ -169,10 +180,50 @@ def cron_path(php_version: str | None) -> str:
     return path
 
 
-def add_cron(website: Website, schedule: str, command: str) -> str:
+def log_target(website: Website, log_path: str | None = None) -> Path:
+    """The log file a job appends to: inside the website's folder, outside public_html."""
+    root = Path(website.root_path).resolve(strict=False)
+    relative = (log_path or DEFAULT_LOG).strip()
+    parts = relative.split("/")
+    if not relative or relative.startswith("/") or len(relative) > 200 or any(part in (".", "..") or not LOG_PART_RE.fullmatch(part) for part in parts):
+        raise ValueError("The log file is a path inside the website's folder: letters, digits, dots, dashes and underscores")
+    if not relative.endswith((".log", ".txt")):
+        raise ValueError("The log file's name must end in .log or .txt")
+    target = root.joinpath(*parts)
+    public = site_users.document_root(root, getattr(website, "document_root", None) or site_users.PUBLIC_DIR)
+    try:
+        target.relative_to(public)
+    except ValueError:
+        return target
+    raise ValueError("Keep the log out of public_html: anyone could read it there")
+
+
+def _redirect(website: Website, output: str, log_path: str | None) -> str:
+    if output == "log":
+        return f">> {shlex.quote(str(log_target(website, log_path)))} 2>&1"
+    if output != "discard":
+        raise ValueError("Output is discard or log")
+    return FETCH_REDIRECT
+
+
+def output_of(command: str) -> tuple[str, str | None]:
+    """Where a listed job's output goes: discard, log (with the file) or mail."""
+    if ">/dev/null" in command:
+        return "discard", None
+    match = LOG_REDIRECT_RE.search(command)
+    if match:
+        return "log", match.group(1).strip("'")
+    return "mail", None
+
+
+def add_cron(website: Website, schedule: str, command: str, output: str = "discard", log_path: str | None = None) -> str:
     safe_schedule = _validate_schedule(schedule)
     document_root = site_users.document_root(website.root_path)
     safe_command = _validate_command(command, document_root)
+    # A URL call comes back already discarding; the choice below decides.
+    if safe_command.endswith(f" {FETCH_REDIRECT}"):
+        safe_command = safe_command[: -len(FETCH_REDIRECT) - 1]
+    redirect = _redirect(website, output, log_path)
     safe_domain = _validate_domain(website.domain)
     marker = f"# OPanel:{safe_domain}"
     runtime_php_version = website.php_version if (website.app_type or "wordpress") in {"wordpress", "php"} else None
@@ -180,7 +231,7 @@ def add_cron(website: Website, schedule: str, command: str) -> str:
     # assignment's PATH differs between shells; env execs with it every time.
     line = (
         f"{safe_schedule} cd {shlex.quote(str(document_root))} && "
-        f"env PATH={cron_path(runtime_php_version)} {safe_command} {marker}"
+        f"env PATH={cron_path(runtime_php_version)} {safe_command} {redirect} {marker}"
     )
     cron_user = cron_user_for_website(website)
     site_users.ensure_site_runtime(website.domain, website.root_path, runtime_php_version, cron_user)

@@ -153,11 +153,11 @@ def test_pasting_the_displayed_command_back_is_idempotent(tmp_path):
     assert once.count(">/dev/null") == 1
 
 
-def _add(monkeypatch, tmp_path, command, php_version="8.3", app_type="wordpress"):
+def _add(monkeypatch, tmp_path, command, php_version="8.3", app_type="wordpress", **output):
     from types import SimpleNamespace
 
     root = tmp_path / "home" / "taplooks" / "taplooks.com"
-    (root / "public_html").mkdir(parents=True)
+    (root / "public_html").mkdir(parents=True, exist_ok=True)
     written = {}
     monkeypatch.setattr(cron, "list_cron_all", lambda cron_user: "")
     monkeypatch.setattr(cron, "cron_user_for_website", lambda website: "taplooks")
@@ -167,7 +167,7 @@ def _add(monkeypatch, tmp_path, command, php_version="8.3", app_type="wordpress"
         lambda *a, **kw: written.update(content=kw.get("input")) or SimpleNamespace(stdout=""),
     )
     site = SimpleNamespace(domain="taplooks.com", root_path=str(root), php_version=php_version, app_type=app_type)
-    line = cron.add_cron(site, "*/5 * * * *", command)
+    line = cron.add_cron(site, "*/5 * * * *", command, **output)
     return line, written["content"]
 
 
@@ -181,7 +181,7 @@ def test_wp_cli_jobs_find_wp_and_the_sites_php(monkeypatch, tmp_path):
 
 def test_the_listing_hides_the_path_prefix(monkeypatch, tmp_path):
     line, _ = _add(monkeypatch, tmp_path, "wp cron event run --due-now")
-    assert cron._parse_cron_line(0, line)["command"] == "wp cron event run --due-now"
+    assert cron._parse_cron_line(0, line)["command"] == "wp cron event run --due-now >/dev/null 2>&1"
 
 
 def test_a_site_without_php_still_gets_usr_local_bin(monkeypatch, tmp_path):
@@ -192,3 +192,35 @@ def test_a_site_without_php_still_gets_usr_local_bin(monkeypatch, tmp_path):
 
 def test_a_malformed_php_version_is_not_put_in_the_path():
     assert cron.cron_path("8.3; rm -rf /") == "/usr/local/bin:/usr/bin:/bin"
+
+
+# --- where a job's output goes (2026-10-17) ------------------------------------------------
+
+def test_every_job_discards_its_output_unless_told_otherwise(monkeypatch, tmp_path):
+    """WP-CLI and PHP output went to cron's mail, which nobody read."""
+    for command in ("wp cron event run --due-now", "php -q cron.php", "curl -s https://taplooks.com/"):
+        line, _ = _add(monkeypatch, tmp_path, command)
+        assert line.count(">/dev/null 2>&1") == 1, line
+        assert cron._parse_cron_line(0, line)["output"] == "discard"
+
+
+def test_a_job_can_append_to_a_log_in_the_websites_folder(monkeypatch, tmp_path):
+    line, _ = _add(monkeypatch, tmp_path, "curl -s https://taplooks.com/", output="log", log_path="logs/cron.log")
+    target = (tmp_path / "home" / "taplooks" / "taplooks.com").resolve() / "logs" / "cron.log"
+    assert f">> {target} 2>&1" in line or f">> '{target}' 2>&1" in line
+    assert "/dev/null" not in line
+    parsed = cron._parse_cron_line(0, line)
+    assert parsed["output"] == "log" and parsed["log_path"] == str(target)
+    # Pasted back, the redirect is not stacked.
+    again, _ = _add(monkeypatch, tmp_path, parsed["command"], output="log")
+    assert again.count(">>") == 1
+
+
+@pytest.mark.parametrize("log_path", ["../other/cron.log", "public_html/cron.log", "cron.php", "a b.log", "/etc/passwd.log", "x/../../y.log"])
+def test_a_log_outside_the_folder_or_readable_on_the_web_is_refused(monkeypatch, tmp_path, log_path):
+    with pytest.raises(ValueError):
+        _add(monkeypatch, tmp_path, "curl -s https://taplooks.com/", output="log", log_path=log_path)
+
+
+def test_a_job_with_no_redirect_is_listed_as_mail():
+    assert cron.output_of("wp cron event run --due-now")[0] == "mail"

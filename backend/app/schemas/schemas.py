@@ -1416,6 +1416,9 @@ class CronCreate(BaseModel):
     website_id: int
     schedule: str
     command: str
+    # Thrown away, or appended to a log file in the website's folder.
+    output: Literal["discard", "log"] = "discard"
+    log_path: Optional[str] = Field(default=None, max_length=200)
 
 
 class PhpConfigRestore(BaseModel):

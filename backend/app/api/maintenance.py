@@ -2263,7 +2263,7 @@ def add_cron(payload: CronCreate, db: Session = Depends(get_db), current_user: U
         website.linux_user = cron_user
         db.add(website)
     try:
-        line = cron.add_cron(website, payload.schedule, payload.command)
+        line = cron.add_cron(website, payload.schedule, payload.command, payload.output, payload.log_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
