@@ -49,6 +49,7 @@ NAME_RE = re.compile(
 # Databases cPanel itself keeps beside the account's own; never the customer's.
 SYSTEM_DATABASES = frozenset({"roundcube", "horde", "cphulkd", "eximstats", "leechprotect", "modsec", "whmxfer", "mysql"})
 MAX_UPLOAD_BYTES = da_import.MAX_UPLOAD_BYTES
+STAGE_PREFIX = "opanel-da-import-cpanel-"
 
 
 class CPanelImportError(RuntimeError):
@@ -417,7 +418,10 @@ def import_cpanel_backup(backup_file: str, db, overwrite: bool = False) -> dict:
     path = resolve_path(backup_file)
     archive_name = path.name
     _log(f"Starting cPanel import: {archive_name}")
-    stage = Path(tempfile.mkdtemp(prefix="opanel-cpanel-import-"))
+    # The root helper copies site files only out of /tmp/opanel-da-import-*
+    # (site-import-copy): the cPanel import stages under that name too, rather
+    # than the helper trusting one more folder. Found live on .41.
+    stage = Path(tempfile.mkdtemp(prefix=STAGE_PREFIX))
     credentials = [
         "# OPanel cPanel import credentials",
         f"# Archive: {archive_name}",

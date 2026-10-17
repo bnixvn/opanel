@@ -324,3 +324,11 @@ def test_a_fresh_server_starts_with_directadmin_import_off(tmp_path, monkeypatch
     assert addons.is_enabled("directadmin") is False
     assert addons.is_enabled("cpanel") is False
     assert json.loads((tmp_path / "addons.json").read_text())["directadmin"] == {"installed": False, "running": False}
+
+
+def test_the_cpanel_staging_folder_is_one_the_helper_copies_from():
+    """site-import-copy refuses a source outside /tmp/opanel-da-import-*: the
+    first cPanel import on .41 stopped there."""
+    helper = (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    assert "/tmp/opanel-da-import-*) ;;" in helper
+    assert ("/tmp/" + cpanel_import.STAGE_PREFIX).startswith("/tmp/opanel-da-import-")
