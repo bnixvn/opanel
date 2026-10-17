@@ -3632,6 +3632,9 @@ terminal_session() {
     # Within the account's own limits when the addon sets them; a fork bomb
     # stops here when it does not. Out of memory, a shell goes before a site.
     -p TasksMax=512 -p OOMScoreAdjust=500 -p UMask=0022
+    # An interactive bash ignores SIGTERM: stopping sends SIGHUP as well, and
+    # waits five seconds, not ninety, before killing what is left.
+    -p SendSIGHUP=yes -p TimeoutStopSec=5
     -E "HOME=$home" -E "USER=$user" -E "LOGNAME=$user" -E SHELL=/bin/bash
     -E TERM=xterm-256color -E LANG=C.UTF-8 -E "COMPOSER_HOME=$home/.composer"
     -E "npm_config_cache=$home/.npm"

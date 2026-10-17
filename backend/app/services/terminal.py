@@ -140,9 +140,11 @@ def end_sessions(user_id: int, reason: str) -> int:
     stopped here, synchronously; the WebSockets notice and close."""
     ended = 0
     for session in sessions_of(user_id):
-        stop_unit(session.unit)
+        # The socket hangs the shell up at once; the stop makes sure, and is
+        # done before this returns.
         if session.close_request:
             session.close_request(reason)
+        stop_unit(session.unit)
         ended += 1
     return ended
 

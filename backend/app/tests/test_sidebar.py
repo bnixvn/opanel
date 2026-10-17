@@ -13,8 +13,10 @@ def _block(start: str, end: str) -> str:
 def test_the_sidebar_is_only_the_everyday_pages():
     nav = _block("  const navSections = [", "  const navItems =")
     keys = re.findall(r"\['(\w+)', tr\(", nav)
-    assert keys == ["dashboard", "websites", "ssl", "databases", "cron", "files", "sftp", "backups", "users", "config"]
+    assert keys == ["dashboard", "websites", "ssl", "databases", "cron", "files", "sftp", "terminal", "backups", "users", "config"]
     assert "...(isAdmin ? [['users', tr(\"Panel users\"), Users]] : [])" in nav
+    # The browser terminal (2026-10-17): only for a session that may open one.
+    assert "...(canOpenTerminal ? [['terminal', tr(\"Terminal\"), TerminalIcon]] : [])" in nav
     # One list: no section headings, addons slot in before Settings.
     assert "title:" not in nav
     assert nav.index("...addonNavItems,") < nav.index("['config', tr(")
