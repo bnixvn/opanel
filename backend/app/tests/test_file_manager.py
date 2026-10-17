@@ -472,7 +472,10 @@ def test_the_listing_carries_each_entrys_modification_time(tmp_path):
 
 
 def test_the_file_list_shows_the_modified_date():
-    app = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    assert '<span className="file-date"' in app and "formatFileTime(item.modified)" in app
+    # The file manager is its own page (pages/Files.jsx, as SNPanel's, 2026-10-17),
+    # and sorts by the date too.
+    page = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "pages" / "Files.jsx").read_text(encoding="utf-8")
+    assert '<time className="file-date"' in page and "formatFileTime(item.modified)" in page
+    assert "sortHeading('modified'" in page
     css = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "shared" / "file-manager.css").read_text(encoding="utf-8")
     assert "grid-template-columns: 20px minmax(200px, 1fr) 52px 72px 112px auto;" in css

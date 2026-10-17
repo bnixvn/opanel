@@ -1,0 +1,44 @@
+/* The file manager (pages/Files.jsx), as SNPanel's: what can be done in the
+   folder, and - only while something is ticked - what can be done with the
+   selection. Each row's own actions are one "…" menu; the headings sort.
+   The list's grid is shared/sn-local.css's. Not in a cascade layer:
+   OPanel's element rules are unlayered and would win over a layered class. */
+.fm-toolbar{display:flex;flex-wrap:wrap;gap:6px}
+.file-toolbar.fm-toolbar button,.file-toolbar.fm-toolbar .upload-button{height:36px;min-height:36px}
+.fm-selection{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:8px 10px;border:1px solid var(--primary);border-radius:var(--radius-md);background:var(--primary-light);position:sticky;top:8px;z-index:3}
+.fm-selection>strong{color:var(--primary-ink,var(--primary));font-size:13.5px;white-space:nowrap}
+.fm-selection-actions{display:flex;flex-wrap:wrap;gap:6px;flex:1 1 auto;min-width:0}
+.fm-selection button,.fm-selection .sn-menu-trigger{height:34px;min-height:34px;font-size:13px}
+.fm-selection-clear{margin-left:auto}
+.file-list .file-item .file-row-actions{display:flex;justify-content:flex-end}
+.file-list .file-item .file-row-actions .sn-menu-trigger{height:32px;min-height:32px;min-width:36px;padding:0 8px}
+
+/* The size and the date are two columns of the row; narrower, one line
+   under the name (shared/sn-local.css). */
+.file-facts{display:contents}
+.file-col-name{display:flex;align-items:center;gap:10px;min-width:0}
+.file-count{font-weight:600}
+.file-col-actions{min-width:0}
+.file-list-header button.file-sort{display:inline-flex;align-items:center;gap:4px;justify-self:start;min-height:0;height:auto;padding:2px 4px;margin-left:-4px;border:0;border-radius:4px;background:transparent;color:var(--text-muted);font-size:12px;font-weight:700;box-shadow:none}
+.file-list-header button.file-sort:hover:not(:disabled),.file-list-header button.file-sort.active{background:transparent;color:var(--text)}
+
+.file-job-dismiss{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;min-height:0;padding:0;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text-muted);cursor:pointer;margin-left:auto}
+.file-job-dismiss:hover:not(:disabled){background:var(--surface);border-color:var(--border-hover);color:var(--text)}
+.file-upload-progress{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-alt);color:var(--text-secondary);font-size:12px;font-weight:700}
+.file-upload-progress span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-upload-progress progress{flex:1 1 120px;min-width:80px;height:8px;accent-color:var(--primary)}
+
+@media (width<=760px){
+  .fm-toolbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .file-toolbar.fm-toolbar button,.file-toolbar.fm-toolbar .upload-button{height:42px;min-height:42px;width:100%}
+  .fm-selection{top:64px}
+  .fm-selection-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));flex-basis:100%}
+  .fm-selection-actions>*{width:100%}
+  .fm-selection-clear{margin-left:0}
+  .file-list .file-item{grid-template-columns:18px minmax(0,1fr) auto;column-gap:8px}
+  .file-list .file-item button.file-name{grid-area:1 / 2}
+  .file-list .file-item .file-row-actions{grid-area:1 / 3;align-self:center}
+  .file-list .file-item .file-facts{grid-area:2 / 2}
+  .file-list .file-item button.file-mode{grid-area:2 / 3;justify-self:end}
+  .file-list .file-item .file-row-actions .sn-menu-trigger{height:40px;min-height:40px;min-width:44px}
+}

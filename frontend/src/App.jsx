@@ -21,6 +21,7 @@ import DashboardPage from './pages/Dashboard';
 import WebsitesPage from './pages/Websites';
 import WebsiteDetailPage from './pages/WebsiteDetail';
 import DatabasesPage from './pages/Databases';
+import FilesPage from './pages/Files';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import Switch from './components/Switch';
 import { isWebsitePath } from './lib/websites';
@@ -529,7 +530,8 @@ function App() {
   const [fileJobs, setFileJobs] = useState([]);
   const [fileContent, setFileContent] = useState('');
   const [selectedFilePaths, setSelectedFilePaths] = useState([]);
-  const [archiveFormat, setArchiveFormat] = useState('zip');
+  // The upload under way, and how far it has got: { name, loaded, total }.
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [editorCursor, setEditorCursor] = useState({ line: 1, column: 1 });
   const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0, terminal_enabled: false });
   // A reseller's share of the server and what it has handed out (GET /users/pool).
@@ -3125,7 +3127,7 @@ function App() {
 
   async function makeFileDirectory() {
     if (!selectedWebsiteId) return;
-    const name = prompt(tr("Folder name:"));
+    const name = await promptDialog({ title: tr("New folder"), label: tr("Folder name"), confirmLabel: tr("Create") });
     if (!name) return;
     const data = await request('/maintenance/files/mkdir', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: fileListPath || '', name }) }, tr("Creating folder..."));
     if (data) await listFiles(fileListPath);
@@ -3133,7 +3135,7 @@ function App() {
 
   async function makeFile() {
     if (!selectedWebsiteId) return;
-    const name = prompt(tr("File name:"), 'new-file.txt');
+    const name = await promptDialog({ title: tr("New file"), label: tr("File name"), defaultValue: 'new-file.txt', select: 'name', confirmLabel: tr("Create") });
     if (!name) return;
     const data = await request('/maintenance/files/create', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: fileListPath || '', name }) }, tr("Creating file..."));
     if (data) {
@@ -3151,16 +3153,21 @@ function App() {
 
   async function renameFileItem(item) {
     if (!item) return;
-    const newName = prompt(tr("New name:"), item.name);
+    const newName = await promptDialog({ title: tr("Rename"), subject: item.name, label: tr("New name"), defaultValue: item.name, select: 'name', confirmLabel: tr("Rename") });
     if (!newName || newName === item.name) return;
     const data = await request('/maintenance/files/rename', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), path: item.path, new_name: newName }) }, 'Renaming...');
     if (data) await listFiles(fileListPath);
   }
 
-  async function deleteSelectedFiles() {
-    if (selectedFilePaths.length === 0) return;
-    if (!confirm(tr("Delete {0} selected item(s)?", selectedFilePaths.length))) return;
-    const data = await request('/maintenance/files/delete', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), paths: selectedFilePaths }) }, tr("Deleting selected files..."));
+  // `paths`: a row's own item; none, the ticked ones.
+  async function deleteSelectedFiles(paths) {
+    const list = Array.isArray(paths) ? paths : selectedFilePaths;
+    if (list.length === 0) return;
+    if (!(await confirmDialog({
+      title: list.length === 1 ? tr("Delete {0}?", list[0].split('/').pop()) : tr("Delete {0} selected item(s)?", list.length),
+      message: tr("Deleted files cannot be brought back."), danger: true, confirmLabel: tr("Delete"),
+    }))) return;
+    const data = await request('/maintenance/files/delete', { method: 'POST', body: JSON.stringify({ website_id: Number(selectedWebsiteId), paths: list }) }, tr("Deleting selected files..."));
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
 
@@ -3168,7 +3175,12 @@ function App() {
     if (!selectedWebsiteId || !paths?.length) return;
     // Whole phrases per action: "{0}ing" only works in English.
     const copying = action === 'copy';
-    const destination = prompt(copying ? tr("Copy to folder:") : tr("Move to folder:"), fileListPath || 'public_html');
+    const destination = await promptDialog({
+      title: copying ? tr("Copy to folder") : tr("Move to folder"),
+      subject: paths.length === 1 ? paths[0].split('/').pop() : tr("{0} item(s)", paths.length),
+      label: tr("Folder"), defaultValue: fileListPath || 'public_html', required: false,
+      confirmLabel: copying ? tr("Copy") : tr("Move"),
+    });
     if (destination === null) return;
     const targetPath = destination.trim() || fileListPath || 'public_html';
     const data = await request(`/maintenance/files/${action}`, {
@@ -3178,22 +3190,26 @@ function App() {
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
 
-  async function copySelectedFiles() {
-    await transferFileItems('copy', selectedFilePaths);
+  async function copySelectedFiles(paths) {
+    await transferFileItems('copy', Array.isArray(paths) ? paths : selectedFilePaths);
   }
 
-  async function moveSelectedFiles() {
-    await transferFileItems('move', selectedFilePaths);
+  async function moveSelectedFiles(paths) {
+    await transferFileItems('move', Array.isArray(paths) ? paths : selectedFilePaths);
   }
 
-  async function archiveSelectedFiles() {
+  function clearFileSelection() {
+    setSelectedFilePaths([]);
+  }
+
+  async function archiveSelectedFiles(format = 'zip') {
     if (selectedFilePaths.length === 0) return;
-    const ext = archiveFormat === 'tar.gz' ? 'tar.gz' : 'zip';
-    const outputName = prompt(tr("Archive file name:"), `archive-${Date.now()}.${ext}`);
+    const ext = format === 'tar.gz' ? 'tar.gz' : 'zip';
+    const outputName = await promptDialog({ title: tr("Compress as {0}", `.${ext}`), label: tr("Archive file name"), defaultValue: `archive-${Date.now()}.${ext}`, select: 'name', confirmLabel: tr("Compress") });
     if (!outputName) return;
     const data = await request('/maintenance/files/archive', {
       method: 'POST',
-      body: JSON.stringify({ website_id: Number(selectedWebsiteId), base_path: fileListPath || '', paths: selectedFilePaths, output_name: outputName, format: archiveFormat }),
+      body: JSON.stringify({ website_id: Number(selectedWebsiteId), base_path: fileListPath || '', paths: selectedFilePaths, output_name: outputName, format: ext }),
     }, tr("Creating archive..."));
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
@@ -3207,7 +3223,7 @@ function App() {
   async function extractArchive(item) {
     if (!isExtractableArchive(item) || !selectedWebsiteId) return;
     const defaultDestination = parentFilePath(item.path);
-    const destination = prompt(tr("Extract to folder:"), defaultDestination);
+    const destination = await promptDialog({ title: tr("Extract"), subject: item.name, label: tr("Extract to folder"), defaultValue: defaultDestination, required: false, confirmLabel: tr("Extract") });
     if (destination === null) return;
     const destinationPath = destination.trim();
     const data = await request('/maintenance/files/extract', {
@@ -3224,15 +3240,18 @@ function App() {
     }
   }
 
-  async function extractSelectedArchive() {
-    if (selectedFilePaths.length !== 1) return;
-    const item = files.find(file => file.path === selectedFilePaths[0]);
-    await extractArchive(item);
-  }
-
   function upsertFileJob(job) {
     if (!job?.job_id) return;
     setFileJobs(prev => [job, ...prev.filter(item => item.job_id !== job.job_id)].slice(0, 6));
+  }
+
+  function dismissFileJob(jobId) {
+    setFileJobs(prev => prev.filter(item => item.job_id !== jobId));
+  }
+
+  // A file's or a folder's permissions, in the dialog at the root.
+  function openChmod(item) {
+    setChmodTarget({ path: item.path, name: item.name, is_dir: item.is_dir, mode: (item.mode || (item.is_dir ? '755' : '644')).slice(-3) });
   }
 
   async function loadFileJob(jobId) {
@@ -3304,26 +3323,33 @@ function App() {
     const uploadDir = fileUploadDir.trim();
     const form = new FormData();
     form.append('file', file);
+    setError('');
+    setUploadProgress({ name: file.name, loaded: 0, total: file.size });
     try {
-      setError('');
-      setLoading(tr("Uploading file..."));
-      const csrfToken = readCookie('opanel_csrf');
-      const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
-      const res = await fetch(`${API}/maintenance/files/${selectedWebsiteId}/upload?path=${encodeURIComponent(uploadDir)}`, {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: form,
+      // XMLHttpRequest, not fetch: only it reports an upload's progress.
+      const { status, data } = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}/maintenance/files/${selectedWebsiteId}/upload?path=${encodeURIComponent(uploadDir)}`);
+        xhr.withCredentials = true;
+        const csrfToken = readCookie('opanel_csrf');
+        if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+        xhr.upload.onprogress = event => {
+          if (event.lengthComputable) setUploadProgress({ name: file.name, loaded: event.loaded, total: event.total });
+        };
+        xhr.onload = () => {
+          let body;
+          try { body = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch { body = { detail: xhr.responseText || tr("HTTP {0}", xhr.status) }; }
+          resolve({ status: xhr.status, data: body });
+        };
+        xhr.onerror = () => reject(new Error('upload failed'));
+        xhr.send(form);
       });
-      const responseText = await res.text();
-      let data;
-      try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { detail: responseText || tr("HTTP {0}", res.status) }; }
-      if (!res.ok) { if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Upload failed."))); return; }
+      if (status < 200 || status >= 300) { if (handleAuthExpired(status, data.detail)) return; setError(formatApiError(data.detail, tr("Upload failed."))); return; }
       setNotice(tr("Uploaded {0} to {1}.", file.name, uploadDir || tr("site root")));
       if (String(fileListPath || '') === uploadDir) await listFiles(uploadDir);
       await loadCurrentUser();
     } catch (err) { setError(tr("File upload failed.")); }
-    finally { setLoading(''); }
+    finally { setUploadProgress(null); }
   }
 
   async function createBackup() {
@@ -4767,6 +4793,11 @@ function App() {
       changeDbPassword, copiedField, createDatabase, createdDbInfo, databaseSearch, databases, deleteDatabase, downloadDatabase,
       newDatabase, openPhpMyAdmin, setCopiedField, setCreatedDbInfo, setDatabaseSearch, setError, setNewDatabase, setNotice,
       setShowCreateDb, showCreateDb,
+      // The file manager (pages/Files.jsx).
+      WebsiteSelect, archiveSelectedFiles, clearFileSelection, copySelectedFiles, currentSite, deleteSelectedFiles, dismissFileJob,
+      downloadFile, extractArchive, fileBreadcrumbs, fileJobs, fileListPath, files, formatFileTime, isExtractableArchive, isTextEditable,
+      listFiles, makeFile, makeFileDirectory, moveSelectedFiles, openChmod, openFileEditorTab, parentFilePath, renameFileItem,
+      selectedFilePaths, selectedWebsiteId, storageUsageText, toggleAllFiles, toggleFileSelection, uploadProgress, uploadSiteFile,
     };
   }
   const sideItems = sidebarItems(navCtx);
@@ -5464,83 +5495,6 @@ function App() {
           <span><strong>{cronScheduleLabel(item.schedule)} <code className="cron-expr">{item.schedule}</code></strong><small>{item.command || item.line}</small></span>
           <button className="mini danger" disabled={!!loading} onClick={() => deleteCron(item.index)} aria-label={tr("Delete")} title={tr("Delete")}><Trash2 size={13}/></button>
         </div>)}
-      </div>
-    </section>;
-  }
-
-  function renderFiles() {
-    const allSelected = files.length > 0 && selectedFilePaths.length === files.length;
-    const visibleFileJobs = fileJobs.filter(job => String(job.website_id) === String(selectedWebsiteId)).slice(0, 4);
-    const selectedArchive = selectedFilePaths.length === 1
-      ? files.find(item => item.path === selectedFilePaths[0] && isExtractableArchive(item))
-      : null;
-    return <section className="section">
-      <div className="section-title">
-        <div><h2>{tr("File manager")}</h2></div>
-        <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14}/> {tr("Refresh")}</button>
-      </div>
-      <div className="file-manager">
-        <div className="file-panel">
-          <div className="file-controls">
-            <WebsiteSelect />
-            {currentSite && <div className="file-meta">
-              <span>{tr("Website:")} <strong>{currentSite.domain}</strong></span>
-              <span>{tr("Root:")} <strong>{currentSite.root_path}{fileListPath ? `/${fileListPath}` : ''}</strong></span>
-              {currentUser && !isAdmin && <span>{tr("Storage:")} <strong>{storageUsageText(currentUser)}</strong></span>}
-            </div>}
-            <div className="path-pill breadcrumb-line">
-              <button className="crumb" disabled={!selectedWebsiteId || fileListPath === ''} onClick={() => listFiles('')}>{tr("root")}</button>
-              {fileBreadcrumbs(fileListPath).map(crumb => <button className="crumb" key={crumb.path} onClick={() => listFiles(crumb.path)}>{crumb.label}</button>)}
-            </div>
-            <div className="file-toolbar">
-              <button className="secondary" disabled={!selectedWebsiteId || fileListPath === '' || !!loading} onClick={() => listFiles(parentFilePath(fileListPath))}>{tr("Up")}</button>
-              <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={makeFileDirectory}><Plus size={14}/> {tr("Folder")}</button>
-              <button className="secondary" disabled={!selectedWebsiteId || !!loading} onClick={makeFile}><FileText size={14}/> {tr("File")}</button>
-              <label className={`upload-button ${(!selectedWebsiteId || !!loading) ? 'disabled' : ''}`}>
-                <Upload size={14}/> {tr("Upload")}
-                <input type="file" disabled={!selectedWebsiteId || !!loading} onChange={e => { uploadSiteFile(e.target.files?.[0]); e.target.value = ''; }} />
-              </label>
-              <select value={archiveFormat} onChange={e => setArchiveFormat(e.target.value)} disabled={!selectedWebsiteId || !!loading}>
-                <option value="zip">{tr("zip")}</option>
-                <option value="tar.gz">tar.gz</option>
-              </select>
-              <button className="secondary" disabled={selectedFilePaths.length === 0 || !!loading} onClick={copySelectedFiles}><Copy size={14}/> {tr("Copy")}</button>
-              <button className="secondary" disabled={selectedFilePaths.length === 0 || !!loading} onClick={moveSelectedFiles}><MoveRight size={14}/> {tr("Move")}</button>
-              <button className="secondary" disabled={selectedFilePaths.length === 0 || !!loading} onClick={archiveSelectedFiles}><Archive size={14}/> {tr("Archive")}</button>
-              <button className="secondary" disabled={!selectedArchive || !!loading} onClick={extractSelectedArchive}><PackageOpen size={14}/> {tr("Extract")}</button>
-              <button className="danger" disabled={selectedFilePaths.length === 0 || !!loading} onClick={deleteSelectedFiles}><Trash2 size={14}/> {tr("Delete")}</button>
-            </div>
-            {visibleFileJobs.length > 0 && <div className="file-job-list">
-              {visibleFileJobs.map(job => <div className={`file-job ${job.status}`} key={job.job_id}>
-                <Clock size={14}/>
-                <span><strong>{job.archive_path?.split('/').pop() || tr("Archive")}</strong> {job.status === 'done' ? tr("completed") : job.status === 'error' ? tr("failed") : job.status}</span>
-                {job.error && <small>{job.error}</small>}
-              </div>)}
-            </div>}
-          </div>
-          <div className="file-list-header">
-            <label><input type="checkbox" checked={allSelected} onChange={toggleAllFiles} disabled={files.length === 0} /> {tr("Select")}</label>
-            <span>{files.length} {tr("item(s)")}</span>
-          </div>
-          <div className="file-list">
-            {files.length === 0 && <div className="empty-box">{tr("No files in this folder.")}</div>}
-            {files.map(item => <div className={`file-item ${selectedFilePaths.includes(item.path) ? 'selected' : ''}`} key={item.path}>
-              <input type="checkbox" checked={selectedFilePaths.includes(item.path)} onChange={() => toggleFileSelection(item.path)} />
-              <button className="file-name" onClick={() => item.is_dir ? listFiles(item.path) : (isTextEditable(item) ? openFileEditorTab(item.path) : downloadFile(item.path))}>
-                {item.is_dir ? <FolderOpen size={16}/> : <FileText size={16}/>} <strong>{item.name}</strong>
-              </button>
-              <button type="button" className="file-mode" disabled={!!loading} title={tr("Change permissions")} aria-label={tr("Change permissions of {0}", item.name)}
-                onClick={() => setChmodTarget({ path: item.path, name: item.name, is_dir: item.is_dir, mode: (item.mode || (item.is_dir ? '755' : '644')).slice(-3) })}>{item.mode || '---'}</button>
-              <span className="file-size">{item.is_dir ? tr("Folder") : formatBytes(item.size)}{item.modified ? <span className="file-date-inline"> · {formatFileTime(item.modified)}</span> : null}</span>
-              <span className="file-date" title={item.modified ? new Date(item.modified * 1000).toLocaleString() : ''}>{formatFileTime(item.modified)}</span>
-              <div className="file-row-actions">
-                {!item.is_dir && <button className="mini secondary-light" disabled={!!loading} onClick={() => downloadFile(item.path)}><Download size={13}/></button>}
-                {isExtractableArchive(item) && <button className="mini secondary-light" disabled={!!loading} onClick={() => extractArchive(item)}><PackageOpen size={13}/> {tr("Extract")}</button>}
-                <button className="mini secondary-light" disabled={!!loading} onClick={() => renameFileItem(item)}>{tr("Rename")}</button>
-              </div>
-            </div>)}
-          </div>
-        </div>
       </div>
     </section>;
   }
@@ -9310,7 +9264,7 @@ function App() {
     if (page === 'ssl') return renderSsl();
     if (page === 'databases') return <DatabasesPage/>;
     if (page === 'cron') return renderCron();
-    if (page === 'files') return renderFiles();
+    if (page === 'files') return <FilesPage/>;
     if (page === 'backups') return renderBackups();
     if (page === 'security') return renderSecurity();
     if (page === 'malware') return renderMalwareScanner();
