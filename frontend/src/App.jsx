@@ -28,6 +28,7 @@ import BackupsPage from './pages/Backups';
 import UsersPage from './pages/Users';
 import ProcessesPage from './pages/Processes';
 import AuditLogPage from './pages/AuditLog';
+import WordPressPage from './pages/WordPress';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import Switch from './components/Switch';
 import { isWebsitePath } from './lib/websites';
@@ -112,6 +113,7 @@ const PAGE_ROUTES = {
   git: '/git',
   terminal: '/terminal',
   auditLog: '/activity-log',
+  wordpress: '/wordpress',
   // The hubs' own addresses (lib/navigation.jsx): each opens its first tab.
   server: '/server',
   'security-center': '/security-center',
@@ -622,6 +624,8 @@ function App() {
   const [gitInfo, setGitInfo] = useState(null);
   // Git is an addon (2026-10-10): null until asked, then whether it is on.
   const [gitEnabled, setGitEnabled] = useState(null);
+  // The WordPress Manager addon: null until the server said.
+  const [wordpressEnabled, setWordpressEnabled] = useState(null);
   const [gitRepo, setGitRepo] = useState(null);
   const [showCreateGit, setShowCreateGit] = useState(false);
   const [gitForm, setGitForm] = useState(BLANK_GIT_FORM);
@@ -2203,6 +2207,11 @@ function App() {
       setShowCreateSftp(false);
       await loadSftp();
     }
+  }
+
+  async function loadWordpressInfo() {
+    const data = await request('/wordpress/info', { silent: true }, '');
+    if (data) setWordpressEnabled(!!data.enabled);
   }
 
   async function loadGitInfo() {
@@ -4602,7 +4611,7 @@ function App() {
 
   // So does Git's (an addon since 2026-10-10).
   useEffect(() => {
-    if (isAuthenticated) loadGitInfo();
+    if (isAuthenticated) { loadGitInfo(); loadWordpressInfo(); }
   }, [isAuthenticated, addonList]);
   useEffect(() => {
     if (!isAuthenticated || page !== 'git' || !gitEnabled) return;
@@ -4770,6 +4779,7 @@ function App() {
   const navCtx = {
     isAdmin, isReseller, limits: limitsOn, terminal: canOpenTerminal,
     malware: !!malwareScanStatus?.enabled, notifications: !!notifyInfo?.enabled,
+    wordpress: !!wordpressEnabled,
   };
   navCtxRef.current = navCtx;
   // A hub's own address typed or bookmarked (/server, /settings): its first
@@ -4795,7 +4805,7 @@ function App() {
   const pageNavCtx = {
     ...navCtx,
     installed: (slug) => ({
-      mail: !!mailInfo?.installed, dns: !!dnsInfo?.installed, git: !!gitEnabled, mcp: !!mcpInfo?.enabled,
+      mail: !!mailInfo?.installed, dns: !!dnsInfo?.installed, git: !!gitEnabled, wordpress: !!wordpressEnabled, mcp: !!mcpInfo?.enabled,
       notifications: !!notifyInfo?.enabled, malware: !!malwareScanStatus?.enabled, limits: limitsOn,
     }[slug] ?? installedAddons.has(slug)),
     webmailUrl: mailInfo?.webmail_url || '',
@@ -4845,6 +4855,8 @@ function App() {
       setUsersTab, startEditingPlan, startEditingUser, toggleUserActive, updatePanelUser, updatePlan, userSearch, usersTab,
       // The process monitor (pages/Processes.jsx); App reads top while it is open.
       processFilter, processPaused, processTop, setProcessFilter, setProcessPaused,
+      // The WordPress Manager addon (pages/WordPress.jsx).
+      wordpressEnabled,
     };
   }
   const sideItems = sidebarItems(navCtx);
@@ -8778,6 +8790,7 @@ function App() {
     if (page === 'settings') return renderPanelSettings();
     if (page === 'users') return <UsersPage/>;
     if (page === 'auditLog') return isAdmin ? <AuditLogPage/> : <DashboardPage/>;
+    if (page === 'wordpress') return <WordPressPage/>;
     if (page === 'usage') return renderResourceUsage();
     if (page === 'processes') return isAdmin ? <ProcessesPage/> : <DashboardPage/>;
     if (page === 'ramUsage') return isAdmin ? renderRamUsage() : <DashboardPage/>;

@@ -22,7 +22,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, resource_limits, sftp_accounts, site_users, ssl, storage_quota, terminal, wordpress
+from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, resource_limits, sftp_accounts, site_users, ssl, storage_quota, terminal, wordpress, wp_manager
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -67,6 +67,7 @@ def _delete_owned_website(db: Session, website: Website, also_deleting=()) -> No
     for db_item in db_items:
         mariadb.drop_database(db_item.db_name, db_item.db_user)
     db.query(WebsiteAlias).filter(WebsiteAlias.website_id == website.id).delete(synchronize_session=False)
+    wp_manager.forget_website(db, website.id)
     openlitespeed.remove_vhost(website.domain)
     ssl.release_site_certificates(db, website, also_deleting)
     wordpress.delete_wordpress(website.root_path)

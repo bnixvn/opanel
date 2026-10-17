@@ -35,6 +35,7 @@ export const TILES = {
   sftp: { label: msg('SFTP accounts'), icon: 'sftp', page: 'sftp' },
   terminal: { label: msg('Terminal'), icon: 'terminal', page: 'terminal', when: (c) => c.terminal },
   git: { label: msg('Git'), icon: 'git', page: 'git', addon: 'git' },
+  wordpress: { label: msg('WordPress Manager'), icon: 'wordpress', page: 'wordpress', addon: 'wordpress' },
   backups: { label: msg('Backup & Restore'), icon: 'backups', page: 'backups', before: 'backupsWebsite' },
   // Security
   firewall: { label: msg('Firewall'), icon: 'firewall', page: 'firewall', roles: ['admin'] },
@@ -67,7 +68,7 @@ export const TILES = {
 // The Dashboard's sections, in order, for each role.
 const ADMIN = [
   ['accounts', msg('Accounts'), ['users', 'user-add', 'packages']],
-  ['websites', msg('Websites and domains'), ['websites', 'website-add', 'ssl', 'dns']],
+  ['websites', msg('Websites and domains'), ['websites', 'website-add', 'ssl', 'dns', 'wordpress']],
   ['email', msg('Email'), ['mailboxes', 'forwarders', 'webmail', 'mail-relay', 'mail-server']],
   ['databases', msg('Databases'), ['databases', 'database-add', 'phpmyadmin']],
   ['files', msg('Files and backups'), ['files', 'sftp', 'git', 'backups']],
@@ -78,7 +79,7 @@ const ADMIN = [
   ['extensions', msg('Extensions'), ['addons']],
 ];
 const CUSTOMER = [
-  ['websites', msg('Websites and domains'), ['websites', 'website-add', 'ssl', 'dns']],
+  ['websites', msg('Websites and domains'), ['websites', 'website-add', 'ssl', 'dns', 'wordpress']],
   ['email', msg('Email'), ['mailboxes', 'forwarders', 'webmail']],
   ['databases', msg('Databases'), ['databases', 'database-add', 'phpmyadmin']],
   ['files', msg('Files and backups'), ['files', 'sftp', 'terminal', 'git', 'backups']],

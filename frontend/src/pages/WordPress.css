@@ -1,0 +1,169 @@
+/* The WordPress Manager (pages/WordPress.jsx), as SNPanel's. Not in a cascade
+   layer: OPanel's element rules are unlayered and would win over a layered class. */
+/* The WordPress Manager, as OPanel lays a page out: one card for the list,
+   one for a site's Manage view with its tabs. See pages/WordPress.jsx. */
+
+.wpm-page{display:grid;gap:16px}
+.wpm-page>.section{margin-bottom:0}
+.wpm-page .icon-button{display:inline-grid;place-items:center;width:34px;height:34px;min-height:34px;padding:0;flex:none}
+.wpm-page .danger-hover:hover:not(:disabled){color:var(--danger-text);border-color:var(--danger);background:var(--danger-bg)}
+.wpm-page label>span{font-size:13px;font-weight:600;color:var(--text-secondary)}
+.wpm-page label>span em{font-weight:500;font-style:normal;color:var(--text-muted)}
+.wpm-main .section-title,.wpm-manage-head{align-items:flex-start}
+.wpm-main .section-title h2,.wpm-manage-title h2{display:flex;align-items:center;gap:8px;margin:0;font-size:17px;font-weight:600}
+.wpm-main .section-title .hint{margin:2px 0 0}
+.wpm-head-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.wpm-head-actions select{min-width:160px}
+.wpm-running{display:flex;align-items:center;gap:8px;margin:10px 0;color:var(--text-secondary);font-size:13px}
+.wpm-error{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 12px;border:1px solid var(--danger-border);border-radius:var(--radius-md);background:var(--danger-bg);color:var(--danger-text);font-size:13px;overflow-wrap:anywhere}
+.wpm-error svg{flex:none;margin-top:1px}
+.wpm-note{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt);color:var(--text);font-size:13px}
+.wpm-note svg{flex:none;margin-top:1px}
+.wpm-https{align-items:center;flex-wrap:wrap}
+.wpm-https span{flex:1;min-width:200px}
+
+/* ---- the list ---- */
+.wpm-table td{vertical-align:top;padding-top:10px;padding-bottom:10px}
+.wpm-site{display:grid;gap:2px;min-width:200px}
+.wpm-site .badge{justify-self:start}
+.wpm-site small{color:var(--text-muted);font-size:12px}
+.wpm-link{all:unset;cursor:pointer;color:var(--text)}
+.wpm-link:hover strong,.wpm-link:focus-visible strong{color:var(--primary-ink,var(--primary));text-decoration:underline}
+.wpm-url{font-size:12.5px;color:var(--text-secondary);overflow-wrap:anywhere}
+.wpm-when{white-space:nowrap;font-size:13px}
+/* The buttons sit in a box inside the cell: a cell that is a flex box
+   itself drops out of the table's row, borders and all. */
+.data-table td.wpm-actions{width:1%;text-align:right;white-space:nowrap}
+.wpm-row-actions{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;white-space:nowrap}
+.wpm-table .badge,.wpm-items .badge{white-space:nowrap}
+
+/* ---- panels: install, add plugin, clone, push ---- */
+.wpm-panel{display:grid;gap:10px;margin:12px 0;padding:14px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-alt)}
+.wpm-panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.wpm-panel-head strong{font-size:14px}
+.wpm-panel .hint{margin:0}
+.wpm-panel-buttons{display:flex;gap:8px;flex-wrap:wrap}
+.wpm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;align-items:end}
+.wpm-grid label{display:grid;gap:6px;min-width:0}
+.wpm-folder{display:flex;align-items:center;gap:4px;min-width:0}
+.wpm-folder>span{color:var(--text-muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
+.wpm-folder input{flex:1;min-width:0}
+.wpm-check{display:flex;align-items:center;gap:8px;font-size:13px}
+.wpm-check-hit{cursor:pointer}
+.wpm-check input{width:auto}
+.wpm-danger{color:var(--danger-text)}
+.wpm-search{display:flex;gap:8px}
+.wpm-search input{flex:1;min-width:0}
+.wpm-found{display:grid;gap:6px}
+.wpm-found-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)}
+.wpm-found-row>div:first-child{display:grid;gap:2px;min-width:0}
+.wpm-found-row small{color:var(--text-muted);font-size:12px}
+
+/* ---- the secret shown once ---- */
+.wpm-secret{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px 12px;align-items:start;padding:12px 14px;border:1px solid var(--success-border);border-left:4px solid var(--success);border-radius:var(--radius-lg);background:var(--success-bg);color:var(--success-text)}
+.wpm-secret>svg{margin-top:2px}
+.wpm-secret strong{display:block;font-size:14px}
+.wpm-secret .hint{margin:2px 0 6px}
+.wpm-secret-value{display:flex;align-items:center;gap:8px}
+.wpm-secret-value code{padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:14px;overflow-wrap:anywhere}
+
+/* ---- the Manage view ---- */
+.wpm-manage-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:start}
+.wpm-manage-title .hint{margin:2px 0 0;overflow-wrap:anywhere}
+.wpm-manage-title .hint a{color:var(--primary-ink,var(--primary))}
+.wpm-manage .tab-bar{margin-top:14px}
+.wpm-tab{display:grid;gap:12px;margin-top:12px}
+.wpm-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wpm-toolbar .hint{margin:0}
+.wpm-subhead{margin:4px 0 0;font-size:14px;font-weight:600}
+.wpm-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.wpm-facts>div{display:grid;gap:2px;align-content:start;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface)}
+.wpm-facts span{font-size:12.5px;font-weight:600;color:var(--text-secondary)}
+.wpm-facts strong{font-size:15px}
+.wpm-update{color:var(--warning-text);font-size:12.5px}
+.wpm-fact-buttons{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.wpm-path{font-size:12px;overflow-wrap:anywhere}
+.wpm-switches{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.wpm-switch{display:grid;gap:6px;align-content:start;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-lg)}
+.wpm-switch>span{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--text-secondary)}
+.wpm-switch button{justify-self:start}
+.wpm-switch small{color:var(--text-muted);font-size:12px}
+/* A switch with what it says, and its task on the way beside it. */
+.wpm-switch-line{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px 8px}
+.wpm-switch-line .sn-switch>span:last-child{font-size:13px;font-weight:600;color:var(--text-secondary)}
+.wpm-pending{white-space:nowrap}
+.wpm-items td{vertical-align:middle}
+
+/* ---- security ---- */
+.wpm-checks{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.wpm-checks>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px 12px;border:1px solid var(--border);border-left:4px solid var(--text-muted);border-radius:var(--radius-lg);background:var(--surface)}
+.wpm-checks>li>svg{margin-top:1px}
+.wpm-checks>li[data-status="ok"]{border-left-color:var(--success)}
+.wpm-checks>li[data-status="ok"]>svg{color:var(--success)}
+.wpm-checks>li[data-status="warning"]{border-left-color:var(--warning)}
+.wpm-checks>li[data-status="warning"]>svg{color:var(--warning-text)}
+.wpm-checks>li[data-status="action"]{border-left-color:var(--primary)}
+.wpm-checks strong{font-size:13.5px;font-weight:600}
+.wpm-checks small{display:block;color:var(--text-muted);font-size:12px}
+.wpm-checks details{margin-top:4px;font-size:12.5px}
+.wpm-files{margin:4px 0 0;padding-left:18px;max-height:200px;overflow:auto}
+
+/* ---- staging, activity ---- */
+.wpm-list{margin:0;padding-left:18px;display:grid;gap:4px;font-size:13px}
+.wpm-list a{color:var(--primary-ink,var(--primary))}
+.wpm-jobs{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.wpm-jobs>li{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface)}
+.wpm-job-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.wpm-job-head button{margin-left:auto}
+.wpm-jobs .wpm-error{margin:0}
+.wpm-jobs details{font-size:12.5px}
+.wpm-log{margin:6px 0 0;padding-left:20px;display:grid;gap:2px;max-height:280px;overflow:auto}
+.wpm-log time{color:var(--text-muted);font-variant-numeric:tabular-nums}
+.wpm-log span{white-space:pre-wrap;overflow-wrap:anywhere}
+
+@media (max-width: 760px){
+  .wpm-manage-head{grid-template-columns:1fr}
+  /* Narrow screens: each row a card, every column - the buttons too -
+     in view, labelled, with nothing hidden in a sideways scroll. */
+  .data-table.wpm-cards,.data-table.wpm-cards tbody{display:block}
+  .data-table.wpm-cards thead{display:none}
+  .data-table.wpm-cards tr{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;padding:10px 12px;border-bottom:1px solid var(--border)}
+  .data-table.wpm-cards tr:last-child{border-bottom:0}
+  .data-table.wpm-cards td{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0;border:0;text-align:left;min-width:0;width:auto;white-space:normal}
+  .data-table.wpm-cards td[data-label]::before{content:attr(data-label);flex:none;color:var(--text-muted);font-size:12px;font-weight:600}
+  .data-table.wpm-cards td.wpm-site,.data-table.wpm-cards td.wpm-card-title{display:grid;justify-content:stretch}
+  .data-table.wpm-cards td.wpm-check-cell,.data-table.wpm-cards td.wpm-actions{justify-content:flex-start}
+  /* A card's select box is a 40px tap target (A11Y-02): its label grows
+     around it, pulled into the card's padding so the box stays put. */
+  .data-table.wpm-cards td.wpm-check-cell .wpm-check-hit{display:inline-flex;align-items:center;justify-content:center;min-width:40px;min-height:40px;margin:-8px 0 -8px -12px}
+  .data-table.wpm-cards td.wpm-wrap{overflow-wrap:anywhere}
+  .data-table.wpm-cards .wpm-row-actions{justify-content:flex-start;white-space:normal}
+  .wpm-checks>li{grid-template-columns:auto minmax(0,1fr)}
+  .wpm-checks>li>.wpm-row-actions{grid-column:1/-1;justify-content:flex-start}
+  .wpm-found-row{flex-direction:column;align-items:stretch}
+}
+.wpm-upload-file{display:grid;gap:6px;min-width:0;font-weight:600;color:var(--text-secondary)}
+.wpm-upload-file input{max-width:100%}
+.wpm-check{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text-secondary)}
+.wpm-check input{margin-top:3px;flex:none}
+/* On a phone an option's whole label is a 40px tap target (A11Y-02). */
+@media (max-width:760px){
+  .wpm-check{min-height:40px;align-items:center}
+  .wpm-check input{margin-top:0}
+}
+.wpm-upload-progress{max-width:none;margin:0}
+.wpm-upload-progress>span{flex:0 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%;font-size:13px}
+.wpm-upload-exists{flex-wrap:wrap}
+
+/* OPanel's: the secret box's close button, the activity list. */
+.wpm-secret{grid-template-columns:auto minmax(0,1fr) auto auto}
+.wpm-secret>small{grid-column:1/-1;color:inherit}
+.wpm-secret code{padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:14px;overflow-wrap:anywhere}
+.wpm-activity{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:8px}
+.wpm-activity>li{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface)}
+.wpm-activity-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.wpm-activity-head small{margin-left:auto;color:var(--text-muted)}
+.wpm-activity .log-output{max-height:260px;overflow:auto;margin:6px 0 0}
+.wpm-main{display:grid;gap:12px}
+.wpm-main .wpm-toolbar select{width:auto;min-width:160px}
+.wpm-manage .sn-tabs{margin-top:4px}

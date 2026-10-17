@@ -26,7 +26,7 @@ from app.models.entities import (
     User,
     Website,
 )
-from app.services import mariadb, openlitespeed, site_users, ssl, storage_quota, waf, wordpress
+from app.services import mariadb, openlitespeed, site_users, ssl, storage_quota, waf, wordpress, wp_manager
 from app.services.shell import shell
 
 # ---------------------------------------------------------------------------
@@ -541,6 +541,7 @@ def terminate_account(db: Session, external_id: str) -> bool:
         openlitespeed.remove_vhost(website.domain)
         ssl.release_site_certificates(db, website, also_deleting=[w.id for w in websites])
         wordpress.delete_wordpress(website.root_path)
+        wp_manager.forget_website(db, website.id)
         db.delete(website)
 
     if user:

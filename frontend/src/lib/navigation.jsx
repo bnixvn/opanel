@@ -7,6 +7,7 @@
 // page (files, users) or an address of its own (server, security-center,
 // config, account) that opens its first tab.
 import { Archive, CircleUserRound, Database, FolderOpen, Globe, Home, Server, Settings, ShieldCheck, Users } from 'lucide-react';
+import WordPressGlyph from '../icons/WordPressGlyph.jsx';
 
 const msg = (text) => text;
 
@@ -40,6 +41,7 @@ export const PAGE_TITLES = {
   services: msg('Services'),
   usage: msg('Resource usage'),
   git: msg('Git'),
+  wordpress: msg('WordPress Manager'),
   processes: msg('Process monitor'),
   ramUsage: msg('RAM usage'),
   diskUsage: msg('Disk usage'),
@@ -119,6 +121,8 @@ export function hubLanding(key, ctx) {
 
 // The sidebar of each role: [key, label, icon].
 export function sidebarItems(ctx) {
+  // The one addon in the sidebar, as SNPanel's: the last entry, while it is on.
+  const wordpress = ctx.wordpress ? [['wordpress', msg('WordPress Manager'), WordPressGlyph]] : [];
   if (ctx.isAdmin) {
     return [
       ['dashboard', msg('Dashboard'), Home],
@@ -130,6 +134,7 @@ export function sidebarItems(ctx) {
       ['server', msg('Server'), Server],
       ['security-center', msg('Security'), ShieldCheck],
       ['config', msg('Settings'), Settings],
+      ...wordpress,
     ];
   }
   if (ctx.isReseller) {
@@ -141,6 +146,7 @@ export function sidebarItems(ctx) {
       ['files', msg('Files'), FolderOpen],
       ['backups', msg('Backup & Restore'), Archive],
       ['account', msg('Account'), CircleUserRound],
+      ...wordpress,
     ];
   }
   return [
@@ -150,6 +156,7 @@ export function sidebarItems(ctx) {
     ['files', msg('Files'), FolderOpen],
     ['backups', msg('Backup & Restore'), Archive],
     ['account', msg('Account'), CircleUserRound],
+    ...wordpress,
   ];
 }
 

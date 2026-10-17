@@ -293,6 +293,36 @@ ADDONS: dict[str, dict] = {
             "Webhooks need the panel's address to be reachable from GitHub or GitLab.",
         ],
     },
+    "wordpress": {
+        "id": "wordpress",
+        "name": "WordPress Manager",
+        "summary": "Every WordPress in the websites: updates, plugins, themes and one-click sign-in.",
+        "description": (
+            "Finds every WordPress in the accounts' websites - the website itself "
+            "and the folders under it - and keeps what each one runs: WordPress, "
+            "its plugins and themes and which have updates, its administrators. "
+            "From the panel: update everything or one thing, switch plugins and "
+            "themes on and off, add them from wordpress.org or delete them, turn "
+            "maintenance mode and debugging on and off, sign in to wp-admin with "
+            "one click, and give an administrator a new password. Every WP-CLI "
+            "command runs as the website's own user."
+        ),
+        "category": "integration",
+        "version": "1",
+        # Part of the panel: installing it only turns it on. See _is_panel_addon.
+        "kind": "panel",
+        "packages": [],
+        "service": "",
+        "features": ["wordpress"],
+        "notes": [
+            "Every account sees the WordPress in its own websites; a reseller its "
+            "customers' too.",
+            "The one-click sign-in puts a small must-use plugin, opanel-sso.php, in "
+            "a site the first time it is used. A link works once, for 60 seconds.",
+            "Stopping the addon hides the WordPress Manager; removing it makes the "
+            "panel forget the WordPress it found. The sites are not touched.",
+        ],
+    },
     "notifications": {
         "id": "notifications",
         "name": "Notifications",
