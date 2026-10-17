@@ -21,6 +21,13 @@ from app.api import maintenance
 from app.core.config import settings
 from app.services import restore_sources
 
+
+@pytest.fixture(autouse=True)
+def directadmin_import_on(monkeypatch):
+    """DirectAdmin import is the DirectAdmin Import addon's (2026-10-18): on here."""
+    from app.services import restore_sources
+    monkeypatch.setattr(restore_sources.addons, "is_enabled", lambda addon_id: addon_id in {"directadmin", "cpanel"})
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 HELPER = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
 APP = (PROJECT_ROOT / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
@@ -165,6 +172,6 @@ def test_the_drop_folder_is_made_on_install_and_on_update():
 
 def test_the_restore_tab_says_where_large_backups_go():
     assert "'/home/admin/backups')" in APP
-    assert "['uploaded', 'da', 'inbox'].includes(chosen.location)" in APP
+    assert "['uploaded', 'da', 'cpanel', 'inbox'].includes(chosen.location)" in APP
     assert "chosen.location === 'inbox' && <span className=\"badge restore-kind\"" in APP
     assert "restore_sources.take_from_inbox(ref, kind)" in inspect.getsource(maintenance._run_restore_job)

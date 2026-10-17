@@ -8,11 +8,16 @@ Three sources, one list to pick from:
 - ``target``: a saved Backup Destination (S3 or SFTP);
 - ``remote``: another server reached over SFTP, FTP or FTPS with credentials
   typed in for this one restore -- DirectAdmin's "restore from FTP", and the
-  usual way off an old DirectAdmin box.
+  usual way off an old DirectAdmin box;
+- ``ssh``: a cPanel or DirectAdmin server signed in to as root, which packs
+  each account picked and hands it over (services/migrate_ssh.py).
 
-Every row says which kind of archive it is, because the two are restored by
-different code: an OPanel account backup by ``backup.restore_user_backup``, a
-DirectAdmin one by ``da_import.import_da_backup``.
+Every row says which kind of archive it is, because each is restored by its
+own code: an OPanel account backup by ``backup.restore_user_backup``, a
+DirectAdmin one by ``da_import.import_da_backup``, a cPanel one by
+``cpanel_import.import_cpanel_backup``. DirectAdmin and cPanel archives are
+the DirectAdmin Import and cPanel Import addons' (2026-10-18): with the addon
+off they are listed, marked, and not restored.
 
 Credentials for another server never touch the disk. They live in memory for
 the request that lists and the job that downloads, and nowhere else.
@@ -42,11 +47,15 @@ from typing import Callable, Iterator, Optional
 import paramiko
 
 from app.core.config import settings
-from app.services import backup, da_import
+from app.services import addons, backup, cpanel_import, da_import, migrate_ssh
 from app.services.shell import shell
 
 KIND_OPANEL = "opanel"
 KIND_DA = "directadmin"
+KIND_CPANEL = "cpanel"
+KIND_LABELS = {KIND_OPANEL: "OPanel", KIND_DA: "DirectAdmin", KIND_CPANEL: "cPanel"}
+# The addon each foreign kind belongs to; an OPanel backup needs none.
+KIND_ADDONS = {KIND_DA: "directadmin", KIND_CPANEL: "cpanel"}
 
 _WEEKDAYS = "|".join(backup.WEEKDAY_SLOTS)
 # <account>-<weekday>.tar.gz and <account>-manual-<weekday>.tar.gz: the names
@@ -106,6 +115,8 @@ class Remote:
     # What it presented this time, for the caller to show or persist.
     seen_host_key_type: str = ""
     seen_host_key_fingerprint: str = ""
+    # protocol "ssh": the control panel on it, cpanel or directadmin.
+    panel: str = ""
 
 
 @dataclass
@@ -121,7 +132,7 @@ class S3Bucket:
 
 @dataclass
 class Source:
-    kind: str  # local | target | remote
+    kind: str  # local | target | remote | ssh
     remote: Optional[Remote] = None
     s3: Optional[S3Bucket] = None
 
@@ -137,14 +148,17 @@ class Source:
 # --- What an archive is ------------------------------------------------------
 
 def archive_kind(name: str) -> Optional[str]:
-    """``opanel``, ``directadmin``, or None for anything that is not a backup.
+    """``opanel``, ``directadmin``, ``cpanel``, or None for anything that is not a backup.
 
     The panel only ever writes ``.tar.gz``; any other tar format, and any
-    ``.tar.gz`` named the DirectAdmin way, is a DirectAdmin archive.
+    ``.tar.gz`` named the DirectAdmin way, is a DirectAdmin archive. cPanel's
+    are named cpmove-<user> or backup-<date>_<user>.
     """
     base = name.replace("\\", "/").rsplit("/", 1)[-1]
     if DA_NAME_RE.match(base):
         return KIND_DA
+    if cpanel_import.is_cpanel_name(base):
+        return KIND_CPANEL
     lower = base.lower()
     if lower.endswith(".tar.gz"):
         return KIND_OPANEL
@@ -163,11 +177,33 @@ def account_of(kind: str, name: str, folder: str = "") -> str:
     if kind == KIND_DA:
         match = DA_NAME_RE.match(base)
         return match.group("user") if match else da_import._archive_username(base)
+    if kind == KIND_CPANEL:
+        return cpanel_import.account_of(base)
     for pattern in (OPANEL_SLOT_RE, OPANEL_STAMP_RE, OPANEL_DATE_RE):
         match = pattern.match(base)
         if match:
             return match.group("user")
     return folder
+
+
+def kind_enabled(kind: str) -> bool:
+    """Whether archives of this kind may be restored: a foreign one needs its addon on."""
+    addon = KIND_ADDONS.get(kind)
+    return addon is None or addons.is_enabled(addon)
+
+
+def _off_message(kind: str) -> str:
+    return f"Turn on the {KIND_LABELS.get(kind, kind)} Import addon (Settings > Addons) to restore this"
+
+
+def _mark_disabled(rows: list[dict]) -> list[dict]:
+    """A listed archive whose addon is off is shown, unpickable, saying why."""
+    enabled = {kind: kind_enabled(kind) for kind in {row.get("kind") for row in rows}}
+    for row in rows:
+        if not enabled.get(row.get("kind"), True):
+            row["valid"] = False
+            row["error"] = _off_message(row["kind"])
+    return rows
 
 
 def _row(ref: str, name: str, size, modified: str, location: str, folder: str = "") -> Optional[dict]:
@@ -255,6 +291,16 @@ def list_local() -> list[dict]:
             "size": item.get("size") or 0,
             "modified_at": modified,
             "location": "da",
+        })
+    for item in cpanel_import.list_backups():
+        rows.append({
+            "ref": item["path"],
+            "kind": KIND_CPANEL,
+            "filename": item["filename"],
+            "account": account_of(KIND_CPANEL, item["filename"]),
+            "size": item.get("size") or 0,
+            "modified_at": item.get("modified") or "",
+            "location": "cpanel",
         })
     rows.extend(list_inbox())
     return rows
@@ -405,6 +451,18 @@ def _walk(entries: Callable[[str], list[tuple]], base: str, location: str) -> li
 
 @contextmanager
 def _sftp(remote: Remote) -> Iterator[paramiko.SFTPClient]:
+    with _ssh_client(remote) as client:
+        sftp = client.open_sftp()
+        sftp.get_channel().settimeout(TIMEOUT * 4)
+        try:
+            yield sftp
+        finally:
+            sftp.close()
+
+
+@contextmanager
+def _ssh_client(remote: Remote) -> Iterator[paramiko.SSHClient]:
+    """A signed-in SSH connection, its host key checked against the pin."""
     pkey = backup._load_private_key(remote.private_key, password=remote.password or None) \
         if remote.private_key else None
     if not pkey and not remote.password:
@@ -439,12 +497,7 @@ def _sftp(remote: Remote) -> Iterator[paramiko.SFTPClient]:
             )
         remote.seen_host_key_type = key.get_name()
         remote.seen_host_key_fingerprint = fingerprint
-        sftp = client.open_sftp()
-        sftp.get_channel().settimeout(TIMEOUT * 4)
-        try:
-            yield sftp
-        finally:
-            sftp.close()
+        yield client
     finally:
         client.close()
 
@@ -531,6 +584,18 @@ def _s3_client(bucket: S3Bucket):
 
 
 def list_source(source: Source) -> list[dict]:
+    if source.kind == "ssh":
+        remote = source.remote
+        if remote is None or remote.panel not in migrate_ssh.PANELS:
+            raise RestoreSourceError("No server to list")
+        if not kind_enabled(remote.panel):
+            raise RestoreSourceError(_off_message(remote.panel))
+        with _ssh_client(remote) as client:
+            return migrate_ssh.list_accounts(client, remote.panel)
+    return _mark_disabled(_list_archives(source))
+
+
+def _list_archives(source: Source) -> list[dict]:
     if source.kind == "local":
         return list_local()
     if source.s3 is not None:
@@ -570,9 +635,16 @@ def check_ref(source: Source, kind: str, ref: str) -> str:
     The ref comes back from the browser, so it is checked again rather than
     trusted because the list once contained it.
     """
+    if not kind_enabled(kind):
+        raise ValueError(_off_message(kind))
+    if source.kind == "ssh":
+        # An account on that server, not a file: the server packs it later.
+        if source.remote is None or kind != source.remote.panel:
+            raise ValueError(f"Not an account of that server: {ref}")
+        return migrate_ssh.check_account(ref)
     _check_remote_path(ref)
     if archive_kind(ref) != kind:
-        raise ValueError(f"Not a {'DirectAdmin' if kind == KIND_DA else 'OPanel'} backup: {ref}")
+        raise ValueError(f"Not a {KIND_LABELS.get(kind, kind)} backup: {ref}")
     if source.kind == "local":
         inbox = inbox_path(ref)
         if inbox is not None:
@@ -581,6 +653,8 @@ def check_ref(source: Source, kind: str, ref: str) -> str:
             return str(inbox)
         if kind == KIND_OPANEL:
             return str(backup.user_backup_path(ref))
+        if kind == KIND_CPANEL:
+            return str(cpanel_import.resolve_path(ref))
         return str(da_import._resolve_da_backup_path(ref))
     if source.s3 is not None:
         base = backup.s3_prefix_for(source.s3.prefix)
@@ -600,7 +674,10 @@ def _destination(kind: str, name: str) -> Path:
     Never an existing name: a fetch must not overwrite an archive someone
     uploaded, and the copy is deleted again once it has been restored.
     """
-    folder = (backup._user_restore_dir() if kind == KIND_OPANEL else Path(settings.da_backup_dir)).resolve()
+    folder = {
+        KIND_OPANEL: lambda: backup._user_restore_dir(),
+        KIND_CPANEL: lambda: Path(settings.cpanel_backup_dir),
+    }.get(kind, lambda: Path(settings.da_backup_dir))().resolve()
     folder.mkdir(parents=True, exist_ok=True)
     safe = Path(name.replace("\\", "/")).name
     if not safe or archive_kind(safe) != kind:
@@ -656,12 +733,26 @@ class _Throttle:
             self.on_progress(done, self.total)
 
 
-def fetch(source: Source, kind: str, ref: str, size: int = 0, on_progress: ProgressFn = None) -> str:
+def fetch(source: Source, kind: str, ref: str, size: int = 0, on_progress: ProgressFn = None,
+          on_status: Optional[Callable[[str], None]] = None) -> str:
     """Download one archive into the folder its kind is restored from.
 
     Returns the local path. A partial download is never left under a name the
     restore list would offer: it is written as ``.part`` and renamed whole.
+    From a cPanel or DirectAdmin server the account is packed there first;
+    ``on_status`` hears what it is waiting for.
     """
+    if source.kind == "ssh" and source.remote is not None:
+        with _ssh_client(source.remote) as client:
+            throttle = _Throttle(on_progress, size)
+
+            def progress(done: int, of: int) -> None:
+                throttle.total = of or throttle.total
+                throttle.set(done)
+
+            return migrate_ssh.pack_and_fetch(
+                client, source.remote.panel, ref, lambda name: _destination(kind, name), _ensure_room,
+                on_status=on_status, on_progress=progress if on_progress else None)
     name = ref.replace("\\", "/").rsplit("/", 1)[-1]
     destination = _destination(kind, name)
     partial = destination.with_name(destination.name + ".part")
@@ -718,7 +809,8 @@ def describe_error(exc: BaseException, source: Optional[Source] = None) -> str:
     if source is not None and source.remote is not None:
         where = f"{source.remote.host}:{source.remote.port}"
     if isinstance(exc, paramiko.AuthenticationException):
-        return f"SFTP login to {where} failed: check the username, password or key"
+        protocol = "SSH" if source is not None and source.remote is not None and source.remote.protocol == "ssh" else "SFTP"
+        return f"{protocol} login to {where} failed: check the username, password or key"
     if isinstance(exc, ftplib.error_perm) and str(exc).startswith("530"):
         return f"FTP login to {where} failed: check the username and password"
     if isinstance(exc, (socket.timeout, TimeoutError)):

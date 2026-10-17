@@ -1082,7 +1082,7 @@ class RestoreRemoteIn(BaseModel):
     outright: over FTP a CR/LF in a path is a second command.
     """
 
-    protocol: Literal["sftp", "ftp", "ftps"] = "sftp"
+    protocol: Literal["sftp", "ftp", "ftps", "ssh"] = "sftp"
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(default="", max_length=128)
@@ -1091,6 +1091,8 @@ class RestoreRemoteIn(BaseModel):
     path: str = Field(default="", max_length=1024)
     # What the server showed when it was listed; the download insists on it.
     host_key_fingerprint: str = Field(default="", max_length=128)
+    # protocol "ssh": the control panel on that server, which packs the accounts.
+    panel: Optional[Literal["cpanel", "directadmin"]] = None
 
     @field_validator("host")
     @classmethod
@@ -1109,10 +1111,11 @@ class RestoreRemoteIn(BaseModel):
 
 
 class RestoreSourceIn(BaseModel):
-    """Where to restore from: this server, a saved Backup Destination, or
-    another server reached with the credentials in ``remote``."""
+    """Where to restore from: this server, a saved Backup Destination, another
+    server reached with the credentials in ``remote``, or (``ssh``) a cPanel or
+    DirectAdmin server signed in to as root."""
 
-    source: Literal["local", "target", "remote"] = "local"
+    source: Literal["local", "target", "remote", "ssh"] = "local"
     target_id: Optional[int] = Field(default=None, gt=0)
     remote: Optional[RestoreRemoteIn] = None
 
@@ -1120,13 +1123,15 @@ class RestoreSourceIn(BaseModel):
     def source_has_what_it_needs(self):
         if self.source == "target" and not self.target_id:
             raise ValueError("Choose a Backup Destination")
-        if self.source == "remote" and self.remote is None:
+        if self.source == "remote" and (self.remote is None or self.remote.protocol == "ssh"):
             raise ValueError("Enter the server to restore from")
+        if self.source == "ssh" and (self.remote is None or self.remote.protocol != "ssh" or not self.remote.panel):
+            raise ValueError("Enter the cPanel or DirectAdmin server to pull from")
         return self
 
 
 class RestoreRunItem(BaseModel):
-    kind: Literal["opanel", "directadmin"]
+    kind: Literal["opanel", "directadmin", "cpanel"]
     ref: str = Field(min_length=1, max_length=1024)
 
     @field_validator("ref")
@@ -1139,7 +1144,7 @@ class RestoreRunItem(BaseModel):
 
 class RestoreRunIn(RestoreSourceIn):
     items: list[RestoreRunItem] = Field(min_length=1, max_length=50)
-    # DirectAdmin archives only: replace a user or website already on this
+    # DirectAdmin and cPanel archives only: replace a user or website already on this
     # server instead of stopping on it. An OPanel archive always restores over
     # its own account and never over someone else's.
     overwrite: bool = False

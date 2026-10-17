@@ -1221,6 +1221,8 @@ install_panel_runtime
 if id -u opanel >/dev/null 2>&1; then
   log "Ensuring DirectAdmin backup import directory"
   install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/da
+  # cPanel archives waiting to be restored (the cPanel Import addon).
+  install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/cpanel
   # The admin's SFTP drop folder for large backups, which Restore > This server
   # lists. setgid opanel, so the panel can read what the admin's login uploads.
   inbox_owner=root

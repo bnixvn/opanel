@@ -7625,7 +7625,14 @@ backup_inbox_take() {
       [[ -n "$dest_dir" ]] || dest_dir="/home/admin/opanel-backups/da"
       install -d -m 0750 -o opanel -g opanel "$dest_dir"
       ;;
-    *) deny "usage: backup-inbox-take <file> <opanel|directadmin>" ;;
+    cpanel)
+      [[ "$name" =~ ^(cpmove-|backup-[0-9.]+_[0-9-]+_)[a-z0-9][a-z0-9_.-]*\.(tar\.gz|tgz|tar)$ ]] \
+        || deny "not a cPanel backup: $name"
+      dest_dir="$(env_get CPANEL_BACKUP_DIR)"
+      [[ -n "$dest_dir" ]] || dest_dir="/home/admin/opanel-backups/cpanel"
+      install -d -m 0750 -o opanel -g opanel "$dest_dir"
+      ;;
+    *) deny "usage: backup-inbox-take <file> <opanel|directadmin|cpanel>" ;;
   esac
   src="${BACKUP_INBOX}/${name}"
   [[ -f "$src" && ! -L "$src" ]] || deny "$name is not in the backup folder"
@@ -8042,7 +8049,7 @@ case "$cmd" in
     ensure_backup_inbox
     ;;
   backup-inbox-take)
-    [[ $# -eq 2 ]] || deny "usage: backup-inbox-take <file> <opanel|directadmin>"
+    [[ $# -eq 2 ]] || deny "usage: backup-inbox-take <file> <opanel|directadmin|cpanel>"
     backup_inbox_take "$1" "$2"
     ;;
 

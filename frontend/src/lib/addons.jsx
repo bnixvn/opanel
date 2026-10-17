@@ -14,6 +14,8 @@ export const ADDON_META = {
   git: { page: 'git', label: msg('Git'), featureIcon: 'git' },
   wordpress: { page: 'wordpress', label: msg('WordPress Manager'), featureIcon: 'wordpress' },
   demo: { page: 'addons', label: msg('Demo mode'), featureIcon: 'account' },
+  directadmin: { page: 'backups', label: msg('DirectAdmin Import'), featureIcon: 'directadmin-import' },
+  cpanel: { page: 'backups', label: msg('cPanel Import'), featureIcon: 'cpanel-import' },
 };
 
 export const addonPage = (slug) => ADDON_META[slug]?.page || 'addons';

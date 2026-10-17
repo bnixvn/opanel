@@ -59,8 +59,9 @@ export const TILES = {
   mcp: { label: msg('AI assistants'), icon: 'mcp', page: 'mcp', addon: 'mcp' },
   notifications: { label: msg('Notifications'), icon: 'notifications', page: 'notifications', addon: 'notifications', roles: ['admin'] },
   'panel-settings': { label: msg('Panel settings'), icon: 'panel-settings', page: 'settings', roles: ['admin'] },
-  // Migration: DirectAdmin archives are restored from Backup & Restore.
-  'da-import': { label: msg('DirectAdmin Import'), icon: 'directadmin-import', page: 'backups', before: 'backupsRestore', roles: ['admin'] },
+  // Migration: the import addons' archives and servers are in Backup & Restore.
+  'da-import': { label: msg('DirectAdmin Import'), icon: 'directadmin-import', page: 'backups', before: 'backupsRestore', roles: ['admin'], addon: 'directadmin' },
+  'cpanel-import': { label: msg('cPanel Import'), icon: 'cpanel-import', page: 'backups', before: 'backupsRestore', roles: ['admin'], addon: 'cpanel' },
   // Extensions
   addons: { label: msg('Manage addons'), icon: 'addons', page: 'addons', roles: ['admin'] },
 };
@@ -75,7 +76,7 @@ const ADMIN = [
   ['security', msg('Security'), ['firewall', 'waf', 'access-logs', 'fail2ban', 'malware', 'security']],
   ['server', msg('Server'), ['php', 'services', 'processes', 'ram', 'disk', 'traffic', 'account-resources', 'updates']],
   ['advanced', msg('Advanced'), ['cron', 'mcp', 'notifications', 'panel-settings']],
-  ['migration', msg('Migration'), ['da-import']],
+  ['migration', msg('Migration'), ['da-import', 'cpanel-import']],
   ['extensions', msg('Extensions'), ['addons']],
 ];
 const CUSTOMER = [

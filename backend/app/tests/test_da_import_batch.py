@@ -11,6 +11,13 @@ from app.models.entities import DatabaseAccount, User
 from app.schemas.schemas import DAImportBatch
 from app.services import da_import
 
+
+@pytest.fixture(autouse=True)
+def directadmin_import_on(monkeypatch):
+    """DirectAdmin import is the DirectAdmin Import addon's (2026-10-18): on here."""
+    from app.services import restore_sources
+    monkeypatch.setattr(restore_sources.addons, "is_enabled", lambda addon_id: addon_id in {"directadmin", "cpanel"})
+
 ADMIN = SimpleNamespace(id=1, role="admin")
 
 

@@ -352,6 +352,66 @@ ADDONS: dict[str, dict] = {
             "kept in the send log for 30 days.",
         ],
     },
+    "directadmin": {
+        "id": "directadmin",
+        "name": "DirectAdmin Import",
+        "summary": "Move accounts from DirectAdmin: its backups, or straight off the server over SSH.",
+        "description": (
+            "Restores DirectAdmin user backups as panel accounts - the user, "
+            "every domain and subdomain as a website, the databases with the "
+            "passwords the sites already use, and the certificates they were "
+            "served with. The backups can be uploaded, dropped in the SFTP "
+            "folder, read from a Backup Destination or another server, or the "
+            "panel can sign in to the DirectAdmin server as root and have it "
+            "back up each account picked, then bring it over. All of it is in "
+            "Backups > Restore."
+        ),
+        "category": "migration",
+        "version": "1",
+        # Part of the panel: installing it only turns it on. See _is_panel_addon.
+        "kind": "panel",
+        "packages": [],
+        "service": "",
+        "features": ["directadmin_import"],
+        "notes": [
+            "DirectAdmin import was part of the panel until it became this "
+            "addon; a server that had used it has it turned on already.",
+            "The root login for a pull is used for that restore only and never "
+            "saved. Each account is backed up into a private folder there, "
+            "downloaded, and that folder is removed.",
+            "Email accounts are not imported.",
+        ],
+    },
+    "cpanel": {
+        "id": "cpanel",
+        "name": "cPanel Import",
+        "summary": "Move accounts from cPanel: cpmove backups, or straight off the server over SSH.",
+        "description": (
+            "Restores cPanel account backups (cpmove-<user>.tar.gz from pkgacct, "
+            "or the backup-<date>_<user>.tar.gz cPanel's backups write) as panel "
+            "accounts - the user, the main, addon and subdomains as websites, "
+            "parked domains as aliases, the databases with the passwords the "
+            "sites already use, and their certificates. The backups can be "
+            "uploaded, dropped in the SFTP folder, read from a Backup "
+            "Destination or another server, or the panel can sign in to the "
+            "cPanel server as root, run pkgacct for each account picked and "
+            "bring the archive over. All of it is in Backups > Restore."
+        ),
+        "category": "migration",
+        "version": "1",
+        # Part of the panel: installing it only turns it on. See _is_panel_addon.
+        "kind": "panel",
+        "packages": [],
+        "service": "",
+        "features": ["cpanel_import"],
+        "notes": [
+            "The root login for a pull is used for that restore only and never "
+            "saved. pkgacct writes into a private folder there, which is removed "
+            "once the archive is downloaded.",
+            "Email accounts, cron jobs and DNS zones are not imported: the "
+            "restore says how many there were.",
+        ],
+    },
 }
 
 
@@ -443,7 +503,55 @@ def _update_state(addon_id: str, **fields) -> dict:
 
 
 def _entry(addon_id: str) -> dict:
-    return dict(_read_state().get(addon_id) or {})
+    data = _read_state()
+    if addon_id == "directadmin" and addon_id not in data:
+        return _adopt_directadmin_import()
+    return dict(data.get(addon_id) or {})
+
+
+def _directadmin_import_was_used() -> bool:
+    """Signs that this server has imported DirectAdmin backups: archives or
+    credential files in the DirectAdmin folder, or an import in the logs."""
+    from app.core.config import settings
+
+    try:
+        if any(Path(settings.da_backup_dir).iterdir()):
+            return True
+    except OSError:
+        pass
+    try:
+        from app.core.database import SessionLocal
+        from app.models.entities import AuditLog, RestoreJob
+
+        db = SessionLocal()
+        try:
+            if db.query(AuditLog).filter(AuditLog.action.in_(
+                    ("start_da_import", "start_da_import_batch", "upload_da_backups"))).first():
+                return True
+            return any('"directadmin"' in (row.items or "") for row in db.query(RestoreJob).all())
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 - no database to ask is no sign of an import
+        return False
+
+
+def _adopt_directadmin_import() -> dict:
+    """DirectAdmin import was part of the panel until it became an addon
+    (2026-10-18). A server that used it keeps it on; everywhere else it starts
+    off like any addon. Decided once: the entry written here is the admin's
+    to change from then on."""
+    if _directadmin_import_was_used():
+        fields = {"installed": True, "running": True, "installed_by": "used before it became an addon",
+                  "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    else:
+        fields = {"installed": False, "running": False}
+    with _state_lock:
+        data = _read_state()
+        if "directadmin" in data:
+            return dict(data["directadmin"])
+        data["directadmin"] = fields
+        _write_state(data)
+    return dict(fields)
 
 
 # ---------------------------------------------------------------------------

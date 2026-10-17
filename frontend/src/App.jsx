@@ -414,6 +414,9 @@ function CodeEditor({ value, mode, disabled, theme, onChange, onCursorChange }) 
   return <div className="code-editor-host" ref={hostRef}></div>;
 }
 
+// Restore: what each kind of archive is called (services/restore_sources.py).
+const RESTORE_KIND_LABELS = { opanel: 'OPanel', directadmin: 'DirectAdmin', cpanel: 'cPanel' };
+
 function App() {
   // Auth is now cookie-based (HttpOnly opanel_session). The SPA does not see
   // the JWT at all. We track only whether the user is authenticated in memory.
@@ -500,6 +503,12 @@ function App() {
   const [restoreSource, setRestoreSource] = useState('local');
   const [restoreTargetId, setRestoreTargetId] = useState('');
   const [restoreRemote, setRestoreRemote] = useState(BLANK_RESTORE_REMOTE);
+  // A cPanel or DirectAdmin server signed in to as root (the import addons):
+  // only in this state, like the SFTP password.
+  const BLANK_RESTORE_SSH = { host: '', port: 22, username: 'root', password: '', private_key: '', use_key: false };
+  const [restoreSsh, setRestoreSsh] = useState(BLANK_RESTORE_SSH);
+  // Which import addons are on, as the last listing said: { directadmin, cpanel }.
+  const [restoreAddons, setRestoreAddons] = useState({});
   // null until a source has been read; then { items, host_key, directories }.
   const [restoreList, setRestoreList] = useState(null);
   const [restoreListError, setRestoreListError] = useState('');
@@ -3527,6 +3536,22 @@ function App() {
   // key answers and shows it; the restore then insists on that same key.
   function restoreSourceBody(source = restoreSource, forRun = false) {
     if (source === 'target') return { source, target_id: Number(restoreTargetId) || null };
+    if (source === 'ssh-cpanel' || source === 'ssh-directadmin') {
+      const { use_key, ...login } = restoreSsh;
+      return {
+        source: 'ssh',
+        remote: {
+          ...login,
+          protocol: 'ssh',
+          panel: source.slice(4),
+          host: login.host.trim(),
+          port: Number(login.port) || 22,
+          username: login.username.trim() || 'root',
+          private_key: use_key ? login.private_key : '',
+          host_key_fingerprint: forRun ? (restoreList?.host_key?.fingerprint || '') : '',
+        },
+      };
+    }
     if (source === 'remote') {
       const { use_key, ...remote } = restoreRemote;
       return {
@@ -3555,7 +3580,7 @@ function App() {
 
   async function loadRestoreList(source = restoreSource) {
     if (source === 'target' && !restoreTargetId) return;
-    if (source === 'remote' && !restoreRemote.host.trim()) {
+    if ((source === 'remote' && !restoreRemote.host.trim()) || (source.startsWith('ssh-') && !restoreSsh.host.trim())) {
       setRestoreListError(tr("Enter the server's host name or IP address."));
       return;
     }
@@ -3581,6 +3606,7 @@ function App() {
         return;
       }
       setRestoreList(data);
+      if (data.addons) setRestoreAddons(data.addons);
       const keys = new Set((data.items || []).map(restoreGroupKey));
       setRestorePicks(prev => prev.filter(key => keys.has(key)));
       describeRestoreItems(data.items || []);
@@ -3639,13 +3665,14 @@ function App() {
   async function runRestore() {
     const chosen = restoreGroups().filter(group => restorePicks.includes(group.key)).map(restoreChosen);
     if (chosen.length === 0) return;
-    const names = chosen.map(item => `  - ${item.account || item.username || '?'} (${item.kind === 'directadmin' ? 'DirectAdmin' : 'OPanel'}): ${item.filename}`).join('\n');
+    const names = chosen.map(item => `  - ${item.account || item.username || '?'} (${RESTORE_KIND_LABELS[item.kind] || item.kind}): ${item.filename}`).join('\n');
     const notes = [];
     if (chosen.some(item => item.kind === 'opanel')) notes.push(tr("This overwrites that account's sites and databases with what is in the archive."));
-    if (chosen.some(item => item.kind === 'directadmin')) notes.push(restoreOverwrite
+    if (chosen.some(item => item.kind !== 'opanel')) notes.push(restoreOverwrite
       ? tr("Overwrite is on. A user or website already on this server is replaced by what the archive carries: its files are copied over the ones there, its databases are re-imported, and the panel user gets a new password. Websites the account has that the archive does not mention are kept.")
       : tr("Overwrite is off. An archive whose user or domains are already on this server stops without touching them; the others still import."));
-    if (restoreSource !== 'local') notes.push(tr("Each archive is downloaded to this server first and deleted again once it has been restored."));
+    if (restoreSource.startsWith('ssh-')) notes.push(tr("Each account is backed up on that server first, then downloaded here; both copies are deleted once it has been restored."));
+    else if (restoreSource !== 'local') notes.push(tr("Each archive is downloaded to this server first and deleted again once it has been restored."));
     if (chosen.length > 1) notes.push(tr("They run one after another on the server, so you can leave this page."));
     if (!confirm(tr("Restore {0} account(s)?\n\n{1}\n\n{2}", chosen.length, names, notes.join('\n\n')))) return;
     const data = await request('/maintenance/restore/run', {
@@ -5633,7 +5660,7 @@ function App() {
       : allGroups;
     const selectable = groups.filter(group => restoreChosen(group).valid !== false);
     const pickedGroups = allGroups.filter(group => restorePicks.includes(group.key));
-    const pickedHasDa = pickedGroups.some(group => group.kind === 'directadmin');
+    const pickedHasDa = pickedGroups.some(group => group.kind !== 'opanel');
     const allPicked = selectable.length > 0 && selectable.every(group => restorePicks.includes(group.key));
     const somePicked = selectable.some(group => restorePicks.includes(group.key));
     const job = restoreJob;
@@ -5644,8 +5671,15 @@ function App() {
       ['local', HardDrive, tr("This server"), tr("Backups the panel made, and archives uploaded for restore.")],
       ['target', Network, tr("Backup Destination"), tr("An S3 or SFTP destination saved under Backup Destination.")],
       ['remote', Server, tr("Another server"), tr("Pull backups from another server over SFTP or FTP, such as an old DirectAdmin server.")],
+      ...(restoreAddons.directadmin ? [['ssh-directadmin', Server, tr("DirectAdmin server"), tr("Sign in as root over SSH: the server backs up each account you pick and the panel brings it over.")]] : []),
+      ...(restoreAddons.cpanel ? [['ssh-cpanel', Server, tr("cPanel server"), tr("Sign in as root over SSH: pkgacct packs each account you pick and the panel brings it over.")]] : []),
     ];
-    const stepTwoTitle = { local: tr("Backups on this server"), target: tr("Destination"), remote: tr("Connection") }[restoreSource];
+    const sshPanel = restoreSource.startsWith('ssh-') ? RESTORE_KIND_LABELS[restoreSource.slice(4)] : '';
+    // What the other server says of an account, in the panel's words.
+    const accountNotes = { suspended: tr("Suspended"), admin: tr("Administrator"), reseller: tr("Reseller") };
+    const ssh = restoreSsh;
+    const setSsh = patch => setRestoreSsh(prev => ({ ...prev, ...patch }));
+    const stepTwoTitle = sshPanel ? tr("Connection") : { local: tr("Backups on this server"), target: tr("Destination"), remote: tr("Connection") }[restoreSource];
 
     // Its title and what it does are the Backups page's head.
     return <div className="backup-tab-panel restore-wizard">
@@ -5670,7 +5704,7 @@ function App() {
         <h4><span className="restore-step-no">2</span>{stepTwoTitle}</h4>
         {restoreSource === 'local' && <>
           <p className="hint">
-            {tr("Read from")} <code>{restoreList?.directories?.opanel || '/var/backups/opanel/users'}</code> {tr("and")} <code>{restoreList?.directories?.directadmin || '/home/admin/opanel-backups/da'}</code>. {tr("An uploaded archive goes to the right one by its name.")}
+            {tr("Read from")} <code>{restoreList?.directories?.opanel || '/var/backups/opanel/users'}</code>, <code>{restoreList?.directories?.directadmin || '/home/admin/opanel-backups/da'}</code> {tr("and")} <code>{restoreList?.directories?.cpanel || '/home/admin/opanel-backups/cpanel'}</code>. {tr("An uploaded archive goes to the right one by its name.")}
           </p>
           <p className="hint restore-sftp-hint">
             {tr("Large backups go up over SFTP: sign in as admin on port 22, with the SFTP password set under SFTP accounts.")}<br/>
@@ -5725,6 +5759,24 @@ function App() {
             <span className="hint">{tr("Used for this restore only; nothing here is saved.")}</span>
           </div>
         </form>}
+        {sshPanel && <form className="restore-remote" onSubmit={e => { e.preventDefault(); loadRestoreList(restoreSource); }} autoComplete="off">
+          <p className="hint restore-remote-wide">{tr("The panel signs in to the {0} server as root and has it back up each account you pick, the way {0} itself does. The backup is made in a private folder there, which is removed once it has been downloaded.", sshPanel)}</p>
+          <label className="field"><span className="field-label">{tr("Host")}</span><input value={ssh.host} onChange={e => setSsh({ host: e.target.value })} placeholder="203.0.113.10" spellCheck={false} /></label>
+          <label className="field"><span className="field-label">{tr("SSH port")}</span><input type="number" min="1" max="65535" value={ssh.port} onChange={e => setSsh({ port: e.target.value })} /></label>
+          <label className="field"><span className="field-label">{tr("Username")}</span><input value={ssh.username} onChange={e => setSsh({ username: e.target.value })} spellCheck={false} /></label>
+          <label className="field"><span className="field-label">{ssh.use_key ? tr("Key passphrase") : tr("Password")}</span><input type="password" value={ssh.password} onChange={e => setSsh({ password: e.target.value })} autoComplete="new-password" /></label>
+          <label className="check-line restore-remote-wide">
+            <input type="checkbox" checked={ssh.use_key} onChange={e => setSsh({ use_key: e.target.checked })} />
+            {tr("Sign in with a private key")}
+          </label>
+          {ssh.use_key && <label className="field restore-remote-wide"><span className="field-label">{tr("Private key")}</span>
+            <textarea rows={4} value={ssh.private_key} onChange={e => setSsh({ private_key: e.target.value })} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellCheck={false} />
+          </label>}
+          <div className="actions restore-remote-wide">
+            <button type="submit" disabled={restoreListing}><Search size={14}/> {restoreListing ? tr("Connecting...") : tr("Connect and list accounts")}</button>
+            <span className="hint">{tr("Used for this restore only; nothing here is saved.")}</span>
+          </div>
+        </form>}
         {restoreList?.host_key && <p className="hint">{tr("Server key:")} <code>{restoreList.host_key.type} {restoreList.host_key.fingerprint}</code></p>}
         {restoreListError && <div className="restore-error" role="alert"><AlertCircle size={14}/> <span>{restoreListError}</span></div>}
       </section>
@@ -5762,9 +5814,12 @@ function App() {
               };
               const detail = invalid
                 ? (chosen.error || tr("Invalid backup"))
-                : [formatBytes(chosen.size), formatIsoTime(chosen.modified_at),
-                  chosen.kind === 'opanel' && chosen.websites != null ? tr("{0} website(s)", chosen.websites) : ''].filter(Boolean).join(' · ');
-              const deletable = restoreSource === 'local' && ['uploaded', 'da', 'inbox'].includes(chosen.location);
+                : chosen.location === 'ssh'
+                  ? [chosen.domain, chosen.size ? formatBytes(chosen.size) : '',
+                    (chosen.note || '').split(', ').filter(Boolean).map(note => accountNotes[note] || note).join(', ')].filter(Boolean).join(' · ')
+                  : [formatBytes(chosen.size), formatIsoTime(chosen.modified_at),
+                    chosen.kind === 'opanel' && chosen.websites != null ? tr("{0} website(s)", chosen.websites) : ''].filter(Boolean).join(' · ');
+              const deletable = restoreSource === 'local' && ['uploaded', 'da', 'cpanel', 'inbox'].includes(chosen.location);
               return <div
                 key={group.key}
                 className={`restore-account${picked ? ' picked' : ''}${invalid ? ' invalid' : ''}`}
@@ -5783,14 +5838,16 @@ function App() {
                   </strong>
                   <small>{detail}</small>
                 </span>
-                <span className={`badge${group.kind === 'opanel' ? ' ok' : ''}`}>{group.kind === 'directadmin' ? 'DirectAdmin' : 'OPanel'}</span>
+                <span className={`badge${group.kind === 'opanel' ? ' ok' : ''}`}>{RESTORE_KIND_LABELS[group.kind] || group.kind}</span>
                 {group.items.length > 1
                   ? <select className="restore-version" value={chosen.ref} aria-label={tr("Backup to restore")}
                       onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
                       onChange={e => setRestoreChoice(prev => ({ ...prev, [group.key]: e.target.value }))}>
                       {group.items.map(item => <option key={item.ref} value={item.ref}>{item.filename}{item.modified_at ? ` · ${formatIsoTime(item.modified_at)}` : ''}</option>)}
                     </select>
-                  : (group.account || chosen.username)
+                  : chosen.location === 'ssh'
+                    ? <span />
+                    : (group.account || chosen.username)
                     ? <span className="restore-version-name" title={chosen.ref}>{chosen.filename}</span>
                     : <span />}
                 {deletable
@@ -5808,7 +5865,7 @@ function App() {
         <h4><span className="restore-step-no">4</span>{tr("Restore")}</h4>
         {pickedHasDa && <label className="check-line">
           <input type="checkbox" checked={restoreOverwrite} onChange={e => setRestoreOverwrite(e.target.checked)} />
-          {tr("DirectAdmin backups: overwrite a user or website that is already on this server")}
+          {tr("DirectAdmin and cPanel backups: overwrite a user or website that is already on this server")}
         </label>}
         <div className="actions">
           <button disabled={!!loading || jobActive || pickedGroups.length === 0} onClick={runRestore}>

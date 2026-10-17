@@ -44,7 +44,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cron, da_import, demo_mode, file_manager, mariadb, notifications, ols_throttle, php, restore_jobs, restore_sources, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cpanel_import, cron, da_import, demo_mode, migrate_ssh, file_manager, mariadb, notifications, ols_throttle, php, restore_jobs, restore_sources, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -1075,6 +1075,20 @@ def _restore_source(payload: RestoreSourceIn, db) -> tuple[restore_sources.Sourc
             host_key_fingerprint=target.host_key_fingerprint or "",
         )), target
     remote = payload.remote
+    if payload.source == "ssh":
+        # A cPanel or DirectAdmin server: root, who can make its backups.
+        if not restore_sources.kind_enabled(remote.panel):
+            raise HTTPException(status_code=403, detail=restore_sources._off_message(remote.panel))
+        return restore_sources.Source("ssh", remote=restore_sources.Remote(
+            protocol="ssh",
+            host=remote.host,
+            port=remote.port,
+            username=remote.username or "root",
+            password=remote.password,
+            private_key=remote.private_key,
+            host_key_fingerprint=remote.host_key_fingerprint,
+            panel=remote.panel,
+        )), None
     return restore_sources.Source("remote", remote=restore_sources.Remote(
         protocol=remote.protocol,
         host=remote.host,
@@ -1090,6 +1104,9 @@ def _restore_source(payload: RestoreSourceIn, db) -> tuple[restore_sources.Sourc
 def _restore_source_label(source: restore_sources.Source, target: BackupTarget | None) -> str:
     if target is not None:
         return f"destination {target.name}"
+    if source.kind == "ssh" and source.remote is not None:
+        return (f"{migrate_ssh.PANELS.get(source.remote.panel, source.remote.panel)} server "
+                f"{source.remote.username}@{source.remote.host}:{source.remote.port}")
     if source.remote is not None:
         return f"{source.remote.protocol}://{source.remote.username}@{source.remote.host}:{source.remote.port}"
     return "this server"
@@ -1122,9 +1139,10 @@ def list_restore_source(payload: RestoreSourceIn, request: Request, db: Session 
         items = restore_sources.list_source(source)
     except _RESTORE_SOURCE_ERRORS as exc:
         raise HTTPException(status_code=502, detail=restore_sources.describe_error(exc, source)) from exc
-    result = {"items": items}
+    result = {"items": items, "addons": {
+        kind: restore_sources.kind_enabled(kind) for kind in (restore_sources.KIND_DA, restore_sources.KIND_CPANEL)}}
     remote = source.remote
-    if remote is not None and remote.protocol == "sftp" and remote.seen_host_key_fingerprint:
+    if remote is not None and remote.protocol in {"sftp", "ssh"} and remote.seen_host_key_fingerprint:
         # A saved destination that has never been used pins its key now, the
         # way its first upload would have.
         if target is not None and not target.host_key_fingerprint:
@@ -1134,7 +1152,8 @@ def list_restore_source(payload: RestoreSourceIn, request: Request, db: Session 
         result["host_key"] = {"type": remote.seen_host_key_type,
                               "fingerprint": remote.seen_host_key_fingerprint}
     if source.kind == "local":
-        result["directories"] = {"opanel": backup.user_restore_dir(), "directadmin": da_import.da_backup_dir()}
+        result["directories"] = {"opanel": backup.user_restore_dir(), "directadmin": da_import.da_backup_dir(),
+                                 "cpanel": cpanel_import.backup_dir()}
     return result
 
 
@@ -1145,8 +1164,8 @@ def upload_restore_archives(
     current_user: User = Depends(get_current_user),
 ):
     """Put archives from the operator's computer where the list reads them:
-    an OPanel backup in the restore folder, a DirectAdmin one in the
-    DirectAdmin folder. Which is which comes from the name."""
+    an OPanel backup in the restore folder, a DirectAdmin or cPanel one in its
+    own folder. Which is which comes from the name."""
     ensure_role(current_user.role, Role.admin)
     if not files:
         raise HTTPException(status_code=400, detail="No backup files uploaded")
@@ -1154,9 +1173,13 @@ def upload_restore_archives(
     for file in files:
         name = file.filename or ""
         kind = restore_sources.archive_kind(name)
+        if kind and not restore_sources.kind_enabled(kind):
+            raise HTTPException(status_code=400, detail=f"{name}: {restore_sources._off_message(kind)}")
         try:
             if kind == restore_sources.KIND_OPANEL:
                 path = backup.save_uploaded_user_backup(name, file.file)
+            elif kind == restore_sources.KIND_CPANEL:
+                path = cpanel_import.save_backup(name, file.file)["path"]
             elif kind == restore_sources.KIND_DA:
                 path = da_import.save_da_backup(name, file.file)["path"]
             else:
@@ -1184,6 +1207,8 @@ def delete_restore_archive(ref: str, request: Request, db: Session = Depends(get
             deleted = backup.delete_user_restore_backup(ref)
         elif kind == restore_sources.KIND_DA:
             deleted = da_import.delete_da_backup(ref)
+        elif kind == restore_sources.KIND_CPANEL:
+            deleted = cpanel_import.delete_backup(ref)
         else:
             raise FileNotFoundError(ref)
     except FileNotFoundError as exc:
@@ -1203,9 +1228,11 @@ def _restore_running() -> bool:
         return any(job.get("status") in {"queued", "running"} for job in _da_import_jobs.values())
 
 
-def _da_summary_note(name: str, summary: dict) -> str:
+def _da_summary_note(name: str, summary: dict, label: str = "DirectAdmin") -> str:
     domains = summary.get("imported_domains") or []
-    note = f"{name} (DirectAdmin): {len(domains)} domain(s)"
+    note = f"{name} ({label}): {len(domains)} domain(s)"
+    if summary.get("aliases"):
+        note += f", {len(summary['aliases'])} alias(es)"
     if summary.get("databases"):
         note += f", {len(summary['databases'])} database(s)"
     if summary.get("ssl_enabled_domains"):
@@ -1240,6 +1267,11 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
                     return _nested_percent(_i, total, int(min(1.0, fraction) * 1000), 1000)
 
                 if remote:
+                    def pack_status(text, _n=name):
+                        # The other server packing the account: no bar to fill yet.
+                        _set_backup_job(job_id, message=f"{text} {position}", progress_label=_n,
+                                        progress_percent=item_percent(0.0))
+
                     def download_progress(got, of, _n=name):
                         _set_backup_job(
                             job_id,
@@ -1252,7 +1284,8 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
                     _set_backup_job(job_id, message=f"Downloading {name} {position}",
                                     progress_percent=item_percent(0.0), progress_label=name)
                     local_path = restore_sources.fetch(source, kind, ref, item.get("size") or 0,
-                                                       on_progress=download_progress)
+                                                       on_progress=download_progress, on_status=pack_status)
+                    name = Path(local_path).name
                     fetched = local_path
                 elif restore_sources.inbox_path(ref) is not None:
                     # Out of the admin's SFTP folder first, into the panel's
@@ -1278,6 +1311,14 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
                         note += f", {len(result['certificates'])} cert(s)"
                     if result.get("ssl_warnings"):
                         note += f", SSL not restored for {len(result['ssl_warnings'])}"
+                    done.append(note)
+                    if record_id:
+                        restore_jobs.item(record_id, index - 1, status="done", note=note)
+                elif kind == restore_sources.KIND_CPANEL:
+                    _set_backup_job(job_id, message=f"Importing {name} (cPanel) {position}", progress_label=name)
+                    summary = cpanel_import.import_cpanel_backup(local_path, db, overwrite=overwrite)
+                    log_action(db, request_user_id, "cpanel_import", name, "overwrite" if overwrite else "")
+                    note = _da_summary_note(name, summary, "cPanel")
                     done.append(note)
                     if record_id:
                         restore_jobs.item(record_id, index - 1, status="done", note=note)
@@ -1498,9 +1539,15 @@ def _run_da_import_job(job_id: str, backup_file: str, overwrite: bool = False) -
         db.close()
 
 
+def _require_directadmin_import() -> None:
+    if not restore_sources.kind_enabled(restore_sources.KIND_DA):
+        raise HTTPException(status_code=403, detail=restore_sources._off_message(restore_sources.KIND_DA))
+
+
 @router.get("/da-backups")
 def list_da_backups(current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
+    _require_directadmin_import()
     return {"directory": da_import.da_backup_dir(), "items": da_import.list_da_backups()}
 
 
@@ -1511,6 +1558,7 @@ def upload_da_backups(
     current_user: User = Depends(get_current_user),
 ):
     ensure_role(current_user.role, Role.admin)
+    _require_directadmin_import()
     if not files:
         raise HTTPException(status_code=400, detail="No backup files uploaded")
     items = []
@@ -1529,6 +1577,7 @@ def upload_da_backups(
 def delete_da_backup(backup_file: str, request: Request, db: Session = Depends(get_db),
                      current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
+    _require_directadmin_import()
     try:
         deleted = da_import.delete_da_backup(backup_file)
     except FileNotFoundError as exc:
@@ -1561,6 +1610,7 @@ def start_da_import(backup_file: str, request: Request, db: Session = Depends(ge
                     overwrite: bool = False,
                     current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
+    _require_directadmin_import()
     try:
         da_import.da_backup_path(backup_file)
     except FileNotFoundError as exc:
@@ -1582,6 +1632,7 @@ def start_da_import_batch(payload: DAImportBatch, request: Request, db: Session 
     the operator's time: tick them all, start once, come back to the results.
     """
     ensure_role(current_user.role, Role.admin)
+    _require_directadmin_import()
     files = list(dict.fromkeys(item.strip() for item in payload.backup_files if item.strip()))
     if not files:
         raise HTTPException(status_code=400, detail="Select at least one backup")

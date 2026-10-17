@@ -24,6 +24,13 @@ ADMIN = SimpleNamespace(id=1, role="admin")
 KIND_OP, KIND_DA = restore_sources.KIND_OPANEL, restore_sources.KIND_DA
 
 
+@pytest.fixture(autouse=True)
+def import_addons_on(monkeypatch):
+    """DirectAdmin archives are the DirectAdmin Import addon's (2026-10-18):
+    these tests run with it on; test_migration_import.py has it off."""
+    monkeypatch.setattr(restore_sources.addons, "is_enabled", lambda addon_id: addon_id in {"directadmin", "cpanel"})
+
+
 # --- what an archive is -------------------------------------------------------
 
 @pytest.mark.parametrize("name, kind, account", [
