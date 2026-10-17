@@ -2403,6 +2403,20 @@ def fix_wordpress_permissions(website_id: int, db: Session = Depends(get_db), cu
     log_action(db, current_user.id, "fix_permissions", website.domain, website.root_path)
     return {"message": f"Fixed permissions for {website.domain}", "root_path": website.root_path}
 
+def _free_wordpress_db_name(db: Session, seed: str) -> str:
+    """wp_<seed>, or wp_<seed>_2 and on when that database or its user exists."""
+    base = mariadb.safe_db_identifier(seed, "wp")[:58]
+    for attempt in range(1, 50):
+        name = base if attempt == 1 else f"{base}_{attempt}"
+        user = mariadb.safe_db_identifier(name, "u")
+        if db.query(DatabaseAccount).filter((DatabaseAccount.db_name == name) | (DatabaseAccount.db_user == user)).first():
+            continue
+        if mariadb.identifier_in_use(name, user):
+            continue
+        return name
+    raise ValueError("No free database name for this website")
+
+
 class WpInstallRequest(BaseModel):
     admin_user: str = "admin"
     admin_email: str = ""
@@ -2440,10 +2454,14 @@ def install_wordpress_on_site(website_id: int, payload: WpInstallRequest, reques
     if wp_config.exists():
         raise HTTPException(status_code=400, detail="WordPress is already installed on this site")
 
-    # Create database
+    # Its own database, under a name nothing uses yet. The name used to come
+    # from the domain alone, so a second WordPress on the website (in a folder)
+    # got the first one's database: its user was given a new password, which
+    # took the first site down, and the second found WordPress already there.
     try:
-        db_info = mariadb.create_database(website.domain)
-    except RuntimeError as exc:
+        db_name = _free_wordpress_db_name(db, website.domain + (f"_{subfolder}" if subfolder else ""))
+        db_info = mariadb.create_database(website.domain, db_name=db_name)
+    except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"Could not create database: {exc}") from exc
 
     # Install WordPress
@@ -2458,6 +2476,14 @@ def install_wordpress_on_site(website_id: int, payload: WpInstallRequest, reques
         mariadb.drop_database(db_info["db_name"], db_info["db_user"])
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # The database is the website's, in the Databases page like any other.
+    db.add(DatabaseAccount(
+        owner_id=website.owner_id,
+        website_id=website.id,
+        db_name=db_info["db_name"],
+        db_user=db_info["db_user"],
+        db_password=encrypt(db_info["db_password"]),
+    ))
     # Update website app_type - a WordPress at the root only: one in a folder
     # leaves the website as it was.
     if not subfolder:

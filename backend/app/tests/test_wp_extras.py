@@ -139,3 +139,29 @@ def test_the_helper_copies_as_the_account_and_never_across_accounts():
     assert 'runuser -u "$user" -- rsync' in body and "the two folders overlap" in body
     place = HELPER.split("  wp-upload-place)", 1)[1].split(";;", 1)[0]
     assert "^/var/lib/opanel/wp-uploads/[a-f0-9]{24}\\.zip$" in place
+
+
+def test_a_second_wordpress_in_a_folder_gets_its_own_database(env, monkeypatch):
+    """The name came from the domain alone: the folder's install re-passworded
+    the root one's database user and found WordPress already in it."""
+    from app.services import wordpress
+
+    made, installs = [], []
+    monkeypatch.setattr(mariadb, "identifier_in_use", lambda name, user: "")
+    monkeypatch.setattr(mariadb, "create_database", lambda seed, db_name=None, **kw: made.append(db_name) or
+                        {"db_name": db_name, "db_user": mariadb.safe_db_identifier(db_name, "u"), "db_password": "x" * 20})
+    monkeypatch.setattr(wordpress, "install_wordpress", lambda *a, **kw: installs.append(kw.get("subfolder")))
+    import app.api.websites as websites_api
+    monkeypatch.setattr(websites_api, "_rewrite_website_vhost", lambda website, **kw: "")
+    site = env.sites["alice"]
+    (Path(site.root_path) / "public_html" / "wp-config.php").unlink()
+    client = env.as_user("alice")
+    body = {"admin_user": "boss", "admin_password": "a-long-password-1", "admin_email": "boss@alice.example"}
+    assert client.post(f"/api/maintenance/wordpress/{site.id}/install", json=body).status_code == 200
+    assert client.post(f"/api/maintenance/wordpress/{site.id}/install", json={**body, "subfolder": "blog"}).status_code == 200
+    assert made == ["wp_alice_example", "wp_alice_example_blog"] and installs == ["", "blog"]
+    names = sorted(row.db_name for row in env.db.query(DatabaseAccount).filter_by(website_id=site.id))
+    assert names == ["wp_alice_example", "wp_alice_example_blog"]
+    env.db.refresh(site)
+    assert site.app_type == "wordpress"
+    assert client.post(f"/api/maintenance/wordpress/{site.id}/install", json={**body, "subfolder": "wp-admin"}).status_code == 400
