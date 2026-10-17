@@ -3408,6 +3408,8 @@ function App() {
           setTimeout(() => {
             if (selectedWebsiteId) listBackups();
             if (selectedBackupUserId) listUserBackups(selectedBackupUserId);
+            // A schedule's row says how its last run went.
+            if (isAdmin) loadBackupSchedules();
           }, 0);
         }
         return data.jobs;
@@ -3664,7 +3666,9 @@ function App() {
     const data = await request(`/maintenance/backup-schedules/${item.id}/run`, { method: 'POST' }, tr("Starting schedule..."));
     if (data) {
       setNotice(tr("Schedule started. Watch Backup logs for progress."));
-      loadBackupJobs();
+      // A small account can be done before the first poll sees it running.
+      await loadBackupJobs();
+      await loadBackupSchedules();
     }
   }
 
