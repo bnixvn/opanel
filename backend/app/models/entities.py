@@ -711,6 +711,8 @@ class WpInstall(Base):
     themes_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     themes_updates: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     inventory: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    # A staging copy: the WordPress it was copied from, which a push goes back to.
+    staging_of: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

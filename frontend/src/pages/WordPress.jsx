@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Activity, AlertTriangle, ArrowLeft, Bug, CheckCircle2, CircleHelp, Copy, Download, ExternalLink, History, KeyRound, LogIn, Package, Palette,
-  Plus, RefreshCw, RotateCcw, ScanSearch, Search, Settings2, ShieldCheck, Trash2, Wrench, X,
+  Activity, AlertTriangle, ArrowLeft, ArrowUpFromLine, Bug, CheckCircle2, CircleHelp, Copy, Download, ExternalLink, Gauge, History, KeyRound, Layers,
+  LogIn, Package, Palette, Plus, RefreshCw, RotateCcw, ScanSearch, Search, Settings2, ShieldCheck, Trash2, Upload, Wrench, X,
 } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
@@ -37,6 +37,10 @@ const JOB_LABELS = {
   point_create: msg('Restore point'),
   point_restore: msg('Roll back'),
   point_delete: msg('Delete restore point'),
+  clone: msg('Staging copy'),
+  push: msg('Push to live'),
+  upload: msg('Upload'),
+  lscache: msg('LiteSpeed Cache'),
 };
 
 // Each security check, in the words for when it is fine and when it is not.
@@ -164,6 +168,8 @@ export default function WordPressPage() {
     if (data) watch(data);
     return data;
   }
+  // A task started some other way (an upload): followed like the rest.
+  post.watch = watch;
 
   function openInstall(id) {
     setInstallId(id);
@@ -281,7 +287,7 @@ export default function WordPressPage() {
           </table>
         </div>}
     </section>
-    <InstallDrawer open={installing} websites={overview.websites.filter((w) => !withWordPress.has(w.id))} busy={busy}
+    <InstallDrawer open={installing} websites={overview.websites} rooted={withWordPress} busy={busy}
       close={() => setInstalling(false)}
       submit={async (websiteId, body) => {
         const data = await request(`/maintenance/wordpress/${websiteId}/install`, { method: 'POST', body: JSON.stringify(body) }, t('Installing WordPress...'));
@@ -295,33 +301,54 @@ export default function WordPressPage() {
 
 // WordPress on a website that has none yet, at its root: the panel makes
 // its database and installs it as the website's user.
-function InstallDrawer({ open, websites, busy, close, submit }) {
+// The languages WordPress is offered in here; any other code WordPress has works too.
+const LOCALES = [['', msg('English (default)')], ['vi', 'Tiếng Việt'], ['fr_FR', 'Français'], ['de_DE', 'Deutsch'], ['es_ES', 'Español'],
+  ['ja', '日本語'], ['zh_CN', '简体中文'], ['ko_KR', '한국어'], ['th', 'ไทย'], ['id_ID', 'Bahasa Indonesia']];
+
+function InstallDrawer({ open, websites, rooted, busy, close, submit }) {
   const t = useT();
-  const [form, setForm] = useState({ website_id: '', title: '', admin_user: 'admin', admin_email: '', admin_password: '' });
+  const [form, setForm] = useState({ website_id: '', title: '', admin_user: 'admin', admin_email: '', admin_password: '', subfolder: '', locale: '' });
   const [tried, setTried] = useState(false);
   const set = (key) => (value) => setForm((prev) => ({ ...prev, [key]: value }));
-  const siteId = form.website_id || String(websites[0]?.id || '');
-  const site = websites.find((w) => String(w.id) === siteId);
+  // At a website's root only where it has no WordPress; in a subfolder of any.
+  const sub = form.subfolder.trim().toLowerCase();
+  const choices = sub ? websites : websites.filter((w) => !rooted.has(w.id));
+  const siteId = choices.some((w) => String(w.id) === form.website_id) ? form.website_id : String(choices[0]?.id || '');
+  const site = choices.find((w) => String(w.id) === siteId);
   const problems = {
     admin_user: !form.admin_user.trim() ? t('Type the admin user name.') : '',
     admin_password: form.admin_password.length < 12 ? t('At least 12 characters.') : '',
+    subfolder: sub && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(sub) ? t('Letters, digits, dots, dashes and underscores.') : '',
   };
   function onSubmit(event) {
     event.preventDefault();
     if (!site || Object.values(problems).some(Boolean)) { setTried(true); return; }
-    submit(site.id, { title: form.title || site.domain, admin_user: form.admin_user.trim(), admin_email: form.admin_email.trim() || `admin@${site.domain}`, admin_password: form.admin_password });
+    submit(site.id, {
+      title: form.title || site.domain, admin_user: form.admin_user.trim(), admin_email: form.admin_email.trim() || `admin@${site.domain}`,
+      admin_password: form.admin_password, subfolder: sub, locale: form.locale,
+    });
   }
   return <Drawer open={open} onClose={close} title={t('Install WordPress')}
-    subtitle={t('On a website that has none yet: the panel makes its database and installs WordPress in its public_html.')}
+    subtitle={t('The panel makes its database and installs WordPress as the website\'s user - at the website\'s root, or in a folder of it.')}
     footer={<>
       <button type="button" className="secondary-light" onClick={close}>{t('Cancel')}</button>
       <button type="submit" form="wpm-install-form" disabled={busy || !site}><Download size={14} aria-hidden="true"/> {t('Install WordPress')}</button>
     </>}>
-    {websites.length === 0 ? <p className="hint">{t('Every website already has a WordPress, or there is no website yet.')}</p>
+    {websites.length === 0 ? <p className="hint">{t('There is no website yet.')}</p>
       : <form id="wpm-install-form" noValidate onSubmit={onSubmit}>
-        <Field label={t('Website')}>
-          <select value={siteId} onChange={(e) => set('website_id')(e.target.value)}>
-            {websites.map((w) => <option key={w.id} value={w.id}>{w.domain}{w.owner_username ? ` (${w.owner_username})` : ''}</option>)}
+        <div className="sn-drawer-grid">
+          <Field label={t('Website')} hint={!sub && choices.length < websites.length ? t('Websites with a WordPress at their root take one in a folder.') : undefined}>
+            <select value={siteId} onChange={(e) => set('website_id')(e.target.value)}>
+              {choices.map((w) => <option key={w.id} value={w.id}>{w.domain}{w.owner_username ? ` (${w.owner_username})` : ''}</option>)}
+            </select>
+          </Field>
+          <Field label={t('Folder')} optional hint={site ? (sub ? `${site.domain}/${sub}` : t('Empty: the website\'s root')) : undefined} error={tried ? problems.subfolder : ''}>
+            <input value={form.subfolder} onChange={(e) => set('subfolder')(e.target.value)} placeholder="blog" autoComplete="off" spellCheck={false}/>
+          </Field>
+        </div>
+        <Field label={t('Language')}>
+          <select value={form.locale} onChange={(e) => set('locale')(e.target.value)}>
+            {LOCALES.map(([code, label]) => <option key={code} value={code}>{t(label)}</option>)}
           </select>
         </Field>
         <Field label={t('Site title')} optional><input value={form.title} onChange={(e) => set('title')(e.target.value)} placeholder={site?.domain || ''}/></Field>
@@ -342,6 +369,8 @@ const TABS = [
   ['themes', Palette, msg('Themes')],
   ['security', ShieldCheck, msg('Security')],
   ['points', History, msg('Restore points')],
+  ['staging', Layers, msg('Staging')],
+  ['cache', Gauge, msg('LiteSpeed Cache')],
   ['activity', ScanSearch, msg('Activity')],
 ];
 
@@ -383,6 +412,8 @@ function ManageView({ id, detail, back, reload, post, signIn, setSecret, busy })
       {tab === 'themes' && <Items kind="theme" detail={detail} items={inv.themes || []} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'security' && <Security detail={detail} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'points' && <RestorePoints detail={detail} base={base} post={post} busy={busy || !usable}/>}
+      {tab === 'staging' && <Staging detail={detail} base={base} post={post} busy={busy || !usable}/>}
+      {tab === 'cache' && <LsCache detail={detail} inv={inv} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'activity' && <ActivityTab detail={detail}/>}
     </section>
   </>;
@@ -487,6 +518,15 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
     const data = await request(`${base}/search?kind=${kind}&q=${encodeURIComponent(query.trim())}`, {}, t('Searching wordpress.org...'));
     if (data) setFound(data.items);
   }
+  // A .zip of a plugin or theme from elsewhere (a paid one, a developer's).
+  async function upload(file, activate) {
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    form.append('activate', activate ? '1' : '0');
+    const data = await request(`${path}/upload`, { method: 'POST', body: form }, t('Uploading {name}...', { name: file.name }));
+    if (data) post.watch(data);
+  }
   async function remove(item) {
     if (!(await confirmDialog({
       title: plugin ? t('Delete the plugin {name}?', { name: item.title || item.name }) : t('Delete the theme {name}?', { name: item.title || item.name }),
@@ -518,6 +558,16 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
           </div>
         </div>)}
       </div>)}
+      <div className="wpm-upload">
+        <strong>{plugin ? t('Or upload a plugin\'s .zip') : t('Or upload a theme\'s .zip')}</strong>
+        <small>{t('A plugin or theme from elsewhere - bought, or your developer\'s. Up to 64 MB.')}</small>
+        <div className="wpm-row-actions">
+          <label className={`upload-button secondary-light${busy ? ' is-disabled' : ''}`}><Upload size={14} aria-hidden="true"/> {t('Upload')}
+            <input type="file" accept=".zip,application/zip" disabled={busy} onChange={(e) => { upload(e.target.files?.[0], false); e.target.value = ''; }}/></label>
+          <label className={`upload-button${busy ? ' is-disabled' : ''}`}><Upload size={14} aria-hidden="true"/> {t('Upload and activate')}
+            <input type="file" accept=".zip,application/zip" disabled={busy} onChange={(e) => { upload(e.target.files?.[0], true); e.target.value = ''; }}/></label>
+        </div>
+      </div>
     </div>}
     {items.length === 0 ? <p className="hint">{t('None found yet: refresh.')}</p> : <div className="data-table-wrap">
       <table className="data-table wpm-items wpm-cards">
@@ -658,6 +708,80 @@ function RestorePoints({ detail, base, post, busy }) {
 }
 
 // What was done to this WordPress, newest first, with each task's log.
+// A staging copy, as SNPanel's: the WordPress copied - files and database -
+// into another website of the same account, to try changes on; and pushed
+// back over the live one when they are right (a restore point first).
+function Staging({ detail, base, post, busy }) {
+  const t = useT();
+  const { request } = usePanel();
+  const [targets, setTargets] = useState(null);
+  const [target, setTarget] = useState('');
+  useEffect(() => {
+    if (detail.staging_of) return;
+    request(`${base}/clone-targets`, { silent: true }).then((data) => { if (data) setTargets(data.websites || []); });
+  }, [detail.id]);
+  const usable = (targets || []).filter((site) => site.ok);
+  const chosen = usable.some((site) => String(site.id) === target) ? target : String(usable[0]?.id || '');
+  if (detail.staging_of) {
+    const live = detail.staging_of;
+    return <div className="wpm-tab">
+      <p className="wpm-staging-note"><Layers size={15} aria-hidden="true"/> {t('This WordPress is a staging copy of {domain}.', { domain: live.domain })}</p>
+      <div className="wpm-toolbar">
+        <button type="button" disabled={busy} onClick={async () => (await confirmDialog({
+          title: t('Push this copy to {domain}?', { domain: live.domain }),
+          message: t('The live site\'s files and database are replaced by this copy\'s, its address put back. A restore point of the live site is taken first; its wp-config.php is kept.'),
+          confirmLabel: t('Push to live'), danger: true,
+        })) && post(`${base}/push`, {}, t('Starting...'))}><ArrowUpFromLine size={15} aria-hidden="true"/> {t('Push to {domain}', { domain: live.domain })}</button>
+      </div>
+      <p className="hint">{t('Files that were removed from the copy stay on the live site; a plugin deleted here is deleted there by WordPress, not by the push.')}</p>
+    </div>;
+  }
+  return <div className="wpm-tab">
+    {(detail.staging_copies || []).length > 0 && <>
+      <h3 className="wpm-subhead">{t('Staging copies')}</h3>
+      <ul className="wpm-copies">{detail.staging_copies.map((copy) => <li key={copy.id}>
+        <a href={`/wordpress?install=${copy.id}`}>{copy.domain}{copy.rel_path ? `/${copy.rel_path}` : ''}</a>
+        {copy.created_at && <small> · {when(copy.created_at)}</small>}
+      </li>)}</ul>
+    </>}
+    <h3 className="wpm-subhead">{t('Make a staging copy')}</h3>
+    <p className="hint">{t('The files and the database are copied into another website of the same account, whose folder is still empty, with its address put in. Search engines are asked not to index the copy.')}</p>
+    {targets === null ? <p className="hint">{t('Loading...')}</p>
+      : usable.length === 0 ? <p className="hint">{t('No website of this account can take a copy: add a website (for example staging.{domain}) and come back.', { domain: detail.domain })}</p>
+        : <div className="wpm-toolbar">
+          <select value={chosen} onChange={(e) => setTarget(e.target.value)} aria-label={t('Copy to')}>
+            {usable.map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}
+          </select>
+          <button type="button" disabled={busy || !chosen} onClick={async () => (await confirmDialog({
+            title: t('Copy this WordPress to {domain}?', { domain: usable.find((site) => String(site.id) === chosen)?.domain }),
+            message: t('A new database is made for the copy.'), confirmLabel: t('Make the copy'),
+          })) && post(`${base}/clone`, { website_id: Number(chosen) }, t('Starting...'))}><Layers size={15} aria-hidden="true"/> {t('Make the copy')}</button>
+        </div>}
+    {(targets || []).filter((site) => !site.ok).length > 0 && <details className="wpm-more"><summary>{t('Websites that cannot take a copy')}</summary>
+      <ul>{targets.filter((site) => !site.ok).map((site) => <li key={site.id}><code>{site.domain}</code>: {site.reason}</li>)}</ul></details>}
+  </div>;
+}
+
+// The LiteSpeed Cache plugin, which decides what LiteSpeed caches for the site.
+function LsCache({ detail, inv, base, post, busy }) {
+  const t = useT();
+  const plugin = (inv.plugins || []).find((item) => item.name === 'litespeed-cache');
+  const active = plugin && (plugin.status === 'active' || plugin.status === 'active-network');
+  const run = (action, label) => post(`${base}/lscache`, { action }, label || t('Starting...'));
+  return <div className="wpm-tab">
+    <p className="hint">{t('LiteSpeed serves cached pages without running PHP; the LiteSpeed Cache plugin tells it what may be cached and empties it when a post changes. The website\'s Cache tab must be on as well.')}</p>
+    <div className="wpm-facts">
+      <div><span>{t('Plugin')}</span><strong>{plugin ? (active ? t('Active') : t('Inactive')) : t('Not installed')}</strong>{plugin?.version && <small>{plugin.version}</small>}</div>
+    </div>
+    <div className="wpm-toolbar">
+      {!plugin && <button type="button" disabled={busy} onClick={() => run('install')}><Download size={15} aria-hidden="true"/> {t('Install and activate')}</button>}
+      {plugin && !active && <button type="button" disabled={busy} onClick={() => run('activate')}>{t('Activate')}</button>}
+      {active && <button type="button" disabled={busy} onClick={() => run('purge')}><RefreshCw size={15} aria-hidden="true"/> {t('Purge the cache')}</button>}
+      {active && <button type="button" className="secondary-light" disabled={busy} onClick={() => run('deactivate')}>{t('Deactivate')}</button>}
+    </div>
+  </div>;
+}
+
 function ActivityTab({ detail }) {
   const t = useT();
   const jobs = detail.jobs || [];

@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 import paramiko
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -2408,6 +2408,9 @@ class WpInstallRequest(BaseModel):
     admin_email: str = ""
     admin_password: str = ""
     title: str = ""
+    # In a folder of the website (example.com/blog) rather than at its root, and in a language.
+    subfolder: str = Field(default="", max_length=64)
+    locale: str = Field(default="", max_length=16)
 
 @router.post("/wordpress/{website_id}/install")
 def install_wordpress_on_site(website_id: int, payload: WpInstallRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -2423,7 +2426,17 @@ def install_wordpress_on_site(website_id: int, payload: WpInstallRequest, reques
 
     # Check if WP already installed (wp-config.php exists)
     from pathlib import Path
-    wp_config = Path(website.root_path) / (website.document_root or "public_html") / "wp-config.php"
+    subfolder = (payload.subfolder or "").strip().lower().strip("/")
+    if subfolder and (not wordpress.SUBFOLDER_RE.fullmatch(subfolder) or subfolder in {"wp-admin", "wp-content", "wp-includes", "cgi-bin"}):
+        raise HTTPException(status_code=400, detail="Choose another folder name")
+    if payload.locale and not wordpress.LOCALE_RE.fullmatch(payload.locale):
+        raise HTTPException(status_code=400, detail="Unknown language code")
+    folder = Path(website.root_path) / (website.document_root or "public_html")
+    if subfolder:
+        folder = folder / subfolder
+        if folder.exists() and any(folder.iterdir()):
+            raise HTTPException(status_code=400, detail=f"The folder {subfolder} is not empty")
+    wp_config = folder / "wp-config.php"
     if wp_config.exists():
         raise HTTPException(status_code=400, detail="WordPress is already installed on this site")
 
@@ -2439,14 +2452,17 @@ def install_wordpress_on_site(website_id: int, payload: WpInstallRequest, reques
             website.domain, db_info, payload.title,
             payload.admin_user, payload.admin_password, payload.admin_email,
             website.php_version, website.linux_user, root_path=website.root_path,
+            subfolder=subfolder, locale=payload.locale or "",
         )
     except (RuntimeError, ValueError) as exc:
         mariadb.drop_database(db_info["db_name"], db_info["db_user"])
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Update website app_type
-    website.app_type = "wordpress"
-    website.nginx_rewrite_mode = "front_controller"
+    # Update website app_type - a WordPress at the root only: one in a folder
+    # leaves the website as it was.
+    if not subfolder:
+        website.app_type = "wordpress"
+        website.nginx_rewrite_mode = "front_controller"
     db.commit()
 
     # Rewrite the vhost from the website as it stands, so it keeps its WAF,

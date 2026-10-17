@@ -23,7 +23,7 @@ LIMITS = {
     "conn_hard": (1, 100000), "grace_secs": (1, 3600), "ban_secs": (0, 86400),
 }
 # Generous for a person browsing - a page and its files over HTTP/2 is one
-# connection and a few dozen requests - short for a flood.
+# connection and a few dozen requests - short for a burst from one address.
 DEFAULTS = {"static_rps": 200, "dynamic_rps": 20, "conn_soft": 60, "conn_hard": 120, "grace_secs": 15, "ban_secs": 60}
 # LiteSpeed's values when nothing limits a client.
 OFF = {"static_rps": 0, "dynamic_rps": 0, "conn_soft": 10000, "conn_hard": 10000, "grace_secs": 15, "ban_secs": 300}

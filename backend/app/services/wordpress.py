@@ -60,6 +60,11 @@ def _render_wp_config(db_name: str, db_user: str, db_password: str) -> str:
     )
 
 
+# A WordPress in a folder of the website (example.com/blog), and its language.
+SUBFOLDER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+LOCALE_RE = re.compile(r"^[a-z]{2,3}(_[A-Z]{2})?(_[a-z]+)?$")
+
+
 def _safe_value(value: str, pattern: re.Pattern, label: str) -> str:
     value = (value or "").strip()
     if value.startswith("-") or "\x00" in value or not pattern.fullmatch(value):
@@ -81,8 +86,15 @@ def install_wordpress(
     php_version: str,
     linux_user: str | None = None,
     root_path: str | None = None,
+    subfolder: str = "",
+    locale: str = "",
 ) -> str:
+    """WordPress in the website's public folder, or in `subfolder` of it, in `locale`'s language."""
     safe_user = _safe_value(admin_user, WP_USER_RE, "WordPress admin username")
+    if subfolder and not SUBFOLDER_RE.fullmatch(subfolder):
+        raise ValueError("The folder is letters, digits, dots, dashes and underscores")
+    if locale and not LOCALE_RE.fullmatch(locale):
+        raise ValueError("Unknown language code")
     safe_title = _safe_value(title, WP_TITLE_RE, "WordPress site title")
     safe_email = _safe_value(admin_email, EMAIL_RE, "WordPress admin email")
     if not isinstance(admin_password, str) or len(admin_password) < 10 or "\x00" in admin_password:
@@ -90,14 +102,19 @@ def install_wordpress(
 
     root = Path(root_path or site_root(domain))
     public = site_users.document_root(root)
+    if subfolder:
+        public = public / subfolder
     linux_user = linux_user or site_users.ensure_site_runtime(domain, str(root), php_version)
     wp_path = f"--path={public}"
+    config_relative = str(public.relative_to(root.resolve()) if public.is_relative_to(root.resolve()) else Path("public_html") / subfolder).replace("\\", "/") + "/wp-config.php"
+    site_url = f"https://{domain}" + (f"/{subfolder}" if subfolder else "")
 
     # WP-CLI runs as this website's isolated Linux user through the helper.
+    download = ["core", "download", wp_path] + ([f"--locale={locale}"] if locale else [])
     shell.privileged(
         "wp-site",
-        helper_args=[linux_user, "core", "download", wp_path],
-        fallback=["wp", "core", "download", wp_path],
+        helper_args=[linux_user, *download],
+        fallback=["wp", *download],
     )
 
     # Render wp-config.php directly to avoid leaking the DB password through
@@ -108,7 +125,7 @@ def install_wordpress(
     if not settings.command_dry_run:
         shell.privileged(
             "site-file-write",
-            helper_args=[linux_user, str(root), "public_html/wp-config.php", "0644"],
+            helper_args=[linux_user, str(root), config_relative, "0644"],
             fallback=[
                 "sh",
                 "-c",
@@ -129,7 +146,7 @@ def install_wordpress(
 
     install_args = [
         "core", "install", wp_path,
-        f"--url=https://{domain}",
+        f"--url={site_url}",
         f"--title={safe_title}",
         f"--admin_user={safe_user}",
         f"--admin_email={safe_email}",
@@ -149,7 +166,7 @@ def install_wordpress(
     if not settings.command_dry_run:
         shell.privileged(
             "site-file-write",
-            helper_args=[linux_user, str(root), "public_html/wp-config.php", "0644"],
+            helper_args=[linux_user, str(root), config_relative, "0644"],
             fallback=[
                 "sh",
                 "-c",

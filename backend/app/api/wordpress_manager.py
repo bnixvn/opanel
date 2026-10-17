@@ -14,7 +14,10 @@ from __future__ import annotations
 import json
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+import secrets
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -23,8 +26,11 @@ from app.core.access import ensure_owner_access, scope_owner
 from app.core.database import get_db
 from app.core.permissions import is_admin_role
 from app.models.entities import User, Website, WpInstall, WpJob
-from app.services import wp_manager
+from app.services import wp_extras, wp_manager
 from app.services.audit import log_action
+
+# Where an uploaded .zip waits for the helper to hand it to the account (wp-upload-place).
+UPLOAD_DIR = Path("/var/lib/opanel/wp-uploads")
 
 
 def _require_enabled() -> None:
@@ -80,6 +86,14 @@ class UserIn(BaseModel):
 class HardenIn(BaseModel):
     item: str
     revert: bool = False
+
+
+class CloneIn(BaseModel):
+    website_id: int = Field(gt=0)
+
+
+class LsCacheIn(BaseModel):
+    action: str = Field(pattern="^(install|activate|deactivate|purge)$")
 
 
 # --- Shapes ------------------------------------------------------------------------------
@@ -171,6 +185,15 @@ def detail(install_id: int, db: Session = Depends(get_db), current_user: User = 
                        "scanned_at": (out["inventory"].get("security_full") or {}).get("scanned_at")}
     jobs = db.query(WpJob).filter(WpJob.install_id == install.id).order_by(WpJob.id.desc()).limit(20).all()
     out["jobs"] = [_job_out(job) for job in jobs]
+    # A staging copy names its live site; a live site lists its copies.
+    live = db.get(WpInstall, install.staging_of) if install.staging_of else None
+    live_site = db.get(Website, live.website_id) if live else None
+    out["staging_of"] = {"id": live.id, "domain": live_site.domain, "rel_path": live.rel_path} if live and live_site else None
+    copies = db.query(WpInstall).filter(WpInstall.staging_of == install.id).all()
+    sites = {site.id: site for site in db.query(Website).filter(Website.id.in_([c.website_id for c in copies])).all()} if copies else {}
+    out["staging_copies"] = [{"id": copy.id, "domain": sites[copy.website_id].domain, "rel_path": copy.rel_path,
+                              "created_at": copy.created_at.isoformat() + "Z" if getattr(copy, "created_at", None) else None}
+                             for copy in copies if copy.website_id in sites]
     return out
 
 
@@ -233,6 +256,82 @@ def _task(db: Session, current_user: User, install_id: int, kind: str, params: d
     log_action(db, current_user.id, f"wordpress_{kind}", install.url or website.domain,
                json.dumps(params)[:200] if params else "", request=request)
     return _job_answer(job)
+
+
+@router.get("/installs/{install_id}/clone-targets")
+def clone_targets(install_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The account's other websites, each with whether it can take a staging copy."""
+    install, website = _install_for(db, current_user, install_id)
+    return {"websites": wp_extras.clone_targets(db, install, website)}
+
+
+@router.post("/installs/{install_id}/clone")
+def clone(install_id: int, payload: CloneIn, request: Request, db: Session = Depends(get_db),
+          current_user: User = Depends(get_current_user)):
+    install, website = _install_for(db, current_user, install_id)
+    target = db.get(Website, payload.website_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Website not found")
+    ensure_owner_access(db, current_user, target.owner_id)
+    allowed = {item["id"]: item for item in wp_extras.clone_targets(db, install, website)}
+    if payload.website_id not in allowed or not allowed[payload.website_id]["ok"]:
+        raise HTTPException(status_code=400, detail=allowed.get(payload.website_id, {}).get("reason") or "That website cannot take a copy")
+    return _task(db, current_user, install_id, "clone", {"website_id": payload.website_id, "domain": target.domain}, request)
+
+
+@router.post("/installs/{install_id}/push")
+def push(install_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    install, _ = _install_for(db, current_user, install_id)
+    if not install.staging_of:
+        raise HTTPException(status_code=400, detail="This WordPress is not a staging copy")
+    return _task(db, current_user, install_id, "push", {}, request)
+
+
+@router.post("/installs/{install_id}/lscache")
+def lscache(install_id: int, payload: LsCacheIn, request: Request, db: Session = Depends(get_db),
+            current_user: User = Depends(get_current_user)):
+    return _task(db, current_user, install_id, "lscache", {"action": payload.action}, request)
+
+
+async def _take_upload(file: UploadFile) -> str:
+    """The .zip saved where the helper takes it from, its size and kind checked."""
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = UPLOAD_DIR / f"{secrets.token_hex(12)}.zip"
+    size = 0
+    try:
+        with target.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > wp_extras.UPLOAD_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="The file is larger than 64 MB")
+                out.write(chunk)
+        with target.open("rb") as check:
+            if check.read(4) != b"PK\x03\x04":
+                raise HTTPException(status_code=400, detail="That is not a .zip file")
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return str(target)
+
+
+@router.post("/installs/{install_id}/plugins/upload")
+async def upload_plugin(install_id: int, request: Request, file: UploadFile = File(...), activate: str = Form("0"),
+                        db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    install, _ = _install_for(db, current_user, install_id)
+    _usable(install)
+    staged = await _take_upload(file)
+    return _task(db, current_user, install_id, "upload",
+                 {"kind": "plugin", "file": staged, "name": file.filename or "plugin.zip", "activate": activate in {"1", "true"}}, request)
+
+
+@router.post("/installs/{install_id}/themes/upload")
+async def upload_theme(install_id: int, request: Request, file: UploadFile = File(...), activate: str = Form("0"),
+                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    install, _ = _install_for(db, current_user, install_id)
+    _usable(install)
+    staged = await _take_upload(file)
+    return _task(db, current_user, install_id, "upload",
+                 {"kind": "theme", "file": staged, "name": file.filename or "theme.zip", "activate": activate in {"1", "true"}}, request)
 
 
 @router.post("/installs/{install_id}/refresh")

@@ -9864,6 +9864,54 @@ PY
     exec runuser -u "$user" -- rm -rf -- "$point"
     ;;
 
+  wp-stage-dir)
+    # The account's scratch folder for a WordPress export or an upload: made
+    # for it (its home is root's, the SFTP jail), as its own, private.
+    [[ $# -eq 1 ]] || deny "usage: wp-stage-dir <site-user>"
+    require_linux_user "$1"
+    install -d -o "$1" -g "$1" -m 0700 "$HOME_ROOT/$1/.opanel-wp-stage"
+    echo "$HOME_ROOT/$1/.opanel-wp-stage"
+    ;;
+
+  wp-stage-clear)
+    [[ $# -eq 1 ]] || deny "usage: wp-stage-clear <site-user>"
+    require_linux_user "$1"
+    stage="$HOME_ROOT/$1/.opanel-wp-stage"
+    [[ -d "$stage" && ! -L "$stage" ]] || exit 0
+    exec runuser -u "$1" -- find "$stage" -mindepth 1 -delete
+    ;;
+
+  wp-copy)
+    # A WordPress's files into another folder of the same account, as the
+    # account: a staging copy, or one pushed back ("keep-config" leaves the
+    # target's wp-config.php and .user.ini alone). Caches are not copied.
+    [[ $# -eq 4 ]] || deny "usage: wp-copy <site-user> <from> <to> <all|keep-config>"
+    user="$1"; mode="$4"
+    require_linux_user "$user"
+    from=$(require_managed_path "$2" "$user")
+    to=$(require_managed_path "$3" "$user")
+    [[ "$mode" == all || "$mode" == keep-config ]] || deny "invalid copy mode"
+    [[ "$from" != "$to" && "$to" != "$from"/* && "$from" != "$to"/* ]] || deny "the two folders overlap"
+    [[ -d "$from" ]] || deny "no folder to copy from: $from"
+    copy_args=(-a --exclude=/wp-content/cache/ --exclude=/wp-content/litespeed/ --exclude=/.well-known/)
+    if [[ "$mode" == keep-config ]]; then copy_args+=(--exclude=/wp-config.php --exclude=/.user.ini); fi
+    runuser -u "$user" -- mkdir -p "$to"
+    exec runuser -u "$user" -- rsync "${copy_args[@]}" "$from/" "$to/"
+    ;;
+
+  wp-upload-place)
+    # An uploaded plugin or theme .zip, from the panel's waiting folder into
+    # the account's scratch folder, owned by the account.
+    [[ $# -eq 3 ]] || deny "usage: wp-upload-place <site-user> <staged> <name>"
+    user="$1"; staged="$2"; name="$3"
+    require_linux_user "$user"
+    [[ "$staged" =~ ^/var/lib/opanel/wp-uploads/[a-f0-9]{24}\.zip$ && -f "$staged" && ! -L "$staged" ]] || deny "invalid upload: $staged"
+    [[ "$name" =~ ^[A-Za-z0-9._-]{1,80}\.zip$ ]] || deny "invalid file name: $name"
+    install -d -o "$user" -g "$user" -m 0700 "$HOME_ROOT/$user/.opanel-wp-stage"
+    install -o "$user" -g "$user" -m 0600 "$staged" "$HOME_ROOT/$user/.opanel-wp-stage/$name"
+    echo "$HOME_ROOT/$user/.opanel-wp-stage/$name"
+    ;;
+
   wp-site)
     [[ $# -ge 2 ]] || deny "usage: wp-site <site-user> <args...>"
     user="$1"; shift

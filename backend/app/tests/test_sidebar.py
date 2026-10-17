@@ -37,8 +37,8 @@ def test_each_role_has_its_short_sidebar():
 
 def test_the_hubs_hold_the_rest_as_tabs():
     server = re.findall(r"page: '(\w+)'", _hub("server"))
-    assert server == ["processes", "usage", "ramUsage", "diskUsage", "traffic", "php", "services", "updates"]
-    assert re.findall(r"page: '(\w+)'", _hub("security-center")) == ["firewall", "waf", "wafLogs", "malware"]
+    assert server == ["processes", "usage", "ramUsage", "diskUsage", "traffic", "php", "mysql", "services", "updates"]
+    assert re.findall(r"page: '(\w+)'", _hub("security-center")) == ["firewall", "waf", "autossl", "wafLogs", "malware"]
     assert re.findall(r"page: '(\w+)'", _hub("config")) == ["settings", "addons", "notifications"]
     assert re.findall(r"page: '(\w+)'", _hub("files")) == ["files", "sftp", "terminal"]
     assert re.findall(r"page: '(\w+)'", _hub("account")) == ["security", "usage"]

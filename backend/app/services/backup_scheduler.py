@@ -332,6 +332,13 @@ if __name__ == "__main__":
         notifications.tick()
     except Exception as exc:  # noqa: BLE001 - never fail the backup run for it
         print(f"opanel notifications tick failed: {exc}")
+    # WordPress Manager: each WordPress read again once a day (a no-op without the addon).
+    try:
+        from app.services import wp_extras
+
+        wp_extras.daily_tick()
+    except Exception as exc:  # noqa: BLE001
+        print(f"opanel WordPress daily check failed: {exc}")
     # AutoSSL: a certificate for the websites whose names point here (a no-op while it is off).
     try:
         from app.services import autossl

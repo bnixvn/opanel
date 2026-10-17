@@ -170,3 +170,13 @@
 
 /* On a wide screen a row's buttons stay on one line. */
 @media (min-width:761px){.wpm-row-actions{flex-wrap:nowrap}}
+
+/* An uploaded .zip, staging copies, LiteSpeed Cache (2026-10-17). */
+.wpm-upload{display:grid;gap:6px;padding-top:10px;border-top:1px solid var(--border)}
+.wpm-upload small{color:var(--text-muted);font-size:12.5px}
+.wpm-upload .upload-button.is-disabled{opacity:1;pointer-events:none;color:var(--text-muted)}
+.wpm-staging-note{display:flex;align-items:center;gap:8px;margin:0;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt);color:var(--text)}
+.wpm-copies{margin:0;padding-left:18px;display:grid;gap:4px}
+.wpm-copies small{color:var(--text-muted)}
+.wpm-more summary{cursor:pointer;color:var(--text);font-size:13px}
+.wpm-more ul{margin:6px 0 0;padding-left:18px;font-size:13px;color:var(--text)}
