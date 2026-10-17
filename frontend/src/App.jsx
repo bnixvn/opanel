@@ -7405,12 +7405,13 @@ function App() {
     </section>;
   }
 
+  // The server's services, as SNPanel's: each one's state, and only the
+  // actions that apply to it - a running service restarts or stops, a
+  // stopped one starts; while its state is unknown, all of them.
   function renderServices() {
-    return <section className="section">
-      <div className="section-title">
-        <div><h2>{tr("Services")}</h2><p className="hint">{tr("Auto-refreshes every 10s")}</p></div>
-        <button className="secondary" disabled={!!loading} onClick={checkAllServices}><RefreshCw size={15}/> {tr("Refresh")}</button>
-      </div>
+    return <>
+      <PageHeader subtitle={tr("Auto-refreshes every 10s")} onRefresh={checkAllServices} refreshDisabled={!!loading}/>
+      <section className="section">
       <div className="service-grid">
         {serviceNames.map(name => {
           const state = serviceStates[name];
@@ -7420,14 +7421,15 @@ function App() {
           return <div className="service-card" key={name}>
             <div><strong>{name}</strong><span className={active ? 'badge ok' : inactive ? 'badge bad' : 'badge'}>{active ? tr("Running") : inactive ? tr("Stopped") : '...'}</span></div>
             {isAdmin && <div className="service-actions">
-              <button className="secondary" disabled={active} onClick={() => runServiceAction(name, 'start')}><Play size={13}/> {tr("Start")}</button>
-              {!['opanel-api', 'redis-server'].includes(name) && <button className="danger-light" disabled={inactive} onClick={() => runServiceAction(name, 'stop')}><Square size={13}/> {tr("Stop")}</button>}
-              <button className="secondary" onClick={() => runServiceAction(name, 'restart')}><RotateCcw size={13}/> {tr("Restart")}</button>
+              {!active && <button className="mini" disabled={!!loading} onClick={() => runServiceAction(name, 'start')}><Play size={13}/> {tr("Start")}</button>}
+              {!inactive && <button className="mini secondary-light" disabled={!!loading} onClick={() => runServiceAction(name, 'restart')}><RotateCcw size={13}/> {tr("Restart")}</button>}
+              {!inactive && !['opanel-api', 'redis-server'].includes(name) && <button className="mini danger-light" disabled={!!loading} onClick={() => runServiceAction(name, 'stop')}><Square size={13}/> {tr("Stop")}</button>}
             </div>}
           </div>;
         })}
       </div>
-    </section>;
+      </section>
+    </>;
   }
 
   // One table for every installed PHP version: a column per version, and a
