@@ -129,7 +129,7 @@ def test_installing_wordpress_on_a_site_keeps_its_vhost_whole(env, monkeypatch):
 
     rewritten = []
     monkeypatch.setattr(maintenance_api.mariadb, "create_database",
-                        lambda domain: {"db_name": "d", "db_user": "u", "db_password": "p"})
+                        lambda domain, **kw: {"db_name": "d", "db_user": "u", "db_password": "p"})
     monkeypatch.setattr(maintenance_api.wordpress, "install_wordpress", lambda *a, **k: None)
     monkeypatch.setattr(websites_api, "_rewrite_website_vhost", lambda website, **k: rewritten.append(
         (website.domain, website.app_type, website.nginx_rewrite_mode, k)))
