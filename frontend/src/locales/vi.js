@@ -929,7 +929,7 @@ export default {
   "Group": "Nhóm",
   "CPU (%)": "CPU (%)",
   "RAM (MB)": "RAM (MB)",
-  "Processes": "Số tiến trình",
+  "Processes": "Tiến trình",
   "Disk read (MB/s)": "Đọc đĩa (MB/s)",
   "Disk write (MB/s)": "Ghi đĩa (MB/s)",
   "Disk I/O": "Đọc/ghi đĩa",
