@@ -407,11 +407,16 @@ def serve_spa(full_path: str):
         requested.relative_to(frontend_dist.resolve())
     except ValueError:
         raise HTTPException(status_code=404, detail="Not found")
-    if requested.is_file():
+    index = frontend_dist / "index.html"
+    if requested.is_file() and requested != index.resolve():
         return FileResponse(requested)
     if full_path.startswith("assets/"):
         raise HTTPException(status_code=404, detail="Not found")
-    index = frontend_dist / "index.html"
     if index.exists():
-        return FileResponse(index)
+        # Asked for again every time (a 304 when unchanged). Without it the
+        # browser kept the page on its own heuristic: a tab brought back after
+        # sleep was drawn from the cache, its session check found no network
+        # yet, and the sign-in form came up with nothing wrong on the server
+        # (operator, 2026-10-16). It also picks up a new release at once.
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
     return {"detail": "Frontend build not found", "path": str(index)}
