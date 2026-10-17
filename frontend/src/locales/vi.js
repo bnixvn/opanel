@@ -2893,4 +2893,9 @@ export default {
   "What the server is running, read from top -c every 3 seconds. Click a column to sort by it.": "Những gì máy chủ đang chạy, đọc từ top -c mỗi 3 giây. Bấm vào một cột để sắp xếp theo cột đó.",
   "Zombie": "Zombie",
   "{shown} of {total} processes": "{shown}/{total} tiến trình",
+  "Configure {0}": "Cấu hình {0}",
+  "Not protected": "Chưa bảo vệ",
+  "One switch per website: the panel's rules check each request before it reaches the site.": "Mỗi website một công tắc: quy tắc của panel kiểm tra từng yêu cầu trước khi nó tới website.",
+  "Protected": "Được bảo vệ",
+  "{0} of {1} website(s) protected": "{0}/{1} website được bảo vệ",
 };

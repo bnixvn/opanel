@@ -7689,50 +7689,54 @@ function App() {
     </>;
   }
 
+  // The WAF page, as SNPanel's: the engine and how many websites it guards,
+  // one switch per website with the way to its own rules, then the bad bots
+  // every website blocks.
   function renderWaf() {
+    if (wafSiteConfig) return renderWafSite();
     // The status probe prints "installed" or "not-installed"; that is all the page needs to say.
     const wafProbe = `${wafRules.status?.stdout || ''}`;
     const wafEngine = /not-installed/.test(wafProbe) ? 'off' : /\binstalled\b/.test(wafProbe) ? 'on' : 'unknown';
+    const protectedCount = websites.filter(site => site.waf_enabled).length;
     return <>
-      {!wafSiteConfig && <>
-        {isAdmin && <section className="section">
-          <div className="section-title">
-            <div>
-              <h2>{tr("Global bad bot")} <span className="badge">{badBots.patterns.length}</span></h2>
-              <p className="hint">{tr("One bot per line, applied to every website. A request whose User-Agent contains the text gets 403 — plain text, no regex.")}</p>
-            </div>
-            <button className="secondary" disabled={!!loading} onClick={loadBadBots}><RefreshCw size={14}/> {tr("Refresh")}</button>
-          </div>
-          <textarea className="code-editor badbot-input" value={badBotText} onChange={e => setBadBotText(e.target.value)}
-            spellCheck={false}
-            placeholder={tr("AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider")} />
-          <div className="actions"><button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> {tr("Save and apply to all websites")}</button></div>
-        </section>}
+      <PageHeader subtitle={tr("One switch per website: the panel's rules check each request before it reaches the site.")}
+        onRefresh={() => { if (isAdmin) { loadWafRules(); loadBadBots(); } refreshAll(); }} refreshDisabled={!!loading}/>
+      {isAdmin && <div className="waf-status-line">
+        <span className={wafEngine === 'on' ? 'badge ok' : wafEngine === 'off' ? 'badge bad' : 'badge'}>{wafEngine === 'on' ? tr("WAF engine on") : wafEngine === 'off' ? tr("WAF engine off") : tr("WAF engine: checking…")}</span>
+        <span className="badge">{tr("{0} of {1} website(s) protected", protectedCount, websites.length)}</span>
+      </div>}
 
-        <section className="section">
-          <div className="section-title">
-            <div>
-              <h2>{isAdmin ? tr("Websites") : tr("Your websites")} {isAdmin && <span className={wafEngine === 'on' ? 'badge ok' : wafEngine === 'off' ? 'badge warn' : 'badge'}>{wafEngine === 'on' ? tr("WAF engine on") : wafEngine === 'off' ? tr("WAF engine off") : tr("WAF engine: checking…")}</span>}</h2>
-              <p className="hint">{tr("Open a website to configure its rules and bad bots.")}</p>
-            </div>
-            {isAdmin && <button className="secondary" disabled={!!loading} onClick={loadWafRules}><RefreshCw size={14}/> {tr("Refresh")}</button>}
-          </div>
-          {websites.length === 0
-            ? <EmptyState icon={Globe} message={tr("No websites yet.")} />
-            : <div className="waf-site-table">
-                {websites.map(site => <button key={site.id} type="button" className="waf-site-row"
-                  disabled={!!loading} onClick={() => loadWebsiteWafConfig(site.id)}>
-                  <span className="waf-site-domain">{site.domain}</span>
-                  <span className="waf-site-badges">
-                    <span className={site.waf_enabled ? 'badge ok' : 'badge'}>{site.waf_enabled ? tr("WAF on") : tr("WAF off")}</span>
-                  </span>
-                  <span className="waf-site-open">{tr("Configure")}</span>
-                </button>)}
-              </div>}
-        </section>
-      </>}
+      <section className="section">
+        <div className="section-title"><div><h2>{isAdmin ? tr("Websites") : tr("Your websites")}</h2>
+          <p className="hint">{tr("Open a website to configure its rules and bad bots.")}</p></div></div>
+        {websites.length === 0
+          ? <EmptyState icon={Globe} message={tr("No websites yet.")} />
+          : <div className="waf-sites">
+            {websites.map(site => <div className="waf-site-row" key={site.id}>
+              <Switch checked={!!site.waf_enabled} disabled={!!loading || wafEngine === 'off'}
+                onChange={() => toggleWebsiteWaf(site)} label={tr("WAF for {0}", site.domain)}/>
+              <div className="waf-site-name">
+                <strong>{site.domain}</strong>
+                <small>{site.waf_enabled ? tr("Protected") : tr("Not protected")}</small>
+              </div>
+              <button type="button" className="secondary-light" disabled={!!loading} onClick={() => loadWebsiteWafConfig(site.id)}
+                aria-label={tr("Configure {0}", site.domain)}><SettingsIcon size={14}/> {tr("Configure")}</button>
+            </div>)}
+          </div>}
+      </section>
 
-      {wafSiteConfig && renderWafSite()}
+      {isAdmin && <section className="section">
+        <div className="section-title">
+          <div>
+            <h2>{tr("Global bad bot")} <span className="badge">{badBots.patterns.length}</span></h2>
+            <p className="hint">{tr("One bot per line, applied to every website. A request whose User-Agent contains the text gets 403 — plain text, no regex.")}</p>
+          </div>
+        </div>
+        <textarea className="code-editor badbot-input" value={badBotText} onChange={e => setBadBotText(e.target.value)}
+          spellCheck={false}
+          placeholder={tr("AhrefsBot\nSemrushBot\nMJ12bot\nGPTBot\nBytespider")} />
+        <div className="actions"><button disabled={!!loading} onClick={saveBadBots}><Shield size={14}/> {tr("Save and apply to all websites")}</button></div>
+      </section>}
     </>;
   }
 
