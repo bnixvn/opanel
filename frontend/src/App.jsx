@@ -5710,9 +5710,9 @@ function App() {
     return Number.isFinite(ms) ? formatFileTime(ms / 1000) : '';
   }
 
-  // DirectAdmin's restore, step by step: where the backups are, what it takes
-  // to reach them, which accounts, go. OPanel and DirectAdmin archives share
-  // the list; each is restored by its own importer.
+  // A restore in DirectAdmin's steps: where the backups are, what it takes to
+  // reach them, which accounts, go. On Backup & Restore the panel's own
+  // backups; on each migration addon's page that panel's (RESTORE_MODES).
   function renderRestoreWizard() {
     const allGroups = restoreGroups();
     const needle = restoreFilter.trim().toLowerCase();

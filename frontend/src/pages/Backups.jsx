@@ -162,7 +162,7 @@ export default function BackupsPage() {
     website: scope === 'user'
       ? t('Includes the panel user, all owned websites, source files, database dumps, and restore metadata.')
       : t('Backups include website source files and a database SQL export.'),
-    restore: t('OPanel and DirectAdmin backups: choose where they are, pick the accounts, then restore.'),
+    restore: t("The panel's account backups: choose where they are, pick the accounts, then restore."),
     schedule: t('Full user backups on a timetable, kept here or sent to a destination.'),
     destination: t('Where off-server backup copies are sent. SFTP, or any S3-compatible object storage.'),
     logs: t('Recent queued, running, completed, and failed backup tasks.'),

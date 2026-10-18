@@ -3378,4 +3378,5 @@ export default {
   "The {name} Import addon is off.": "Addon Nhập từ {name} đang tắt.",
   "{0} backups uploaded here, or put in the SFTP folder.": "Bản sao lưu {0} tải lên đây, hoặc đặt vào thư mục SFTP.",
   "{name} Import": "Nhập từ {name}",
+  "The panel's account backups: choose where they are, pick the accounts, then restore.": "Bản sao lưu tài khoản của panel: chọn nơi chứa, chọn tài khoản, rồi khôi phục.",
 };
