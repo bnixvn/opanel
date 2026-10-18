@@ -66,3 +66,11 @@ def test_a_removed_php_extension_leaves_no_ini_behind():
     assert 'purge -y "$pkg"' in body and 'remove -y "$pkg"' not in body
     packages = (SRC.parents[1] / "installer" / "files" / "opanel-packages.sh").read_text(encoding="utf-8")
     assert "purge_lsphp_leftover_configs" in packages and '$1 == "rc"' in packages
+
+
+def test_an_end_user_never_sees_the_panel_version_or_its_update():
+    """An end user's account menu showed the plain version number even though
+    update-available status was already admin-only (found live on .41)."""
+    body = APP[APP.index("appVersion && isAdmin"):APP.index("user-menu-logout")]
+    assert "appVersion && isAdmin &&" in body
+    assert "user-menu-version'" not in body and 'user-menu-version"' not in body

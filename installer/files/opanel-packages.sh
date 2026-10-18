@@ -11,16 +11,27 @@
 #     published SHA-384, into /usr/local/bin, and self-updates on each run;
 #     it runs on the system PHP (php-cli, from main, which Ubuntu patches);
 #   - the panel's Python lives in its own venv, whose pip is upgraded there;
-#     the system-wide pip and wheel were never used.
+#     the system-wide pip and wheel were never used;
+#   - phpMyAdmin comes from files/opanel-phpmyadmin.sh (upstream, checksummed)
+#     instead of apt's `phpmyadmin`, which pulls apache2 (its only php-json
+#     provider in Debian's graph is libapache2-mod-php) plus six
+#     php-symfony-*, php-twig and a dozen php-composer-*/php-phpmyadmin-*
+#     packages -- all esm-apps too. OpenLiteSpeed has always served it; Apache
+#     never ran.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export COMPOSER_ALLOW_SUPERUSER=1
 
 COMPOSER_BIN=/usr/local/bin/composer
-# What composer and pip brought in and nothing else needs once they are gone.
-# Matched by name, so a package an administrator installed for a reason of
-# their own is never swept up with them.
-LEFTOVERS_RE='^(composer|jsonlint|php-composer-[a-z-]+|php-symfony-[a-z0-9-]+|php-psr-[a-z-]+|php-react-promise|php-seld-[a-z-]+|php-json-schema|php-intl|php[0-9.]+-intl|python3-pip|python3-wheel)$'
+PMA_MARKER=/usr/share/phpmyadmin/.opanel-version
+# What composer, pip and apt's phpmyadmin brought in and nothing else needs
+# once they are gone. Matched by name, so a package an administrator installed
+# for a reason of their own is never swept up with them.
+# php-mbstring deliberately stays out of this list even though phpmyadmin was
+# its only apt-tracked dependent: WP-CLI runs under this same system php-cli
+# (installer/files/opanel-helper.sh wp-site) and needs it. autoremove only
+# sees apt's graph, not that, so the allowlist is what protects it.
+LEFTOVERS_RE='^(composer|jsonlint|php-composer-[a-z-]+|php-symfony-[a-z0-9-]+|php-psr-[a-z-]+|php-react-promise|php-seld-[a-z-]+|php-json-schema|php-intl|php[0-9.]+-intl|python3-pip|python3-wheel|php-phpmyadmin-[a-z]+|php-twig(-i18n-extension)?|php-google-recaptcha|php-nikic-fast-route|php-slim-psr7|php-webmozart-assert|php-mariadb-mysql-kbs|libjs-[a-z0-9.-]+)$'
 
 log() { echo "[packages] $*"; }
 
@@ -72,8 +83,10 @@ purge_only() {
 
 remove_universe_leftovers() {
   local remove=() name
-  # The apt composer goes only once ours is in place.
+  # The apt composer goes only once ours is in place; apt's phpmyadmin only
+  # once opanel-phpmyadmin.sh has put a working upstream copy there.
   if dpkg -s composer >/dev/null 2>&1 && [[ -x "$COMPOSER_BIN" ]]; then remove+=(composer); fi
+  if dpkg -s phpmyadmin >/dev/null 2>&1 && [[ -f "$PMA_MARKER" ]]; then remove+=(phpmyadmin); fi
   for name in python3-pip python3-wheel; do
     dpkg -s "$name" >/dev/null 2>&1 && remove+=("$name")
   done
@@ -81,6 +94,23 @@ remove_universe_leftovers() {
   # Then what they had pulled in and nothing needs now.
   mapfile -t remove < <(apt-get -s autoremove 2>/dev/null | awk '/^Remv/{print $2}' | grep -E "$LEFTOVERS_RE" || true)
   purge_only "${remove[@]}"
+}
+
+# Apache came in only as apt's phpmyadmin's php-json provider (OpenLiteSpeed
+# has always served phpMyAdmin itself; Apache never ran). Purged only once it
+# is confirmed inactive -- a VPS where an administrator deliberately runs
+# something else on it is left alone, same guard host_trim uses at install
+# time. ssl-cert stays manual: its snakeoil certificate serves the tools port.
+remove_apache_if_unused() {
+  local purge=() pkg
+  dpkg -s apache2 >/dev/null 2>&1 || return 0
+  systemctl is-active --quiet apache2 2>/dev/null && return 0
+  for pkg in apache2 apache2-bin apache2-data apache2-utils $(dpkg-query -W 'libapache2-mod-php*' 2>/dev/null | awk '{print $1}'); do
+    dpkg -s "$pkg" >/dev/null 2>&1 && purge+=("$pkg")
+  done
+  ((${#purge[@]})) || return 0
+  apt-mark manual ssl-cert >/dev/null 2>&1 || true
+  purge_only "${purge[@]}"
 }
 
 # A PHP extension the panel removed before it purged them left its .ini behind
@@ -97,4 +127,5 @@ purge_lsphp_leftover_configs() {
 ensure_php_cli
 install_composer || true
 remove_universe_leftovers
+remove_apache_if_unused
 purge_lsphp_leftover_configs

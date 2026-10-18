@@ -615,8 +615,16 @@ ensure_terminal_tools() {
     DEBIAN_FRONTEND=noninteractive apt-get update --allow-releaseinfo-change
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
   fi
-  # composer from upstream, and the universe packages the panel no longer
-  # installs (composer's php-symfony-*, python3-pip) taken off (2026-10-18).
+  # phpMyAdmin from upstream (skips when already at the pinned version), then
+  # composer from upstream and the universe packages the panel no longer
+  # installs (apt's phpmyadmin and its apache2/php-symfony-*/php-twig chain,
+  # composer's php-symfony-*, python3-pip) taken off (2026-10-18). phpMyAdmin
+  # goes first: it fills /usr/share/phpmyadmin back in before the apt package
+  # that owned it is purged, so there is no gap with no phpMyAdmin at all.
+  if [[ -f "$SOURCE_DIR/installer/files/opanel-phpmyadmin.sh" ]]; then
+    bash "$SOURCE_DIR/installer/files/opanel-phpmyadmin.sh" || log "WARNING: phpMyAdmin was not updated; it runs again on the next update"
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper refresh-tools >/dev/null 2>&1 || true
+  fi
   if [[ -f "$SOURCE_DIR/installer/files/opanel-packages.sh" ]]; then
     bash "$SOURCE_DIR/installer/files/opanel-packages.sh" || log "WARNING: the package tidy-up did not finish; it runs again on the next update"
   fi

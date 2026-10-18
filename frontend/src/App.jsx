@@ -9204,12 +9204,13 @@ function App() {
                 <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); openProfileModal(); }}><KeyRound size={15}/>{tr("Profile")}</button>
                 <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); navigateToPage('security'); }}><LockKeyhole size={15}/>{tr("Account security")}</button>
                 {currentUser?.impersonator && <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); returnToImpersonator(); }}><ArrowLeft size={15}/>{tr("Back to {0}", currentUser.impersonator)}</button>}
-                {appVersion && (isAdmin
-                  ? <button type="button" role="menuitem" className={`user-menu-version-item${panelWaiting ? ' has-update' : ''}`} onClick={() => { setUserMenuOpen(false); navigateToPage('updates'); }}>
-                    <RefreshCw size={15}/><span>{panelSettings.app_name || 'OPanel'} v{appVersion}</span>
-                    <small>{panelWaiting ? tr("Panel update {0} is available.", resourceUsage?.panel_update?.latest_version) : tr("Updates")}</small>
-                  </button>
-                  : <small className="user-menu-version">{panelSettings.app_name || 'OPanel'} v{appVersion}</small>)}
+                {/* The panel's own version, and whether an update is waiting, is an
+                    administrator's concern (operator, 2026-10-18: an end user
+                    must not see it, not even the plain version number). */}
+                {appVersion && isAdmin && <button type="button" role="menuitem" className={`user-menu-version-item${panelWaiting ? ' has-update' : ''}`} onClick={() => { setUserMenuOpen(false); navigateToPage('updates'); }}>
+                  <RefreshCw size={15}/><span>{panelSettings.app_name || 'OPanel'} v{appVersion}</span>
+                  <small>{panelWaiting ? tr("Panel update {0} is available.", resourceUsage?.panel_update?.latest_version) : tr("Updates")}</small>
+                </button>}
                 <button type="button" role="menuitem" className="user-menu-logout" onClick={() => { setUserMenuOpen(false); logout(); }}><LogOut size={15}/>{tr("Logout")}</button>
               </div>}
             </div>

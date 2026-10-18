@@ -53,7 +53,6 @@ h1,h2,h3,h4{letter-spacing:0}
 }
 .sidebar .sidebar-tool:hover:not(:disabled){background:var(--nav-hover);color:var(--nav-text-strong);border-color:var(--nav-border)}
 .sidebar .sidebar-user .user-menu-panel{top:auto;bottom:calc(100% + 8px);left:0;right:auto;width:min(260px,calc(var(--sidebar-width) - 20px))}
-.user-menu-version{display:block;padding:6px 10px 2px;font-size:12px;color:var(--text-muted)}
 .sidebar .sidebar-close{background:transparent;color:var(--nav-text);border:1px solid transparent}
 .sidebar .sidebar-close:hover:not(:disabled){background:var(--nav-hover);color:var(--nav-text-strong);border-color:var(--nav-border)}
 .sidebar{scrollbar-color:var(--nav-border) transparent}

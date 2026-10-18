@@ -951,20 +951,96 @@ for link in phpmyadmin.rglob('*'):
                 shutil.copy2(str(target), str(link))
 " 2>/dev/null || true
   fi
-  sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
-  sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
+  # /usr/share/phpmyadmin/opanel-signon.php lives inside the folder a
+  # phpMyAdmin (re)install replaces wholesale (opanel-phpmyadmin.sh), so it is
+  # written fresh here rather than patched in place -- a sed on a file a
+  # version bump had already replaced did nothing, and single sign-on answered
+  # 404 (found switching off the Debian package, 2026-10-18).
+  local pma_signon_secret
+  pma_signon_secret="$(env_get PMA_SIGNON_SECRET)"
+  if [[ -n "$pma_signon_secret" ]]; then
+    cat >/usr/share/phpmyadmin/opanel-signon.php <<'SIGNON'
+<?php
+declare(strict_types=1);
+
+session_save_path('/var/lib/php/pma-sessions');
+ini_set('session.use_cookies', 'true');
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'domain' => '',
+    'secure' => __opanel_PMA_COOKIE_SECURE__,
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
+session_name('opanelPmaSignon');
+if (!session_start()) {
+    http_response_code(500);
+    exit('Cannot start signon session');
+}
+
+$token = $_GET['opanel_sso'] ?? '';
+if (!preg_match('/^[A-Za-z0-9_-]{20,}$/', $token)) {
+    http_response_code(403);
+    exit('Invalid token');
+}
+
+$apiUrl = '__opanel_API_BASE__' . rawurlencode($token);
+$ch = curl_init($apiUrl);
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_TIMEOUT => 5,
+    CURLOPT_SSL_VERIFYPEER => false,
+    CURLOPT_SSL_VERIFYHOST => false,
+    CURLOPT_HTTPHEADER => ['Accept: application/json', 'X-OPanel-Signon-Secret: __opanel_PMA_SIGNON_SECRET__'],
+]);
+$response = curl_exec($ch);
+$status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
+
+if ($status !== 200 || !$response) {
+    http_response_code(403);
+    exit('Expired token');
+}
+
+$data = json_decode($response, true);
+if (!is_array($data) || empty($data['db_user']) || empty($data['db_password'])) {
+    http_response_code(403);
+    exit('Invalid signon data');
+}
+
+session_regenerate_id(true);
+$_SESSION = [];
+$_SESSION['PMA_single_signon_user'] = $data['db_user'];
+$_SESSION['PMA_single_signon_password'] = $data['db_password'];
+$_SESSION['PMA_single_signon_host'] = 'localhost';
+$_SESSION['PMA_single_signon_port'] = '';
+$_SESSION['PMA_single_signon_cfgupdate'] = [
+    'only_db' => $data['db_name'] ?? '',
+];
+$_SESSION['PMA_single_signon_HMAC_secret'] = bin2hex(random_bytes(16));
+session_write_close();
+
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Location: /phpmyadmin/index.php?server=1');
+exit;
+SIGNON
+    sed -i "s#__opanel_API_BASE__#${api_scheme}://127.0.0.1:${port}/api/databases/phpmyadmin-sso/#" /usr/share/phpmyadmin/opanel-signon.php
+    sed -i "s#__opanel_PMA_COOKIE_SECURE__#${pma_secure}#" /usr/share/phpmyadmin/opanel-signon.php
+    sed -i "s#__opanel_PMA_SIGNON_SECRET__#${pma_signon_secret}#" /usr/share/phpmyadmin/opanel-signon.php
+  fi
+  # conf.d/opanel-signon.php sits outside /usr/share/phpmyadmin, so a
+  # phpMyAdmin (re)install never touches it; patched in place as before.
+  sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
   # Migrate the sign-on session store off the shared parent. install.sh writes
   # the new path for fresh installs, but an existing box only ever gets a new
   # helper -- and ensure_php_runtime_dirs now tightens /var/lib/php/sessions to
   # 0751 root:root, which would leave phpMyAdmin unable to write its sessions
   # there. Doing it here means the fix arrives with the helper instead of one
   # release late.
-  sed -i -E "s#/var/lib/php/sessions'#/var/lib/php/pma-sessions'#g" \
-    /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
+  sed -i -E "s#/var/lib/php/sessions'#/var/lib/php/pma-sessions'#g" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
   [[ -n "$host" ]] && sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
-  local pma_signon_secret
-  pma_signon_secret="$(env_get PMA_SIGNON_SECRET)"
-  [[ -n "$pma_signon_secret" ]] && sed -i -E "s#(X-OPanel-Signon-Secret: )[^']*#\1${pma_signon_secret}#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   # This file holds the signon secret, so it is group-readable and no wider.
   # The previous comment here claimed 0640 could not work because the group is
   # opanel-sites rather than www-data -- but www-data is added to opanel-sites
