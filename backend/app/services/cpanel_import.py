@@ -402,7 +402,7 @@ def _add_parked(db, main_domain: str, parked: list[str], summary: dict) -> None:
         return
     db.commit()
     db.refresh(website)
-    summary["aliases"] = added
+    summary.setdefault("aliases", []).extend(added)
     try:
         from app.api.websites import _rewrite_website_vhost
 

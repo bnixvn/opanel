@@ -44,7 +44,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cpanel_import, cron, da_import, demo_mode, migrate_ssh, file_manager, mariadb, notifications, ols_throttle, php, restore_jobs, restore_sources, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cpanel_import, cron, da_import, demo_mode, fastpanel_import, migrate_ssh, file_manager, mariadb, notifications, ols_throttle, php, restore_jobs, restore_sources, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -1322,6 +1322,14 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
                         note += f", {len(result['certificates'])} cert(s)"
                     if result.get("ssl_warnings"):
                         note += f", SSL not restored for {len(result['ssl_warnings'])}"
+                    done.append(note)
+                    if record_id:
+                        restore_jobs.item(record_id, index - 1, status="done", note=note)
+                elif kind == restore_sources.KIND_FASTPANEL:
+                    _set_backup_job(job_id, message=f"Importing {name} (FastPanel) {position}", progress_label=name)
+                    summary = fastpanel_import.import_fastpanel_backup(local_path, db, overwrite=overwrite)
+                    log_action(db, request_user_id, "fastpanel_import", name, "overwrite" if overwrite else "")
+                    note = _da_summary_note(name, summary, "FastPanel")
                     done.append(note)
                     if record_id:
                         restore_jobs.item(record_id, index - 1, status="done", note=note)

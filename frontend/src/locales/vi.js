@@ -3379,4 +3379,12 @@ export default {
   "{0} backups uploaded here, or put in the SFTP folder.": "Bản sao lưu {0} tải lên đây, hoặc đặt vào thư mục SFTP.",
   "{name} Import": "Nhập từ {name}",
   "The panel's account backups: choose where they are, pick the accounts, then restore.": "Bản sao lưu tài khoản của panel: chọn nơi chứa, chọn tài khoản, rồi khôi phục.",
+  "Accounts from a FastPanel server, straight off it over SSH: FastPanel keeps files and databases in separate backups, so the panel packs each account itself.": "Tài khoản từ máy chủ FastPanel, lấy thẳng qua SSH: bản sao lưu của FastPanel tách riêng file và cơ sở dữ liệu, nên panel tự đóng gói từng tài khoản.",
+  "FastPanel Import": "Nhập từ FastPanel",
+  "FastPanel server": "Máy chủ FastPanel",
+  "Sign in as root over SSH: the panel packs each account you pick - its sites, databases and certificates - and brings it over.": "Đăng nhập root qua SSH: panel đóng gói từng tài khoản bạn chọn - website, cơ sở dữ liệu và chứng chỉ - rồi mang về đây.",
+  "Move accounts from FastPanel, straight off the server over SSH.": "Chuyển tài khoản từ FastPanel, lấy thẳng từ máy chủ qua SSH.",
+  "FastPanel's own backups keep a site's files and its databases apart, so the panel signs in to the FastPanel server as root and packs each account picked itself: every site's files, the databases its configs name, its other domain names and its certificate. Each comes back as a panel account with its websites, aliases, databases and SSL. It is in Migration > FastPanel.": "Bản sao lưu của FastPanel để file và cơ sở dữ liệu của website riêng nhau, nên panel đăng nhập root vào máy chủ FastPanel và tự đóng gói từng tài khoản được chọn: file của mọi website, các cơ sở dữ liệu mà cấu hình website nhắc tới, các tên miền khác và chứng chỉ SSL. Mỗi tài khoản trở thành một tài khoản panel với website, alias, cơ sở dữ liệu và SSL. Nằm ở Chuyển dữ liệu > FastPanel.",
+  "The root login is used for that import only and never saved. Each account is packed into a private folder there, downloaded, and that folder is removed.": "Thông tin đăng nhập root chỉ dùng cho lần nhập đó và không bao giờ được lưu. Mỗi tài khoản được đóng gói vào một thư mục riêng ở đó, tải về, rồi thư mục đó bị xóa.",
+  "Email accounts, cron jobs and DNS zones are not imported.": "Tài khoản email, cron job và vùng DNS không được nhập.",
 };

@@ -62,6 +62,7 @@ export const TILES = {
   // Migration: each import addon's page, in the Migration hub.
   'da-import': { label: msg('DirectAdmin Import'), icon: 'directadmin-import', page: 'importDirectadmin', roles: ['admin'], addon: 'directadmin' },
   'cpanel-import': { label: msg('cPanel Import'), icon: 'cpanel-import', page: 'importCpanel', roles: ['admin'], addon: 'cpanel' },
+  'fastpanel-import': { label: msg('FastPanel Import'), icon: 'migration', page: 'importFastpanel', roles: ['admin'], addon: 'fastpanel' },
   // Extensions
   addons: { label: msg('Manage addons'), icon: 'addons', page: 'addons', roles: ['admin'] },
 };
@@ -76,7 +77,7 @@ const ADMIN = [
   ['security', msg('Security'), ['firewall', 'waf', 'access-logs', 'fail2ban', 'malware', 'security']],
   ['server', msg('Server'), ['php', 'services', 'processes', 'ram', 'disk', 'traffic', 'account-resources', 'updates']],
   ['advanced', msg('Advanced'), ['cron', 'mcp', 'notifications', 'panel-settings']],
-  ['migration', msg('Migration'), ['da-import', 'cpanel-import']],
+  ['migration', msg('Migration'), ['da-import', 'cpanel-import', 'fastpanel-import']],
   ['extensions', msg('Extensions'), ['addons']],
 ];
 const CUSTOMER = [

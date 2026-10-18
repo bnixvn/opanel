@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     da_backup_dir: str = "/home/admin/opanel-backups/da"
     # cPanel archives waiting to be restored (the cPanel Import addon).
     cpanel_backup_dir: str = "/home/admin/opanel-backups/cpanel"
+    # FastPanel accounts pulled over SSH, until each is restored (FastPanel Import).
+    fastpanel_backup_dir: str = "/home/admin/opanel-backups/fastpanel"
     # Legacy field kept for migration; use webserver_vhosts_dir instead
     nginx_sites_available: str = "/usr/local/lsws/conf/opanel/vhosts"
     # OpenLiteSpeed paths

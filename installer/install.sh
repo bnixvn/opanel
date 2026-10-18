@@ -650,6 +650,8 @@ setup_panel_user() {
   install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/da
   # cPanel archives waiting to be restored (the cPanel Import addon).
   install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/cpanel
+  # FastPanel accounts pulled over SSH, until each is restored (FastPanel Import).
+  install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/fastpanel
   # The admin's SFTP drop folder for large backups, which Restore > This server
   # lists. setgid opanel, so the panel can read what the admin's login uploads.
   inbox_owner=root

@@ -252,6 +252,9 @@ class _FakeServer:
             return 0, "/usr/local/directadmin/data/users/admin/user.conf\n", ""
         if command.startswith("chown"):
             return 0, "", ""
+        if command.startswith("U="):
+            # FastPanel: the account packed by the panel's own script.
+            return (1, "", "no sites for bob") if self.fail_pack else (0, "fastpanel-bob.tar.gz\n", "")
         if command.startswith("find "):
             name = "cpmove-bob.tar.gz" if self.panel == "cpanel" else "user.admin.bob.tar.zst"
             return 0, f"{name}\t1234\n", ""
@@ -276,7 +279,8 @@ class _FakeServer:
         return Sftp()
 
 
-@pytest.mark.parametrize("panel, name", [("cpanel", "cpmove-bob.tar.gz"), ("directadmin", "user.admin.bob.tar.zst")])
+@pytest.mark.parametrize("panel, name", [("cpanel", "cpmove-bob.tar.gz"), ("directadmin", "user.admin.bob.tar.zst"),
+                                         ("fastpanel", "fastpanel-bob.tar.gz")])
 def test_an_account_is_packed_there_downloaded_and_the_folder_removed(tmp_path, monkeypatch, panel, name):
     server = _FakeServer(panel)
     monkeypatch.setattr(migrate_ssh, "_exec", server.run)
@@ -285,6 +289,10 @@ def test_an_account_is_packed_there_downloaded_and_the_folder_removed(tmp_path, 
     assert Path(got) == tmp_path / name and Path(got).read_bytes() == b"archive"
     assert server.downloaded == f"{server.folder}/{name}"
     assert server.removed == [f"rm -rf -- {server.folder}"]
+    if panel == "fastpanel":
+        pack = next(c for c in server.commands if c.startswith("U="))
+        assert pack.startswith(f"U=bob W={server.folder} bash -c ")
+        return
     pack = next(c for c in server.commands if "pkgacct" in c or "taskq" in c)
     if panel == "cpanel":
         assert pack.startswith(f"/usr/local/cpanel/scripts/pkgacct bob {server.folder} ")
@@ -393,3 +401,75 @@ def test_the_wizard_page_sends_its_kinds():
     assert "kinds: RESTORE_MODES[restoreMode].kinds" in app_src
     assert "opanel: { kinds: ['opanel'], sources: ['local', 'target', 'remote'] }" in app_src
     assert "DirectAdmin" not in app_src[app_src.index("    const sourceCards = {"):app_src.index("'ssh-directadmin': [Server")]
+
+
+
+# --- FastPanel --------------------------------------------------------------------------------------
+
+def test_fastpanel_accounts_are_read_and_the_pack_script_quotes_nothing_raw():
+    rows = migrate_ssh.parse_fastpanel_accounts("bob\tbob.test,shop.test\t1234\nmail\t\t0\nBad\tx.test\t1\n")
+    assert [(r["account"], r["domain"], r["note"], r["kind"]) for r in rows] == [("bob", "bob.test", "2 site(s)", "fastpanel")]
+    with pytest.raises(migrate_ssh.MigrateError):
+        migrate_ssh.parse_fastpanel_accounts("NOT_FASTPANEL")
+    script = migrate_ssh._FASTPANEL_PACK
+    # Only checked names reach mysqldump and tar.
+    assert "grep -Eq '^[A-Za-z0-9_]{1,64}$'" in script and "--transform=s#^var/www/$U/data/www/" in script
+    assert "--single-transaction" in script and 'echo "fastpanel-$U.tar.gz"' in script
+
+
+def test_a_packed_fastpanel_account_comes_over_with_its_aliases(tmp_path, monkeypatch):
+    from app.services import fastpanel_import
+    folder = tmp_path / "fastpanel"
+    folder.mkdir()
+    monkeypatch.setattr(settings, "fastpanel_backup_dir", str(folder))
+    files = {
+        "backup/user.conf": "username=bob\nemail=\n",
+        "backup/domains.list": "bob.test\nshop.test\n",
+        "domains/bob.test/public_html/index.php": "<?php echo 1;",
+        "domains/bob.test/public_html/wp-config.php": ("<?php define('DB_NAME', 'bob_wp'); define('DB_USER', 'bob_wp');"
+                                                      " define('DB_PASSWORD', 'fp-pw'); define('DB_HOST', 'localhost');"),
+        "domains/shop.test/public_html/index.html": "shop",
+        "mysql/bob_wp.sql": "CREATE TABLE t (id int);",
+        "backup/bob.test/domain.cert": CERT,
+        "backup/bob.test/domain.key": KEY,
+        "opanel/aliases.tsv": "bob.test\tbob.test www.bob.test bob.net\nshop.test\tshop.test www.shop.test\n",
+    }
+    with tarfile.open(folder / "fastpanel-bob.tar.gz", "w:gz") as tar:
+        for name, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    created, certs = [], []
+    monkeypatch.setattr(site_users, "ensure_panel_user", lambda username, password: username)
+    monkeypatch.setattr(site_users, "site_root_for_panel_user", lambda user, domain: f"/home/{user}/{domain}")
+    monkeypatch.setattr(site_users, "ensure_site_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(site_users, "ensure_document_root", lambda root, doc, user: Path(root) / doc)
+    monkeypatch.setattr(site_users, "import_site_files", lambda *a, **k: None)
+    monkeypatch.setattr(site_users, "fix_site_permissions", lambda *a, **k: None)
+    monkeypatch.setattr(site_users, "site_lsphp_socket", lambda *a, **k: "/tmp/sock")
+    monkeypatch.setattr(mariadb, "assert_db_user_available", lambda *a, **k: None)
+    monkeypatch.setattr(mariadb, "create_database_credentials", lambda name, user, pw, **k: created.append((name, pw)))
+    monkeypatch.setattr(mariadb, "import_database", lambda name, path: None)
+    monkeypatch.setattr(da_import, "_update_app_db_config", lambda *a, **k: [])
+    monkeypatch.setattr(da_import, "_temporary_sql_file", lambda sql: Path(sql))
+    monkeypatch.setattr(openlitespeed, "rewrite_vhost", lambda *a, **k: None)
+    monkeypatch.setattr(openlitespeed, "reload_service", lambda: None)
+    monkeypatch.setattr(waf, "sync_website_rules", lambda *a, **k: SimpleNamespace(returncode=0))
+    from app.services import ssl as ssl_service
+    monkeypatch.setattr(ssl_service, "install_site_certificate", lambda domain, cert, key, ca: certs.append(domain) or {"cert": "c", "key": "k"})
+    monkeypatch.setattr(ssl_service, "certificate_expiry", lambda cert: None)
+    import app.api.websites as websites_api
+    monkeypatch.setattr(websites_api, "_rewrite_website_vhost", lambda website, **k: None)
+    import socket
+    monkeypatch.setattr(socket, "gethostbyname", lambda name: (_ for _ in ()).throw(socket.gaierror()))
+
+    summary = fastpanel_import.import_fastpanel_backup("fastpanel-bob.tar.gz", db)
+    assert sorted(summary["imported_domains"]) == ["bob.test", "shop.test"]
+    assert created == [("bob_wp", "fp-pw")] and certs == ["bob.test"]
+    # www. is served anyway; the other name becomes an alias.
+    assert [(a.domain, a.website.domain) for a in db.query(WebsiteAlias)] == [("bob.net", "bob.test")]
+    assert restore_sources.archive_kind("fastpanel-bob.tar.gz") == "fastpanel"

@@ -46,6 +46,7 @@ export const PAGE_TITLES = {
   wordpress: msg('WordPress Manager'),
   importDirectadmin: msg('DirectAdmin Import'),
   importCpanel: msg('cPanel Import'),
+  importFastpanel: msg('FastPanel Import'),
   processes: msg('Process monitor'),
   ramUsage: msg('RAM usage'),
   diskUsage: msg('Disk usage'),
@@ -102,6 +103,7 @@ export const HUBS = [
   { key: 'migration', title: msg('Migration'), roles: ['admin'], tabs: [
     { page: 'importDirectadmin', label: 'DirectAdmin', when: (c) => c.directadminImport },
     { page: 'importCpanel', label: 'cPanel', when: (c) => c.cpanelImport },
+    { page: 'importFastpanel', label: 'FastPanel', when: (c) => c.fastpanelImport },
   ] },
   { key: 'account', title: msg('Account'), roles: ['reseller', 'customer'], tabs: [
     { page: 'security', label: msg('Account security') },

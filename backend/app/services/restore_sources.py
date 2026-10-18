@@ -47,15 +47,17 @@ from typing import Callable, Iterator, Optional
 import paramiko
 
 from app.core.config import settings
-from app.services import addons, backup, cpanel_import, da_import, migrate_ssh
+from app.services import addons, backup, cpanel_import, da_import, fastpanel_import, migrate_ssh
 from app.services.shell import shell
 
 KIND_OPANEL = "opanel"
 KIND_DA = "directadmin"
 KIND_CPANEL = "cpanel"
-KIND_LABELS = {KIND_OPANEL: "OPanel", KIND_DA: "DirectAdmin", KIND_CPANEL: "cPanel"}
+# Packed by the panel itself off a FastPanel server (fastpanel_import).
+KIND_FASTPANEL = "fastpanel"
+KIND_LABELS = {KIND_OPANEL: "OPanel", KIND_DA: "DirectAdmin", KIND_CPANEL: "cPanel", KIND_FASTPANEL: "FastPanel"}
 # The addon each foreign kind belongs to; an OPanel backup needs none.
-KIND_ADDONS = {KIND_DA: "directadmin", KIND_CPANEL: "cpanel"}
+KIND_ADDONS = {KIND_DA: "directadmin", KIND_CPANEL: "cpanel", KIND_FASTPANEL: "fastpanel"}
 
 _WEEKDAYS = "|".join(backup.WEEKDAY_SLOTS)
 # <account>-<weekday>.tar.gz and <account>-manual-<weekday>.tar.gz: the names
@@ -159,6 +161,8 @@ def archive_kind(name: str) -> Optional[str]:
         return KIND_DA
     if cpanel_import.is_cpanel_name(base):
         return KIND_CPANEL
+    if fastpanel_import.is_fastpanel_name(base):
+        return KIND_FASTPANEL
     lower = base.lower()
     if lower.endswith(".tar.gz"):
         return KIND_OPANEL
@@ -179,6 +183,8 @@ def account_of(kind: str, name: str, folder: str = "") -> str:
         return match.group("user") if match else da_import._archive_username(base)
     if kind == KIND_CPANEL:
         return cpanel_import.account_of(base)
+    if kind == KIND_FASTPANEL:
+        return fastpanel_import.account_of(base)
     for pattern in (OPANEL_SLOT_RE, OPANEL_STAMP_RE, OPANEL_DATE_RE):
         match = pattern.match(base)
         if match:
@@ -677,6 +683,7 @@ def _destination(kind: str, name: str) -> Path:
     folder = {
         KIND_OPANEL: lambda: backup._user_restore_dir(),
         KIND_CPANEL: lambda: Path(settings.cpanel_backup_dir),
+        KIND_FASTPANEL: lambda: Path(settings.fastpanel_backup_dir),
     }.get(kind, lambda: Path(settings.da_backup_dir))().resolve()
     folder.mkdir(parents=True, exist_ok=True)
     safe = Path(name.replace("\\", "/")).name

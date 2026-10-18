@@ -21,6 +21,10 @@ const PANELS = {
     name: 'cPanel', flag: 'cpanelImport',
     subtitle: msg('Accounts from a cPanel server: straight off it over SSH (pkgacct), or from its cpmove backups.'),
   },
+  fastpanel: {
+    name: 'FastPanel', flag: 'fastpanelImport',
+    subtitle: msg('Accounts from a FastPanel server, straight off it over SSH: FastPanel keeps files and databases in separate backups, so the panel packs each account itself.'),
+  },
 };
 
 export default function ImportPage({ panel }) {

@@ -1092,7 +1092,7 @@ class RestoreRemoteIn(BaseModel):
     # What the server showed when it was listed; the download insists on it.
     host_key_fingerprint: str = Field(default="", max_length=128)
     # protocol "ssh": the control panel on that server, which packs the accounts.
-    panel: Optional[Literal["cpanel", "directadmin"]] = None
+    panel: Optional[Literal["cpanel", "directadmin", "fastpanel"]] = None
 
     @field_validator("host")
     @classmethod
@@ -1121,7 +1121,7 @@ class RestoreSourceIn(BaseModel):
     # Which kinds of archive the page asking reads: Backup & Restore only the
     # panel's own, each migration addon's page its own (2026-10-18). None is
     # every kind, for API callers.
-    kinds: Optional[list[Literal["opanel", "directadmin", "cpanel"]]] = Field(default=None, max_length=4)
+    kinds: Optional[list[Literal["opanel", "directadmin", "cpanel", "fastpanel"]]] = Field(default=None, max_length=4)
 
     @model_validator(mode="after")
     def source_has_what_it_needs(self):
@@ -1135,7 +1135,7 @@ class RestoreSourceIn(BaseModel):
 
 
 class RestoreRunItem(BaseModel):
-    kind: Literal["opanel", "directadmin", "cpanel"]
+    kind: Literal["opanel", "directadmin", "cpanel", "fastpanel"]
     ref: str = Field(min_length=1, max_length=1024)
 
     @field_validator("ref")

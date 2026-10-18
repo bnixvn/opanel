@@ -412,6 +412,32 @@ ADDONS: dict[str, dict] = {
             "restore says how many there were.",
         ],
     },
+    "fastpanel": {
+        "id": "fastpanel",
+        "name": "FastPanel Import",
+        "summary": "Move accounts from FastPanel, straight off the server over SSH.",
+        "description": (
+            "FastPanel's own backups keep a site's files and its databases apart, "
+            "so the panel signs in to the FastPanel server as root and packs each "
+            "account picked itself: every site's files, the databases its "
+            "configs name, its other domain names and its certificate. Each comes "
+            "back as a panel account with its websites, aliases, databases and "
+            "SSL. It is in Migration > FastPanel."
+        ),
+        "category": "migration",
+        "version": "1",
+        # Part of the panel: installing it only turns it on. See _is_panel_addon.
+        "kind": "panel",
+        "packages": [],
+        "service": "",
+        "features": ["fastpanel_import"],
+        "notes": [
+            "The root login is used for that import only and never saved. Each "
+            "account is packed into a private folder there, downloaded, and that "
+            "folder is removed.",
+            "Email accounts, cron jobs and DNS zones are not imported.",
+        ],
+    },
 }
 
 

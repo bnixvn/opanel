@@ -16,6 +16,7 @@ export const ADDON_META = {
   demo: { page: 'addons', label: msg('Demo mode'), featureIcon: 'account' },
   directadmin: { page: 'importDirectadmin', label: msg('DirectAdmin Import'), featureIcon: 'directadmin-import' },
   cpanel: { page: 'importCpanel', label: msg('cPanel Import'), featureIcon: 'cpanel-import' },
+  fastpanel: { page: 'importFastpanel', label: msg('FastPanel Import'), featureIcon: 'migration' },
 };
 
 export const addonPage = (slug) => ADDON_META[slug]?.page || 'addons';

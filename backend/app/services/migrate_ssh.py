@@ -26,8 +26,9 @@ from typing import Callable, Optional
 
 import paramiko
 
-PANELS = {"cpanel": "cPanel", "directadmin": "DirectAdmin"}
+PANELS = {"cpanel": "cPanel", "directadmin": "DirectAdmin", "fastpanel": "FastPanel"}
 ACCOUNT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 # What mktemp makes on the other server, and the only folder ever removed there.
 WORK_RE = re.compile(r"^/home/opanel-migrate\.[A-Za-z0-9]{6,16}$")
 LIST_TIMEOUT = 120
@@ -175,6 +176,8 @@ def list_accounts(client: paramiko.SSHClient, panel: str) -> list[dict]:
         return parse_cpanel_accounts(_must(client, _CPANEL_LIST, LIST_TIMEOUT, "Listing the accounts"))
     if panel == "directadmin":
         return parse_directadmin_accounts(_must(client, _DA_LIST, LIST_TIMEOUT, "Listing the accounts"))
+    if panel == "fastpanel":
+        return parse_fastpanel_accounts(_must(client, _FASTPANEL_LIST, LIST_TIMEOUT, "Listing the accounts"))
     raise ValueError(f"Unknown panel: {panel}")
 
 
@@ -264,6 +267,95 @@ def _pack_directadmin(client, account: str, folder: str, on_status: StatusFn) ->
     raise MigrateError(f"DirectAdmin did not write a backup of {account}")
 
 
+# --- FastPanel ------------------------------------------------------------------------------------
+# FastPanel 2 keeps each account's sites in /var/www/<user>/data/www/<domain>
+# and their nginx configs in /etc/nginx/fastpanel2-sites/<user>/<domain>.conf.
+# Its own backups split files and databases, so the account is packed here, in
+# the DirectAdmin layout the importer reads (services/fastpanel_import.py).
+
+_FASTPANEL_LIST = (
+    "[ -d /usr/local/fastpanel2 ] || [ -d /etc/nginx/fastpanel2-sites ] || { echo NOT_FASTPANEL; exit 0; }; "
+    "for home in /var/www/*/; do u=$(basename \"$home\"); [ -d \"$home/data/www\" ] || continue; "
+    "id -u \"$u\" >/dev/null 2>&1 || continue; "
+    "sites=$(find \"$home/data/www\" -mindepth 1 -maxdepth 1 -type d -printf '%f,' 2>/dev/null); "
+    "size=$(timeout 20 du -sb \"$home/data\" 2>/dev/null | cut -f1); "
+    "printf '%s\\t%s\\t%s\\n' \"$u\" \"${sites%,}\" \"${size:-0}\"; done"
+)
+
+
+def parse_fastpanel_accounts(text: str) -> list[dict]:
+    if text.strip().startswith("NOT_FASTPANEL"):
+        raise MigrateError("That server has no FastPanel (/usr/local/fastpanel2 is missing)")
+    rows = []
+    for line in text.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3 or not ACCOUNT_RE.fullmatch(parts[0]):
+            continue
+        sites = [site for site in parts[1].split(",") if DOMAIN_RE.fullmatch(site.lower())]
+        if not sites:
+            continue
+        size = int(parts[2]) if parts[2].isdigit() else 0
+        rows.append(_row("fastpanel", parts[0], sites[0].lower(), size,
+                         f"{len(sites)} site(s)" if len(sites) > 1 else ""))
+    return rows
+
+
+# Run as root on the FastPanel server with U (the account) and W (the work
+# folder) set. Prints the archive's name on its last line.
+_FASTPANEL_PACK = r"""
+set -eu
+H="/var/www/$U"; P="$W/pack"
+[ -d "$H/data/www" ] || { echo "no sites for $U" >&2; exit 1; }
+mkdir -p "$P/backup" "$P/mysql" "$P/opanel"
+printf 'username=%s\nemail=\n' "$U" > "$P/backup/user.conf"
+: > "$P/backup/domains.list"; : > "$P/opanel/aliases.tsv"
+transforms=(); paths=()
+for d in "$H"/data/www/*/; do
+  dom=$(basename "$d")
+  printf '%s' "$dom" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' || continue
+  echo "$dom" >> "$P/backup/domains.list"
+  transforms+=("--transform=s#^var/www/$U/data/www/${dom//./\\.}#domains/$dom/public_html#")
+  paths+=("var/www/$U/data/www/$dom")
+  conf="/etc/nginx/fastpanel2-sites/$U/$dom.conf"
+  [ -f "$conf" ] || continue
+  names=$(grep -hE '^\s*server_name\s' "$conf" | head -n 1 | sed -E 's/^\s*server_name\s+//; s/;.*$//')
+  printf '%s\t%s\n' "$dom" "$names" >> "$P/opanel/aliases.tsv"
+  crt=$(grep -hE '^\s*ssl_certificate\s' "$conf" | head -n 1 | awk '{print $2}' | tr -d ';')
+  key=$(grep -hE '^\s*ssl_certificate_key\s' "$conf" | head -n 1 | awk '{print $2}' | tr -d ';')
+  if [ -n "$crt" ] && [ -n "$key" ] && [ -f "$crt" ] && [ -f "$key" ]; then
+    mkdir -p "$P/backup/$dom"; cp "$crt" "$P/backup/$dom/domain.cert"; cp "$key" "$P/backup/$dom/domain.key"
+  fi
+done
+[ ${#paths[@]} -gt 0 ] || { echo "no sites for $U" >&2; exit 1; }
+# The databases: those the sites' configs name, and those named after the account.
+mysql_ok=1; mysql -NBe 'SELECT 1' >/dev/null 2>&1 || mysql_ok=0
+if [ "$mysql_ok" = 1 ]; then
+  {
+    find "$H/data/www" -maxdepth 4 -name wp-config.php -type f -exec grep -hoE "define\(\s*['\"]DB_NAME['\"]\s*,\s*['\"][A-Za-z0-9_]+" {} + 2>/dev/null | sed -E "s/.*['\"]//"
+    find "$H/data/www" -maxdepth 4 -name .env -type f -exec grep -hoE '^DB_DATABASE=["'"'"']?[A-Za-z0-9_]+' {} + 2>/dev/null | sed -E "s/^DB_DATABASE=[\"']?//"
+    mysql -NBe 'SHOW DATABASES' | grep -E "^${U}(_|$)" || true
+  } | sort -u | while read -r db; do
+    printf '%s' "$db" | grep -Eq '^[A-Za-z0-9_]{1,64}$' || continue
+    mysql -NBe 'SHOW DATABASES' | grep -qx "$db" || continue
+    mysqldump --single-transaction --quick --routines --events --triggers "$db" > "$P/mysql/$db.sql"
+  done
+else
+  echo "MySQL could not be read as root: the account is packed without its databases" >&2
+fi
+tar -C / -czf "$W/fastpanel-$U.tar.gz" "${transforms[@]}" "${paths[@]}" -C "$P" backup mysql opanel
+echo "fastpanel-$U.tar.gz"
+"""
+
+
+def _pack_fastpanel(client, account: str, folder: str) -> str:
+    command = f"U={shlex.quote(account)} W={shlex.quote(folder)} bash -c {shlex.quote(_FASTPANEL_PACK)}"
+    out = _must(client, command, PACK_TIMEOUT, f"Packing {account}")
+    name = (out.strip().splitlines() or [""])[-1].strip()
+    if name != f"fastpanel-{account}.tar.gz":
+        raise MigrateError(f"Packing {account} on the FastPanel server left no archive")
+    return name
+
+
 def pack_and_fetch(client: paramiko.SSHClient, panel: str, account: str,
                    destination_for: Callable[[str], Path], ensure_room: Callable[[Path, int, str], None],
                    on_status: StatusFn = None, on_progress: ProgressFn = None) -> str:
@@ -281,6 +373,8 @@ def pack_and_fetch(client: paramiko.SSHClient, panel: str, account: str,
             name = _pack_cpanel(client, account, folder)
         elif panel == "directadmin":
             name = _pack_directadmin(client, account, folder, on_status)
+        elif panel == "fastpanel":
+            name = _pack_fastpanel(client, account, folder)
         else:
             raise ValueError(f"Unknown panel: {panel}")
         destination = destination_for(name)
