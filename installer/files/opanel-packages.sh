@@ -83,6 +83,18 @@ remove_universe_leftovers() {
   purge_only "${remove[@]}"
 }
 
+# A PHP extension the panel removed before it purged them left its .ini behind
+# (dpkg state "rc"), and LiteSpeed's PHP kept trying to load it.
+purge_lsphp_leftover_configs() {
+  local leftover=()
+  mapfile -t leftover < <(dpkg -l 2>/dev/null | awk '$1 == "rc" && $2 ~ /^lsphp[0-9]+-[a-z0-9-]+$/ {print $2}')
+  ((${#leftover[@]})) || return 0
+  dpkg --purge "${leftover[@]}" >/dev/null
+  log "purged the configuration left by ${leftover[*]}"
+  systemctl restart lsws >/dev/null 2>&1 || true
+}
+
 ensure_php_cli
 install_composer || true
 remove_universe_leftovers
+purge_lsphp_leftover_configs

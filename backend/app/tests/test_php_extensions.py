@@ -100,7 +100,7 @@ def test_the_helper_offers_the_same_extensions_and_guards_them():
     remove = _helper_function("php_ext_remove")
     assert 'php_ext_is_core "$ext" && deny' in remove
     assert "apt-get -s remove" in remove           # refuses when apt would take PHP or a core package along
-    assert remove.index("apt-get -s remove") < remove.index("apt-get -o DPkg::Lock::Timeout=120 remove -y")
+    assert remove.index("apt-get -s remove") < remove.index("apt-get -o DPkg::Lock::Timeout=120 purge -y")
     for fn in ("php_ext_install", "php_ext_remove"):
         body = _helper_function(fn)
         assert 'require_php_ext "$ext"' in body and "restart_openlitespeed" in body

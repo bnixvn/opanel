@@ -57,3 +57,12 @@ def test_the_mail_domain_field_is_a_picker_not_a_datalist():
 def test_wordpress_upload_has_its_own_button():
     wp = (SRC / "pages" / "WordPress.jsx").read_text(encoding="utf-8")
     assert "t('Upload plugin')" in wp and "t('Upload theme')" in wp and "wpm-dropzone" in wp
+
+
+def test_a_removed_php_extension_leaves_no_ini_behind():
+    helper = (SRC.parents[1] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    body = helper[helper.index("php_ext_remove() {"):]
+    body = body[:body.index("\n}\n")]
+    assert 'purge -y "$pkg"' in body and 'remove -y "$pkg"' not in body
+    packages = (SRC.parents[1] / "installer" / "files" / "opanel-packages.sh").read_text(encoding="utf-8")
+    assert "purge_lsphp_leftover_configs" in packages and '$1 == "rc"' in packages

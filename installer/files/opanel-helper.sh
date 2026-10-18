@@ -2585,7 +2585,10 @@ php_ext_remove() {
       [[ "$name" == "lsphp${v}-${core}" ]] && deny "removing $pkg would also remove $name"
     done
   done
-  apt-get -o DPkg::Lock::Timeout=120 remove -y "$pkg" >/dev/null || deny "apt could not remove $pkg"
+  # Purged, not removed: "remove" kept the package's mods-available/<ext>.ini,
+  # which LiteSpeed's PHP still loads - every PHP process then warned that
+  # <ext>.so could not be loaded (lsphp84-tidy on .41, 2026-10-18).
+  apt-get -o DPkg::Lock::Timeout=120 purge -y "$pkg" >/dev/null || deny "apt could not remove $pkg"
   restart_openlitespeed
   echo "Removed ${pkg}; PHP ${version} reloaded"
 }
