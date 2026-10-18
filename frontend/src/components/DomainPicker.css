@@ -1,0 +1,13 @@
+/* A domain field with its list (components/DomainPicker.jsx): the panel's
+   own input, a list under it in the account menu's look. */
+.domain-picker{position:relative;min-width:0}
+.domain-picker-field{position:relative;display:flex}
+.domain-picker-field input{width:100%;padding-right:34px}
+.domain-picker-toggle{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:28px;min-width:28px;height:28px;min-height:28px;padding:0;display:grid;place-items:center;background:transparent;border:0;box-shadow:none;color:var(--text-secondary)}
+.domain-picker-toggle:hover:not(:disabled){background:var(--surface-hover);color:var(--text)}
+.domain-picker-list{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:40;max-height:300px;overflow:auto;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)}
+.domain-picker-group{padding:8px 10px 4px;font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--text-secondary)}
+.domain-picker-option{padding:7px 10px;border-radius:var(--radius-sm);font-size:13.5px;color:var(--text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.domain-picker-option.is-active{background:var(--surface-hover)}
+.domain-picker-option.is-chosen{font-weight:600;color:var(--primary-ink)}
+.domain-picker-empty{padding:8px 10px;font-size:13px;color:var(--text-secondary)}

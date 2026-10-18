@@ -76,7 +76,9 @@
 .wsd-advanced{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
 .wsd-advanced>.section{margin:0}
 .wsd-advanced .code-editor{margin-top:12px;width:100%}
-.wsd-terminal{height:600px;margin-top:12px;min-width:0}
+/* As tall as the terminal in it (its bar, screen and rules): a fixed 600px
+   let a taller one spill over the Delete card below (operator, 2026-10-18). */
+.wsd-terminal{margin-top:12px;min-width:0}
 .wsd-term-off{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px}
 .wsd-term-off .hint{margin:0}
 .wsd-danger{border-color:var(--danger-border)}
@@ -98,7 +100,6 @@
   .wsd-domain-form>button{width:100%}
   .wsd-actions>button,.wsd-actions>.button-link{flex:1 1 calc(50% - 8px)}
   .wsd-savebar>button{flex:1}
-  .wsd-terminal{height:520px}
 }
 
 /* The WAF page's list (App's renderWaf), as SNPanel's: a switch, the

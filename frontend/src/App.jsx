@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import DomainPicker from './components/DomainPicker.jsx';
+import NotificationBell from './components/NotificationBell.jsx';
 import { createRoot } from 'react-dom/client';
 import ace from 'ace-builds/src-noconflict/ace';
 import 'ace-builds/src-noconflict/ext-language_tools';
@@ -905,7 +907,6 @@ function App() {
     setWafAccessAutoRefresh(5);
     setLogViewer(null);
     setNginxCustomEditing(null);
-    setTerminalViewer(null);
     setSelectedWebsiteId('');
     setMobileMenuOpen(false);
     navigateToPage('dashboard', { replace: true });
@@ -1556,7 +1557,8 @@ function App() {
       const count = data.deleted_websites?.length || 0;
       setNotice(tr("Deleted user {0}{1}", user.username, count ? tr(" and {0} website(s)", count) : ''));
       await loadUsers();
-      await loadWebsites();
+      // Its websites and databases went with it.
+      await refreshAll();
     }
   }
 
@@ -3393,7 +3395,6 @@ function App() {
   async function openWebsiteFileManager(site) {
     setNginxCustomEditing(null);
     setLogViewer(null);
-    setTerminalViewer(null);
     setSelectedWebsiteId(String(site.id));
     navigateToPage('files');
     setFileListPath('public_html');
@@ -4275,6 +4276,13 @@ function App() {
       setNotice(data.message || tr("Bad bot list saved."));
       if (selectedWafWebsiteId) await loadWebsiteWafConfig(selectedWafWebsiteId, false);
     }
+  }
+
+  // One of the access log filters, back to the first page; the list follows
+  // (the effect on wafAccessFilters). The controls called this before it
+  // existed, so no filter took (operator, 2026-10-18: verdicts did not filter).
+  function setWafAccessFilter(key, value) {
+    setWafAccessFilters(prev => ({ ...prev, [key]: value, offset: 0 }));
   }
 
   async function loadWafAccessLogs(nextFilters = wafAccessFilters, showLoading = true) {
@@ -6523,6 +6531,13 @@ function App() {
     </div>;
   }
 
+  // The account a domain's website (or alias) belongs to, for grouping domains.
+  function domainOwnerName(domain) {
+    const site = websites.find(item => item.domain === domain || (item.aliases || []).some(alias => alias.domain === domain));
+    if (!site) return tr("Not a website here");
+    return users.find(user => user.id === site.owner_id)?.username || site.owner_username || `#${site.owner_id}`;
+  }
+
   function renderMailDomains() {
     const info = mailInfo;
     const domains = info.domains || [];
@@ -6533,9 +6548,10 @@ function App() {
         <div className="mail-create-grid">
           {isAdmin
             ? <div className="field"><span className="field-label">{tr("Domain")}</span>
-                <input list="mail-domain-candidates" value={mailDomainForm.domain} placeholder="example.com" spellCheck={false}
-                  onChange={e => setMailDomainForm(prev => ({ ...prev, domain: e.target.value.trim().toLowerCase() }))} />
-                <datalist id="mail-domain-candidates">{candidates.map(name => <option key={name} value={name} />)}</datalist>
+                <DomainPicker value={mailDomainForm.domain} placeholder="example.com" ariaLabel={tr("Domain")}
+                  emptyText={tr("No website domain matches: email can still be turned on for the domain typed here.")}
+                  options={candidates.map(name => ({ value: name, group: domainOwnerName(name) }))}
+                  onChange={domain => setMailDomainForm(prev => ({ ...prev, domain }))} />
               </div>
             : <div className="field"><span className="field-label">{tr("Domain")}</span>
                 <select value={mailDomainForm.domain} onChange={e => setMailDomainForm(prev => ({ ...prev, domain: e.target.value }))}>
@@ -9101,10 +9117,11 @@ function App() {
               </h1>
               : <h1>{pageTitle}</h1>}
           </div>
-          {/* The language, the theme and the account's menu, as SNPanel has
-              them. The server's figures are the Dashboard's; the version is in
-              the account's menu, and opens Updates. */}
+          {/* What needs attention (the bell), the language, the theme and the
+              account's menu, as SNPanel has them. The server's figures are the
+              Dashboard's; the version is in the account's menu, and opens Updates. */}
           <div className="top-actions">
+            {currentUser && <PanelContext.Provider value={panelContext()}><NotificationBell/></PanelContext.Provider>}
             {renderLanguageToggle('top-tool')}
             <button type="button" className="top-tool" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
             <div className="user-menu top-user" ref={userMenuRef}>

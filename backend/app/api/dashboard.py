@@ -76,27 +76,56 @@ def _malware() -> dict:
     return summary
 
 
+_COVERAGE_RANK = {"domains": 0, "websites": 1, "everything": 2}
+
+
+def _scan_coverage(job: dict) -> tuple[str, frozenset]:
+    """What a scan looked at: the whole server, every website, or some of them."""
+    root = (job.get("scan_root") or "").rstrip("/") or ("/" if job.get("scan_root") else "")
+    if root == "/" or job.get("scope") == "server":
+        return "everything", frozenset()
+    if root == "/home" or job.get("scope") in {"all", "web"}:
+        return "websites", frozenset()
+    return "domains", frozenset(job.get("domains") or ([root] if root else []))
+
+
+def _covers(newer: tuple[str, frozenset], older: tuple[str, frozenset]) -> bool:
+    if _COVERAGE_RANK[newer[0]] != _COVERAGE_RANK[older[0]]:
+        return _COVERAGE_RANK[newer[0]] > _COVERAGE_RANK[older[0]]
+    return newer[0] != "domains" or bool(older[1]) and older[1] <= newer[1]
+
+
 def _malware_state(jobs: list, installed: bool) -> dict:
-    """SNPanel's reading (2026-10-17, the dashboard as SNPanel shows it): what
-    the latest scan of *each* target found, so a clean scan of one site does
-    not hide the threats an earlier scan found on another."""
-    seen, threats, quarantined = set(), 0, 0
+    """What the scans found that no later scan has looked at again.
+
+    A scan's threats stand until a newer *full* scan covers the same files:
+    the whole server covers every website, every website covers one. A clean
+    scan of one site does not hide what an earlier scan found on another
+    (SNPanel's reading), and a weekly scan of /home that came back clean does
+    clear an old scan of all websites - it used to stay "2 threats" for weeks
+    (operator, 2026-10-18). An incremental scan clears nothing: it skips the
+    files that did not change.
+    """
+    cleared_by: list[tuple[str, frozenset]] = []
+    threats, quarantined, scanned = 0, 0, False
     last_scan_at, infected_job = None, None
     for job in jobs:  # newest first
         if job.get("status") not in {"done", "completed", "infected", "finished"}:
             continue
+        scanned = True
         if last_scan_at is None:
             last_scan_at = job.get("finished_at") or job.get("updated_at") or job.get("started_at")
-        target = f"{job.get('scope', '')}:{','.join(job.get('domains') or [])}"
-        if target in seen:
+        coverage = _scan_coverage(job)
+        if any(_covers(newer, coverage) for newer in cleared_by):
             continue
-        seen.add(target)
         found = int(job.get("infected") or 0)
         if found and infected_job is None:
             infected_job = job.get("job_id")
         threats += found
         quarantined += int(job.get("quarantined") or 0)
-    state = "not_installed" if not installed else "never" if not seen else "threats" if threats else "clean"
+        if (job.get("scan_mode") or "full") != "incremental":
+            cleared_by.append(coverage)
+    state = "not_installed" if not installed else "never" if not scanned else "threats" if threats else "clean"
     return {"state": state, "threats": threats, "quarantined": quarantined,
             "last_scan_at": last_scan_at, "infected_job": infected_job}
 

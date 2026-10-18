@@ -13,8 +13,6 @@
 .dashboard a.status-row{font-size:13px;line-height:1}
 
 /* The "check again" button, at the end of the heading or of the all-clear. */
-.cp-attention .dash-recheck{flex:none}
-.cp-attention .attention-ok .dash-recheck{margin-left:auto}
 
 /* Narrow, the way to the fix goes under the text: what OPanel does for its
    buttons, for these links. */
@@ -44,7 +42,6 @@
 .dash-section-head:hover:not(:disabled){background:none;color:var(--primary-ink, var(--primary-text))}
 .dash-section-head:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .dash-section-head h3{margin:0;font-size:14px;font-weight:700;color:inherit}
-.dash-section-count{min-width:22px;padding:1px 7px;border-radius:999px;background:var(--surface-alt);color:var(--text-secondary);font-size:12px;font-weight:600;text-align:center}
 .dash-section-chevron{margin-left:auto;color:var(--text-secondary);flex:none;transition:transform .15s}
 .dash-section:not(.is-open) .dash-section-chevron{transform:rotate(-90deg)}
 .dash-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;padding:2px 0 14px}
@@ -67,8 +64,6 @@
 @media (prefers-reduced-motion:reduce){.dash-tile-link,.dash-section-chevron{transition:none}}
 
 /* The alerts' fold. */
-.cp-attention .dash-fold svg{transition:transform .15s}
-.cp-attention .dash-fold[aria-expanded="false"] svg{transform:rotate(-90deg)}
 
 /* ---- The administrator's server card: four figures with a sparkline ---- */
 .dash-figures{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:2px 0 6px}
@@ -104,11 +99,9 @@
 /* Unlayered, to win over skin.css. */
 
 /* Before the first answer: neither good nor bad. */
-.cp-attention .attention-ok.is-pending{background:var(--surface-alt);border-color:var(--border);color:var(--text-secondary)}
 
 /* All clear, the "check again" button is no taller than the line it ends -
    even on a phone, where every button is 42px. */
-.cp-attention.is-clear .attention-ok .dash-recheck{width:26px;min-width:26px;height:26px;min-height:26px}
 
 /* A count that is the way to its page: the row it was, not a link's bold
    colour, underlined while pointed at. */

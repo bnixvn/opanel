@@ -5,11 +5,9 @@ import {
   Bug,
   ChevronDown,
   CircleAlert,
-  CircleCheck,
   Download,
   Fingerprint,
   Lock,
-  OctagonAlert,
   Plus,
   RefreshCw,
   Search,
@@ -29,15 +27,14 @@ import './Dashboard.css';
 // 2026-10-17: "Làm lại giao diện cho giống nó"): it says how things are, and
 // is the way to everything else, the addons included.
 //
-// A main column - what needs attention, worst first, each with the way to
-// the page that fixes it; then every feature as a tile with its picture
-// (icons/feature), in sections that fold, searchable with "/" - beside a
-// narrow one with the facts of the role: the server and its state for an
-// administrator; the share for a reseller; usage and the account for a
-// customer. Below 1100px the two are one column, in --cp-order.
+// A main column - every feature as a tile with its picture (icons/feature),
+// in sections that fold, searchable with "/" - beside a narrow one with the
+// facts of the role: the server and its state for an administrator; the share
+// for a reseller; usage and the account for a customer. Below 1100px the two
+// are one column, the features first (operator, 2026-10-18). What needs
+// attention is the header's bell (components/NotificationBell.jsx).
 
-const TONE_RANK = { bad: 0, warn: 1, info: 2 };
-// The sections this browser has folded, by key ('attention' is the alerts).
+// The sections this browser has folded, by key.
 const FOLDED_KEY = 'opanel-dashboard-folded';
 
 // "5 minutes ago", in the reader's language, for a moment in the past.
@@ -145,22 +142,13 @@ export default function DashboardPage() {
   const ago = useAgo();
   const duration = useDuration();
   const [summary, setSummary] = useState(null);
-  const [updates, setUpdates] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [folded, setFolded] = useState(readFolded);
   const searchRef = useRef(null);
 
   async function load() {
-    setRefreshing(true);
     const data = await request('/dashboard/summary', { silent: true });
     if (data) setSummary(data);
-    setRefreshing(false);
-    // Asking the package manager takes a moment; the rest does not wait.
-    if (isAdmin) {
-      const pending = await request('/dashboard/updates', { silent: true });
-      if (pending) setUpdates(pending);
-    }
   }
   useEffect(() => { load(); }, [isAdmin]);
 
@@ -203,54 +191,6 @@ export default function DashboardPage() {
   const total = Number(sites.total) || 0;
   const withSsl = Number(sites.with_ssl) || 0;
 
-  // ---- what needs attention, worst first ----
-  const attention = [];
-  const need = (tone, key, text, page, action, before) => attention.push({ tone, key, text, page, action, before });
-  if (summary && isAdmin) {
-    const stopped = summary.services?.stopped || [];
-    if (stopped.length) need('bad', 'services', t('Stopped: {names}', { names: stopped.join(', ') }), 'services', t('Open Services'));
-    const fw = summary.firewall || {};
-    if (fw.state === 'disabled') need('bad', 'firewall', t('The firewall is off.'), 'firewall', t('Turn it on'));
-    const mw = summary.malware || {};
-    if (mw.state === 'threats') need('bad', 'malware', t('{count} threat(s) found by the last scan.', { count: mw.threats }), 'malware', t('See what was found'));
-    // A failed scheduled backup needs attention; having no schedule at all
-    // does not: that is the administrator's choice.
-    const bk = summary.backups || {};
-    if (bk.state === 'error') need('bad', 'backups', t('A scheduled backup failed.'), 'backups', t('Open Backup & Restore'));
-    if (summary.waf && summary.waf.engine === false) need('warn', 'waf', t('The WAF engine is not installed on this server.'), 'waf', t('Open WAF'));
-    if (mw.installed && mw.state === 'never') need('warn', 'scanner', t('No malware scan has run yet.'), 'malware', t('Scan now'));
-    const rs = summary.resources || {};
-    const oom = rs.oom_last_24h || [];
-    const over = rs.users_over_80 || [];
-    if (oom.length) need('bad', 'oom', t('Out of memory in the last 24 hours: {names}', { names: oom.join(', ') }), 'usage', t('Open Account resources'));
-    if (over.length) need('warn', 'limits', t('At 80% of a resource limit: {names}', { names: over.join(', ') }), 'usage', t('Open Account resources'));
-  }
-  if (summary) {
-    const noSsl = sites.without_ssl || [];
-    if (noSsl.length) {
-      need('warn', 'ssl', noSsl.length === 1
-        ? t('{domain} has no SSL certificate.', { domain: noSsl[0] })
-        : t('{count} websites have no SSL certificate.', { count: noSsl.length }), 'ssl', t('Install SSL'));
-    }
-    if (sites.suspended > 0) need('warn', 'suspended', t('{count} website(s) suspended.', { count: sites.suspended }), 'websites', t('Open Websites'));
-  }
-  if (summary && !isAdmin) {
-    if (!summary.two_factor?.totp && !(summary.two_factor?.passkeys > 0)) need('warn', 'twofactor', t('Two-step verification is off for your account.'), 'security', t('Turn it on'));
-  }
-  if (!isAdmin && currentUser) {
-    const limit = storageLimitBytes(currentUser);
-    const used = Number(currentUser.storage_used_bytes) || 0;
-    if (limit !== null && limit > 0 && used / limit >= 0.9) {
-      need(used >= limit ? 'bad' : 'warn', 'storage', t('Storage is {percent} full.', { percent: formatPercent((used / limit) * 100) }), 'files', t('Open the files'));
-    }
-  }
-  if (updates) {
-    if (updates.os > 0) need('info', 'os-updates', t('{count} system update(s) available.', { count: updates.os }), 'updates', t('Open Updates'));
-    if (updates.panel?.available) need('info', 'panel-update', t('OPanel {version} is available.', { version: updates.panel.latest }), 'updates', t('Open Updates'));
-  }
-  attention.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
-  const attentionFolded = folded.includes('attention');
-
   function toggleFold(key) {
     setFolded((prev) => {
       const next = prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key];
@@ -258,35 +198,6 @@ export default function DashboardPage() {
       return next;
     });
   }
-
-  const recheck = <button type="button" className="secondary icon-only mini dash-recheck" onClick={load} disabled={refreshing}
-    aria-label={t('Check again')} title={t('Check again')}><RefreshCw size={14} className={refreshing ? 'spin' : ''} aria-hidden="true"/></button>;
-  const attentionCard = <section className={`section dash-card cp-attention${summary && attention.length === 0 ? ' is-clear' : ''}`}
-    style={{ '--cp-order': 1 }} aria-label={t('Needs attention')}>
-    {!summary
-      ? <div className="attention-ok is-pending" aria-busy="true"><RefreshCw size={16} className="spin" aria-hidden="true"/> {t('Checking…')}</div>
-      : attention.length === 0
-        ? <div className="attention-ok"><CircleCheck size={16} aria-hidden="true"/> {t('Everything is fine.')}{recheck}</div>
-        : <>
-          <div className="dash-card-head">
-            <span className="dash-card-icon"><CircleAlert size={16} aria-hidden="true"/></span>
-            <h2>{t('Needs attention')}</h2>
-            <span className="badge warn">{attention.length}</span>
-            {recheck}
-            <button type="button" className="secondary icon-only mini dash-fold" onClick={() => toggleFold('attention')}
-              aria-expanded={!attentionFolded} aria-controls="dash-attention-list"
-              aria-label={attentionFolded ? t('Show') : t('Hide')} title={attentionFolded ? t('Show') : t('Hide')}>
-              <ChevronDown size={14} aria-hidden="true"/></button>
-          </div>
-          {!attentionFolded && <div className="attention-list" id="dash-attention-list">
-            {attention.map((item) => <div key={item.key} className={`attention-item tone-${item.tone}`}>
-              {item.tone === 'bad' ? <OctagonAlert size={15} aria-hidden="true"/> : item.tone === 'info' ? <RefreshCw size={15} aria-hidden="true"/> : <CircleAlert size={15} aria-hidden="true"/>}
-              <span>{item.text}</span>
-              <PanelLink to={to(item.page, item.before)} className="button-link mini secondary">{item.action}</PanelLink>
-            </div>)}
-          </div>}
-        </>}
-  </section>;
 
   // ---- the state of each thing that can be wrong ----
   const status = [];
@@ -343,7 +254,7 @@ export default function DashboardPage() {
           : t('Only a password protects the account') },
     );
   }
-  const statusCard = (order) => <section className="section side-card" style={{ '--cp-order': order }}>
+  const statusCard = <section className="section side-card">
     <h3 className="side-card-title">{t('Status')}</h3>
     {summary
       ? <div className="status-list">
@@ -392,7 +303,7 @@ export default function DashboardPage() {
       <small className="dash-tile-note">{t('Not installed')}</small>
     </a>
   </div>;
-  const featuresCard = (order) => <section className="section dash-card dash-features" style={{ '--cp-order': order }} aria-label={t('Features')}>
+  const featuresCard = <section className="section dash-card dash-features" aria-label={t('Features')}>
     <label className="tools-search">
       <Search size={16} aria-hidden="true"/>
       <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)}
@@ -404,12 +315,10 @@ export default function DashboardPage() {
     {shownSections.map((section) => {
       // A search opens every section it finds something in.
       const open = Boolean(needle) || !folded.includes(section.key);
-      const count = section.tiles.length + (section.key === 'extensions' ? missingAddons.length : 0);
       return <div key={section.key} className={`dash-section${open ? ' is-open' : ''}`}>
         <button type="button" className="dash-section-head" aria-expanded={open} aria-controls={`dash-section-${section.key}`}
           onClick={() => toggleFold(section.key)}>
           <h3>{section.title}</h3>
-          <span className="dash-section-count">{count}</span>
           <ChevronDown size={16} className="dash-section-chevron" aria-hidden="true"/>
         </button>
         {open && <div className="dash-tiles" id={`dash-section-${section.key}`}>
@@ -439,11 +348,10 @@ export default function DashboardPage() {
       value={`${value}${unit} / ${max ? `${max}${unit}` : '∞'}`} percent={max ? (value / max) * 100 : null}/>;
     return <div className="dashboard cp-layout">
       <div className="cp-main">
-        {attentionCard}
-        {featuresCard(3)}
+        {featuresCard}
       </div>
       <aside className="cp-side">
-        {isReseller && <section className="section side-card" style={{ '--cp-order': 4 }}>
+        {isReseller && <section className="section side-card">
           <h3 className="side-card-title">{t('Reseller allotment')}</h3>
           <p className="hint side-card-hint">{t('What you and your customers use, against what you were given.')}</p>
           {resellerPool ? <>
@@ -451,7 +359,7 @@ export default function DashboardPage() {
             {poolRow(t('Disk'), poolDisk, pool.pool_storage_limit_mb, ' MB')}
           </> : <p className="hint" aria-busy="true">{t('Checking…')}</p>}
         </section>}
-        <section className="section side-card" style={{ '--cp-order': 2 }}>
+        <section className="section side-card">
           <h3 className="side-card-title">{isReseller ? t('Your package') : t('Usage')}</h3>
           <StatRow label={t('Storage')}
             value={currentUser?.storage_used_bytes == null ? t('Measuring…') : `${formatBytes(used)} / ${storageLimit === null ? '∞' : formatBytes(storageLimit)}`}
@@ -466,7 +374,7 @@ export default function DashboardPage() {
             {own.memory.oomKills > 0 && <StatRow label={t('Killed for memory')} value={String(own.memory.oomKills)} tone="bad"/>}
           </>}
         </section>
-        <section className="section side-card" style={{ '--cp-order': 6 }}>
+        <section className="section side-card">
           <h3 className="side-card-title">{t('General information')}</h3>
           <InfoRow label={t('Account')} value={currentUser?.username}/>
           <InfoRow label={t('Email')} value={currentUser?.email}/>
@@ -474,7 +382,7 @@ export default function DashboardPage() {
           <InfoRow label={t('Home directory')} value={home}/>
           <InfoRow label={t('Server IP')} value={summary?.server?.ipv4}/>
         </section>
-        {statusCard(7)}
+        {statusCard}
       </aside>
     </div>;
   }
@@ -497,12 +405,11 @@ export default function DashboardPage() {
 
   return <div className="dashboard cp-layout">
     <div className="cp-main">
-      {attentionCard}
-      {featuresCard(3)}
+      {featuresCard}
     </div>
 
     <aside className="cp-side">
-      <section className="section side-card" style={{ '--cp-order': 2 }}>
+      <section className="section side-card">
         <h3 className="side-card-title">{t('Server')}</h3>
         <div className="dash-figures">
           {figure('processes', 'CPU', pct(cpu.percent), resourceUsage ? Number(cpu.percent) || 0 : null, history.map((h) => h.cpu))}
@@ -519,8 +426,8 @@ export default function DashboardPage() {
         <InfoRow label="RAM" value={memory.total ? formatBytes(memory.total) : ''}/>
         <InfoRow label={t('Panel version')} value={appVersion}/>
       </section>
-      {statusCard(4)}
-      <section className="section side-card" style={{ '--cp-order': 7 }}>
+      {statusCard}
+      <section className="section side-card">
         <h3 className="side-card-title">{t('Totals')}</h3>
         <StatRow label={t('Customers')} value={summary?.users ? String(summary.users.total) : '—'} to={to('users', 'usersList')}/>
         <StatRow label={t('Websites')} tone={sites.suspended > 0 ? 'warn' : ''} to={to('websites')}

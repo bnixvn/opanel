@@ -205,8 +205,8 @@ input[type=file]::file-selector-button:hover{background:var(--surface-hover);bor
    cPanel's home page: tools on the left, in groups that fold and a search
    above them; on the right what the account (or the server) is and how much
    of it is used. An administrator's left column leads with what needs a look
-   and the server's meters. Below 1100px the two columns become one, ordered
-   by each card's --cp-order: what needs a look, then the figures, then tools.
+   and the server's meters. Below 1100px the two columns become one, in the
+   page's order: the tools first, then the figures (operator, 2026-10-18).
    Flat: borders and tints, no gradients, motion only on the fold. */
 .dashboard .section{margin:0}
 .dash-card{display:grid;gap:14px;align-content:start}
@@ -233,8 +233,6 @@ input[type=file]::file-selector-button:hover{background:var(--surface-hover);bor
 .resource-track.tone-bad span{background:var(--danger)}
 
 /* What needs a look: a list when there is something, one quiet line when not. */
-.cp-attention.is-clear{padding:10px 14px}
-.cp-attention .dash-card-head .badge{margin-left:auto}
 .attention-list{display:grid;gap:8px}
 .attention-item{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)}
 .attention-item span{font-size:13.5px;line-height:1.4;min-width:0;overflow-wrap:anywhere}
@@ -244,7 +242,6 @@ input[type=file]::file-selector-button:hover{background:var(--surface-hover);bor
 .attention-item.tone-warn svg{color:var(--warning)}
 .attention-item.tone-info svg{color:var(--primary-ink)}
 .attention-ok{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:var(--radius-md);background:var(--success-bg);color:var(--success-text);border:1px solid var(--success-border);font-weight:600;font-size:13.5px}
-.cp-attention.is-clear .attention-ok{padding:6px 10px}
 
 /* The tools: a search, then groups of tiles that fold, as cPanel lays them out. */
 .tools-panel{gap:4px}
@@ -354,7 +351,6 @@ button.top-accounts-row:hover:not(:disabled){background:var(--surface-hover);col
 @media(max-width:1100px){
   .cp-layout{grid-template-columns:minmax(0,1fr)}
   .cp-main,.cp-side{display:contents}
-  .cp-layout>*>*{order:var(--cp-order,10)}
 }
 @media(max-width:720px){
   .tool-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}

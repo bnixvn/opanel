@@ -157,6 +157,24 @@ def test_the_latest_scan_of_each_target_counts():
     assert dashboard._malware_state(jobs, installed=False)["state"] == "not_installed"
 
 
+
+def test_a_newer_full_scan_of_the_same_files_clears_older_threats():
+    """.41, 2026-10-18: a scan of every website found 2 threats on 09-03; the
+    weekly full scan of /home since came back clean, and the dashboard still
+    said 2 threats."""
+    old = {"job_id": "old", "status": "infected", "scope": "all", "domains": ["a.test", "b.test"], "infected": 2}
+    weekly = {"job_id": "w", "status": "done", "scope": "system", "scan_root": "/home", "scan_mode": "full",
+              "infected": 0, "finished_at": "9"}
+    assert dashboard._malware_state([weekly, old], installed=True)["state"] == "clean"
+    # An incremental run skips unchanged files: it clears nothing.
+    incremental = dict(weekly, scan_mode="incremental")
+    assert dashboard._malware_state([incremental, old], installed=True)["threats"] == 2
+    # A scan of one site does not clear a scan of all of them, nor the other way round for a newer site scan.
+    one_site = {"job_id": "s", "status": "done", "scope": "website", "domains": ["a.test"], "infected": 0}
+    assert dashboard._malware_state([one_site, old], installed=True)["threats"] == 2
+    whole = {"job_id": "x", "status": "done", "scope": "system", "scan_root": "/", "infected": 0}
+    assert dashboard._malware_state([whole, one_site, old], installed=True)["state"] == "clean"
+
 def test_os_updates_are_counted_for_the_dashboard():
     output = "Listing...\nbash/noble 5.2 amd64 [upgradable from: 5.1]\ncurl/noble 8 amd64 [upgradable from: 7]\n"
     assert dashboard._count_os_updates(output) == 2

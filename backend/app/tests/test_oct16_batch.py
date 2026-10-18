@@ -73,7 +73,9 @@ def test_no_backup_schedule_is_not_a_warning():
     # and only a failing one needs attention.
     DASH = (PROJECT_ROOT / "frontend" / "src" / "pages" / "Dashboard.jsx").read_text(encoding="utf-8")
     assert "bk.state === 'none' ? 'neutral'" in DASH
-    assert "if (bk.state === 'error') need('bad', 'backups'" in DASH
+    # What needs attention is the header's bell since 2026-10-18.
+    BELL = (PROJECT_ROOT / "frontend" / "src" / "lib" / "attention.js").read_text(encoding="utf-8")
+    assert "if (bk.state === 'error') need('bad', 'backups'" in BELL
 
 
 def test_opcache_sizes_replace_the_tuned_lines(monkeypatch, tmp_path):

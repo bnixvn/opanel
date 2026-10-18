@@ -504,6 +504,11 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
   const { request } = usePanel();
   const items = listed.filter((item) => !isSsoPlugin(item));
   const [adding, setAdding] = useState(false);
+  // The .zip upload has its own button (operator, 2026-10-18: it was at the
+  // foot of the wordpress.org search, where nobody found it).
+  const [uploading, setUploading] = useState(false);
+  const [activateUpload, setActivateUpload] = useState(true);
+  const [dragging, setDragging] = useState(false);
   const [query, setQuery] = useState('');
   const [found, setFound] = useState(null);
   const plugin = kind === 'plugin';
@@ -525,7 +530,15 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
     form.append('file', file);
     form.append('activate', activate ? '1' : '0');
     const data = await request(`${path}/upload`, { method: 'POST', body: form }, t('Uploading {name}...', { name: file.name }));
-    if (data) post.watch(data);
+    if (data) {
+      post.watch(data);
+      setUploading(false);
+    }
+  }
+  function dropped(event) {
+    event.preventDefault();
+    setDragging(false);
+    if (!busy) upload(event.dataTransfer.files?.[0], activateUpload);
   }
   async function remove(item) {
     if (!(await confirmDialog({
@@ -537,7 +550,9 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
 
   return <div className="wpm-tab">
     <div className="wpm-toolbar">
-      <button type="button" disabled={busy} onClick={() => setAdding((v) => !v)}><Plus size={15} aria-hidden="true"/> {plugin ? t('Add plugin') : t('Add theme')}</button>
+      <button type="button" disabled={busy} onClick={() => { setAdding((v) => !v); setUploading(false); }}><Plus size={15} aria-hidden="true"/> {plugin ? t('Add plugin') : t('Add theme')}</button>
+      <button type="button" className="secondary-light" disabled={busy} onClick={() => { setUploading((v) => !v); setAdding(false); }}>
+        <Upload size={15} aria-hidden="true"/> {plugin ? t('Upload plugin') : t('Upload theme')}</button>
       <button type="button" className="secondary-light" disabled={busy || updates.length === 0}
         onClick={async () => (await confirmDialog({ title: plugin ? t('Update every plugin with an update waiting?') : t('Update every theme with an update waiting?'), message: t('A restore point is taken first.'), confirmLabel: t('Update now') })) && act('update_all', [])}>
         <Download size={15} aria-hidden="true"/> {t('Update all')} {updates.length ? `(${updates.length})` : ''}</button>
@@ -558,16 +573,20 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
           </div>
         </div>)}
       </div>)}
-      <div className="wpm-upload">
-        <strong>{plugin ? t('Or upload a plugin\'s .zip') : t('Or upload a theme\'s .zip')}</strong>
-        <small>{t('A plugin or theme from elsewhere - bought, or your developer\'s. Up to 64 MB.')}</small>
-        <div className="wpm-row-actions">
-          <label className={`upload-button secondary-light${busy ? ' is-disabled' : ''}`}><Upload size={14} aria-hidden="true"/> {t('Upload')}
-            <input type="file" accept=".zip,application/zip" disabled={busy} onChange={(e) => { upload(e.target.files?.[0], false); e.target.value = ''; }}/></label>
-          <label className={`upload-button${busy ? ' is-disabled' : ''}`}><Upload size={14} aria-hidden="true"/> {t('Upload and activate')}
-            <input type="file" accept=".zip,application/zip" disabled={busy} onChange={(e) => { upload(e.target.files?.[0], true); e.target.value = ''; }}/></label>
-        </div>
-      </div>
+    </div>}
+    {uploading && <div className="wpm-panel">
+      <div className="wpm-panel-head"><strong>{plugin ? t('Upload a plugin (.zip)') : t('Upload a theme (.zip)')}</strong>
+        <button type="button" className="secondary-light icon-button" onClick={() => setUploading(false)} aria-label={t('Close')} title={t('Close')}><X size={15} aria-hidden="true"/></button></div>
+      <p className="hint">{t('A plugin or theme from elsewhere - bought, or your developer\'s. Up to 64 MB.')}</p>
+      <label className={`wpm-dropzone${dragging ? ' is-over' : ''}${busy ? ' is-disabled' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={dropped}>
+        <Upload size={22} aria-hidden="true"/>
+        <strong>{t('Choose a .zip file, or drop it here')}</strong>
+        <input type="file" accept=".zip,application/zip" disabled={busy}
+          onChange={(e) => { upload(e.target.files?.[0], activateUpload); e.target.value = ''; }}/>
+      </label>
+      <label className="check-line"><input type="checkbox" checked={activateUpload} onChange={(e) => setActivateUpload(e.target.checked)}/>
+        {plugin ? t('Activate the plugin once it is installed') : t('Activate the theme once it is installed')}</label>
     </div>}
     {items.length === 0 ? <p className="hint">{t('None found yet: refresh.')}</p> : <div className="data-table-wrap">
       <table className="data-table wpm-items wpm-cards">
