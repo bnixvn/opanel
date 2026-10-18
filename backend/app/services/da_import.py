@@ -1243,6 +1243,12 @@ def _process_archive(
             website.nginx_rewrite_mode = nginx_rewrite_mode
             db.flush()
         websites.append(website)
+        # Saved before its database is tried: a database that fails rolls the
+        # session back, and with only a flush behind them that took the panel
+        # user and every website of the archive with it - the files and the
+        # Linux user stayed, the job said "done", and the panel showed nothing
+        # (a FastPanel import on .41, 2026-10-18).
+        db.commit()
 
         # Re-parse app config from copied files
         app_config = app_config or _parse_app_db_config(public)

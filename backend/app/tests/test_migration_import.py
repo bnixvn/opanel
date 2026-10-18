@@ -473,3 +473,45 @@ def test_a_packed_fastpanel_account_comes_over_with_its_aliases(tmp_path, monkey
     # www. is served anyway; the other name becomes an alias.
     assert [(a.domain, a.website.domain) for a in db.query(WebsiteAlias)] == [("bob.net", "bob.test")]
     assert restore_sources.archive_kind("fastpanel-bob.tar.gz") == "fastpanel"
+
+
+
+def test_a_database_that_fails_does_not_take_the_account_with_it(tmp_path, monkeypatch):
+    """The rollback after a failed database discarded the user and websites
+    that had only been flushed: the job said done and the panel showed none."""
+    folder = tmp_path / "cpanel"
+    folder.mkdir()
+    archive = _cpmove(folder)
+    monkeypatch.setattr(settings, "cpanel_backup_dir", str(folder))
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    monkeypatch.setattr(site_users, "ensure_panel_user", lambda username, password: username)
+    monkeypatch.setattr(site_users, "site_root_for_panel_user", lambda user, domain: f"/home/{user}/{domain}")
+    monkeypatch.setattr(site_users, "ensure_site_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(site_users, "ensure_document_root", lambda root, doc, user: Path(root) / doc)
+    monkeypatch.setattr(site_users, "import_site_files", lambda *a, **k: None)
+    monkeypatch.setattr(site_users, "fix_site_permissions", lambda *a, **k: None)
+    monkeypatch.setattr(site_users, "site_lsphp_socket", lambda *a, **k: "/tmp/sock")
+
+    def refuse(db_, user, owner_id):
+        raise mariadb.MariaDBError("Database user already exists on this server")
+
+    monkeypatch.setattr(mariadb, "assert_db_user_available", refuse)
+    monkeypatch.setattr(da_import, "_temporary_sql_file", lambda sql: Path(sql))
+    monkeypatch.setattr(openlitespeed, "rewrite_vhost", lambda *a, **k: None)
+    monkeypatch.setattr(openlitespeed, "reload_service", lambda: None)
+    monkeypatch.setattr(waf, "sync_website_rules", lambda *a, **k: SimpleNamespace(returncode=0))
+    from app.services import ssl as ssl_service
+    monkeypatch.setattr(ssl_service, "install_site_certificate", lambda *a: {"cert": "c", "key": "k"})
+    monkeypatch.setattr(ssl_service, "certificate_expiry", lambda cert: None)
+    import app.api.websites as websites_api
+    monkeypatch.setattr(websites_api, "_rewrite_website_vhost", lambda website, **k: None)
+    import socket
+    monkeypatch.setattr(socket, "gethostbyname", lambda name: (_ for _ in ()).throw(socket.gaierror()))
+
+    summary = cpanel_import.import_cpanel_backup(archive.name, db)
+    assert any("Database import failed" in warning for warning in summary["warnings"])
+    db.expire_all()
+    assert db.query(User).filter_by(username="bob").count() == 1
+    assert sorted(site.domain for site in db.query(Website)) == ["blog.bob.test", "bob.test", "shop.test"]
