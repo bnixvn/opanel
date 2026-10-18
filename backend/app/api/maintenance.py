@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 import paramiko
 from pydantic import BaseModel, Field
@@ -1139,6 +1139,8 @@ def list_restore_source(payload: RestoreSourceIn, request: Request, db: Session 
         items = restore_sources.list_source(source)
     except _RESTORE_SOURCE_ERRORS as exc:
         raise HTTPException(status_code=502, detail=restore_sources.describe_error(exc, source)) from exc
+    if payload.kinds:
+        items = [item for item in items if item.get("kind") in payload.kinds]
     result = {"items": items, "addons": {
         kind: restore_sources.kind_enabled(kind) for kind in (restore_sources.KIND_DA, restore_sources.KIND_CPANEL)}}
     remote = source.remote
@@ -1160,6 +1162,7 @@ def list_restore_source(payload: RestoreSourceIn, request: Request, db: Session 
 @router.post("/restore/upload")
 def upload_restore_archives(
     files: list[UploadFile] = File(...),
+    kind: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1172,7 +1175,15 @@ def upload_restore_archives(
     saved = []
     for file in files:
         name = file.filename or ""
-        kind = restore_sources.archive_kind(name)
+        found = restore_sources.archive_kind(name)
+        # The page uploading says which kind it restores: a DirectAdmin archive
+        # dropped on Backup & Restore is sent to DirectAdmin Import instead.
+        if kind and found and found != kind:
+            label = restore_sources.KIND_LABELS.get(found, found)
+            raise HTTPException(status_code=400, detail=(
+                f"{name} is a {label} backup: restore it from {label} Import" if found != restore_sources.KIND_OPANEL
+                else f"{name} is a panel backup: restore it from Backup & Restore"))
+        kind = found
         if kind and not restore_sources.kind_enabled(kind):
             raise HTTPException(status_code=400, detail=f"{name}: {restore_sources._off_message(kind)}")
         try:
@@ -1364,12 +1375,17 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
 
 
 @router.get("/restore/jobs")
-def list_restore_jobs(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """The last restores, each archive with how it went."""
+def list_restore_jobs(kind: str = "", db: Session = Depends(get_db),
+                      current_user: User = Depends(get_current_user)):
+    """The last restores, each archive with how it went; with `kind`, only
+    those of that kind of archive (each page shows its own)."""
     ensure_role(current_user.role, Role.admin)
     restore_jobs.settle_stale(db)
-    rows = db.query(RestoreJob).order_by(RestoreJob.id.desc()).limit(20).all()
-    return {"jobs": [restore_jobs.serialize(row) for row in rows]}
+    rows = db.query(RestoreJob).order_by(RestoreJob.id.desc()).limit(100 if kind else 20).all()
+    jobs = [restore_jobs.serialize(row) for row in rows]
+    if kind:
+        jobs = [job for job in jobs if any(item.get("kind") == kind for item in job["items"])][:20]
+    return {"jobs": jobs}
 
 
 @router.post("/restore/jobs/{record_id}/retry")

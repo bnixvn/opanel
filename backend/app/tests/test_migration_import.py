@@ -332,3 +332,64 @@ def test_the_cpanel_staging_folder_is_one_the_helper_copies_from():
     helper = (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
     assert "/tmp/opanel-da-import-*) ;;" in helper
     assert ("/tmp/" + cpanel_import.STAGE_PREFIX).startswith("/tmp/opanel-da-import-")
+
+
+
+# --- each page its own kind (operator, 2026-10-18) -------------------------------------------------
+
+def test_backup_and_restore_lists_only_the_panels_own_backups(monkeypatch):
+    _addons(monkeypatch, directadmin=True, cpanel=True)
+    monkeypatch.setattr(restore_sources, "list_local", lambda: [
+        {"ref": "/x/cpmove-bob.tar.gz", "kind": "cpanel", "filename": "cpmove-bob.tar.gz"},
+        {"ref": "/x/user.admin.al.tar.zst", "kind": "directadmin", "filename": "user.admin.al.tar.zst"},
+        {"ref": "/x/al-monday.tar.gz", "kind": "opanel", "filename": "al-monday.tar.gz"},
+    ])
+    from app.schemas.schemas import RestoreSourceIn
+    monkeypatch.setattr(maintenance.backup, "user_restore_dir", lambda: "/var/backups/opanel/restore")
+    listed = maintenance.list_restore_source(RestoreSourceIn(source="local", kinds=["opanel"]), request=None, db=None,
+                                             current_user=ADMIN)
+    assert [item["kind"] for item in listed["items"]] == ["opanel"]
+    listed = maintenance.list_restore_source(RestoreSourceIn(source="local", kinds=["directadmin"]), request=None,
+                                             db=None, current_user=ADMIN)
+    assert [item["kind"] for item in listed["items"]] == ["directadmin"]
+
+
+def test_an_archive_uploaded_on_the_wrong_page_says_where_it_goes(monkeypatch):
+    _addons(monkeypatch, directadmin=True)
+    upload = SimpleNamespace(filename="user.admin.al.tar.zst", file=io.BytesIO(b"x"))
+    with pytest.raises(HTTPException) as exc:
+        maintenance.upload_restore_archives(files=[upload], kind="opanel", db=None, current_user=ADMIN)
+    assert exc.value.status_code == 400 and "restore it from DirectAdmin Import" in exc.value.detail
+    upload = SimpleNamespace(filename="al-monday.tar.gz", file=io.BytesIO(b"x"))
+    with pytest.raises(HTTPException) as exc:
+        maintenance.upload_restore_archives(files=[upload], kind="directadmin", db=None, current_user=ADMIN)
+    assert "restore it from Backup & Restore" in exc.value.detail
+
+
+def test_each_page_shows_the_restores_of_its_kind(monkeypatch):
+    rows = [SimpleNamespace(id=n) for n in (3, 2, 1)]
+    serialized = {3: [{"kind": "cpanel"}], 2: [{"kind": "opanel"}], 1: [{"kind": "directadmin"}, {"kind": "opanel"}]}
+
+    class Query:
+        def order_by(self, *a):
+            return self
+
+        def limit(self, n):
+            return self
+
+        def all(self):
+            return rows
+
+    db = SimpleNamespace(query=lambda model: Query())
+    monkeypatch.setattr(maintenance.restore_jobs, "settle_stale", lambda db: None)
+    monkeypatch.setattr(maintenance.restore_jobs, "serialize", lambda row: {"id": row.id, "items": serialized[row.id]})
+    assert [job["id"] for job in maintenance.list_restore_jobs(kind="opanel", db=db, current_user=ADMIN)["jobs"]] == [2, 1]
+    assert [job["id"] for job in maintenance.list_restore_jobs(kind="cpanel", db=db, current_user=ADMIN)["jobs"]] == [3]
+    assert len(maintenance.list_restore_jobs(db=db, current_user=ADMIN)["jobs"]) == 3
+
+
+def test_the_wizard_page_sends_its_kinds():
+    app_src = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    assert "kinds: RESTORE_MODES[restoreMode].kinds" in app_src
+    assert "opanel: { kinds: ['opanel'], sources: ['local', 'target', 'remote'] }" in app_src
+    assert "DirectAdmin" not in app_src[app_src.index("    const sourceCards = {"):app_src.index("'ssh-directadmin': [Server")]

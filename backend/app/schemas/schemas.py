@@ -1118,6 +1118,10 @@ class RestoreSourceIn(BaseModel):
     source: Literal["local", "target", "remote", "ssh"] = "local"
     target_id: Optional[int] = Field(default=None, gt=0)
     remote: Optional[RestoreRemoteIn] = None
+    # Which kinds of archive the page asking reads: Backup & Restore only the
+    # panel's own, each migration addon's page its own (2026-10-18). None is
+    # every kind, for API callers.
+    kinds: Optional[list[Literal["opanel", "directadmin", "cpanel"]]] = Field(default=None, max_length=4)
 
     @model_validator(mode="after")
     def source_has_what_it_needs(self):

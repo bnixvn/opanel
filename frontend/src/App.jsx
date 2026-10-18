@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import ImportPage from './pages/Import.jsx';
 import DomainPicker from './components/DomainPicker.jsx';
 import NotificationBell from './components/NotificationBell.jsx';
 import { createRoot } from 'react-dom/client';
@@ -121,10 +122,14 @@ const PAGE_ROUTES = {
   mysql: '/mysql',
   autossl: '/autossl',
   wordpress: '/wordpress',
+  // The migration addons' pages (the Migration hub).
+  importDirectadmin: '/migration/directadmin',
+  importCpanel: '/migration/cpanel',
   // The hubs' own addresses (lib/navigation.jsx): each opens its first tab.
   server: '/server',
   'security-center': '/security-center',
   account: '/account',
+  migration: '/migration',
   // The server's own pages, behind the top bar's status chips (admin only).
   processes: '/processes',
   ramUsage: '/ram-usage',
@@ -418,6 +423,16 @@ function CodeEditor({ value, mode, disabled, theme, onChange, onCursorChange }) 
 
 // Restore: what each kind of archive is called (services/restore_sources.py).
 const RESTORE_KIND_LABELS = { opanel: 'OPanel', directadmin: 'DirectAdmin', cpanel: 'cPanel' };
+// One wizard, several pages (operator, 2026-10-18: DirectAdmin import out of
+// Backup & Restore, an addon page of its own like cPanel's): what each restores
+// and where from. Backup & Restore is the panel's own backups only.
+const RESTORE_MODES = {
+  opanel: { kinds: ['opanel'], sources: ['local', 'target', 'remote'] },
+  directadmin: { kinds: ['directadmin'], sources: ['ssh-directadmin', 'local', 'remote'] },
+  cpanel: { kinds: ['cpanel'], sources: ['ssh-cpanel', 'local', 'remote'] },
+};
+// The migration addons' pages, and the mode each runs the wizard in.
+const IMPORT_PAGES = { importDirectadmin: 'directadmin', importCpanel: 'cpanel' };
 
 function App() {
   // Auth is now cookie-based (HttpOnly opanel_session). The SPA does not see
@@ -503,6 +518,8 @@ function App() {
   // pick the accounts, restore. The remote password lives only in this state.
   const BLANK_RESTORE_REMOTE = { protocol: 'sftp', host: '', port: 22, username: '', password: '', private_key: '', use_key: false, path: '' };
   const [restoreSource, setRestoreSource] = useState('local');
+  // Which page the wizard is on (RESTORE_MODES); each page sets it as it opens.
+  const [restoreMode, setRestoreMode] = useState('opanel');
   const [restoreTargetId, setRestoreTargetId] = useState('');
   const [restoreRemote, setRestoreRemote] = useState(BLANK_RESTORE_REMOTE);
   // A cPanel or DirectAdmin server signed in to as root (the import addons):
@@ -3536,6 +3553,10 @@ function App() {
   // What the server needs to reach the source. Listing trusts whatever SFTP
   // key answers and shows it; the restore then insists on that same key.
   function restoreSourceBody(source = restoreSource, forRun = false) {
+    return { ...restoreSourceOnly(source, forRun), kinds: RESTORE_MODES[restoreMode].kinds };
+  }
+
+  function restoreSourceOnly(source, forRun) {
     if (source === 'target') return { source, target_id: Number(restoreTargetId) || null };
     if (source === 'ssh-cpanel' || source === 'ssh-directadmin') {
       const { use_key, ...login } = restoreSsh;
@@ -3567,6 +3588,20 @@ function App() {
       };
     }
     return { source: 'local' };
+  }
+
+  // A page with the wizard on it says which kinds it restores; switching page
+  // starts the wizard over on that page's first source.
+  function enterRestoreMode(mode) {
+    if (!RESTORE_MODES[mode]) return;
+    setRestoreMode(mode);
+    setRestoreSource(RESTORE_MODES[mode].sources[0]);
+    setRestoreList(null);
+    setRestoreListError('');
+    setRestorePicks([]);
+    setRestoreChoice({});
+    setRestoreFilter('');
+    setRestoreOverwrite(false);
   }
 
   function chooseRestoreSource(source) {
@@ -3650,6 +3685,7 @@ function App() {
     if (picked.length === 0) return;
     const form = new FormData();
     picked.forEach(file => form.append('files', file));
+    form.append('kind', RESTORE_MODES[restoreMode].kinds[0]);
     const data = await request('/maintenance/restore/upload', { method: 'POST', body: form }, tr("Uploading backups..."));
     if (data) {
       setNotice(tr("Uploaded {0} backup(s).", data.items?.length || picked.length));
@@ -4675,10 +4711,12 @@ function App() {
   // This server needs nothing typed in, so its list is read as soon as the
   // step is on screen; a destination as soon as one is chosen.
   useEffect(() => {
-    if (!isAuthenticated || !isAdmin || page !== 'backups' || backupTab !== 'restore') return;
+    const onWizard = (page === 'backups' && backupTab === 'restore' && restoreMode === 'opanel')
+      || IMPORT_PAGES[page] === restoreMode;
+    if (!isAuthenticated || !isAdmin || !onWizard) return;
     if (restoreSource === 'local') loadRestoreList('local');
     if (restoreSource === 'target' && restoreTargetId) loadRestoreList('target');
-  }, [isAuthenticated, isAdmin, page, backupTab, restoreSource, restoreTargetId]);
+  }, [isAuthenticated, isAdmin, page, backupTab, restoreSource, restoreTargetId, restoreMode]);
 
   useEffect(() => {
     if (isAuthenticated && page === 'users') { loadUsers(); loadPlans(); if (currentUser?.role === 'reseller') loadResellerPool(); }
@@ -4886,10 +4924,15 @@ function App() {
 
   // The navigation (lib/navigation.jsx), as SNPanel lays it out: the role's
   // sidebar, the entry lit on this page, the hub it is a tab of, its title.
+  // An addon installed and switched on, from the Addons list.
+  const addonOn = id => addonList.some(addon => addon.id === id && addon.installed && addon.running !== false);
   const navCtx = {
     isAdmin, isReseller, limits: limitsOn, terminal: canOpenTerminal,
     malware: !!malwareScanStatus?.enabled, notifications: !!notifyInfo?.enabled,
     wordpress: !!wordpressEnabled,
+    // The migration addons, each a tab of the Migration hub while it is on.
+    directadminImport: addonOn('directadmin'),
+    cpanelImport: addonOn('cpanel'),
   };
   navCtxRef.current = navCtx;
   // A hub's own address typed or bookmarked (/server, /settings): its first
@@ -4954,7 +4997,7 @@ function App() {
       backupJobs, backupSchedules, backupTab, backups, createBackup, createBackupSchedule, createSftpTarget, createUserBackup,
       cronScheduleLabel, deleteBackup, deleteBackupSchedule, deleteSftpTarget, deleteTargetObject, deleteUserBackup, downloadBackup,
       downloadUserBackup, loadBackupJobs, loadSftpTargets, loadTargetObjects, newBackupSchedule, newSftpTarget, refreshBackupArea,
-      refreshScheduledBackupArea, refreshUserBackupArea, renderRestoreWizard, renderSchedulePicker, restoreBackup, restoreUserBackup,
+      refreshScheduledBackupArea, refreshUserBackupArea, renderRestoreWizard, enterRestoreMode, restoreMode, renderSchedulePicker, restoreBackup, restoreUserBackup,
       runBackupScheduleNow, selectedBackupUserId, selectedSftpTargetId, setNewBackupSchedule, setNewSftpTarget, setSelectedBackupUserId,
       setSelectedSftpTargetId, sftpTargets, targetObjects, testBackupTarget, uploadBackup, userBackups,
       // Users & packages (pages/Users.jsx).
@@ -5668,20 +5711,27 @@ function App() {
       : allGroups;
     const selectable = groups.filter(group => restoreChosen(group).valid !== false);
     const pickedGroups = allGroups.filter(group => restorePicks.includes(group.key));
-    const pickedHasDa = pickedGroups.some(group => group.kind !== 'opanel');
+    const pickedHasDa = restoreMode !== 'opanel' && pickedGroups.length > 0;
     const allPicked = selectable.length > 0 && selectable.every(group => restorePicks.includes(group.key));
     const somePicked = selectable.some(group => restorePicks.includes(group.key));
     const job = restoreJob;
     const jobActive = !!job && (job.status === 'queued' || job.status === 'running');
     const remote = restoreRemote;
     const setRemote = patch => setRestoreRemote(prev => ({ ...prev, ...patch }));
-    const sources = [
-      ['local', HardDrive, tr("This server"), tr("Backups the panel made, and archives uploaded for restore.")],
-      ['target', Network, tr("Backup Destination"), tr("An S3 or SFTP destination saved under Backup Destination.")],
-      ['remote', Server, tr("Another server"), tr("Pull backups from another server over SFTP or FTP, such as an old DirectAdmin server.")],
-      ...(restoreAddons.directadmin ? [['ssh-directadmin', Server, tr("DirectAdmin server"), tr("Sign in as root over SSH: the server backs up each account you pick and the panel brings it over.")]] : []),
-      ...(restoreAddons.cpanel ? [['ssh-cpanel', Server, tr("cPanel server"), tr("Sign in as root over SSH: pkgacct packs each account you pick and the panel brings it over.")]] : []),
-    ];
+    const mode = RESTORE_MODES[restoreMode];
+    const foreign = restoreMode !== 'opanel' ? RESTORE_KIND_LABELS[restoreMode] : '';
+    const sourceCards = {
+      local: [HardDrive, tr("This server"), foreign
+        ? tr("{0} backups uploaded here, or put in the SFTP folder.", foreign)
+        : tr("Backups the panel made, and archives uploaded for restore.")],
+      target: [Network, tr("Backup Destination"), tr("An S3 or SFTP destination saved under Backup Destination.")],
+      remote: [Server, tr("Another server"), foreign
+        ? tr("Pull {0} backups from a server over SFTP or FTP.", foreign)
+        : tr("Pull panel backups from another server over SFTP or FTP.")],
+      'ssh-directadmin': [Server, tr("DirectAdmin server"), tr("Sign in as root over SSH: the server backs up each account you pick and the panel brings it over.")],
+      'ssh-cpanel': [Server, tr("cPanel server"), tr("Sign in as root over SSH: pkgacct packs each account you pick and the panel brings it over.")],
+    };
+    const sources = mode.sources.map(id => [id, ...sourceCards[id]]);
     const sshPanel = restoreSource.startsWith('ssh-') ? RESTORE_KIND_LABELS[restoreSource.slice(4)] : '';
     // What the other server says of an account, in the panel's words.
     const accountNotes = { suspended: tr("Suspended"), admin: tr("Administrator"), reseller: tr("Reseller") };
@@ -5712,11 +5762,11 @@ function App() {
         <h4><span className="restore-step-no">2</span>{stepTwoTitle}</h4>
         {restoreSource === 'local' && <>
           <p className="hint">
-            {tr("Read from")} <code>{restoreList?.directories?.opanel || '/var/backups/opanel/users'}</code>, <code>{restoreList?.directories?.directadmin || '/home/admin/opanel-backups/da'}</code> {tr("and")} <code>{restoreList?.directories?.cpanel || '/home/admin/opanel-backups/cpanel'}</code>. {tr("An uploaded archive goes to the right one by its name.")}
+            {tr("Read from")} <code>{restoreList?.directories?.[restoreMode] || (restoreMode === 'opanel' ? '/var/backups/opanel/users' : `/home/admin/opanel-backups/${restoreMode === 'directadmin' ? 'da' : restoreMode}`)}</code>.
           </p>
           <p className="hint restore-sftp-hint">
             {tr("Large backups go up over SFTP: sign in as admin on port 22, with the SFTP password set under SFTP accounts.")}<br/>
-            {tr("Put them in {0} (/backups in the SFTP client), panel and DirectAdmin backups alike, then press Refresh once the upload has finished.", '/home/admin/backups')}
+            {tr("Put them in {0} (/backups in the SFTP client), then press Refresh once the upload has finished.", '/home/admin/backups')}
           </p>
           <div className="actions restore-local-actions">
             <label className="upload-button secondary">
@@ -5873,7 +5923,7 @@ function App() {
         <h4><span className="restore-step-no">4</span>{tr("Restore")}</h4>
         {pickedHasDa && <label className="check-line">
           <input type="checkbox" checked={restoreOverwrite} onChange={e => setRestoreOverwrite(e.target.checked)} />
-          {tr("DirectAdmin and cPanel backups: overwrite a user or website that is already on this server")}
+          {tr("Overwrite a user or website that is already on this server")}
         </label>}
         <div className="actions">
           <button disabled={!!loading || jobActive || pickedGroups.length === 0} onClick={runRestore}>
@@ -8993,6 +9043,7 @@ function App() {
     if (page === 'databases') return <DatabasesPage/>;
     if (page === 'cron') return renderCron();
     if (page === 'files') return <FilesPage/>;
+    if (IMPORT_PAGES[page]) return <ImportPage panel={IMPORT_PAGES[page]}/>;
     if (page === 'backups') return <BackupsPage/>;
     if (page === 'security') return renderSecurity();
     if (page === 'malware') return renderMalwareScanner();

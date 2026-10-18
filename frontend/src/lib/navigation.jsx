@@ -44,6 +44,8 @@ export const PAGE_TITLES = {
   usage: msg('Resource usage'),
   git: msg('Git'),
   wordpress: msg('WordPress Manager'),
+  importDirectadmin: msg('DirectAdmin Import'),
+  importCpanel: msg('cPanel Import'),
   processes: msg('Process monitor'),
   ramUsage: msg('RAM usage'),
   diskUsage: msg('Disk usage'),
@@ -94,6 +96,12 @@ export const HUBS = [
     { page: 'sftp', label: 'SFTP' },
     // The browser terminal: a customer whose package has it (OPanel only).
     { page: 'terminal', label: msg('Terminal'), when: (c) => c.terminal },
+  ] },
+  // Accounts moved here from other panels: a tab per migration addon that is
+  // on, reached from the Dashboard's Migration tools and the Addons page.
+  { key: 'migration', title: msg('Migration'), roles: ['admin'], tabs: [
+    { page: 'importDirectadmin', label: 'DirectAdmin', when: (c) => c.directadminImport },
+    { page: 'importCpanel', label: 'cPanel', when: (c) => c.cpanelImport },
   ] },
   { key: 'account', title: msg('Account'), roles: ['reseller', 'customer'], tabs: [
     { page: 'security', label: msg('Account security') },

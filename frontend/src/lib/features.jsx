@@ -59,9 +59,9 @@ export const TILES = {
   mcp: { label: msg('AI assistants'), icon: 'mcp', page: 'mcp', addon: 'mcp' },
   notifications: { label: msg('Notifications'), icon: 'notifications', page: 'notifications', addon: 'notifications', roles: ['admin'] },
   'panel-settings': { label: msg('Panel settings'), icon: 'panel-settings', page: 'settings', roles: ['admin'] },
-  // Migration: the import addons' archives and servers are in Backup & Restore.
-  'da-import': { label: msg('DirectAdmin Import'), icon: 'directadmin-import', page: 'backups', before: 'backupsRestore', roles: ['admin'], addon: 'directadmin' },
-  'cpanel-import': { label: msg('cPanel Import'), icon: 'cpanel-import', page: 'backups', before: 'backupsRestore', roles: ['admin'], addon: 'cpanel' },
+  // Migration: each import addon's page, in the Migration hub.
+  'da-import': { label: msg('DirectAdmin Import'), icon: 'directadmin-import', page: 'importDirectadmin', roles: ['admin'], addon: 'directadmin' },
+  'cpanel-import': { label: msg('cPanel Import'), icon: 'cpanel-import', page: 'importCpanel', roles: ['admin'], addon: 'cpanel' },
   // Extensions
   addons: { label: msg('Manage addons'), icon: 'addons', page: 'addons', roles: ['admin'] },
 };
