@@ -104,7 +104,10 @@ def test_the_top_bar_has_the_language_theme_and_account_as_snpanel():
 def test_the_version_opens_updates_and_marks_a_waiting_release():
     assert "const panelWaiting = isAdmin && resourceUsage?.panel_update?.update_available === true;" in APP
     assert "user-menu-version-item${panelWaiting ? ' has-update' : ''}" in APP and "navigateToPage('updates'); }}>" in APP
-    assert '<small className="user-menu-version">' in APP, "a customer sees the number only"
+    # Operator, 2026-10-18: an end user must not see the panel's version or
+    # whether an update is waiting, not even the plain version number.
+    assert "appVersion && isAdmin &&" in APP
+    assert '<small className="user-menu-version">' not in APP
     from app.api import services
     source = inspect.getsource(services.get_resource_usage)
     assert "if is_admin_role(current_user.role):" in source and "updates.cached_release_summary()" in source, \

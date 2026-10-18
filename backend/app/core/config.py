@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     # migration window only.
     strict_decrypt: bool = True
     pma_signon_secret: str = ""
+    # The secret opanel-helper's refresh_tools_ols writes into
+    # conf.d/opanel-signon.php; the backend itself never reads it.
+    pma_blowfish_secret: str = ""
     # The branch this box updates from (opanel_UPDATE_BRANCH): "staging" on the
     # staging box, main everywhere else. update.sh and the helper read it from
     # this .env too; declared here because an unknown key in .env stops the
