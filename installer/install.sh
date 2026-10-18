@@ -273,7 +273,11 @@ install_base_packages() {
   echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
   echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
   apt-get update --allow-releaseinfo-change
-  apt-get install -y software-properties-common ca-certificates curl gnupg git composer mariadb-server mariadb-client redis-server openssh-server python3 python3-pip python3-venv certbot python3-certbot-dns-cloudflare tar zip unzip openssl iptables iptables-persistent ipset acl phpmyadmin zstd
+  # No composer or python3-pip from apt: universe packages whose security
+  # fixes need Ubuntu Pro. composer comes from upstream (files/opanel-packages.sh),
+  # and the panel's Python has its own venv and pip.
+  apt-get install -y software-properties-common ca-certificates curl gnupg git php-cli mariadb-server mariadb-client redis-server openssh-server python3 python3-venv certbot python3-certbot-dns-cloudflare tar zip unzip openssl iptables iptables-persistent ipset acl phpmyadmin zstd
+  bash "${SCRIPT_DIR}/files/opanel-packages.sh" || echo "WARNING: composer was not installed; the Git addon's composer presets need it"
   systemctl enable --now mariadb redis-server
   systemctl enable --now ssh 2>/dev/null || systemctl enable --now sshd 2>/dev/null || true
   remove_ufw_legacy

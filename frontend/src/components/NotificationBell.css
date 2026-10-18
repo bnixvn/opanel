@@ -2,12 +2,13 @@
    The count wears the worst item's colour; the list opens under the bell,
    right-aligned like the account's menu. */
 .notify-bell{position:relative;display:flex}
-.notify-bell-trigger{position:relative}
+/* The header buttons clip what overflows them; the count sits on the edge. */
+.top-actions .notify-bell-trigger{position:relative;overflow:visible}
 .top-actions .notify-bell-trigger.tone-bad{color:var(--danger);border-color:var(--danger-border)}
 .top-actions .notify-bell-trigger.tone-warn{color:var(--warning-text);border-color:var(--warning-border)}
 .notify-bell-count{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;display:grid;place-items:center;border-radius:999px;background:var(--primary);color:var(--primary-contrast);font-size:11px;font-weight:700;line-height:1;letter-spacing:0;box-shadow:0 0 0 2px var(--surface)}
 .notify-bell-trigger.tone-bad .notify-bell-count{background:var(--danger);color:#fff}
-.notify-bell-trigger.tone-warn .notify-bell-count{background:var(--warning);color:#1f1300}
+.notify-bell-trigger.tone-warn .notify-bell-count{background:var(--warning);color:#fff}
 .notify-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:45;width:min(380px,calc(100vw - 32px));max-height:min(70vh,560px);overflow:auto;padding:10px;display:grid;gap:10px;align-content:start;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);animation:menuIn .12s ease}
 .notify-panel-head{display:flex;align-items:center;gap:8px;padding:2px 2px 8px;border-bottom:1px solid var(--border)}
 .notify-panel-head strong{font-size:14px;color:var(--text)}

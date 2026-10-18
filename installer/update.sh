@@ -607,7 +607,6 @@ PY
 
 ensure_terminal_tools() {
   local missing=()
-  command -v composer >/dev/null 2>&1 || missing+=(composer)
   command -v zip >/dev/null 2>&1 || missing+=(zip)
   command -v unzip >/dev/null 2>&1 || missing+=(unzip)
   command -v zstd >/dev/null 2>&1 || missing+=(zstd)
@@ -615,6 +614,11 @@ ensure_terminal_tools() {
     log "Installing terminal/file-manager tools: ${missing[*]}"
     DEBIAN_FRONTEND=noninteractive apt-get update --allow-releaseinfo-change
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+  fi
+  # composer from upstream, and the universe packages the panel no longer
+  # installs (composer's php-symfony-*, python3-pip) taken off (2026-10-18).
+  if [[ -f "$SOURCE_DIR/installer/files/opanel-packages.sh" ]]; then
+    bash "$SOURCE_DIR/installer/files/opanel-packages.sh" || log "WARNING: the package tidy-up did not finish; it runs again on the next update"
   fi
 }
 

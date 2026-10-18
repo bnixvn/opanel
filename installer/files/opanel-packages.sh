@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Packages the panel takes from upstream rather than Ubuntu's universe, and the
+# universe ones it no longer installs. Run by install.sh and every update.sh;
+# safe to run again.
+#
+# Operator, 2026-10-18 ("Kiểm tra lại bộ thư viện"): apt said composer, the
+# php-symfony-* it pulls in, python3-pip and python3-wheel had security fixes
+# waiting that only Ubuntu Pro (esm-apps) delivers. None of them is needed
+# from apt:
+#   - composer comes from getcomposer.org, its installer checked against the
+#     published SHA-384, into /usr/local/bin, and self-updates on each run;
+#     it runs on the system PHP (php-cli, from main, which Ubuntu patches);
+#   - the panel's Python lives in its own venv, whose pip is upgraded there;
+#     the system-wide pip and wheel were never used.
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+export COMPOSER_ALLOW_SUPERUSER=1
+
+COMPOSER_BIN=/usr/local/bin/composer
+# What composer and pip brought in and nothing else needs once they are gone.
+# Matched by name, so a package an administrator installed for a reason of
+# their own is never swept up with them.
+LEFTOVERS_RE='^(composer|jsonlint|php-composer-[a-z-]+|php-symfony-[a-z0-9-]+|php-psr-[a-z-]+|php-react-promise|php-seld-[a-z-]+|php-json-schema|php-intl|php[0-9.]+-intl|python3-pip|python3-wheel)$'
+
+log() { echo "[packages] $*"; }
+
+ensure_php_cli() {
+  if ! dpkg -s php-cli >/dev/null 2>&1; then
+    apt-get install -y php-cli >/dev/null
+  fi
+  # Kept for composer even when what first pulled it in is removed.
+  apt-mark manual php-cli >/dev/null 2>&1 || true
+}
+
+install_composer() {
+  if [[ -x "$COMPOSER_BIN" ]] && "$COMPOSER_BIN" --version 2>/dev/null | grep -q '^Composer'; then
+    "$COMPOSER_BIN" self-update --stable --no-interaction --quiet 2>/dev/null \
+      || log "composer self-update failed; keeping $("$COMPOSER_BIN" --version 2>/dev/null | head -n 1)"
+    return 0
+  fi
+  local tmp expected actual
+  tmp="$(mktemp -d)"
+  curl -fsSL --retry 3 --max-time 60 https://composer.github.io/installer.sig -o "$tmp/installer.sig"
+  curl -fsSL --retry 3 --max-time 60 https://getcomposer.org/installer -o "$tmp/composer-setup.php"
+  expected="$(tr -d '[:space:]' < "$tmp/installer.sig")"
+  actual="$(php -r 'echo hash_file("sha384", $argv[1]);' "$tmp/composer-setup.php")"
+  if [[ -z "$expected" || "$expected" != "$actual" ]]; then
+    rm -rf "$tmp"
+    log "the composer installer does not match its published checksum; composer not installed"
+    return 1
+  fi
+  php "$tmp/composer-setup.php" --quiet --install-dir=/usr/local/bin --filename=composer
+  rm -rf "$tmp"
+  chmod 0755 "$COMPOSER_BIN"
+  log "installed $("$COMPOSER_BIN" --version 2>/dev/null | head -n 1)"
+}
+
+# Purge what is no longer wanted, and only that: the purge is simulated first
+# and stops if apt would take anything not on the list with it.
+purge_only() {
+  local wanted=("$@") planned extra
+  ((${#wanted[@]})) || return 0
+  planned="$(apt-get -s purge "${wanted[@]}" 2>/dev/null | awk '/^Purg|^Remv/{print $2}' | sort -u)"
+  extra="$(comm -23 <(printf '%s\n' "$planned") <(printf '%s\n' "${wanted[@]}" | sort -u) | grep -v '^$' || true)"
+  if [[ -n "$extra" ]]; then
+    log "not removing ${wanted[*]}: apt would also remove ${extra//$'\n'/ }"
+    return 0
+  fi
+  apt-get purge -y "${wanted[@]}" >/dev/null
+  log "removed ${wanted[*]}"
+}
+
+remove_universe_leftovers() {
+  local remove=() name
+  # The apt composer goes only once ours is in place.
+  if dpkg -s composer >/dev/null 2>&1 && [[ -x "$COMPOSER_BIN" ]]; then remove+=(composer); fi
+  for name in python3-pip python3-wheel; do
+    dpkg -s "$name" >/dev/null 2>&1 && remove+=("$name")
+  done
+  purge_only "${remove[@]}"
+  # Then what they had pulled in and nothing needs now.
+  mapfile -t remove < <(apt-get -s autoremove 2>/dev/null | awk '/^Remv/{print $2}' | grep -E "$LEFTOVERS_RE" || true)
+  purge_only "${remove[@]}"
+}
+
+ensure_php_cli
+install_composer || true
+remove_universe_leftovers
