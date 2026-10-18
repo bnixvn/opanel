@@ -1,6 +1,8 @@
 // English -> Vietnamese. Keys are the English source strings (see src/i18n.js);
 // a string missing here shows in English. List the gaps with: npm run i18n:check
 export default {
+  "A restore point before every update": "Tạo điểm khôi phục trước mỗi lần cập nhật",
+  "The files without the uploads, and the database, only when you take one; the newest two are kept, in the account's home.": "Các tệp (trừ thư mục uploads) và cơ sở dữ liệu, chỉ khi bạn tự tạo; giữ hai bản mới nhất, trong thư mục home của tài khoản.",
   "(3 per CPU core an account may use, split over its sites)": "(3 cho mỗi core CPU tài khoản được dùng, chia đều cho các website của nó)",
   "0 = unlimited.": "0 = không giới hạn.",
   "0 = unlimited. Choosing a package fills these in.": "0 = không giới hạn. Chọn gói sẽ tự điền các ô này.",

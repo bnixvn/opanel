@@ -79,6 +79,14 @@ class PointIn(BaseModel):
     name: str = Field(pattern=r"^[0-9]{8}T[0-9]{6}$")
 
 
+class AutoPointsIn(BaseModel):
+    on: bool
+
+
+class AutoPointsIn(BaseModel):
+    on: bool
+
+
 class UserIn(BaseModel):
     user_id: Optional[int] = None
 
@@ -120,6 +128,8 @@ def _install_out(install: WpInstall, website: Optional[Website], owners: dict[in
         "themes_total": install.themes_total, "themes_updates": install.themes_updates,
         "checked": install.last_checked_at is not None,
         "security_warnings": wp_manager.security_warnings(json.loads(install.inventory or "{}")),
+        "auto_points": wp_manager.auto_points(install),
+        "auto_points": wp_manager.auto_points(install),
         "last_checked_at": install.last_checked_at.isoformat() + "Z" if install.last_checked_at else None,
         "last_error": install.last_error,
     }
@@ -385,6 +395,26 @@ def themes(install_id: int, payload: ItemsIn, request: Request, db: Session = De
 @router.post("/installs/{install_id}/points")
 def point_create(install_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return _task(db, current_user, install_id, "point_create", {}, request)
+
+
+@router.put("/installs/{install_id}/points/auto")
+def point_auto(install_id: int, payload: AutoPointsIn, request: Request, db: Session = Depends(get_db),
+               current_user: User = Depends(get_current_user)):
+    """A restore point before every update, or not: answered at once."""
+    install, website = _install_for(db, current_user, install_id)
+    wp_manager.set_auto_points(db, install, payload.on)
+    log_action(db, current_user.id, "wordpress_points_auto", install.url or website.domain, "on" if payload.on else "off", request=request)
+    return {"auto_points": payload.on}
+
+
+@router.put("/installs/{install_id}/points/auto")
+def point_auto(install_id: int, payload: AutoPointsIn, request: Request, db: Session = Depends(get_db),
+               current_user: User = Depends(get_current_user)):
+    """A restore point before every update, or not: answered at once."""
+    install, website = _install_for(db, current_user, install_id)
+    wp_manager.set_auto_points(db, install, payload.on)
+    log_action(db, current_user.id, "wordpress_points_auto", install.url or website.domain, "on" if payload.on else "off", request=request)
+    return {"auto_points": payload.on}
 
 
 @router.post("/installs/{install_id}/points/restore")

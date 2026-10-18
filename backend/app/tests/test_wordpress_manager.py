@@ -354,3 +354,23 @@ def test_a_restore_names_a_point_the_site_has(env):
     restored = [call for call in env.calls if call["command"] == "wp-point-restore"]
     assert restored and restored[0]["user"] == "alice"
     assert any(call["args"][:2] == ["db", "import"] for call in env.calls)
+
+
+def test_restore_points_before_an_update_can_be_switched_off(env):
+    """Operator, 2026-10-19: "Cho bật/tắt tính năng điểm khôi phục"."""
+    _scan(env)
+    row = env.db.query(WpInstall).one()
+    client = env.as_user("alice")
+    assert client.get(f"/api/wordpress/installs/{row.id}").json()["auto_points"] is True
+    assert client.put(f"/api/wordpress/installs/{row.id}/points/auto", json={"on": False}).json() == {"auto_points": False}
+    env.calls.clear()
+    assert client.post(f"/api/wordpress/installs/{row.id}/update", json={}).status_code == 200
+    commands = [call["command"] for call in env.calls]
+    assert "wp-point-create" not in commands
+    assert any(call["args"][:2] == ["core", "update"] for call in env.calls)
+    # A refresh keeps the switch where it was.
+    env.db.refresh(row)
+    assert json.loads(row.inventory)["auto_points"] is False
+    assert client.get(f"/api/wordpress/installs/{row.id}").json()["auto_points"] is False
+    # Another account cannot switch it.
+    assert env.as_user("bob").put(f"/api/wordpress/installs/{row.id}/points/auto", json={"on": True}).status_code == 403

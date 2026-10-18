@@ -411,7 +411,7 @@ function ManageView({ id, detail, back, reload, post, signIn, setSecret, busy })
       {tab === 'plugins' && <Items kind="plugin" detail={detail} items={inv.plugins || []} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'themes' && <Items kind="theme" detail={detail} items={inv.themes || []} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'security' && <Security detail={detail} base={base} post={post} busy={busy || !usable}/>}
-      {tab === 'points' && <RestorePoints detail={detail} base={base} post={post} busy={busy || !usable}/>}
+      {tab === 'points' && <RestorePoints detail={detail} base={base} post={post} reload={reload} busy={busy || !usable}/>}
       {tab === 'staging' && <Staging detail={detail} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'cache' && <LsCache detail={detail} inv={inv} base={base} post={post} busy={busy || !usable}/>}
       {tab === 'activity' && <ActivityTab detail={detail}/>}
@@ -686,9 +686,16 @@ function Security({ detail, base, post, busy }) {
 // The restore points, newest first: the site's files (without its uploads)
 // and its database, taken before every update and on request; the newest
 // two are kept, in the account's own home.
-function RestorePoints({ detail, base, post, busy }) {
+function RestorePoints({ detail, base, post, reload, busy }) {
   const t = useT();
-  const { formatBytes } = usePanel();
+  const { formatBytes, request } = usePanel();
+  // Whether one is taken before every update: the WordPress's own switch
+  // (operator, 2026-10-19), on until turned off.
+  const auto = detail.auto_points !== false;
+  async function setAuto(on) {
+    const data = await request(`${base}/points/auto`, { method: 'PUT', body: JSON.stringify({ on }) }, t('Saving...'));
+    if (data) reload();
+  }
   const points = [...((detail.inventory || {}).points || [])].reverse();
   const reasons = { manual: t('Taken by hand'), 'core update': t('Before a WordPress update'), 'plugin update': t('Before a plugin update'),
     'theme update': t('Before a theme update'), 'update everything': t('Before updating everything') };
@@ -706,7 +713,14 @@ function RestorePoints({ detail, base, post, busy }) {
   return <div className="wpm-tab">
     <div className="wpm-toolbar">
       <button type="button" disabled={busy} onClick={() => post(`${base}/points`, {}, t('Starting...'))}><History size={15} aria-hidden="true"/> {t('Take a restore point')}</button>
-      <span className="hint">{t('The files without the uploads, and the database. Taken before every update; the newest two are kept, in the account\'s home.')}</span>
+      <span className="hint">{auto
+        ? t('The files without the uploads, and the database. Taken before every update; the newest two are kept, in the account\'s home.')
+        : t('The files without the uploads, and the database, only when you take one; the newest two are kept, in the account\'s home.')}</span>
+    </div>
+    <div className="wpm-toolbar">
+      <Switch checked={auto} disabled={busy} onChange={setAuto} label={t('A restore point before every update')}>
+        <span>{t('A restore point before every update')}</span>
+      </Switch>
     </div>
     {points.length === 0 ? <p className="hint">{t('No restore point yet.')}</p> : <div className="data-table-wrap">
       <table className="data-table wpm-cards">

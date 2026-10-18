@@ -236,9 +236,10 @@ def apply_inventory(install: WpInstall, inventory: dict) -> None:
     install.themes_total = len(inventory["themes"])
     install.themes_updates = sum(1 for item in inventory["themes"] if item["update"])
     previous = json.loads(install.inventory or "{}")
-    # What a check does not read: the last full security check, the restore points.
-    for key in ("security_full", "points"):
-        if previous.get(key) and key not in inventory:
+    # What a check does not read: the last full security check, the restore
+    # points, and whether one is taken before an update.
+    for key in ("security_full", "points", "auto_points"):
+        if previous.get(key) is not None and key not in inventory:
             inventory[key] = previous[key]
     install.inventory = json.dumps(inventory)
     install.last_checked_at = datetime.utcnow()
@@ -619,10 +620,26 @@ def _handle_point_delete(db: Session, task: _Task, params: dict) -> None:
     _save_points(db, install, [item for item in points if item["name"] != point["name"]])
 
 
+def auto_points(install: WpInstall) -> bool:
+    """Whether a restore point is taken before every update: on unless this
+    WordPress's owner turned it off (operator, 2026-10-19)."""
+    return json.loads(install.inventory or "{}").get("auto_points", True) is not False
+
+
+def set_auto_points(db: Session, install: WpInstall, on: bool) -> None:
+    inventory = json.loads(install.inventory or "{}")
+    inventory["auto_points"] = bool(on)
+    install.inventory = json.dumps(inventory)
+    db.commit()
+
+
 def _point_first(db: Session, task: _Task, params: dict, install: WpInstall, website: Website, reason: str) -> None:
-    """Before an update: a restore point, unless the task was asked not to."""
-    if params.get("restore_point", True):
+    """Before an update: a restore point, unless the task was asked not to or
+    the WordPress has them switched off."""
+    if params.get("restore_point", True) and auto_points(install):
         create_point(db, task, install, website, reason)
+    else:
+        task.log("No restore point: switched off for this WordPress")
 
 
 def _short(text: str) -> str:

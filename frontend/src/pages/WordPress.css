@@ -29,6 +29,12 @@
 .wpm-site small{color:var(--text-muted);font-size:12px}
 .wpm-link{all:unset;cursor:pointer;color:var(--text)}
 .wpm-link:hover strong,.wpm-link:focus-visible strong{color:var(--primary-ink,var(--primary));text-decoration:underline}
+/* The panel's button:hover:not(:disabled) (a blue fill) outranks .wpm-link:
+   the name went dark on blue (operator, 2026-10-19). */
+.wpm-link:hover:not(:disabled),.wpm-link:focus-visible{background:none;box-shadow:none;transform:none;color:var(--text)}
+/* The panel's button:hover:not(:disabled) (a blue fill) outranks .wpm-link:
+   the name went dark on blue (operator, 2026-10-19). */
+.wpm-link:hover:not(:disabled),.wpm-link:focus-visible{background:none;box-shadow:none;transform:none;color:var(--text)}
 .wpm-url{font-size:12.5px;color:var(--text-secondary);overflow-wrap:anywhere}
 .wpm-when{white-space:nowrap;font-size:13px}
 /* The buttons sit in a box inside the cell: a cell that is a flex box

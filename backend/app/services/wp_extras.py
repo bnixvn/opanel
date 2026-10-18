@@ -42,8 +42,8 @@ def folder_is_empty(website: Website) -> tuple[bool, str]:
         entries = list(root.iterdir())
     except FileNotFoundError:
         return True, ""
-    except OSError as exc:
-        return False, f"Its folder cannot be read: {exc}"
+    except OSError:
+        return False, "Its folder cannot be read"
     for entry in entries:
         if entry.name not in EMPTY_ENTRIES:
             return False, "Its folder is not empty"
