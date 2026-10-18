@@ -753,6 +753,7 @@ install_panel_runtime() {
   # have ALLOWED_ORIGINS, so nesting it there meant they never got a secret and
   # phpMyAdmin single sign-on stayed broken for good.
   env_set_default PMA_SIGNON_SECRET "$(openssl rand -hex 32)"
+  env_set_default PMA_BLOWFISH_SECRET "$(openssl rand -hex 32)"
   panel_domain="$(env_get PANEL_DOMAIN)"
   if [[ -n "$panel_domain" ]] && ! is_domain_name "$panel_domain"; then
     env_set PANEL_DOMAIN ""

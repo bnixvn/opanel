@@ -23,7 +23,6 @@ export DEBIAN_FRONTEND=noninteractive
 export COMPOSER_ALLOW_SUPERUSER=1
 
 COMPOSER_BIN=/usr/local/bin/composer
-PMA_MARKER=/usr/share/phpmyadmin/.opanel-version
 # What composer, pip and apt's phpmyadmin brought in and nothing else needs
 # once they are gone. Matched by name, so a package an administrator installed
 # for a reason of their own is never swept up with them.
@@ -83,10 +82,11 @@ purge_only() {
 
 remove_universe_leftovers() {
   local remove=() name
-  # The apt composer goes only once ours is in place; apt's phpmyadmin only
-  # once opanel-phpmyadmin.sh has put a working upstream copy there.
+  # apt's phpmyadmin is purged by opanel-phpmyadmin.sh itself, before it writes
+  # anything of its own -- purging it only afterwards, here, once deleted files
+  # by the path its own manifest tracks regardless of their new content.
+  # The apt composer goes only once ours is in place.
   if dpkg -s composer >/dev/null 2>&1 && [[ -x "$COMPOSER_BIN" ]]; then remove+=(composer); fi
-  if dpkg -s phpmyadmin >/dev/null 2>&1 && [[ -f "$PMA_MARKER" ]]; then remove+=(phpmyadmin); fi
   for name in python3-pip python3-wheel; do
     dpkg -s "$name" >/dev/null 2>&1 && remove+=("$name")
   done

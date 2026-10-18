@@ -10,12 +10,20 @@
 # all needing Ubuntu Pro (esm-apps) for security fixes. Downloading the
 # official tarball needs none of that: it ships its own PHP dependencies
 # (vendor/), and OPanel already runs phpMyAdmin on OpenLiteSpeed + lsapi, never
-# Apache. installer/files/opanel-packages.sh purges the apt package and
-# whatever only it needed once this has put a working copy in its place.
+# Apache. installer/files/opanel-packages.sh purges what this no longer needed.
+#
+# The apt package is purged FIRST, here, before anything of ours is written --
+# not after. Purging it once our own copy was already in place, the first time
+# this ran, deleted files by the PATH its own manifest tracks regardless of
+# their current content (index.php and most of libraries/ and src/ along with
+# it, half of phpMyAdmin simply gone), and its postrm empties /etc/phpmyadmin
+# outright, taking conf.d/opanel-signon.php and the folder itself with it
+# (found live switching every existing box off the package, 2026-10-18).
 #
 # Run by install.sh and every update.sh; safe to run again -- it only
-# downloads when the pinned version is not already in place.
+# downloads when the pinned version is not already in place and intact.
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 PHPMYADMIN_VERSION="5.2.3"
 PMA_DIR="/usr/share/phpmyadmin"
@@ -26,7 +34,12 @@ ARCHIVE="phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages.tar.gz"
 
 log() { echo "[phpmyadmin] $*"; }
 
-if [[ -f "$PMA_MARKER" && "$(cat "$PMA_MARKER" 2>/dev/null)" == "$PHPMYADMIN_VERSION" ]]; then
+if dpkg -s phpmyadmin >/dev/null 2>&1; then
+  log "Removing the apt phpmyadmin package first, before our own copy goes in its place"
+  apt-get -o DPkg::Lock::Timeout=120 purge -y phpmyadmin >/dev/null || log "WARNING: could not purge the apt phpmyadmin package"
+fi
+
+if [[ -f "$PMA_MARKER" && "$(cat "$PMA_MARKER" 2>/dev/null)" == "$PHPMYADMIN_VERSION" && -f "${PMA_DIR}/index.php" ]]; then
   exit 0
 fi
 
@@ -46,7 +59,7 @@ fi
 
 tar -xzf "${tmp}/${ARCHIVE}" -C "$tmp"
 extracted="${tmp}/phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages"
-[[ -d "$extracted" ]] || { log "the archive did not contain the folder expected"; exit 1; }
+[[ -d "$extracted" && -f "${extracted}/index.php" ]] || { log "the archive did not contain the files expected"; exit 1; }
 
 # The web setup wizard, test fixtures and build-time files: no business being
 # reachable from a browser, or taking up space, on an install nobody builds.
@@ -57,7 +70,7 @@ rm -rf "${extracted}/setup" "${extracted}/examples" "${extracted}/test" \
 # phpMyAdmin reads its own docRoot's config.inc.php by default -- this makes
 # that file a one-line pointer at the real configuration OPanel manages, so
 # every other script that touches /etc/phpmyadmin (conf.d/opanel-signon.php,
-# ownership, the sed-patches in refresh_tools_ols) keeps working unchanged.
+# ownership, refresh_tools_ols) keeps working unchanged.
 cat >"${extracted}/config.inc.php" <<'PHP'
 <?php
 // OPanel: the real configuration lives in /etc/phpmyadmin, managed by the
@@ -79,9 +92,12 @@ echo "$PHPMYADMIN_VERSION" >"$PMA_MARKER"
 
 install -d -o www-data -g www-data -m 0770 "$PMA_TEMP_DIR"
 
+# Written fresh every time, not only when missing: the apt package purged
+# above is what was emptying this out from under an earlier version of this
+# very script, and a stray future purge of anything else in /etc/phpmyadmin
+# must not leave this file silently absent either.
 install -d -m 0755 /etc/phpmyadmin/conf.d
-if [[ ! -f /etc/phpmyadmin/config.inc.php ]]; then
-  cat >/etc/phpmyadmin/config.inc.php <<'PHP'
+cat >/etc/phpmyadmin/config.inc.php <<'PHP'
 <?php
 // OPanel's own phpMyAdmin configuration (installer/files/opanel-phpmyadmin.sh).
 // No phpMyAdmin configuration storage (pmadb): every account's databases are
@@ -96,7 +112,6 @@ foreach (glob('/etc/phpmyadmin/conf.d/*.php') as $filename) {
     include $filename;
 }
 PHP
-  chmod 0644 /etc/phpmyadmin/config.inc.php
-fi
+chmod 0644 /etc/phpmyadmin/config.inc.php
 
 log "phpMyAdmin ${PHPMYADMIN_VERSION} installed"

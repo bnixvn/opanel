@@ -1031,16 +1031,38 @@ SIGNON
     sed -i "s#__opanel_PMA_SIGNON_SECRET__#${pma_signon_secret}#" /usr/share/phpmyadmin/opanel-signon.php
   fi
   # conf.d/opanel-signon.php sits outside /usr/share/phpmyadmin, so a
-  # phpMyAdmin (re)install never touches it; patched in place as before.
-  sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
-  # Migrate the sign-on session store off the shared parent. install.sh writes
-  # the new path for fresh installs, but an existing box only ever gets a new
-  # helper -- and ensure_php_runtime_dirs now tightens /var/lib/php/sessions to
-  # 0751 root:root, which would leave phpMyAdmin unable to write its sessions
-  # there. Doing it here means the fix arrives with the helper instead of one
-  # release late.
-  sed -i -E "s#/var/lib/php/sessions'#/var/lib/php/pma-sessions'#g" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
-  [[ -n "$host" ]] && sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
+  # phpMyAdmin tarball re-extraction never touches it -- but apt purging the
+  # Debian phpmyadmin package does: its postrm empties /etc/phpmyadmin
+  # outright, taking this file (and the folder itself) with it, found the day
+  # every existing box did exactly that switching off the package (2026-10-18).
+  # Written fresh here too, for the same reason as opanel-signon.php above.
+  local blowfish_secret pma_host
+  blowfish_secret="$(env_get PMA_BLOWFISH_SECRET)"
+  pma_host="$host"
+  if [[ -n "$blowfish_secret" ]]; then
+    install -d -m 0755 /etc/phpmyadmin/conf.d
+    cat >/etc/phpmyadmin/conf.d/opanel-signon.php <<PHP
+<?php
+\$cfg['blowfish_secret'] = '${blowfish_secret}';
+\$i = 1;
+\$cfg['Servers'][\$i]['auth_type'] = 'signon';
+\$cfg['Servers'][\$i]['SignonSession'] = 'opanelPmaSignon';
+\$cfg['Servers'][\$i]['SignonCookieParams'] = [
+    'lifetime' => 0,
+    'path' => '/',
+    'domain' => '',
+    'secure' => ${pma_secure},
+    'httponly' => true,
+    'samesite' => 'Lax',
+];
+\$cfg['Servers'][\$i]['SignonURL'] = '/phpmyadmin/opanel-signon.php';
+\$cfg['Servers'][\$i]['host'] = 'localhost';
+\$cfg['Servers'][\$i]['AllowNoPassword'] = false;
+\$cfg['Servers'][\$i]['only_db'] = '';
+\$cfg['SessionSavePath'] = '/var/lib/php/pma-sessions';
+\$cfg['PmaAbsoluteUri'] = '${tools_scheme}://${pma_host}/phpmyadmin/';
+PHP
+  fi
   # This file holds the signon secret, so it is group-readable and no wider.
   # The previous comment here claimed 0640 could not work because the group is
   # opanel-sites rather than www-data -- but www-data is added to opanel-sites

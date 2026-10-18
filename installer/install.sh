@@ -785,6 +785,7 @@ PANEL_SSL_CERT=
 PANEL_SSL_KEY=
 FRONTEND_DIST=${APP_DIR}/frontend/dist
 PMA_SIGNON_SECRET=$(openssl rand -hex 32)
+PMA_BLOWFISH_SECRET=$(openssl rand -hex 32)
 ENV
 
   # Lock down the env file: contains SECRET_KEY and ALLOWED_ORIGINS.
@@ -1093,8 +1094,14 @@ setup_phpmyadmin_sso() {
     return 0
   fi
 
+  # Persisted in .env (not generated fresh here) so refresh_tools_ols in the
+  # helper can rewrite this same file later with the same secret -- it lives
+  # outside /usr/share/phpmyadmin but is still gone on purge of the Debian
+  # phpmyadmin package's own /etc/phpmyadmin, which switching to the upstream
+  # tarball made every existing box do once (2026-10-18).
   local blowfish_secret
-  blowfish_secret="$(openssl rand -hex 32)"
+  blowfish_secret="$(grep -oP "^PMA_BLOWFISH_SECRET=\K.*" "${APP_DIR}/backend/.env" 2>/dev/null || true)"
+  [[ -n "$blowfish_secret" ]] || blowfish_secret="$(openssl rand -hex 32)"
   local pma_host pma_scheme pma_secure
   pma_host="${PANEL_DOMAIN:-$SERVER_IP}"
   [[ -n "$pma_host" ]] || pma_host="$(detect_server_ip)"
