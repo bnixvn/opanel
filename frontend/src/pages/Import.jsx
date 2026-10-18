@@ -33,6 +33,7 @@ export default function ImportPage({ panel }) {
 
   const header = <PageHeader title={t('{name} Import', { name: meta.name })} subtitle={t(meta.subtitle)}/>;
   if (!isAdmin) return <section className="section">{header}<EmptyState message={t('Only an administrator can import accounts.')}/></section>;
+  if (!navCtx?.addonsLoaded) return <section className="section">{header}<p className="hint" aria-busy="true">{t('Checking…')}</p></section>;
   if (!on) {
     return <section className="section">
       {header}

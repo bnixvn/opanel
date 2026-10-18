@@ -683,6 +683,8 @@ function App() {
   const [panelSslEmail, setPanelSslEmail] = useState('');
   const [updatesStatus, setUpdatesStatus] = useState(null);
   const [addonList, setAddonList] = useState([]);
+  // The list has been read once: until then no addon's page or tab is decided on.
+  const [addonsLoaded, setAddonsLoaded] = useState(false);
   const [addonOpen, setAddonOpen] = useState('');
   const [f2bSettings, setF2bSettings] = useState(null);
   const [f2bDraft, setF2bDraft] = useState(null);
@@ -925,6 +927,8 @@ function App() {
     setLogViewer(null);
     setNginxCustomEditing(null);
     setSelectedWebsiteId('');
+    setAddonList([]);
+    setAddonsLoaded(false);
     setMobileMenuOpen(false);
     navigateToPage('dashboard', { replace: true });
     setError('');
@@ -4366,7 +4370,7 @@ function App() {
 
   async function loadAddons(silent = false) {
     const data = await request('/addons', { silent }, silent ? '' : tr("Loading addons..."));
-    if (data) setAddonList(data.addons || []);
+    if (data) { setAddonList(data.addons || []); setAddonsLoaded(true); }
     return data?.addons || [];
   }
 
@@ -4742,6 +4746,9 @@ function App() {
       if (!websites.length) refreshAll();
     }
     if (isAuthenticated && page === 'addons' && isAdmin) loadAddons();
+    // Which addons are on decides the Dashboard's tools and the Migration
+    // hub's tabs, on every page: read once when an administrator signs in.
+    if (isAuthenticated && isAdmin && !addonsLoaded) loadAddons(true);
     if (isAuthenticated && page === 'mcp') loadMcp();
     if (isAuthenticated && page === 'mail') { loadMailInfo(); if (isAdmin) loadUsers(); }
     if (isAuthenticated && page === 'dns') loadDnsInfo();
@@ -4933,13 +4940,16 @@ function App() {
     // The migration addons, each a tab of the Migration hub while it is on.
     directadminImport: addonOn('directadmin'),
     cpanelImport: addonOn('cpanel'),
+    addonsLoaded,
   };
   navCtxRef.current = navCtx;
   // A hub's own address typed or bookmarked (/server, /settings): its first
   // tab, once the account is known.
   useEffect(() => {
+    // The Migration hub's tabs are its addons: wait until they are known.
+    if (page === 'migration' && !addonsLoaded) return;
     if (currentUser && isHubKey(page)) navigateToPage(page, { replace: true });
-  }, [page, currentUser, navigateToPage]);
+  }, [page, currentUser, navigateToPage, addonsLoaded]);
   // Named App actions a Dashboard tile runs before opening its page.
   const beforeActions = {
     usersList: () => setUsersTab('list'),
