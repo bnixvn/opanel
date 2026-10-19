@@ -16,11 +16,13 @@ import 'ace-builds/src-noconflict/mode-text';
 import 'ace-builds/src-noconflict/mode-yaml';
 import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
-import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pause, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye, Mail, Inbox, Forward, Send, GitBranch, CloudDownload, CloudUpload, Rocket } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pause, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye, Mail, Inbox, Forward, Send, GitBranch, CloudDownload, CloudUpload, Rocket, ArrowDown, ArrowUp, Gauge, LineChart } from 'lucide-react';
 import { Terminal } from './components/Terminal';
 import { UsageChart } from './components/UsageChart';
+import './pages/AccountResources.css';
 import HubTabs from './components/HubTabs';
 import PageHeader from './components/PageHeader';
+import Drawer from './components/Drawer.jsx';
 import DashboardPage from './pages/Dashboard';
 import WebsitesPage from './pages/Websites';
 import WebsiteDetailPage from './pages/WebsiteDetail';
@@ -725,6 +727,13 @@ function App() {
   const [dashRange, setDashRange] = useState('day');
   const [dashScope, setDashScope] = useState('account');
   const [topAccountsSort, setTopAccountsSort] = useState('cpu');
+  // Server › Account resources (as BPanel's): the find box, the sort, and the
+  // account whose charts are open with their history and period.
+  const [arFind, setArFind] = useState('');
+  const [arSort, setArSort] = useState({ key: 'cpu', desc: true });
+  const [arOpen, setArOpen] = useState(null);
+  const [arHistory, setArHistory] = useState(null);
+  const [arRange, setArRange] = useState('day');
   // An account picked on the dashboard, opened for editing once Users has loaded.
   const [pendingEditUserId, setPendingEditUserId] = useState(null);
   const [mailTab, setMailTab] = useState('mailboxes');
@@ -5413,10 +5422,123 @@ function App() {
     </section>;
   }
 
+  // Server › Account resources, as BPanel's (operator, 2026-10-19: "Resource
+  // usage của bpanel đẹp hơn opanel và xem được chi tiết của user"): every
+  // account's CPU, RAM, processes and IO beside its limits and how often the
+  // RAM limit stopped it, in a table that sorts by any column and finds an
+  // account; a row opens its charts.
+  function renderAccountResources() {
+    const all = Object.entries(limitsInfo?.accounts || {}).map(([id, entry]) => ({ ...entry, id: Number(id), now: entry.usage || null, caps: entry.limits || {} }));
+    const needle = arFind.trim().toLowerCase();
+    const columns = [
+      ['username', tr("Account"), row => row.username],
+      ['cpu', 'CPU', row => Number(row.now?.cpu_percent ?? -1)],
+      ['ram', 'RAM', row => Number(row.now?.memory_mb ?? -1)],
+      ['procs', tr("Processes"), row => Number(row.now?.processes ?? -1)],
+      ['io', 'IO', row => Number(row.now?.io_read_mbps ?? -1) + Number(row.now?.io_write_mbps ?? 0)],
+      ['oom', tr("Stopped (24 h)"), row => Number(row.oom_kills_day || 0)],
+    ];
+    const column = columns.find(([key]) => key === arSort.key) || columns[1];
+    const rows = all.filter(row => !needle || row.username.toLowerCase().includes(needle)).sort((a, b) => {
+      const x = column[2](a);
+      const y = column[2](b);
+      const order = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
+      return (arSort.desc ? -order : order) || a.username.localeCompare(b.username);
+    });
+    const sortBy = key => setArSort(prev => (prev.key === key ? { key, desc: !prev.desc } : { key, desc: key !== 'username' }));
+    const share = (used, limit) => (limit > 0 && used != null ? clampPercent((Number(used) || 0) / limit * 100) : null);
+    const figure = (text, capText, percent) => <span className={`ar-figure${percent >= 90 ? ' tone-bad' : percent >= 75 ? ' tone-warn' : ''}`}>
+      <span className="ar-value">{text}</span>
+      {capText ? <span className="ar-cap">/ {capText}</span> : <span className="ar-cap is-none">{tr("no limit")}</span>}
+      {percent !== null && <span className="ar-track" aria-hidden="true"><span style={{ width: `${percent}%` }}/></span>}
+    </span>;
+    const head = (key, label) => <th key={key} scope="col" className={`ar-col-${key}`} aria-sort={arSort.key === key ? (arSort.desc ? 'descending' : 'ascending') : 'none'}>
+      <button type="button" className="ar-sort" onClick={() => sortBy(key)}>{label}
+        {arSort.key === key && (arSort.desc ? <ArrowDown size={12} aria-hidden="true"/> : <ArrowUp size={12} aria-hidden="true"/>)}</button>
+    </th>;
+    const open = all.find(row => row.id === arOpen);
+    return <>
+      <PageHeader subtitle={tr("CPU, RAM and processes of every account beside its limits, and how often the RAM limit stopped it. A row opens its charts.")}
+        onRefresh={loadLimitsInfo} refreshDisabled={!!loading}/>
+      <section className="section ar-page">
+        <div className="ar-toolbar">
+          <label className="ar-field ar-find"><span className="sr-only">{tr("Find an account")}</span>
+            <input type="search" value={arFind} onChange={e => setArFind(e.target.value)} placeholder={tr("Find an account")} aria-label={tr("Find an account")}/>
+          </label>
+        </div>
+        {!limitsInfo && <p className="hint">{tr("Loading...")}</p>}
+        {limitsInfo && !limitsInfo.running && <p className="hint">{tr("The resource limits agent is not running, so these figures are not current.")}</p>}
+        {limitsInfo && <p className="hint ar-note">{tr("{0} of {1} accounts", rows.length, all.length)} · {tr("Read again every 15 seconds while this page is open.")}</p>}
+        {limitsInfo && all.length === 0 && <EmptyState icon={Gauge} message={tr("No account yet. An account appears here once it is created.")}/>}
+        {all.length > 0 && <div className="data-table-wrap ar-table-wrap">
+          <table className="data-table ar-table">
+            <thead><tr>{columns.map(([key, label]) => head(key, label))}</tr></thead>
+            <tbody>
+              {rows.map(row => <tr key={row.id} className={row.oom_kills_day ? 'has-faults' : undefined}>
+                <td className="ar-col-username" data-label={tr("Account")}>
+                  <button type="button" className="ar-open" onClick={() => openAccountResources(row.id)} title={tr("Charts of {0}", row.username)}>
+                    <LineChart size={14} aria-hidden="true"/> {row.username}
+                  </button>
+                  {row.role === 'reseller' && <em className="ar-role">{tr("Reseller")}</em>}
+                </td>
+                <td className="ar-col-cpu" data-label="CPU">{figure(row.now ? formatCpuPercent(row.now.cpu_percent) : '—', row.caps.cpu_percent ? `${row.caps.cpu_percent}%` : '', share(row.now?.cpu_percent, row.caps.cpu_percent))}</td>
+                <td className="ar-col-ram" data-label="RAM">{figure(row.now ? formatMegabytes(row.now.memory_mb) : '—', row.caps.memory_mb ? formatMegabytes(row.caps.memory_mb) : '', share(row.now?.memory_mb, row.caps.memory_mb))}</td>
+                <td className="ar-col-procs" data-label={tr("Processes")}>{figure(row.now ? String(row.now.processes ?? 0) : '—', row.caps.process_limit ? String(row.caps.process_limit) : '', share(row.now?.processes, row.caps.process_limit))}</td>
+                <td className="ar-col-io" data-label="IO">
+                  <span className="ar-io"><small>{tr("Read")}</small> {row.now ? formatMbps(row.now.io_read_mbps) : '—'}</span>
+                  <span className="ar-io"><small>{tr("Write")}</small> {row.now ? formatMbps(row.now.io_write_mbps) : '—'}</span>
+                </td>
+                <td className="ar-col-oom" data-label={tr("Stopped (24 h)")}><span className={`ar-fault${row.oom_kills_day ? ' is-hit' : ''}`}>{row.oom_kills_day || 0}</span></td>
+              </tr>)}
+            </tbody>
+          </table>
+          {rows.length === 0 && <p className="hint ar-empty">{tr("No account matches {0}.", arFind.trim())}</p>}
+        </div>}
+      </section>
+      {open && renderAccountResourceSheet(open)}
+    </>;
+  }
+
+  // One account's charts over the last day or week, in a side sheet.
+  function renderAccountResourceSheet(row) {
+    const points = (arRange === 'week' ? arHistory?.account?.week : arHistory?.account?.day) || [];
+    const caps = row.caps || {};
+    const formatWhen = (stamp, full) => {
+      const date = new Date(stamp * 1000);
+      if (full) return date.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      return arRange === 'week' ? date.toLocaleDateString([], { day: '2-digit', month: '2-digit' }) : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+    const formatCount = value => String(Math.round(Number(value) || 0));
+    const common = { points, when: formatWhen, emptyText: tr("Not enough history yet: a point is added every 5 minutes."),
+      limitText: tr("Limit"), unlimitedText: tr("Unlimited"), peakText: tr("Peak"), averageText: tr("Average") };
+    return <Drawer open wide onClose={() => setArOpen(null)} title={row.username}
+      subtitle={tr("CPU, memory, processes and disk speed over the last day or week. The dashed line is the limit.")}
+      footer={<button type="button" className="secondary-light" onClick={() => setArOpen(null)}>{tr("Close")}</button>}>
+      <div className="segmented-control compact" role="tablist" aria-label={tr("Period")}>
+        <button type="button" role="tab" aria-selected={arRange === 'day'} className={arRange === 'day' ? 'active' : ''} onClick={() => setArRange('day')}>{tr("24 hours")}</button>
+        <button type="button" role="tab" aria-selected={arRange === 'week'} className={arRange === 'week' ? 'active' : ''} onClick={() => setArRange('week')}>{tr("7 days")}</button>
+      </div>
+      {!arHistory ? <p className="hint">{tr("Loading...")}</p> : <div className="usage-charts ar-charts">
+        <UsageChart {...common} title="CPU" pick={point => point.cpu} limit={caps.cpu_percent} format={formatCpuPercent} floor={10} />
+        <UsageChart {...common} title="RAM" pick={point => point.mem} limit={caps.memory_mb} format={formatMegabytes} floor={128} />
+        <UsageChart {...common} title={tr("Processes")} pick={point => point.procs} limit={caps.process_limit} format={formatCount} floor={10} />
+        <UsageChart {...common} title={tr("Disk read")} pick={point => point.io_r} limit={caps.io_read_mbps} format={formatMbps} floor={0.1} />
+        <UsageChart {...common} title={tr("Disk write")} pick={point => point.io_w} limit={caps.io_write_mbps} format={formatMbps} floor={0.1} />
+      </div>}
+    </Drawer>;
+  }
+
+  async function openAccountResources(userId) {
+    setArOpen(userId);
+    setArHistory(null);
+    const data = await request(`/resource-limits/${userId}/history`, { silent: true });
+    if (data) setArHistory(data);
+  }
+
   // cPanel's "Resource Usage": the addon's history for this account (and a
   // reseller's group), a day of 5-minute points or a week of hours.
   function renderResourceUsage() {
-    if (isAdmin) return limitsOn ? renderTopAccounts() : <DashboardPage/>;
+    if (isAdmin) return limitsOn ? renderAccountResources() : <DashboardPage/>;
     if (!limitsOn || !currentUser) return <DashboardPage/>;
     const limitEntry = limitsInfo?.accounts?.[currentUser.id];
     const groupScope = isReseller && dashScope === 'group' && !!limitEntry?.group_limits;

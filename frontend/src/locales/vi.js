@@ -1,6 +1,13 @@
 // English -> Vietnamese. Keys are the English source strings (see src/i18n.js);
 // a string missing here shows in English. List the gaps with: npm run i18n:check
 export default {
+  "CPU, RAM and processes of every account beside its limits, and how often the RAM limit stopped it. A row opens its charts.": "CPU, RAM và số tiến trình của từng tài khoản so với giới hạn, cùng số lần bị dừng vì chạm giới hạn RAM. Bấm một dòng để xem biểu đồ.",
+  "Charts of {0}": "Biểu đồ của {0}",
+  "Find an account": "Tìm tài khoản",
+  "No account matches {0}.": "Không có tài khoản nào khớp {0}.",
+  "No account yet. An account appears here once it is created.": "Chưa có tài khoản. Tài khoản sẽ hiện ở đây sau khi được tạo.",
+  "Read again every 15 seconds while this page is open.": "Tự đọc lại mỗi 15 giây khi trang đang mở.",
+  "{0} of {1} accounts": "{0}/{1} tài khoản",
   "Website actions for {domain}": "Thao tác cho {domain}",
   "A restore point before every update": "Tạo điểm khôi phục trước mỗi lần cập nhật",
   "The files without the uploads, and the database, only when you take one; the newest two are kept, in the account's home.": "Các tệp (trừ thư mục uploads) và cơ sở dữ liệu, chỉ khi bạn tự tạo; giữ hai bản mới nhất, trong thư mục home của tài khoản.",
