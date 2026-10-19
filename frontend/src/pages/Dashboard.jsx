@@ -5,7 +5,6 @@ import {
   Bug,
   ChevronDown,
   CircleAlert,
-  Download,
   Fingerprint,
   Lock,
   Plus,
@@ -18,7 +17,6 @@ import { followInPanel, usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
 import { toneOf, usageFigures } from '../lib/limits.js';
 import { useDuration } from '../components/ServerFigures.jsx';
-import { ADDON_META, addonFeatureIcon, addonLabel } from '../lib/addons.jsx';
 import { TILES, dashboardSections, tileLabel, tileVisible } from '../lib/features.jsx';
 import { FeatureIcon } from '../icons/feature/index.js';
 import './Dashboard.css';
@@ -273,13 +271,9 @@ export default function DashboardPage() {
   const sections = dashboardSections(navCtx)
     .map(([key, title, keys]) => ({ key, title: t(title), tiles: keys.filter((tileKey) => tileVisible(tileKey, navCtx)) }))
     .map((section) => ({ ...section, tiles: section.tiles.filter((key) => !needle || fold(`${t(tileLabel(TILES[key], navCtx))} ${section.title}`).includes(needle)) }));
-  // An administrator also sees each addon not installed yet, greyed, as the
-  // way to install it (in Extensions).
-  const missingAddons = isAdmin
-    ? (addons || []).filter((addon) => !addon.installed && ADDON_META[addon.slug] && addon.slug !== 'demo'
-      && (!needle || fold(`${addonLabel(addon, t)} ${t('Extensions')}`).includes(needle)))
-    : [];
-  const shownSections = sections.filter((section) => section.tiles.length > 0 || (section.key === 'extensions' && missingAddons.length > 0));
+  // An addon not installed has no tile: the Addons page is where it is
+  // installed (operator, 2026-10-19).
+  const shownSections = sections.filter((section) => section.tiles.length > 0);
   const tile = (key) => {
     const item = TILES[key];
     const label = t(tileLabel(item, navCtx));
@@ -294,15 +288,6 @@ export default function DashboardPage() {
       <a className="dash-tile-link" href={target.href} onClick={(event) => followInPanel(event, target.open)}>{body}</a>
     </div>;
   };
-  const missingTile = (addon) => <div key={`addon-${addon.slug}`} className="dash-tile is-missing">
-    <a className="dash-tile-link" href={routeForPage('addons')}
-      onClick={(event) => followInPanel(event, () => navigateToPage('addons'))}
-      aria-label={t('{name}: not installed. Open Addons to install it.', { name: addonLabel(addon, t) })}>
-      <span className="dash-tile-art"><FeatureIcon name={addonFeatureIcon(addon.slug)} size={40} muted/><span className="dash-tile-badge" aria-hidden="true"><Download size={11}/></span></span>
-      <span className="dash-tile-label">{addonLabel(addon, t)}</span>
-      <small className="dash-tile-note">{t('Not installed')}</small>
-    </a>
-  </div>;
   const featuresCard = <section className="section dash-card dash-features" aria-label={t('Features')}>
     <label className="tools-search">
       <Search size={16} aria-hidden="true"/>
@@ -323,7 +308,6 @@ export default function DashboardPage() {
         </button>
         {open && <div className="dash-tiles" id={`dash-section-${section.key}`}>
           {section.tiles.map(tile)}
-          {section.key === 'extensions' && missingAddons.map(missingTile)}
         </div>}
       </div>;
     })}

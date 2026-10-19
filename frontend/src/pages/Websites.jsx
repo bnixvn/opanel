@@ -214,7 +214,8 @@ export default function WebsitesPage() {
             </dl>
             <div className="ws-tags">
               {site.waf_enabled && <span className="badge ok">WAF</span>}
-              {site.wp_installed && <span className="badge">WordPress</span>}
+              {/* Its type says WordPress already where it is one (operator, 2026-10-19). */}
+              {site.wp_installed && (site.app_type || 'wordpress') !== 'wordpress' && <span className="badge">WordPress</span>}
               {aliasCount > 0 && <span className="badge">{t('{count} extra domain(s)', { count: aliasCount })}</span>}
             </div>
             {/* Every action an icon, one click each (operator, 2026-10-19:
