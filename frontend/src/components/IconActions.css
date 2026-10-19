@@ -4,7 +4,7 @@
 .icon-actions{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 .icon-actions .icon-action{position:relative;display:inline-grid;place-items:center;width:34px;height:34px;min-height:34px;min-width:34px;padding:0;
   border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text-secondary);
-  cursor:pointer;text-decoration:none;box-shadow:none;transform:none;font:inherit}
+  cursor:pointer;text-decoration:none;box-shadow:none;transform:none;font:inherit;overflow:visible;text-overflow:clip}
 .icon-actions .icon-action:hover:not(:disabled){background:var(--surface-hover);border-color:var(--border-hover,var(--border));color:var(--text);box-shadow:none;transform:none}
 .icon-actions .icon-action:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .icon-actions .icon-action.is-primary{background:var(--primary);border-color:var(--primary);color:#fff}
