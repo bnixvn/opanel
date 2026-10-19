@@ -12,14 +12,16 @@ export default function IconActions({ items = [], label, className = '' }) {
       if (item === 'separator') return <span key={`gap-${index}`} className="icon-actions-gap" aria-hidden="true"/>;
       const Icon = item.icon;
       const classes = ['icon-action', item.primary ? 'is-primary' : '', item.danger ? 'is-danger' : ''].filter(Boolean).join(' ');
-      const title = item.hint ? `${item.label} - ${item.hint}` : item.label;
-      const inner = Icon ? <Icon size={16} aria-hidden="true"/> : item.label;
+      // Its name shows at once on hover or focus (a title waits a second
+      // and is easy to miss); aria-label says it to a screen reader.
+      const tip = item.hint ? `${item.label} - ${item.hint}` : item.label;
+      const inner = <>{Icon ? <Icon size={16} aria-hidden="true"/> : item.label}<span className="icon-action-tip" aria-hidden="true">{tip}</span></>;
       if (item.href) {
-        return <a key={item.label} className={classes} href={item.href} title={title} aria-label={item.label}
+        return <a key={item.label} className={classes} href={item.href} aria-label={item.label}
           target={item.external ? '_blank' : undefined} rel={item.external ? 'noopener noreferrer' : undefined}>{inner}</a>;
       }
       return <button key={item.label} type="button" className={classes} disabled={item.disabled} onClick={item.onClick}
-        title={title} aria-label={item.label}>{inner}</button>;
+        aria-label={item.label}>{inner}</button>;
     })}
   </div>;
 }
