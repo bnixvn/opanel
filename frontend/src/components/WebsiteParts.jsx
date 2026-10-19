@@ -49,8 +49,9 @@ export function useSiteMenu({ onDeleted } = {}) {
   const t = useT();
   const { deleteWebsite, loading, openWebsiteFileManager, openWpInstall, updateWordPressAll, websiteUrl } = usePanel();
   const openSite = useOpenSite();
-  return (site, { inDetail = false } = {}) => [
-    { label: t('Open website'), icon: ExternalLink, href: websiteUrl(site), external: true, hidden: inDetail },
+  // inList: the list's row, which has its own link to the website.
+  return (site, { inDetail = false, inList = false } = {}) => [
+    { label: t('Open website'), icon: ExternalLink, href: websiteUrl(site), external: true, hidden: inDetail || inList },
     { label: t('File manager'), icon: FolderOpen, onClick: () => openWebsiteFileManager(site) },
     { label: t('SSL'), icon: Lock, onClick: () => openSite(site, 'ssl'), hidden: inDetail },
     { label: t('Logs'), icon: FileText, onClick: () => openSite(site, 'logs') },

@@ -5,7 +5,7 @@ import { useT } from '../lib/t.js';
 import { websiteRoute } from '../lib/websites.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Drawer from '../components/Drawer.jsx';
-import ActionMenu from '../components/ActionMenu.jsx';
+import IconActions from '../components/IconActions.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import { Checkbox, Field, PasswordField } from '../components/Form.jsx';
 import { WordPressInstallDrawer, siteTypeLabel, sslLabel, useOpenSite, useSiteMenu, useSiteOwners } from '../components/WebsiteParts.jsx';
@@ -217,11 +217,12 @@ export default function WebsitesPage() {
               {site.wp_installed && <span className="badge">WordPress</span>}
               {aliasCount > 0 && <span className="badge">{t('{count} extra domain(s)', { count: aliasCount })}</span>}
             </div>
-            <div className="ws-actions">
-              <button type="button" disabled={!!loading} onClick={() => openSite(site)}
-                aria-label={t('Manage {domain}', { domain: site.domain })}><SettingsIcon size={14} aria-hidden="true"/> {t('Manage')}</button>
-              <ActionMenu label={t('More actions for {domain}', { domain: site.domain })} items={siteMenu(site)}/>
-            </div>
+            {/* Every action an icon, one click each (operator, 2026-10-19:
+                the "…" menu cost a click every time). */}
+            <IconActions className="ws-actions" label={t('Website actions for {domain}', { domain: site.domain })} items={[
+              { label: t('Manage'), icon: SettingsIcon, primary: true, disabled: !!loading, onClick: () => openSite(site) },
+              ...siteMenu(site, { inList: true }),
+            ]}/>
           </li>;
         })}
       </ul>}

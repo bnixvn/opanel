@@ -1,0 +1,15 @@
+/* components/IconActions.jsx: a row's actions as icon buttons. Not in a
+   cascade layer, and two classes deep, so the panel's own button and
+   button:hover rules (a fill, a height) do not reach them. */
+.icon-actions{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.icon-actions .icon-action{display:inline-grid;place-items:center;width:34px;height:34px;min-height:34px;min-width:34px;padding:0;
+  border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text-secondary);
+  cursor:pointer;text-decoration:none;box-shadow:none;transform:none;font:inherit}
+.icon-actions .icon-action:hover:not(:disabled){background:var(--surface-hover);border-color:var(--border-hover,var(--border));color:var(--text);box-shadow:none;transform:none}
+.icon-actions .icon-action:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.icon-actions .icon-action.is-primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.icon-actions .icon-action.is-primary:hover:not(:disabled){background:var(--primary-hover);border-color:var(--primary-hover);color:#fff}
+.icon-actions .icon-action.is-danger{color:var(--danger-text,var(--danger))}
+.icon-actions .icon-action.is-danger:hover:not(:disabled){background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger-text,var(--danger))}
+.icon-actions .icon-action:disabled{cursor:not-allowed;color:var(--text-muted);background:var(--surface-alt)}
+.icon-actions-gap{width:1px;height:22px;margin:0 4px;background:var(--border)}
