@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_current_user
 from app.core.permissions import Role, ensure_role
 from app.models.entities import User
-from app.schemas.schemas import PanelAutoUpdateConfig, SystemAutoUpdateConfig
-from app.services import updates
+from app.schemas.schemas import PanelAutoUpdateConfig, ServiceUpdateRun, SystemAutoUpdateConfig
+from app.services import service_versions, updates
 
 router = APIRouter(prefix="/updates", tags=["updates"])
 
@@ -37,3 +37,23 @@ def run_panel_update(current_user: User = Depends(get_current_user)):
 def configure_panel_auto_update(payload: PanelAutoUpdateConfig, current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
     return updates.configure_panel_auto_update(payload.enabled, payload.time).__dict__
+
+
+@router.get("/services")
+def get_service_versions(refresh: bool = Query(default=False), current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        return service_versions.status(refresh=refresh)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/services/run")
+def run_service_update(payload: ServiceUpdateRun, current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    try:
+        return service_versions.run(None if payload.all else payload.services)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

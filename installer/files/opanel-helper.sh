@@ -1168,6 +1168,86 @@ run_os_update() {
   echo "OS update started in background. Log: /var/log/opanel-os-update.log"
 }
 
+# Packages the Updates page may upgrade one service at a time (operator's
+# request, 2026-10-21). Shell globs; keep in step with SERVICES in
+# backend/app/services/service_versions.py. Anything else waits for
+# "Update OS now" or unattended-upgrades.
+SERVICE_PACKAGE_GLOBS=(openlitespeed 'lsphp[0-9]*' 'mariadb-*' 'libmariadb*' 'galera-*'
+  redis-server redis-tools nodejs 'exim4*' 'dovecot-*' rspamd 'pdns-*' 'clamav*' 'libclamav*')
+
+service_package_allowed() {
+  local name="$1" glob
+  for glob in "${SERVICE_PACKAGE_GLOBS[@]}"; do
+    # shellcheck disable=SC2053 # the right-hand side is meant as a glob
+    [[ "$name" == $glob ]] && return 0
+  done
+  return 1
+}
+
+service_packages_status() {
+  case "${1:-}" in
+    "") ;;
+    refresh)
+      if ! timeout 240 apt-get update -qq --allow-releaseinfo-change >/dev/null 2>&1; then
+        echo "== warning"
+        echo "apt-get update failed; versions are from the last successful check"
+      fi
+      ;;
+    *) deny "usage: service-packages [refresh]" ;;
+  esac
+  echo "== installed"
+  COLUMNS=250 dpkg-query -l "${SERVICE_PACKAGE_GLOBS[@]}" 2>/dev/null | awk '$1 == "ii" { print $2, $3 }' || true
+  echo "== upgradable"
+  apt list --upgradable 2>/dev/null | awk -F'[/ ]' '/upgradable from/ { print $1, $3 }' || true
+  echo "== state"
+  systemctl is-active opanel-service-update.service 2>/dev/null || true
+  echo "== log"
+  journalctl -u opanel-service-update.service -n 60 --no-pager --output=cat 2>/dev/null \
+    | grep -v "Failed to open /run/systemd/transient" || true
+}
+
+service_packages_upgrade() {
+  local unit="opanel-service-update" name
+  [[ $# -ge 1 && $# -le 400 ]] || deny "usage: service-packages-upgrade <package>..."
+  for name in "$@"; do
+    [[ "$name" =~ ^[a-z0-9][a-z0-9+.-]*$ ]] || deny "invalid package name: $name"
+    service_package_allowed "$name" || deny "not a service package: $name"
+    [[ "$(dpkg-query -W -f='${Status}' "$name" 2>/dev/null)" == "install ok installed" ]] \
+      || deny "not installed: $name"
+  done
+  systemctl is-active --quiet "${unit}.service" && deny "a service update is already running"
+  command -v systemd-run >/dev/null 2>&1 || deny "systemd-run is not available"
+  # Runs outside this helper, so it cannot call restart_openlitespeed; the
+  # runtime dir line is the part of it a package upgrade can undo. OLS is
+  # restarted for lsphp too: it is what starts the PHP processes, and a
+  # restart is what makes sites run the new PHP.
+  # shellcheck disable=SC2016 # expanded by the unit's bash, not here
+  local script='
+export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_SUSPEND=1
+echo "opanel-service-update: started $(date -u +%Y-%m-%dT%H:%M:%SZ) for $*"
+status=0
+apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+  install --only-upgrade -y "$@" || status=$?
+if [ "$status" -eq 0 ]; then
+  for name in "$@"; do
+    case "$name" in
+      openlitespeed|lsphp*)
+        echo "Restarting OpenLiteSpeed so sites run the new version"
+        install -d -o www-data -g opanel-sites -m 2770 /tmp/lshttpd /tmp/lshttpd/swap
+        systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart || status=$?
+        break
+        ;;
+    esac
+  done
+fi
+echo "opanel-service-update: finished (exit $status)"
+exit "$status"
+'
+  systemd-run --unit="$unit" --collect --description="Update OPanel service packages" \
+    /bin/bash -c "$script" "$unit" "$@" >/dev/null
+  echo "Service update started for $# package(s)"
+}
+
 write_panel_auto_update_timer() {
   local enabled="$1" time_value="$2"
   [[ "$enabled" == "on" || "$enabled" == "off" ]] || deny "enabled must be on/off"
@@ -8313,6 +8393,15 @@ case "$cmd" in
 
   updates-os-run)
     run_os_update
+    ;;
+
+  service-packages)
+    [[ $# -le 1 ]] || deny "usage: service-packages [refresh]"
+    service_packages_status "$@"
+    ;;
+
+  service-packages-upgrade)
+    service_packages_upgrade "$@"
     ;;
 
   updates-os-auto)

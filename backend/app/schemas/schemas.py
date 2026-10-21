@@ -643,6 +643,11 @@ class SystemAutoUpdateConfig(BaseModel):
     auto_reboot: bool = False
 
 
+class ServiceUpdateRun(BaseModel):
+    all: bool = False
+    services: list[str] = Field(default_factory=list, max_length=40)
+
+
 class PanelAutoUpdateConfig(BaseModel):
     enabled: bool = True
     time: str = Field(default="03:30", pattern=r"^\d{2}:\d{2}$")

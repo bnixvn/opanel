@@ -705,6 +705,10 @@ function App() {
   const [panelUpdating, setPanelUpdating] = useState(false);
   const [panelUpdateLog, setPanelUpdateLog] = useState([]);
   const panelUpdateInterval = useRef(null);
+  // Updates › Service versions: installed and offered version per service.
+  const [serviceVersions, setServiceVersions] = useState(null);
+  const [serviceChecking, setServiceChecking] = useState(false);
+  const serviceWasRunning = useRef(false);
   const wafAccessFiltersRef = useRef(wafAccessFilters);
   const [osAutoUpdate, setOsAutoUpdate] = useState({ enabled: true, mode: 'security', auto_reboot: false });
   const [panelAutoUpdate, setPanelAutoUpdate] = useState({ enabled: true, time: '03:30' });
@@ -4474,6 +4478,40 @@ function App() {
     if (data) setUpdatesStatus(data);
   }
 
+  // A service update runs as its own unit; read it again until it is done.
+  useEffect(() => {
+    if (!serviceVersions?.running || page !== 'updates') return undefined;
+    const timer = setTimeout(() => loadServiceVersions(false, true), 3000);
+    return () => clearTimeout(timer);
+  }, [serviceVersions, page]);
+
+  async function loadServiceVersions(refresh = false, quiet = false) {
+    if (refresh) setServiceChecking(true);
+    const data = await request(`/updates/services${refresh ? '?refresh=true' : ''}`, {},
+      quiet ? null : (refresh ? tr("Checking for service updates...") : tr("Loading service versions...")));
+    if (refresh) setServiceChecking(false);
+    if (!data) return;
+    if (serviceWasRunning.current && !data.running && data.last_result) {
+      setNotice(data.last_result.ok ? tr("Service update finished.") : tr("Service update failed. See the log below."));
+    }
+    serviceWasRunning.current = Boolean(data.running);
+    setServiceVersions(data);
+  }
+
+  async function runServiceUpdate(service) {
+    const list = serviceVersions?.services || [];
+    const chosen = service ? [service] : list.filter(item => item.updates.length);
+    const restartsOls = chosen.some(item => item.key === 'openlitespeed' || item.key.startsWith('php'));
+    const names = chosen.map(item => item.label).join(', ');
+    const question = restartsOls
+      ? tr("Update {0} now? OpenLiteSpeed restarts afterwards, so websites pause for a few seconds.", names)
+      : tr("Update {0} now? The service restarts briefly.", names);
+    if (!confirm(question)) return;
+    const body = service ? { services: [service.key] } : { all: true };
+    const data = await request('/updates/services/run', { method: 'POST', body: JSON.stringify(body) }, tr("Starting service update..."));
+    if (data) await loadServiceVersions(false, true);
+  }
+
   async function toggleUpdateLog() {
     if (!showUpdateLog && !updatesStatus) await loadUpdates();
     setShowUpdateLog(prev => !prev);
@@ -4744,7 +4782,7 @@ function App() {
     if (isAuthenticated && page === 'php') { loadPhpConfig(); loadPhpVersions(); loadPhpExtensions(); }
     if (isAuthenticated && page === 'firewall') { loadFirewall(); loadFirewallBlocklists(); if (isAdmin) loadF2bAddon(); }
     if (isAuthenticated && page === 'waf') { loadWafRules(); loadBadBots(); }
-    if (isAuthenticated && page === 'updates' && currentUser?.role === 'admin') loadUpdates();
+    if (isAuthenticated && page === 'updates' && currentUser?.role === 'admin') { loadUpdates(); loadServiceVersions(); }
     if (isAuthenticated && page === 'security') {
       loadTwoFactorStatus();
       loadPasskeys();
@@ -8423,6 +8461,7 @@ function App() {
           </div>
         )}
       </section>
+      {renderServiceVersions()}
       <section className="section">
         <h2>{tr("Auto Update OS")}</h2>
         <div className="firewall-form updates-os-form">
@@ -8433,6 +8472,57 @@ function App() {
         </div>
       </section>
     </>;
+  }
+
+  function renderServiceVersions() {
+    const sv = serviceVersions;
+    const services = sv?.services || [];
+    const running = Boolean(sv?.running);
+    const busy = !!loading || running || serviceChecking;
+    // A security fix often keeps the upstream version (7.0.15-1ubuntu0.5 ->
+    // 7.0.15-1ubuntu0.6), and "7.0.15 -> 7.0.15" would read as nothing.
+    const offered = item => {
+      if (!item.updates.length) return null;
+      if (!item.available) return tr("{0} package updates", item.updates.length);
+      return item.available_short && item.available_short !== item.installed_short ? item.available_short : item.available;
+    };
+    return <section className="section">
+      <div className="section-title">
+        <div><h2>{tr("Service versions")}</h2>
+          <p className="hint">{tr("The web server, PHP, database and mail software. Update one service or all of them; the nightly automatic update installs the same packages.")}</p></div>
+        <div className="actions">
+          <button className="secondary-light" disabled={busy} onClick={() => loadServiceVersions(true)}>
+            <RefreshCw size={14} className={serviceChecking ? 'spin' : ''}/> {serviceChecking ? tr("Checking...") : tr("Check for updates")}</button>
+          <button disabled={busy || !sv?.pending} onClick={() => runServiceUpdate(null)}>
+            <ArrowUp size={14}/> {sv?.pending ? tr("Update all ({0})", services.filter(item => item.updates.length).length) : tr("Update all")}</button>
+        </div>
+      </div>
+      {sv?.check_error && <p className="hint">{sv.check_error}</p>}
+      {!sv && <p className="hint">{tr("Loading...")}</p>}
+      {sv && services.length === 0 && <EmptyState icon={PackageOpen} message={tr("No service package found.")}/>}
+      {services.length > 0 && <div className="data-table-wrap">
+        <table className="data-table service-versions">
+          <thead><tr><th>{tr("Service")}</th><th>{tr("Installed")}</th><th>{tr("Available")}</th><th className="data-table-actions"><span className="sr-only">{tr("Actions")}</span></th></tr></thead>
+          <tbody>{services.map(item => <tr key={item.key}>
+            <td><strong>{item.label}</strong> <code className="data-table-muted">{item.package}</code></td>
+            <td title={item.installed}>{item.installed_short || item.installed}</td>
+            <td>{item.updates.length
+              ? <span className="badge warn" title={item.updates.map(u => `${u.name} ${u.from} → ${u.to}`).join('\n')}>{offered(item)}</span>
+              : <span className="badge ok">{tr("Up to date")}</span>}</td>
+            <td className="data-table-actions">{item.updates.length > 0 &&
+              <button className="mini" disabled={busy} onClick={() => runServiceUpdate(item)}
+                      aria-label={tr("Update {0}", item.label)}><ArrowUp size={13}/> {tr("Update")}</button>}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>}
+      {running && <p className="hint"><span className="badge warn">{tr("Running")}</span> {tr("Updating packages. This page reads the progress every few seconds.")}</p>}
+      {sv?.log?.length > 0 && (running
+        ? <pre className="update-progress-log">{sv.log.join('\n')}</pre>
+        : <details className="service-versions-log">
+            <summary>{sv.last_result ? (sv.last_result.ok ? tr("Last service update finished") : tr("Last service update failed")) : tr("Service update log")}</summary>
+            <pre className="update-progress-log">{sv.log.join('\n')}</pre>
+          </details>)}
+    </section>;
   }
 
   function renderSecurity() {
