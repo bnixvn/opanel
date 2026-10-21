@@ -142,3 +142,4 @@ def test_helper_checks_every_name_before_root_runs_apt():
     assert "^[a-z0-9][a-z0-9+.-]*$" in body
     assert "--only-upgrade" in body, "never installs a package that is not there"
     assert body.index("deny \"a service update is already running\"") < body.index("systemd-run")
+    assert "systemctl start" in body, "a daemon the upgrade left stopped is started again"

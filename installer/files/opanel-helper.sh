@@ -1220,11 +1220,14 @@ service_packages_upgrade() {
   # Runs outside this helper, so it cannot call restart_openlitespeed; the
   # runtime dir line is the part of it a package upgrade can undo. OLS is
   # restarted for lsphp too: it is what starts the PHP processes, and a
-  # restart is what makes sites run the new PHP.
+  # restart is what makes sites run the new PHP. Any other daemon the upgrade
+  # left stopped is started again: a site must not stay down because MariaDB
+  # failed one restart.
   # shellcheck disable=SC2016 # expanded by the unit's bash, not here
   local script='
 export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_SUSPEND=1
 echo "opanel-service-update: started $(date -u +%Y-%m-%dT%H:%M:%SZ) for $*"
+units=$(systemctl list-units --type=service --state=active --no-legend --plain lshttpd.service mariadb.service redis-server.service 2>/dev/null | cut -d" " -f1)
 status=0
 apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
   install --only-upgrade -y "$@" || status=$?
@@ -1240,6 +1243,12 @@ if [ "$status" -eq 0 ]; then
     esac
   done
 fi
+for unit in $units; do
+  if ! systemctl is-active --quiet "$unit"; then
+    echo "Starting $unit again"
+    systemctl start "$unit" || status=1
+  fi
+done
 echo "opanel-service-update: finished (exit $status)"
 exit "$status"
 '

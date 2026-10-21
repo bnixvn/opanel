@@ -8489,7 +8489,7 @@ function App() {
     return <section className="section">
       <div className="section-title service-versions-title">
         <div><h2>{tr("Service versions")}</h2>
-          <p className="hint">{tr("The web server, PHP, database and mail software. Update one service or all of them; the nightly automatic update installs the same packages.")}</p></div>
+          <p className="hint">{tr("The web server, PHP, database and mail software. Update one service or all of them. Security fixes for the web server, PHP and the database also install on their own each night.")}</p></div>
         <div className="actions">
           <button className="secondary-light" disabled={busy} onClick={() => loadServiceVersions(true)}>
             <RefreshCw size={14} className={serviceChecking ? 'spin' : ''}/> {serviceChecking ? tr("Checking...") : tr("Check for updates")}</button>

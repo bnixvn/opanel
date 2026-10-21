@@ -3,8 +3,9 @@
 "Update OS now" upgrades every package on the server. This is the narrower
 tool the operator asked for on 2026-10-21: see which version of OpenLiteSpeed,
 each PHP, MariaDB and the rest is installed and which one apt offers, then
-update one service or all of them. Nightly unattended-upgrades covers the same
-packages (52opanel-service-updates); this is for not waiting until night.
+update one service or all of them. Nightly unattended-upgrades installs only
+security fixes, and Node.js not at all; this is for everything else, and for
+not waiting until night.
 
 The helper re-checks every package name against its own allow-list, so this
 module decides what a service is, and the helper decides what may be touched.

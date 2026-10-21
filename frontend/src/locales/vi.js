@@ -3410,7 +3410,7 @@ export default {
   "Service update log": "Nhật ký cập nhật dịch vụ",
   "Service versions": "Phiên bản dịch vụ",
   "Starting service update...": "Đang bắt đầu cập nhật dịch vụ...",
-  "The web server, PHP, database and mail software. Update one service or all of them; the nightly automatic update installs the same packages.": "Web server, PHP, cơ sở dữ liệu và phần mềm mail. Cập nhật từng dịch vụ hoặc tất cả; bản cập nhật tự động hằng đêm cũng cài đúng các gói này.",
+  "The web server, PHP, database and mail software. Update one service or all of them. Security fixes for the web server, PHP and the database also install on their own each night.": "Web server, PHP, cơ sở dữ liệu và phần mềm mail. Cập nhật từng dịch vụ hoặc tất cả. Bản vá bảo mật của web server, PHP và cơ sở dữ liệu cũng tự cài mỗi đêm.",
   "Up to date": "Đã mới nhất",
   "Update all ({0})": "Cập nhật tất cả ({0})",
   "Update {0}": "Cập nhật {0}",
