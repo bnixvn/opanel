@@ -38,7 +38,20 @@ LSPHP = re.compile(r"^lsphp(\d)(\d+)$")
 def short_version(version: str) -> str:
     """8.4.26-1+noble -> 8.4.26, 1:10.11.14-0ubuntu0.24.04.1 -> 10.11.14."""
     version = re.sub(r"^\d+:", "", version or "")
-    return version.rsplit("-", 1)[0] if "-" in version else version
+    version = version.rsplit("-", 1)[0] if "-" in version else version
+    return re.sub(r"\+dfsg\d*$", "", version)
+
+
+def _shown(installed: str, offered: str) -> tuple[str, str]:
+    """Short versions, unless an update keeps the upstream version.
+
+    Ubuntu's security fixes usually do (7.0.15-1build2 -> 7.0.15-1ubuntu0.5),
+    and "7.0.15 -> 7.0.15" would read as no update at all.
+    """
+    short_installed, short_offered = short_version(installed), short_version(offered)
+    if offered and short_installed == short_offered:
+        return re.sub(r"^\d+:", "", installed), re.sub(r"^\d+:", "", offered)
+    return short_installed, short_offered if offered else ""
 
 
 def _parse(stdout: str) -> dict:
@@ -111,14 +124,15 @@ def status(refresh: bool = False) -> dict:
             if name in installed and any(fnmatch(name, pattern) for pattern in patterns)
         ]
         main_to = upgradable.get(main, "")
+        installed_short, available_short = _shown(installed[main], main_to)
         services.append({
             "key": key,
             "label": label,
             "package": main,
             "installed": installed[main],
-            "installed_short": short_version(installed[main]),
+            "installed_short": installed_short,
             "available": main_to,
-            "available_short": short_version(main_to) if main_to else "",
+            "available_short": available_short,
             "updates": updates,
         })
     return {

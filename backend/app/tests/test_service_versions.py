@@ -111,6 +111,16 @@ def test_short_versions_drop_epoch_and_revision():
     assert service_versions.short_version("1:10.11.14-0ubuntu0.24.04.1") == "10.11.14"
     assert service_versions.short_version("22.23.3-1nodesource1") == "22.23.3"
     assert service_versions.short_version("1.9.3") == "1.9.3"
+    assert service_versions.short_version("1:2.3.21+dfsg1-2ubuntu6.5") == "2.3.21"
+
+
+def test_a_fix_within_the_same_version_shows_the_revision(monkeypatch):
+    """Ubuntu's security fixes keep 7.0.15; "7.0.15 -> 7.0.15" says nothing."""
+    _fake(monkeypatch, LISTING.replace(
+        "== upgradable\n", "== upgradable\nredis-server 5:7.0.15-1ubuntu0.24.04.6\n"))
+    redis = next(item for item in service_versions.status()["services"] if item["key"] == "redis")
+    assert redis["installed_short"] == "7.0.15-1ubuntu0.24.04.5"
+    assert redis["available_short"] == "7.0.15-1ubuntu0.24.04.6"
 
 
 def test_helper_allow_list_covers_every_service_package():
