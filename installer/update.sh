@@ -511,6 +511,21 @@ migrate_protect_php_from_autoremove() {
   fi
 }
 
+migrate_service_update_origins() {
+  # Operator's request of 2026-10-21. unattended-upgrades only followed
+  # Ubuntu's archive, so OpenLiteSpeed and lsphp security fixes from
+  # LiteSpeed's repository never arrived on their own. Kept identical to
+  # write_service_update_origins in opanel-helper.sh.
+  local conf=/etc/apt/apt.conf.d/52opanel-service-updates
+  [[ -f "$conf" ]] && grep -q 'o=LiteSpeedTech' "$conf" && return 0
+  cat >"$conf" <<'APT'
+Unattended-Upgrade::Origins-Pattern {
+        "o=LiteSpeedTech,a=${distro_codename}";
+};
+APT
+  echo "    apt: OpenLiteSpeed and lsphp now get unattended updates"
+}
+
 migrate_nginx_wordpress_csp_worker_src() {
   python3 - <<'PY'
 from pathlib import Path
@@ -1771,6 +1786,7 @@ migrate_nginx_wordpress_csp_worker_src
 migrate_drop_iframe_blocking
 migrate_backup_layout
 migrate_protect_php_from_autoremove
+migrate_service_update_origins
 
 # --- Serve IPv6 when the box has it ----------------------------------------
 # Only fills in a bind host that was never set: an admin who turned IPv6 off in

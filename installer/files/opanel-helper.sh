@@ -1075,6 +1075,20 @@ PHP
   restart_openlitespeed 2>/dev/null || true
 }
 
+write_service_update_origins() {
+  # OpenLiteSpeed and lsphp come from LiteSpeed's repository, which no
+  # Allowed-Origins line above matches: security fixes for the web server and
+  # every site's PHP waited for someone to press "OS update". The repository
+  # has no -security suite, so this takes all of its updates for this release
+  # (operator's choice, 2026-10-21, knowing PHP and OLS restart briefly).
+  # A separate file because the list in 51opanel is rewritten per mode.
+  cat >/etc/apt/apt.conf.d/52opanel-service-updates <<'APT'
+Unattended-Upgrade::Origins-Pattern {
+        "o=LiteSpeedTech,a=${distro_codename}";
+};
+APT
+}
+
 configure_unattended_upgrades() {
   local enabled="$1" mode="$2" reboot="$3" origins
   [[ "$enabled" == "on" || "$enabled" == "off" ]] || deny "enabled must be on/off"
@@ -1119,6 +1133,7 @@ Unattended-Upgrade::Remove-Unused-Dependencies "false";
 Unattended-Upgrade::Automatic-Reboot "$([[ "$reboot" == "on" ]] && echo true || echo false)";
 Unattended-Upgrade::Automatic-Reboot-Time "03:00";
 APT
+  write_service_update_origins
   systemctl enable --now unattended-upgrades.service 2>/dev/null || true
   echo "OS auto updates enabled (${mode}, reboot=${reboot})"
 }
