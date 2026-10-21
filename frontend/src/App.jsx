@@ -8508,10 +8508,10 @@ function App() {
             <td title={item.installed}>{item.installed_short || item.installed}</td>
             <td>{item.updates.length
               ? <span className="badge warn" title={item.updates.map(u => `${u.name} ${u.from} → ${u.to}`).join('\n')}>{offered(item)}</span>
-              : <span className="badge ok">{tr("Up to date")}</span>}</td>
+              : <span className="badge ok" title={tr("Up to date")}><Check size={12}/> <span className="service-label-collapse">{tr("Up to date")}</span></span>}</td>
             <td className="data-table-actions">{item.updates.length > 0 &&
               <button className="mini" disabled={busy} onClick={() => runServiceUpdate(item)}
-                      aria-label={tr("Update {0}", item.label)}><ArrowUp size={13}/> <span className="service-update-label">{tr("Update")}</span></button>}</td>
+                      aria-label={tr("Update {0}", item.label)}><ArrowUp size={13}/> <span className="service-label-collapse">{tr("Update")}</span></button>}</td>
           </tr>)}</tbody>
         </table>
       </div>}

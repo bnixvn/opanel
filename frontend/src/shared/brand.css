@@ -178,10 +178,12 @@ button:disabled,.upload-button.disabled{background:var(--surface-muted);color:va
 /* Updates › Service versions */
 .service-versions td{white-space:nowrap}
 .service-versions td:first-child code{display:block;margin-top:2px;font-size:12px}
-.service-versions-title .actions{flex-wrap:wrap}
+.service-versions-title .actions{flex-wrap:wrap;min-width:0}
 @media (max-width:640px){
-  .service-versions th,.service-versions td{padding-left:8px;padding-right:8px}
-  .service-versions .service-update-label{display:none}
+  .service-versions-title .actions button{flex:1 1 auto}
+  .service-versions th,.service-versions td{padding-left:6px;padding-right:6px}
+  /* Icon only on a phone; the words stay for screen readers. */
+  .service-versions .service-label-collapse{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 }
 .service-versions-log{margin-top:12px}
 .service-versions-log summary{cursor:pointer;font-weight:600;color:var(--text-secondary);margin-bottom:8px}
