@@ -8487,7 +8487,7 @@ function App() {
       return item.available_short && item.available_short !== item.installed_short ? item.available_short : item.available;
     };
     return <section className="section">
-      <div className="section-title">
+      <div className="section-title service-versions-title">
         <div><h2>{tr("Service versions")}</h2>
           <p className="hint">{tr("The web server, PHP, database and mail software. Update one service or all of them; the nightly automatic update installs the same packages.")}</p></div>
         <div className="actions">
@@ -8511,7 +8511,7 @@ function App() {
               : <span className="badge ok">{tr("Up to date")}</span>}</td>
             <td className="data-table-actions">{item.updates.length > 0 &&
               <button className="mini" disabled={busy} onClick={() => runServiceUpdate(item)}
-                      aria-label={tr("Update {0}", item.label)}><ArrowUp size={13}/> {tr("Update")}</button>}</td>
+                      aria-label={tr("Update {0}", item.label)}><ArrowUp size={13}/> <span className="service-update-label">{tr("Update")}</span></button>}</td>
           </tr>)}</tbody>
         </table>
       </div>}
