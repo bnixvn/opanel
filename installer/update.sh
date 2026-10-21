@@ -484,6 +484,33 @@ fastcgi_cache_key "$scheme$request_method$host$request_uri";
 NGINX
 }
 
+migrate_protect_php_from_autoremove() {
+  # Repairs what we shipped (BPanel's fix of 2026-09-23, operator check of
+  # 2026-10-21). The panel told unattended-upgrades to remove unused
+  # dependencies, and every PHP extension qualifies: nothing depends on it.
+  # On .41 it removed Ubuntu's php8.3 mbstring/xml/curl/mysql overnight on
+  # 2026-10-19; lsphp's igbinary packages are marked automatic too.
+  #
+  # Both halves matter. Clearing the setting stops the next removal; marking
+  # the web server's and PHP's packages manual protects them from a plain
+  # `apt autoremove` typed by hand, and from the setting being turned back on.
+  local conf=/etc/apt/apt.conf.d/51opanel-unattended-upgrades
+  if [[ -f "$conf" ]] && grep -q 'Remove-Unused-Dependencies "true"' "$conf"; then
+    sed -i 's|Unattended-Upgrade::Remove-Unused-Dependencies "true";|Unattended-Upgrade::Remove-Unused-Dependencies "false";|' "$conf"
+    echo "    apt: stopped unattended-upgrades removing \"unused\" packages"
+  fi
+
+  local packages=()
+  mapfile -t packages < <(
+    COLUMNS=250 dpkg-query -l 'lsphp*' 'php8.*' openlitespeed 2>/dev/null \
+      | awk '$1 == "ii" { print $2 }'
+  )
+  if [[ ${#packages[@]} -gt 0 ]]; then
+    apt-mark manual "${packages[@]}" >/dev/null 2>&1 || true
+    echo "    apt: ${#packages[@]} web server / PHP package(s) held back from autoremove"
+  fi
+}
+
 migrate_nginx_wordpress_csp_worker_src() {
   python3 - <<'PY'
 from pathlib import Path
@@ -1743,6 +1770,7 @@ update_progress 92 "restarting" "Restarting services and reloading OpenLiteSpeed
 migrate_nginx_wordpress_csp_worker_src
 migrate_drop_iframe_blocking
 migrate_backup_layout
+migrate_protect_php_from_autoremove
 
 # --- Serve IPv6 when the box has it ----------------------------------------
 # Only fills in a bind host that was never set: an admin who turned IPv6 off in
