@@ -180,7 +180,7 @@ button:disabled,.upload-button.disabled{background:var(--surface-muted);color:va
 .service-versions td:first-child code{display:block;margin-top:2px;font-size:12px}
 .service-versions-title .actions{flex-wrap:wrap;min-width:0}
 @media (max-width:640px){
-  .service-versions-title{grid-template-columns:minmax(0,1fr)}
+  .service-versions-title .actions{flex:1 1 100%;max-width:100%}
   .service-versions-title .actions button{flex:1 1 auto}
   .service-versions th,.service-versions td{padding-left:6px;padding-right:6px}
   /* Icon only on a phone; the words stay for screen readers. */
