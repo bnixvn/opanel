@@ -18,6 +18,7 @@ import 'ace-builds/src-noconflict/theme-textmate';
 import 'ace-builds/src-noconflict/theme-tomorrow_night';
 import { Activity, Archive, ArrowLeft, Bot, BrickWall, Bug, Check, CheckCircle, ChevronDown, Clock, Code2, Copy, Cpu, Database, Dices, FileText, FolderOpen, Globe, HardDrive, Home, Image, KeyRound, Layers, Lock, LockKeyhole, LogIn, LogOut, MemoryStick, Menu, Moon, MoveRight, Network, PackageOpen, Pause, Pencil, Save, ScrollText, Search, Server, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Sun, Trash2, TerminalIcon, Users, X, RefreshCw, Plus, Download, Upload, Play, Square, RotateCcw, AlertCircle, Zap, ExternalLink, Ban, Bell, Eye, Mail, Inbox, Forward, Send, GitBranch, CloudDownload, CloudUpload, Rocket, ArrowDown, ArrowUp, Gauge, LineChart } from 'lucide-react';
 import { Terminal } from './components/Terminal';
+import { generatePassword } from './lib/password.js';
 import { UsageChart } from './components/UsageChart';
 import './pages/AccountResources.css';
 import HubTabs from './components/HubTabs';
@@ -2789,16 +2790,19 @@ function App() {
       title: cleanDomain,
     };
     if (siteOwnerId) body.owner_id = Number(siteOwnerId);
+    // Blank means a random one, as the form says; it was a fixed
+    // 'StrongPass123!', the same on every site made without one.
+    const wpPassword = installWp ? (wpAdminPassword || generatePassword()) : '';
     if (installWp) {
       body.admin_user = wpAdminUser;
       body.admin_email = cleanAdminEmail || `admin@${cleanDomain}`;
-      body.admin_password = wpAdminPassword || 'StrongPass123!';
+      body.admin_password = wpPassword;
     }
     const data = await request('/websites', { method: 'POST', body: JSON.stringify(body) },
       installWp ? tr("Creating WordPress website...") : tr("Creating website..."));
     if (data) {
       if (installWp) {
-        setNotice(tr("Created WordPress site: https://{0}\nAdmin: {1} | Password: {2}", cleanDomain, wpAdminUser, wpAdminPassword || tr("StrongPass123!")));
+        setNotice(tr("Created WordPress site: https://{0}\nAdmin: {1} | Password: {2}", cleanDomain, wpAdminUser, wpPassword));
       } else {
         setNotice(tr("Created site {0}. Upload your files to public_html/ folder.", cleanDomain));
       }
