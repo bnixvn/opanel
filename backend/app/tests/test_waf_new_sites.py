@@ -178,3 +178,20 @@ def test_no_api_rebuilds_a_vhost_by_reading_it_back():
                  if "update_waf_block(" in path.read_text(encoding="utf-8")
                  or "_rewrite_existing_vhost(" in path.read_text(encoding="utf-8")]
     assert offenders == []
+
+
+def test_a_wordpress_site_made_without_installing_stays_wordpress(env):
+    """Mode WordPress, "Install WordPress" unticked: the owner uploads WordPress
+    themselves. The site was turned into "php", whose vhost has no front
+    controller, so every permalink of the uploaded site answered 404
+    (operator, 2026-10-22)."""
+    db, client, calls = env
+    _login(client)
+    response = _post(client, "/api/websites", {"domain": "upload.test", "app_type": "wordpress", "install_wordpress": False})
+    assert response.status_code == 200, response.text
+
+    site = db.query(Website).filter(Website.domain == "upload.test").one()
+    assert site.app_type == "wordpress"
+    assert site.nginx_rewrite_mode == "front_controller"
+    writes = _vhost_writes(calls, "upload.test")
+    assert writes and writes[-1].get("app_type") == "wordpress"

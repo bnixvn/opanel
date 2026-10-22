@@ -21,7 +21,7 @@ import './Websites.css';
 export default function WebsitesPage() {
   const t = useT();
   const {
-    adminEmail, canManageUsers, createSslCerts, createSslForm, createSslMode, createWordPress, currentUser, domain, error,
+    adminEmail, canManageUsers, createSslCerts, createSslForm, createSslMode, createWordPress, currentUser, domain,
     installSslAfterCreate, installWordPress, loadCreateSslCerts, loading, phpVersion, phpVersionOptions, phpVersions,
     refreshAll, renderWildcardProvider, setAdminEmail, setCreateSslForm, setCreateSslMode, setDomain, setInstallSslAfterCreate,
     setInstallWordPress, setPhpVersion, setShowCreateSite, setSiteOwnerId, setSiteType, setWebsiteSearch, setWpAdminPassword,
@@ -32,11 +32,6 @@ export default function WebsitesPage() {
   const openSite = useOpenSite();
   const siteMenu = useSiteMenu();
   const [createTried, setCreateTried] = useState(false);
-  // Creating a WordPress site takes a minute or more. The page's own "Creating..."
-  // line and any error sit behind this sheet, so the sheet says both itself:
-  // without that, Create looked like it did nothing (operator, 2026-10-22).
-  const [submitting, setSubmitting] = useState(false);
-  const [createFailed, setCreateFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // The Dashboard's "New website" tile lands here with the sheet open.
@@ -44,7 +39,6 @@ export default function WebsitesPage() {
   function closeCreate() {
     setShowCreateSite(false);
     setCreateTried(false);
-    setCreateFailed(false);
   }
 
   const query = websiteSearch.trim().toLowerCase();
@@ -76,13 +70,12 @@ export default function WebsitesPage() {
       document.querySelector('#website-create-form [aria-invalid="true"]')?.focus();
       return;
     }
-    setCreateTried(false);
-    setCreateFailed(false);
-    setSubmitting(true);
-    let made = false;
-    try { made = await createWordPress(); } finally { setSubmitting(false); }
-    // Made: the sheet closes, and the list (refreshed) has the new site.
-    if (made) { setDomain(''); closeCreate(); } else setCreateFailed(true);
+    // The sheet closes as soon as Create is pressed (operator, 2026-10-22): a
+    // WordPress site takes a minute or more, and the page under the sheet is
+    // where "Creating..." and any error are shown. What was typed is kept
+    // until the site is made, so a failed one can be opened and sent again.
+    closeCreate();
+    if (await createWordPress()) setDomain('');
   }
 
   async function refresh() {
@@ -97,11 +90,8 @@ export default function WebsitesPage() {
       subtitle={websites.length ? null : t('This creates the first hosted site for the current account.')}
       footer={<>
         {createTried && Object.values(createProblems).some(Boolean) && <span className="sn-drawer-foot-note" role="alert">{t('Some fields need attention.')}</span>}
-        {submitting && <span className="sn-drawer-foot-note is-progress" role="status">{loading || t('Creating website...')}</span>}
-        {!submitting && createFailed && error && <span className="sn-drawer-foot-note" role="alert">{error}</span>}
         <button type="button" className="secondary-light" onClick={closeCreate}>{t('Cancel')}</button>
-        <button type="submit" form="website-create-form" disabled={!!loading || submitting}>
-          {submitting ? <RefreshCw size={15} className="spin" aria-hidden="true"/> : <Plus size={15} aria-hidden="true"/>} {submitting ? t('Creating...') : t('Create website')}</button>
+        <button type="submit" form="website-create-form" disabled={!!loading}><Plus size={15} aria-hidden="true"/> {t('Create website')}</button>
       </>}>
       <form id="website-create-form" noValidate onSubmit={submitCreate}>
         <Field label={t('Domain')} required error={createTried ? createProblems.domain : ''}>

@@ -284,7 +284,11 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
         raise HTTPException(status_code=403, detail="Website limit reached")
 
     install_wp = payload.install_wordpress and payload.app_type == "wordpress"
-    app_type_value = "wordpress" if install_wp else ("php" if payload.app_type == "wordpress" else payload.app_type)
+    # A WordPress site stays one when the panel is not asked to install it:
+    # the owner uploads WordPress themselves. Turning it into "php" gave it a
+    # vhost without WordPress's front controller, so every permalink of the
+    # uploaded site answered 404 (operator, 2026-10-22).
+    app_type_value = payload.app_type
     create_estimate_bytes = storage_quota.WORDPRESS_SITE_ESTIMATE_BYTES if install_wp else storage_quota.STATIC_SITE_ESTIMATE_BYTES
     try:
         storage_quota.enforce_user_storage_quota(db, owner, incoming_bytes=create_estimate_bytes)
