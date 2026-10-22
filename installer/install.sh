@@ -27,12 +27,20 @@ FRONTEND_SRC="${PROJECT_ROOT}/frontend"
 # so PROJECT_ROOT becomes /dev and BACKEND_SRC becomes /dev/backend which
 # does not exist.  Detect this and download the main branch tarball via curl
 # (curl is guaranteed to be available - the user just used it to fetch us).
-OPANEL_GITHUB="${OPANEL_GITHUB:-https://github.com/bnixvn/opanel}"
+# The panel's own GitLab since 2026-10-22. OPANEL_GITHUB is still read, for
+# a script that set it.
+OPANEL_SOURCE="${OPANEL_SOURCE:-${OPANEL_GITHUB:-https://gitlab.sieunhim.com/bnix/opanel}}"
+opanel_main_tarball_url() {
+  case "$1" in
+    https://github.com/*) printf '%s/archive/refs/heads/main.tar.gz\n' "${1%.git}" ;;
+    *) printf '%s/-/archive/main/%s-main.tar.gz\n' "${1%.git}" "$(basename "${1%.git}")" ;;
+  esac
+}
 if [[ ! -d "${BACKEND_SRC}" ]]; then
   OPANEL_CLONE_DIR="$(mktemp -d)"
   echo ""
   echo "==> Source not found locally - downloading main branch to ${OPANEL_CLONE_DIR}"
-  curl -fsSL --connect-timeout 15 --max-time 600 --retry 2 "${OPANEL_GITHUB}/archive/refs/heads/main.tar.gz" \
+  curl -fsSL --connect-timeout 15 --max-time 600 --retry 2 "$(opanel_main_tarball_url "$OPANEL_SOURCE")" \
     | tar xz -C "${OPANEL_CLONE_DIR}" --strip-components=1
   PROJECT_ROOT="${OPANEL_CLONE_DIR}"
   SCRIPT_DIR="${PROJECT_ROOT}/installer"

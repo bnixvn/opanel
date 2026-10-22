@@ -106,7 +106,19 @@ else
   SOURCE_DIR="${SOURCE_DIR:-$DEFAULT_SOURCE_DIR}"
 fi
 
-REPO_URL="${REPO_URL:-https://github.com/bnixvn/opanel.git}"
+DEFAULT_REPO_URL="https://gitlab.sieunhim.com/bnix/opanel.git"
+REPO_URL="${REPO_URL:-$DEFAULT_REPO_URL}"
+# Where the panel lived before it moved to its own GitLab (2026-10-22). A
+# checkout whose remote still points here is moved to REPO_URL; any other
+# remote was set on purpose and is left alone. The helper of the release
+# before the move passes the old address as REPO_URL itself, which would
+# otherwise hold the move back by one update.
+LEGACY_REPO_URLS=("https://github.com/bnixvn/opanel.git" "https://github.com/bnixvn/opanel")
+for legacy_repo in "${LEGACY_REPO_URLS[@]}"; do
+  if [[ "$REPO_URL" == "$legacy_repo" ]]; then
+    REPO_URL="$DEFAULT_REPO_URL"
+  fi
+done
 GIT_REMOTE="${GIT_REMOTE-origin}"                 # remote name in the local checkout
 UPDATE_CHANNEL="${UPDATE_CHANNEL-branch}"         # branch, release, or tag
 # A box can follow a branch other than main -- the staging box tracks staging
@@ -220,7 +232,15 @@ env_set_default() {
 }
 
 ensure_git_remote() {
-  if git remote get-url "$GIT_REMOTE" >/dev/null 2>&1; then
+  local current legacy
+  if current="$(git remote get-url "$GIT_REMOTE" 2>/dev/null)"; then
+    for legacy in "${LEGACY_REPO_URLS[@]}"; do
+      if [[ "$current" == "$legacy" && "$current" != "$REPO_URL" ]]; then
+        log "Moving git remote ${GIT_REMOTE} from ${current} to ${REPO_URL}"
+        git remote set-url "$GIT_REMOTE" "$REPO_URL"
+        break
+      fi
+    done
     return 0
   fi
   log "Adding git remote ${GIT_REMOTE} -> ${REPO_URL}"
@@ -241,6 +261,12 @@ release_archive_url() {
     return 0
   fi
   case "$repo" in
+    https://gitlab.sieunhim.com/*)
+      # GitLab names the archive after the project: <project>-<tag>.zip.
+      base="${repo%.git}"
+      printf '%s/-/archive/%s/%s-%s.zip\n' "$base" "$tag" "${base##*/}" "$tag"
+      return 0
+      ;;
     https://github.com/*)
       base="${repo%.git}"
       ;;

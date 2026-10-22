@@ -4535,7 +4535,7 @@ function App() {
   }
 
   async function runPanelUpdate() {
-    if (!confirm(tr("Update opanel from GitHub main now? The API may restart and this page will reload when done."))) return;
+    if (!confirm(tr("Update opanel from GitLab main now? The API may restart and this page will reload when done."))) return;
     setPanelUpdating(true);
     setShowUpdateLog(true);
     setPanelUpdateLog([]);
@@ -8421,7 +8421,7 @@ function App() {
     return <>
       <section className="section">
         <div className="section-title">
-          <div><h2>{tr("Updates")}</h2><p className="hint">{tr("OS packages use apt; panel updates pull from GitHub")} <code>main</code>.</p></div>
+          <div><h2>{tr("Updates")}</h2><p className="hint">{tr("OS packages use apt; panel updates pull from GitLab")} <code>main</code>.</p></div>
           <button className="secondary-light" disabled={!!loading} onClick={toggleUpdateLog}>{showUpdateLog ? <X size={14}/> : <FileText size={14}/>} {showUpdateLog ? tr("Hide logs") : tr("View logs")}</button>
         </div>
         <div className="info-box update-version-box">

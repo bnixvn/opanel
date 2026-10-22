@@ -2,7 +2,7 @@
 
 **OPanel** là bảng điều khiển hosting gọn nhẹ cho **Ubuntu 24.04**, chạy trên **OpenLiteSpeed** và **LSPHP**. Một giao diện web duy nhất để quản lý website WordPress/PHP, SSL, cơ sở dữ liệu, backup, firewall, WAF và người dùng hosting, với mỗi tài khoản là một Linux user riêng biệt.
 
-- **Phiên bản mới nhất:** xem [Releases](https://github.com/bnixvn/opanel/releases)
+- **Phiên bản mới nhất:** xem [Releases](https://gitlab.sieunhim.com/bnix/opanel/-/releases)
 - **Giao diện:** tiếng Việt và tiếng Anh, có chế độ sáng/tối
 
 ## Ảnh chụp màn hình
@@ -105,7 +105,7 @@ Các tính năng tuỳ chọn, cài và gỡ ở **Settings › Addons**. Addon 
 Chạy bằng root trên server Ubuntu 24.04 mới:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/install.sh)
+bash <(curl -fsSL https://gitlab.sieunhim.com/bnix/opanel/-/raw/main/installer/install.sh)
 ```
 
 Trình cài đặt sẽ hỏi tên miền của panel (để trống thì dùng IP), cổng (mặc định `2222`), có bật SSL Let's Encrypt hay không và email đăng ký SSL.
@@ -116,7 +116,7 @@ Truyền sẵn các giá trị qua biến môi trường:
 
 ```bash
 export PANEL_URL=https://panel.example.com:2222 ENABLE_SSL=yes SSL_EMAIL=admin@example.com
-bash <(curl -fsSL https://raw.githubusercontent.com/bnixvn/opanel/main/installer/install.sh)
+bash <(curl -fsSL https://gitlab.sieunhim.com/bnix/opanel/-/raw/main/installer/install.sh)
 ```
 
 ### Trình cài đặt làm những gì

@@ -11,7 +11,7 @@ from app.core.version import APP_VERSION
 from app.services.shell import shell
 
 
-REPO_URL = os.environ.get("opanel_REPO_URL", "https://github.com/bnixvn/opanel.git")
+REPO_URL = os.environ.get("opanel_REPO_URL", "https://gitlab.sieunhim.com/bnix/opanel.git")
 UPDATE_BRANCH = os.environ.get("opanel_UPDATE_BRANCH", "main")
 UPDATE_STATE_FILE = Path(os.environ.get("opanel_UPDATE_STATE_FILE", "/var/lib/opanel/update-status.json"))
 STATUS_CACHE_SECONDS = 300

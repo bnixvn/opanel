@@ -1279,7 +1279,7 @@ Wants=network-online.target
 Type=oneshot
 Environment=SOURCE_DIR=${SOURCE_DIR}
 Environment=APP_DIR=${APP_DIR}
-Environment=REPO_URL=${REPO_URL:-https://github.com/bnixvn/opanel.git}
+Environment=REPO_URL=${REPO_URL:-https://gitlab.sieunhim.com/bnix/opanel.git}
 Environment=GIT_REMOTE=${GIT_REMOTE:-origin}
 Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-branch}
 Environment=BRANCH=$(panel_update_branch)
@@ -1333,7 +1333,7 @@ run_panel_update() {
       --description="Update opanel from GitHub" \
       --property="Environment=SOURCE_DIR=${SOURCE_DIR}" \
       --property="Environment=APP_DIR=${APP_DIR}" \
-      --property="Environment=REPO_URL=${REPO_URL:-https://github.com/bnixvn/opanel.git}" \
+      --property="Environment=REPO_URL=${REPO_URL:-https://gitlab.sieunhim.com/bnix/opanel.git}" \
       --property="Environment=GIT_REMOTE=${GIT_REMOTE:-origin}" \
       --property="Environment=UPDATE_CHANNEL=${UPDATE_CHANNEL:-branch}" \
       --property="Environment=BRANCH=$(panel_update_branch)" \
@@ -1348,7 +1348,7 @@ run_panel_update() {
   nohup env \
     SOURCE_DIR="$SOURCE_DIR" \
     APP_DIR="$APP_DIR" \
-    REPO_URL="${REPO_URL:-https://github.com/bnixvn/opanel.git}" \
+    REPO_URL="${REPO_URL:-https://gitlab.sieunhim.com/bnix/opanel.git}" \
     GIT_REMOTE="${GIT_REMOTE:-origin}" \
     UPDATE_CHANNEL="${UPDATE_CHANNEL:-branch}" \
     BRANCH="$(panel_update_branch)" \
@@ -5515,7 +5515,8 @@ MAIL_SERVICES=(unbound rspamd dovecot exim4 bnix-webmail)
 MAIL_WEBMAIL_ROOT="/opt/bnix-webmail"
 MAIL_WEBMAIL_ENV="/etc/bnix-webmail.env"
 MAIL_WEBMAIL_UNIT="/etc/systemd/system/bnix-webmail.service"
-MAIL_WEBMAIL_REPO="https://github.com/bnixvn/webmail.git"
+# On the panel's own GitLab since 2026-10-22; GitHub keeps a copy.
+MAIL_WEBMAIL_REPO="https://gitlab.sieunhim.com/bnix/webmail.git"
 # A commit, not a branch: what runs here is what was reviewed. The merge of
 # single sign-on into the webmail's main (/api/auth/sso, with /sso kept for
 # 1.25.0) and the UID SEARCH fix for aioimaplib 2.
