@@ -628,6 +628,7 @@ export default {
   "Creating plan...": "Đang tạo gói...",
   "Creating user...": "Đang tạo người dùng...",
   "Creating website...": "Đang tạo website...",
+  "Creating...": "Đang tạo...",
   "Creating zones...": "Đang tạo zone...",
   "Credential and backup files": "Tệp thông tin xác thực và tệp sao lưu",
   "Cron": "Cron",

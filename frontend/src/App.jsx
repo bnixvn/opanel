@@ -5045,7 +5045,7 @@ function App() {
       wildcardProvider, wpAdminPassword, wpAdminUser, wpInstallForm, wpManagerMode, wpManagerSite,
       // The Databases page (pages/Databases.jsx).
       changeDbPassword, copiedField, createDatabase, createdDbInfo, databaseSearch, databases, deleteDatabase, downloadDatabase,
-      newDatabase, openPhpMyAdmin, setCopiedField, setCreatedDbInfo, setDatabaseSearch, setError, setNewDatabase, setNotice,
+      newDatabase, openPhpMyAdmin, setCopiedField, setCreatedDbInfo, setDatabaseSearch, error, setError, setNewDatabase, setNotice,
       setShowCreateDb, showCreateDb,
       // The file manager (pages/Files.jsx).
       WebsiteSelect, archiveSelectedFiles, clearFileSelection, copySelectedFiles, currentSite, deleteSelectedFiles, dismissFileJob,

@@ -26,6 +26,7 @@ body.sn-drawer-open{overflow:hidden}
 .sn-drawer-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:14px 22px;border-top:1px solid var(--border);background:var(--surface-alt)}
 .sn-drawer-foot>button{min-width:110px}
 .sn-drawer-foot .sn-drawer-foot-note{margin-right:auto;color:var(--danger-text);font-size:13px;font-weight:600}
+.sn-drawer-foot .sn-drawer-foot-note.is-progress{color:var(--text-secondary)}
 
 @keyframes sn-drawer-fade{from{opacity:0}to{opacity:1}}
 @keyframes sn-drawer-in{from{transform:translateX(24px);opacity:.6}to{transform:none;opacity:1}}
