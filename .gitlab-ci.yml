@@ -1,0 +1,111 @@
+# OPanel CI on gitlab.sieunhim.com (moved from GitHub Actions, 2026-10-22).
+#
+# runner-01 is a Docker runner, so every job here runs in a plain container.
+# The install smoke test (.github/workflows/install-smoke.yml) is not ported
+# yet: it runs install.sh against a whole Ubuntu with systemd, which a
+# container is not. It needs a shell runner on a throwaway VM of its own.
+#
+# A commit with [skip ci] in its message starts no pipeline, the same as on
+# GitHub.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "staging"
+    # Branches with an open MR run as the MR pipeline above, not twice.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+stages:
+  - test
+  - security
+
+default:
+  tags: [docker]
+  interruptible: true
+
+# The weekly dependency scan runs alone; the test jobs skip a schedule.
+.not-scheduled:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: on_success
+
+backend:
+  stage: test
+  image: python:3.12
+  extends: .not-scheduled
+  timeout: 45m
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  cache:
+    key: pip-$CI_COMMIT_REF_SLUG
+    paths: [.cache/pip]
+  script:
+    - python -m pip install --upgrade pip
+    - pip install -r backend/requirements.txt pytest
+    - cd backend
+    - python -m pytest -q -p no:cacheprovider
+    - python -c "import py_compile, glob; [py_compile.compile(f, doraise=True) for f in glob.glob('app/**/*.py', recursive=True)]"
+
+frontend:
+  stage: test
+  image: node:22
+  extends: .not-scheduled
+  cache:
+    key:
+      files: [frontend/package-lock.json]
+    paths: [frontend/node_modules]
+  script:
+    - cd frontend
+    - npm ci
+    - npm run i18n:check
+    - npm run build
+
+shell:
+  stage: test
+  image: koalaman/shellcheck-alpine:stable
+  extends: .not-scheduled
+  script:
+    - apk add --no-cache bash
+    # Blocking: a script that does not parse is broken on every server.
+    - find installer -name '*.sh' -print0 | xargs -0 -n1 bash -n
+    # Style findings are reported, not gating (pre-existing debt).
+    - find installer -name '*.sh' -print0 | xargs -0 shellcheck -e SC1091 -S warning || echo "shellcheck reported findings (not blocking)"
+
+# Dependency CVEs. The scheduled run is the point: a pinned dependency does
+# not change, but advisories against it keep arriving. Create the schedule in
+# Build > Pipeline schedules (weekly), and it also runs on main.
+.security:
+  stage: security
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+pip-audit:
+  extends: .security
+  image: python:3.12
+  script:
+    - pip install pip-audit
+    # Accepted risk, re-review whenever this list is touched:
+    # GHSA-wj6h-64fc-37mp - python-ecdsa Minerva timing attack, no fixed
+    #   version; ecdsa arrives only through python-jose and OPanel signs
+    #   its JWTs with HS256, so no ECDSA path runs. Way out: PyJWT.
+    # CVE-2026-85394 - python-jose algorithm confusion, no release with the
+    #   fix yet; OPanel verifies HS256 with its own secret and every
+    #   jwt.decode pins algorithms=[ALGORITHM]. Way out: PyJWT.
+    - pip-audit -r backend/requirements.txt --strict
+        --ignore-vuln GHSA-wj6h-64fc-37mp
+        --ignore-vuln CVE-2026-85394
+
+npm-audit:
+  extends: .security
+  image: node:22
+  script:
+    - cd frontend
+    - npm audit --audit-level=high
