@@ -7,6 +7,7 @@ way. Second, an unsaved rule selection means "the defaults", so any group added
 with enabled_default False must stay off for the sites that never opened the
 WAF page, which on a real server is most of them.
 """
+import json
 import re
 
 import pytest
@@ -84,11 +85,31 @@ def test_xss_stays_opt_in():
     assert "xss" not in waf._default_enabled_ids()
 
 
+# Shipped on, and turned off by default on purpose since: blocking
+# wp-admin/install.php kept every not-yet-installed WordPress site from being
+# set up (operator, 2026-10-22).
+MADE_OPT_IN = {"wordpress-install-upgrade"}
+
+
 def test_an_unsaved_selection_keeps_every_previously_shipped_group():
     # Existing sites store nothing, so this set is what they are running.
-    assert SHIPPED_BEFORE <= waf._parse_enabled_rule_ids("")
-    assert SHIPPED_BEFORE <= waf._parse_enabled_rule_ids("not json")
-    assert SHIPPED_BEFORE <= waf._parse_enabled_rule_ids('{"not": "a list"}')
+    kept = SHIPPED_BEFORE - MADE_OPT_IN
+    assert kept <= waf._parse_enabled_rule_ids("")
+    assert kept <= waf._parse_enabled_rule_ids("not json")
+    assert kept <= waf._parse_enabled_rule_ids('{"not": "a list"}')
+
+
+def test_the_installer_block_is_off_unless_a_site_asks_for_it():
+    # Nowhere by default, in either stored format: an old flat list named it
+    # only because it was on by default when the list was written.
+    assert MADE_OPT_IN.isdisjoint(waf._parse_enabled_rule_ids(""))
+    assert MADE_OPT_IN.isdisjoint(waf._parse_enabled_rule_ids(json.dumps(sorted(SHIPPED_BEFORE))))
+    assert MADE_OPT_IN.isdisjoint(waf._parse_enabled_rule_ids('{"disabled": [], "enabled": []}'))
+    assert "id:1001104" not in waf.render_site_rules("example.test", waf._parse_enabled_rule_ids(""))
+    # A site that wants it still gets it.
+    chosen = waf._parse_enabled_rule_ids(json.dumps(waf.selection_payload(["wordpress-install-upgrade"])))
+    assert "wordpress-install-upgrade" in chosen
+    assert "id:1001104" in waf.render_site_rules("example.test", chosen)
 
 
 def test_an_unsaved_selection_renders_the_default_set():

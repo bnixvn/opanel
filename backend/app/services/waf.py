@@ -83,9 +83,16 @@ SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'
     },
     {
         "id": "wordpress-install-upgrade",
+        # Off unless a site asks for it (operator, 2026-10-22). WordPress
+        # sends every visitor to wp-admin/install.php while its tables are
+        # missing - a manual install, a restore or migration with another
+        # table prefix - and this answered 403 there, so the site could not
+        # be set up. WordPress already refuses install.php once installed
+        # and setup-config.php once wp-config.php exists.
+        "enabled_default": False,
         "category": "WordPress",
         "title": "WordPress installer probes",
-        "description": "Blocks direct access to WordPress installation scripts after deployment.",
+        "description": "Blocks direct access to WordPress installation scripts after deployment. Off by default: a site that is not installed yet needs wp-admin/install.php.",
         "rules": """SecRule REQUEST_URI "@rx (?i)(?:/wp-admin/install\\.php(?:$|[?])|/wp-admin/setup-config\\.php(?:$|[?]))" "id:1001104,phase:1,deny,status:403,log,msg:'opanel blocked WordPress installer probe'"
 """,
     },
@@ -508,7 +515,10 @@ def _parse_enabled_rule_ids(value: str | None) -> set[str]:
         # deselected; everything newer takes its own default.
         listed = _clean_ids(raw, valid)
         disabled = (HISTORICAL_RULE_IDS & valid) - listed
-        enabled = listed - defaults
+        # Every historical group was on by default when these lists were
+        # written, so listing one said "left on", never "asked for". One made
+        # opt-in since then follows its new default.
+        enabled = listed - defaults - HISTORICAL_RULE_IDS
         return (defaults - disabled) | enabled
 
     return set(defaults)

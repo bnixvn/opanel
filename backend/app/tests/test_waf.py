@@ -13,9 +13,11 @@ def test_default_rules_cover_the_app_stacks_plus_server_and_injection():
         "Laravel", "PHP", "WordPress", "Server", "Injection",
     }
     # Everything is on out of the box except XSS, which stays opt-in because
-    # its predecessor was dropped on purpose -- see test_waf_rules.py.
+    # its predecessor was dropped on purpose -- see test_waf_rules.py -- and
+    # the WordPress installer block, which 403'd wp-admin/install.php on every
+    # site not installed yet (operator, 2026-10-22).
     off = {rule["id"] for rule in definitions if not rule["enabled_default"]}
-    assert off == {"xss"}
+    assert off == {"xss", "wordpress-install-upgrade"}
 
 
 def test_legacy_heavy_rule_ids_are_mapped_or_ignored():
