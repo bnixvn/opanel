@@ -47,7 +47,8 @@ backend:
     paths: [.cache/pip]
   script:
     - python -m pip install --upgrade pip
-    - pip install -r backend/requirements.txt pytest
+    # httpx2: starlette 1.x's TestClient needs it; tests only, not the panel.
+    - pip install -r backend/requirements.txt pytest httpx2
     - cd backend
     - python -m pytest -q -p no:cacheprovider
     - python -c "import py_compile, glob; [py_compile.compile(f, doraise=True) for f in glob.glob('app/**/*.py', recursive=True)]"
