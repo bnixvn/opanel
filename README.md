@@ -110,6 +110,14 @@ bash <(curl -fsSL https://gitlab.sieunhim.com/bnix/opanel/-/raw/main/installer/i
 
 Trình cài đặt sẽ hỏi tên miền của panel (để trống thì dùng IP), cổng (mặc định `2222`), có bật SSL Let's Encrypt hay không và email đăng ký SSL.
 
+Chưa chọn web server? Lệnh này hỏi OpenLiteSpeed (OPanel) hay Nginx (BPanel) rồi chạy đúng trình cài:
+
+```bash
+bash <(curl -fsSL https://gitlab.sieunhim.com/bnix/bpanel/-/raw/main/panel-setup.sh)
+```
+
+Mã nguồn và bản phát hành ở [GitLab](https://gitlab.sieunhim.com/bnix/opanel); [GitHub](https://github.com/bnixvn/opanel) chỉ là bản sao đồng bộ.
+
 ### Cài đặt không cần trả lời
 
 Truyền sẵn các giá trị qua biến môi trường:
