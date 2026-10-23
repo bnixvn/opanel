@@ -4209,6 +4209,26 @@ ensure_php_revalidate_freq() {
   fi
 }
 
+# Ubuntu's "New release '26.04 LTS' available. Run 'do-release-upgrade' to
+# upgrade to it." on every SSH login (operator, 2026-10-24: remove it). The
+# panel is built and tested on 24.04, and a release upgrade underneath it
+# replaces PHP, the web server and the database with versions it has not met.
+# Nothing is uninstalled: whoever means to upgrade sets Prompt=lts again.
+ensure_no_release_upgrade_prompt() {
+  local conf=/etc/update-manager/release-upgrades
+  [[ -f "$conf" ]] || return 0
+  if grep -qE '^[[:space:]]*Prompt[[:space:]]*=' "$conf"; then
+    sed -i -E 's/^[[:space:]]*Prompt[[:space:]]*=.*/Prompt=never/' "$conf"
+  elif grep -q '^\[DEFAULT\]' "$conf"; then
+    sed -i '/^\[DEFAULT\]/a Prompt=never' "$conf"
+  else
+    printf '[DEFAULT]\nPrompt=never\n' >>"$conf"
+  fi
+  # The offer already found is cached for the MOTD; with Prompt=never nothing
+  # writes it again.
+  rm -f /var/lib/ubuntu-release-upgrader/release-upgrade-available
+}
+
 # TCP for a web server: BBR with fq (better throughput to far or lossy
 # clients than cubic), room in the accept queues, TCP Fast Open. The same
 # family of settings wptangtoc-ols applies. BBR only where the kernel has it.
@@ -9249,6 +9269,7 @@ PY
     ensure_php_revalidate_freq
     ensure_php_file_cache_all
     ensure_network_tuning
+    ensure_no_release_upgrade_prompt
     ensure_journal_cap
     ensure_lmd_monitor_layout
     ensure_ols_defaults_private
