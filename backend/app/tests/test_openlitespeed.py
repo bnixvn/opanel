@@ -119,7 +119,8 @@ def test_wordpress_vhost_blocks_xmlrpc_before_php():
         php_version="8.4",
     )
 
-    assert "RewriteRule ^xmlrpc\\.php$ - [F,L]" in rendered
+    # With a PATH_INFO it is the same script (.41, 2026-10-23).
+    assert "RewriteRule ^xmlrpc\\.php($|/) - [F,L]" in rendered
 
 
 def test_wordpress_vhost_includes_security_headers_when_ssl_is_enabled():
@@ -354,7 +355,7 @@ def test_a_wordpress_in_a_folder_gets_its_own_pretty_links_first(tmp_path):
     rendered = openlitespeed.render_vhost(
         "example.test", str(root), app_type="wordpress", php_version="8.4", rewrite_mode="front_controller")
     context = _context_block(rendered)
-    assert rule in context and "RewriteRule ^blog\\.v2/xmlrpc\\.php$ - [F,L]" in context
+    assert rule in context and "RewriteRule ^blog\\.v2/xmlrpc\\.php($|/) - [F,L]" in context
     assert context.index(rule) < context.index("RewriteRule . /index.php [L]")
     assert "images" not in context
     # A PHP website has its rules at vhost scope.

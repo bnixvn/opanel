@@ -461,7 +461,7 @@ def _wordpress_folder_rules(folders: list[str]) -> str:
     for folder in folders:
         pattern = folder.replace(".", "\\.")
         rules.append(
-            f"RewriteRule ^{pattern}/xmlrpc\\.php$ - [F,L]\n"
+            f"RewriteRule ^{pattern}/xmlrpc\\.php($|/) - [F,L]\n"
             "RewriteCond %{REQUEST_FILENAME} !-f\n"
             "RewriteCond %{REQUEST_FILENAME} !-d\n"
             f"RewriteRule ^{pattern}/ /{folder}/index.php [QSA,L]"

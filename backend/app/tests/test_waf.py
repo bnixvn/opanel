@@ -54,6 +54,42 @@ def test_wordpress_xmlrpc_rule_blocks_xmlrpc():
     assert "id:1001103" in content
 
 
+def _xmlrpc_rule_regex():
+    """Rule 1001102's pattern and whether it decodes first, as ModSecurity
+    sees them."""
+    import re
+
+    line = next(item for item in waf.render_site_rules("example.com", ["wordpress-xmlrpc-author-scan"]).splitlines()
+                if "id:1001102" in item)
+    pattern = re.search(r'"@rx ([^"]+)"', line).group(1)
+    return re.compile(pattern), "t:urlDecodeUni" in line
+
+
+def test_xmlrpc_is_blocked_whatever_follows_its_name():
+    """POST /xmlrpc.php/ answered 200 with a methodResponse on .41
+    (2026-10-23): the same script with a PATH_INFO, which a rule ending in
+    `(?:$|[?])` let through."""
+    from urllib.parse import unquote
+
+    regex, decodes = _xmlrpc_rule_regex()
+    assert decodes
+    for uri in ("/xmlrpc.php", "/XMLRPC.PHP", "/xmlrpc.php?rsd", "/xmlrpc.php/", "/xmlrpc.php/x",
+                "//xmlrpc.php", "/blog/xmlrpc.php", "/xmlrpc.php;x", "/xmlrpc.php%2fx", "/%78mlrpc.php",
+                "/xmlrpc%2ephp", "/xmlrpc.php%252f"):
+        assert regex.search(unquote(uri)), uri
+    for uri in ("/", "/xmlrpc-guide/", "/wp-json/", "/xmlrpc.phpx", "/my-xmlrpc.php.html"):
+        assert not regex.search(unquote(uri)), uri
+
+
+def test_every_copy_of_the_xmlrpc_rule_is_the_same():
+    """install.sh, the helper and waf.py each write rule 1001102."""
+    base = HELPER_SCRIPT.parents[2]
+    rule = next(line for line in waf.render_site_rules("example.com", ["wordpress-xmlrpc-author-scan"]).splitlines()
+                if "id:1001102" in line)
+    for script in ("installer/install.sh", "installer/files/opanel-helper.sh"):
+        assert rule in (base / script).read_text(encoding="utf-8"), script
+
+
 def test_wordpress_wp2shell_rules_block_batch_paths():
     content = waf.render_site_rules("example.com", ["wordpress-wp2shell"])
 

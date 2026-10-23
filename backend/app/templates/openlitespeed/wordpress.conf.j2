@@ -136,7 +136,7 @@ context / {
     rewrite {
         enable            1
         rewriteRules      <<<END_RULES
-RewriteRule ^xmlrpc\.php$ - [F,L]
+RewriteRule ^xmlrpc\.php($|/) - [F,L]
 {% if wp_folder_rules %}{{ wp_folder_rules }}
 {% endif %}RewriteRule ^index\.php$ - [L]
 RewriteCond %{REQUEST_FILENAME} !-f

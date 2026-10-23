@@ -77,7 +77,12 @@ DEFAULT_RULES = [
         "category": "WordPress",
         "title": "WordPress XML-RPC and author scans",
         "description": "Blocks XML-RPC access and ?author= enumeration scans.",
-        "rules": """SecRule REQUEST_URI "@rx (?i)(?:/xmlrpc\\.php(?:$|[?]))" "id:1001102,phase:1,deny,status:403,log,msg:'opanel blocked WordPress XML-RPC access'"
+        # /xmlrpc.php/ and /xmlrpc.php/anything are the same script with a
+        # PATH_INFO, and WordPress answered them (.41, 2026-10-23: POST
+        # /xmlrpc.php/ returned 200 with a methodResponse) because the rule
+        # only matched the name at the end of the path. Decoded first, so
+        # /%78mlrpc.php is the same name.
+        "rules": """SecRule REQUEST_URI "@rx (?i)/xmlrpc\\.php(?:$|[?/;%#])" "id:1001102,phase:1,t:none,t:urlDecodeUni,deny,status:403,log,msg:'opanel blocked WordPress XML-RPC access'"
 SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'opanel blocked WordPress author enumeration'"
 """,
     },
@@ -276,7 +281,7 @@ RULE_REASON_BY_ID = {
 }
 
 PATH_REASON_RULES = [
-    (re.compile(r"(?i)(?:^|/)xmlrpc\.php(?:$|[?])"), "Block WordPress XML-RPC"),
+    (re.compile(r"(?i)(?:^|/)xmlrpc\.php(?:$|[?/;%#])"), "Block WordPress XML-RPC"),
     (re.compile(r"(?i)(?:^|/)wp-config\.php(?:\.|$|[?])"), "Block WordPress sensitive path"),
     (re.compile(r"(?i)(?:^|/)wp-admin/(?:install|setup-config)\.php(?:$|[?])"), "Block WordPress installer probe"),
     (re.compile(r"(?i)(?:^|/)wp-json/batch/v1(?:$|[?])"), "Block wp2shell Path"),
