@@ -11,7 +11,7 @@ export default {
   "Website actions for {domain}": "Thao tác cho {domain}",
   "A restore point before every update": "Tạo điểm khôi phục trước mỗi lần cập nhật",
   "The files without the uploads, and the database, only when you take one; the newest two are kept, in the account's home.": "Các tệp (trừ thư mục uploads) và cơ sở dữ liệu, chỉ khi bạn tự tạo; giữ hai bản mới nhất, trong thư mục home của tài khoản.",
-  "(3 per CPU core an account may use, split over its sites)": "(3 cho mỗi core CPU tài khoản được dùng, chia đều cho các website của nó)",
+  "(3 per CPU core an account may use, shared by its sites: a busy site may use more while the others are idle)": "(3 cho mỗi core CPU tài khoản được dùng, dùng chung cho các website của nó: site đang bận được dùng nhiều hơn khi các site khác rảnh)",
   "0 = unlimited.": "0 = không giới hạn.",
   "0 = unlimited. Choosing a package fills these in.": "0 = không giới hạn. Chọn gói sẽ tự điền các ô này.",
   "1. Add this deploy key to the repository": "1. Thêm deploy key này vào repository",

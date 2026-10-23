@@ -8028,7 +8028,7 @@ function App() {
           <div><strong>{tr("OPcache memory:")}</strong> {phpTuning.recommendation.opcache_memory_consumption} {tr("MB")}</div>
           <div><strong>{tr("OPcache files:")}</strong> {phpTuning.recommendation.opcache_max_accelerated_files}</div>
           <div><strong>{tr("OPcache JIT:")}</strong> {phpTuning.recommendation.opcache_jit} ({phpTuning.recommendation.opcache_jit_buffer_size}{tr("MB)")}</div>
-          <div><strong>{tr("PHP workers, whole server:")}</strong> {phpTuning.recommendation.lsapi_children} <small>{tr("(3 per CPU core an account may use, split over its sites)")}</small></div>
+          <div><strong>{tr("PHP workers, whole server:")}</strong> {phpTuning.recommendation.lsapi_children} <small>{tr("(3 per CPU core an account may use, shared by its sites: a busy site may use more while the others are idle)")}</small></div>
           <div><strong>{tr("LSAPI idle:")}</strong> {phpTuning.recommendation.lsapi_max_idle}{tr("s, max idle children:")} {phpTuning.recommendation.lsapi_max_idle_children}</div>
           <div><strong>upload_max:</strong> {phpTuning.recommendation.upload_max_filesize}</div>
           <div><strong>post_max:</strong> {phpTuning.recommendation.post_max_size}</div>

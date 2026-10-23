@@ -29,22 +29,60 @@ def test_the_122_incident_is_bounded():
     accounts.update({n: Account(8.0, [f"site{n}.example"]) for n in range(1, 7)})
     plan = php_workers.split(accounts, budget, cores=8)
     tapsenior = [plan[f"site{i}.tapsenior.com"] for i in range(5)]
-    assert tapsenior == [2] * 5, "ten workers for the account instead of 75 (135 on the day)"
+    # Each site may run what the account's two cores run, and no more: 30
+    # ceilings for the whole account if every site were busy at once, against
+    # 100 a site (135 processes) on the day. Shared since 2026-10-23.
+    assert tapsenior == [6] * 5
     assert {plan[f"site{n}.example"] for n in range(1, 7)} == {12}
-    assert sum(plan.values()) <= budget + 2 * len(plan)
+    assert sum(plan.values()) <= budget * php_workers.SERVER_OVERCOMMIT
 
 
-def test_an_account_gets_three_workers_a_core_split_over_its_sites():
+def test_an_account_gets_three_workers_a_core_shared_by_its_sites():
+    # Twelve for the account; a busy site may use them all, not half.
     plan = php_workers.split({1: Account(4.0, ["a.test", "b.test"])}, budget=1000, cores=8)
-    assert plan == {"a.test": 6, "b.test": 6}
+    assert plan == {"a.test": 12, "b.test": 12}
     plan = php_workers.split({1: Account(0.5, ["a.test"])}, budget=1000, cores=8)
-    assert plan == {"a.test": 2}, "never below two a site"
+    assert plan == {"a.test": 2}, "never below two a site, never above what half a core runs"
+
+
+def test_a_many_site_account_is_not_starved():
+    """.41, 2026-10-23: 12 cores, a memory budget of 120 workers, accounts of
+    49, 55 and 68 sites. The even split gave each site 2, and stderr.log said
+    "Reached max children process limit: 2" thousands of times an hour while
+    requests waited 20-60 s."""
+    accounts = {1: Account(12.0, [f"b{i}" for i in range(49)]), 2: Account(12.0, [f"x{i}" for i in range(55)]),
+                3: Account(12.0, [f"m{i}" for i in range(68)]), 4: Account(12.0, ["solo.test"])}
+    plan = php_workers.split(accounts, budget=120, cores=12)
+    assert {plan[f"b{i}"] for i in range(49)} == {5}
+    assert plan["solo.test"] >= 20, "a one-site account keeps what it had"
+    assert sum(plan.values()) <= 120 * php_workers.SERVER_OVERCOMMIT
+
+
+def test_no_site_ends_below_the_even_split():
+    accounts = {n: Account(8.0, [f"s{n}-{i}.test" for i in range(n + 1)]) for n in range(30)}
+    budget = 50
+    plan = php_workers.split(accounts, budget=budget, cores=8)
+    total_cores = 8.0 * len(accounts)
+    for n, account in accounts.items():
+        workers = max(2, min(24, int(budget * 8.0 / total_cores)))
+        even = max(2, -(-workers // len(account.sites)))
+        assert all(plan[domain] >= even for domain in account.sites)
+
+
+def test_a_small_server_stays_small():
+    plan = php_workers.split({1: Account(2.0, [f"a{i}.test" for i in range(10)])},
+                             budget=php_workers.server_budget(total_mb=2048, pool_mb=256), cores=2)
+    assert set(plan.values()) == {2}
 
 
 def test_the_memory_budget_caps_a_server_full_of_unlimited_accounts():
+    # 40 workers of memory for 20 one-site accounts: a floor of one worker a
+    # core each (8), not the 24 their cores would run, and the server's
+    # ceilings within SERVER_OVERCOMMIT times its memory.
     accounts = {n: Account(8.0, [f"s{n}.test"]) for n in range(20)}
     plan = php_workers.split(accounts, budget=40, cores=8)
-    assert set(plan.values()) == {2}, "40 workers of memory for 20 accounts: two each, not 24"
+    assert set(plan.values()) == {8}
+    assert sum(plan.values()) <= 40 * php_workers.SERVER_OVERCOMMIT
 
 
 def test_the_budget_leaves_mariadb_and_a_reserve():

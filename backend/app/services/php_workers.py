@@ -17,8 +17,26 @@ So the count is per account and follows what the account can actually run:
 - the whole server no more than its memory holds -- RAM less MariaDB's buffer
   pool and a reserve for the system, at WORKER_MB a worker -- shared between
   accounts in proportion to the cores each may use;
-- the account's number split evenly over its PHP websites, MIN_PER_SITE at
-  least, so a fifth site does not multiply an account's workers by five.
+- the account's number shared by its PHP websites, MIN_PER_SITE at least, so
+  a fifth site does not multiply an account's workers by five.
+
+Shared, not split evenly (operator, 2026-10-23). An even split assumed every
+site of an account busy at once, which never happens: an idle site runs no
+worker at all. On .41 an account with 49 sites gave each of them 2, and the
+log said "Reached max children process limit: 2" thousands of times an hour
+while requests waited 20-60 s. Now:
+
+- each site may use up to SHARE_SITES/n of its account's workers (as if
+  SHARE_SITES of its sites were busy together), never more than the account
+  itself has;
+- and at least a floor that follows the server: one worker a core, between
+  MIN_PER_SITE and FLOOR_MAX, but never above what the account's own cores
+  run - a CPU-limited account (the .122 case) stays bounded by its limit;
+- the whole server's ceilings together at most SERVER_OVERCOMMIT times the
+  memory budget. Ceilings are not processes: only a busy site starts workers,
+  and its idle ones exit. Past that only what the sharing added is scaled
+  down: no site ends below what the even split gave it. (The even split
+  already summed to 3.4 times the budget on .41, from MIN_PER_SITE alone.)
 
 The vhost template reads for_domain(). reconcile() runs on the panel's minute
 tick and re-renders only the sites whose number changed, so a site added or
@@ -43,6 +61,9 @@ logger = logging.getLogger("opanel.php_workers")
 WORKERS_PER_CORE = 3
 WORKER_MB = 150
 MIN_PER_SITE = 2
+FLOOR_MAX = 8
+SHARE_SITES = 4
+SERVER_OVERCOMMIT = 8
 # A site whose account the plan does not know yet (being created right now):
 # a modest number until the next tick has the real one.
 DEFAULT_PER_SITE = 4
@@ -118,17 +139,27 @@ def split(accounts: dict[int, Account], budget: int, cores: int) -> dict[str, in
     """Workers per site, from each account's cores and sites and the server's
     memory budget. Pure, so the arithmetic is tested on its own."""
     total_cores = sum(account.cores for account in accounts.values()) or 1.0
-    plan: dict[str, int] = {}
+    server_floor = max(MIN_PER_SITE, min(FLOOR_MAX, cores))
+    even: dict[str, int] = {}
+    shared_plan: dict[str, int] = {}
     for account in accounts.values():
         if not account.sites:
             continue
         by_cpu = max(MIN_PER_SITE, round(WORKERS_PER_CORE * account.cores))
         by_memory = int(budget * account.cores / total_cores)
         workers = max(MIN_PER_SITE, min(by_cpu, by_memory))
-        per_site = max(MIN_PER_SITE, math.ceil(workers / len(account.sites)))
+        evenly = max(MIN_PER_SITE, math.ceil(workers / len(account.sites)))
+        shared = min(workers, math.ceil(workers * SHARE_SITES / len(account.sites)))
+        per_site = max(evenly, min(server_floor, by_cpu), shared)
         for domain in account.sites:
-            plan[domain] = per_site
-    return plan
+            even[domain] = evenly
+            shared_plan[domain] = per_site
+    ceiling = budget * SERVER_OVERCOMMIT
+    total, base = sum(shared_plan.values()), sum(even.values())
+    if total <= ceiling or total <= base:
+        return shared_plan
+    keep = max(0.0, (ceiling - base) / (total - base))
+    return {domain: even[domain] + int((shared_plan[domain] - even[domain]) * keep) for domain in shared_plan}
 
 
 def _allowed_cores(user, reseller, enforcing: bool, cores: int) -> float:
