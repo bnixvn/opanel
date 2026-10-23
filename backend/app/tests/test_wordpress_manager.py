@@ -330,6 +330,8 @@ def test_an_update_takes_a_restore_point_first_and_two_are_kept(env):
     _scan(env)
     row = env.db.query(WpInstall).one()
     client = env.as_user("alice")
+    # Off by default (operator, 2026-10-24): this WordPress turned them on.
+    assert client.put(f"/api/wordpress/installs/{row.id}/points/auto", json={"on": True}).json() == {"auto_points": True}
     for _ in range(3):
         env.calls.clear()
         answer = client.post(f"/api/wordpress/installs/{row.id}/update", json={})
@@ -360,11 +362,17 @@ def test_a_restore_names_a_point_the_site_has(env):
     assert any(call["args"][:2] == ["db", "import"] for call in env.calls)
 
 
-def test_restore_points_before_an_update_can_be_switched_off(env):
-    """Operator, 2026-10-19: "Cho bật/tắt tính năng điểm khôi phục"."""
+def test_restore_points_before_an_update_are_off_until_turned_on(env):
+    """Operator, 2026-10-19: "Cho bật/tắt tính năng điểm khôi phục"; off by
+    default since 2026-10-24: "Restore point mặc định là off"."""
     _scan(env)
     row = env.db.query(WpInstall).one()
     client = env.as_user("alice")
+    assert client.get(f"/api/wordpress/installs/{row.id}").json()["auto_points"] is False
+    env.calls.clear()
+    assert client.post(f"/api/wordpress/installs/{row.id}/update", json={}).status_code == 200
+    assert "wp-point-create" not in [call["command"] for call in env.calls]
+    assert client.put(f"/api/wordpress/installs/{row.id}/points/auto", json={"on": True}).json() == {"auto_points": True}
     assert client.get(f"/api/wordpress/installs/{row.id}").json()["auto_points"] is True
     assert client.put(f"/api/wordpress/installs/{row.id}/points/auto", json={"on": False}).json() == {"auto_points": False}
     env.calls.clear()

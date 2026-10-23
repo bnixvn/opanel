@@ -187,6 +187,15 @@ button:disabled,.upload-button.disabled{background:var(--surface-muted);color:va
   .service-versions .service-label-collapse{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 }
 .service-versions-log{margin-top:12px}
+/* The Updates page's system packages, under the service versions. */
+.system-packages{margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
+.system-packages-head{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;justify-content:space-between}
+.system-packages-head h3{margin:0 0 4px;font-size:15px}
+.system-packages-head .hint{margin:0}
+.system-packages-list{margin-top:10px}
+.system-packages-list summary{cursor:pointer;font-weight:600;color:var(--text-secondary)}
+.system-packages-list ul{margin:8px 0 0;padding-left:18px;display:grid;gap:4px;font-size:13px;color:var(--text-secondary)}
+.system-packages-list code{color:var(--text)}
 .service-versions-log summary{cursor:pointer;font-weight:600;color:var(--text-secondary);margin-bottom:8px}
 .update-progress-log{max-height:260px;overflow:auto;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
 .progress-bar{width:100%;height:10px;background:var(--surface-alt);border:1px solid var(--border);border-radius:999px;overflow:hidden}

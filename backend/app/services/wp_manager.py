@@ -780,9 +780,10 @@ def _handle_point_delete(db: Session, task: _Task, params: dict) -> None:
 
 
 def auto_points(install: WpInstall) -> bool:
-    """Whether a restore point is taken before every update: on unless this
-    WordPress's owner turned it off (operator, 2026-10-19)."""
-    return json.loads(install.inventory or "{}").get("auto_points", True) is not False
+    """Whether a restore point is taken before every update: off unless this
+    WordPress's owner turned it on (operator, 2026-10-24; it was on by default
+    from 2026-10-19). A point is still taken by hand at any time."""
+    return json.loads(install.inventory or "{}").get("auto_points") is True
 
 
 def set_auto_points(db: Session, install: WpInstall, on: bool) -> None:

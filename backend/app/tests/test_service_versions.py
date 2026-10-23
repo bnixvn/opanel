@@ -143,3 +143,51 @@ def test_helper_checks_every_name_before_root_runs_apt():
     assert "--only-upgrade" in body, "never installs a package that is not there"
     assert body.index("deny \"a service update is already running\"") < body.index("systemd-run")
     assert "systemctl start" in body, "a daemon the upgrade left stopped is started again"
+
+
+# --- System packages: what "Update OS now" upgrades (2026-10-24) -------------------------
+# The bell said "3 system update(s) available"; "Update OS now" showed one
+# notice that went away, and nothing said whether the packages were updated.
+
+OS_LISTING = LISTING.replace("tmux 3.4-1ubuntu0.2\n", "tmux 3.4-1ubuntu0.2 3.4-1ubuntu0.1\nlibc6 2.39-0ubuntu8.6 2.39-0ubuntu8.5\n") + """== os-state
+inactive
+== os-log
+opanel-os-update: started 2026-10-24T01:00:00Z
+Setting up libc6 (2.39-0ubuntu8.6) ...
+opanel-os-update: finished (exit 0)
+"""
+
+
+def test_the_system_packages_no_service_row_shows_are_listed(monkeypatch):
+    _fake(monkeypatch, OS_LISTING)
+    system = service_versions.status()["system"]
+    # Everything apt would upgrade, as the bell counts; the others by name.
+    assert system["pending"] == 6
+    assert system["others"] == [
+        {"name": "libc6", "to": "2.39-0ubuntu8.6", "from": "2.39-0ubuntu8.5"},
+        {"name": "tmux", "to": "3.4-1ubuntu0.2", "from": "3.4-1ubuntu0.1"},
+    ]
+
+
+def test_the_os_update_is_followed_to_its_end(monkeypatch):
+    _fake(monkeypatch, OS_LISTING)
+    system = service_versions.status()["system"]
+    assert system["running"] is False
+    assert system["last_result"] == {"ok": True, "exit_code": 0}
+    assert "Setting up libc6 (2.39-0ubuntu8.6) ..." in system["log"]
+    running = OS_LISTING.replace("== os-state\ninactive", "== os-state\nactive").replace(
+        "opanel-os-update: finished (exit 0)\n", "")
+    _fake(monkeypatch, running)
+    system = service_versions.status()["system"]
+    assert system["running"] is True and system["last_result"] is None
+    failed = OS_LISTING.replace("finished (exit 0)", "finished (exit 100)")
+    _fake(monkeypatch, failed)
+    assert service_versions.status()["system"]["last_result"] == {"ok": False, "exit_code": 100}
+
+
+def test_the_os_update_unit_says_how_it_ended_and_the_page_reads_it():
+    run = HELPER.split("\nrun_os_update() {\n", 1)[1].split("\n}\n", 1)[0]
+    assert 'echo "opanel-os-update: finished (exit $status)"' in run
+    status = HELPER.split("\nservice_packages_status() {\n", 1)[1].split("\n}\n", 1)[0]
+    assert "systemctl is-active opanel-os-update.service" in status
+    assert "journalctl -u opanel-os-update.service" in status

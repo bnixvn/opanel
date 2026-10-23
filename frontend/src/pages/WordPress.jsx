@@ -689,9 +689,9 @@ function Security({ detail, base, post, busy }) {
 function RestorePoints({ detail, base, post, reload, busy }) {
   const t = useT();
   const { formatBytes, request } = usePanel();
-  // Whether one is taken before every update: the WordPress's own switch
-  // (operator, 2026-10-19), on until turned off.
-  const auto = detail.auto_points !== false;
+  // Whether one is taken before every update: the WordPress's own switch,
+  // off until turned on (operator, 2026-10-24).
+  const auto = detail.auto_points === true;
   async function setAuto(on) {
     const data = await request(`${base}/points/auto`, { method: 'PUT', body: JSON.stringify({ on }) }, t('Saving...'));
     if (data) reload();

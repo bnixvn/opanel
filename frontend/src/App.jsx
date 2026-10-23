@@ -712,6 +712,7 @@ function App() {
   const [serviceVersions, setServiceVersions] = useState(null);
   const [serviceChecking, setServiceChecking] = useState(false);
   const serviceWasRunning = useRef(false);
+  const osWasRunning = useRef(false);
   const wafAccessFiltersRef = useRef(wafAccessFilters);
   const [osAutoUpdate, setOsAutoUpdate] = useState({ enabled: true, mode: 'security', auto_reboot: false });
   const [panelAutoUpdate, setPanelAutoUpdate] = useState({ enabled: true, time: '03:30' });
@@ -4496,7 +4497,7 @@ function App() {
 
   // A service update runs as its own unit; read it again until it is done.
   useEffect(() => {
-    if (!serviceVersions?.running || page !== 'updates') return undefined;
+    if (!(serviceVersions?.running || serviceVersions?.system?.running) || page !== 'updates') return undefined;
     const timer = setTimeout(() => loadServiceVersions(false, true), 3000);
     return () => clearTimeout(timer);
   }, [serviceVersions, page]);
@@ -4510,7 +4511,16 @@ function App() {
     if (serviceWasRunning.current && !data.running && data.last_result) {
       setNotice(data.last_result.ok ? tr("Service update finished.") : tr("Service update failed. See the log below."));
     }
+    const system = data.system || {};
+    if (osWasRunning.current && !system.running && system.last_result) {
+      setNotice(system.last_result.ok ? tr("System packages updated.") : tr("The system update failed. See the log below."));
+    }
+    // The bell counts what is waiting: once an update ends, it counts again.
+    if ((serviceWasRunning.current && !data.running) || (osWasRunning.current && !system.running)) {
+      window.dispatchEvent(new Event('opanel:attention-refresh'));
+    }
     serviceWasRunning.current = Boolean(data.running);
+    osWasRunning.current = Boolean(system.running);
     setServiceVersions(data);
   }
 
@@ -4533,12 +4543,15 @@ function App() {
     setShowUpdateLog(prev => !prev);
   }
 
+  // apt-get upgrade runs as its own unit: the Service versions section shows
+  // it running, its log, and how it ended (it used to show one notice that
+  // went away, and nothing said whether anything was updated).
   async function runOsUpdate() {
-    if (!confirm(tr("Run apt-get update && apt-get upgrade now?"))) return;
+    if (!confirm(tr("Update every system package now (apt-get upgrade)?"))) return;
     setOsUpdating(true);
-    const data = await request('/updates/os/run', { method: 'POST' }, tr("Updating OS packages..."));
+    const data = await request('/updates/os/run', { method: 'POST' }, tr("Starting the system update..."));
     setOsUpdating(false);
-    if (data) { setNotice((data.stdout || data.stderr || tr("OS update completed.")).trim()); if (showUpdateLog) await loadUpdates(); }
+    if (data) await loadServiceVersions(false, true);
   }
 
   async function saveOsAutoUpdate() {
@@ -8453,7 +8466,6 @@ function App() {
         </div>
         <div className="actions">
           <button className="secondary-light" disabled={!!loading} onClick={() => loadUpdates(true)}><RefreshCw size={14}/> {tr("Refresh status")}</button>
-          <button className="secondary" disabled={!!loading || osUpdating} onClick={runOsUpdate}><RefreshCw size={14} className={osUpdating ? 'spin' : ''}/> {osUpdating ? tr("Updating OS...") : tr("Update OS now")}</button>
           <button disabled={!!loading || panelUpdating} onClick={runPanelUpdate}><RotateCcw size={14} className={panelUpdating ? 'spin' : ''}/> {panelUpdating ? tr("Updating panel...") : tr("Update panel now")}</button>
         </div>
         {showUpdateLog && <div className="info-box firewall-status update-log-box">
@@ -8538,7 +8550,41 @@ function App() {
             <summary>{sv.last_result ? (sv.last_result.ok ? tr("Last service update finished") : tr("Last service update failed")) : tr("Service update log")}</summary>
             <pre className="update-progress-log">{sv.log.join('\n')}</pre>
           </details>)}
+      {sv?.system && renderSystemPackages(sv.system, busy)}
     </section>;
+  }
+
+  // Every other package apt would upgrade: what the bell's "system update(s)
+  // available" counts, and "Update OS now", followed until it ends.
+  function renderSystemPackages(system, busy) {
+    const others = system.others || [];
+    const sysRunning = Boolean(system.running);
+    return <div className="system-packages">
+      <div className="system-packages-head">
+        <div>
+          <h3>{tr("System packages")}</h3>
+          <p className="hint">{system.pending
+            ? tr("{0} package(s) can be updated, the services above included.", system.pending)
+            : tr("Every system package is up to date.")}</p>
+        </div>
+        <button className="secondary" disabled={busy || sysRunning || osUpdating || !system.pending} onClick={runOsUpdate}>
+          <RefreshCw size={14} className={sysRunning || osUpdating ? 'spin' : ''}/> {sysRunning ? tr("Updating OS...") : tr("Update OS now")}</button>
+      </div>
+      {others.length > 0 && <details className="system-packages-list">
+        <summary>{tr("{0} other package(s)", others.length)}</summary>
+        <ul>{others.map(item => <li key={item.name}><code>{item.name}</code> {item.from ? `${item.from} → ` : ''}{item.to}</li>)}</ul>
+      </details>}
+      {sysRunning && <p className="hint"><span className="badge warn">{tr("Running")}</span> {tr("Updating packages. This page reads the progress every few seconds.")}</p>}
+      {!sysRunning && system.last_result && <p className="hint">
+        <span className={system.last_result.ok ? 'badge ok' : 'badge bad'}>{system.last_result.ok ? tr("Finished") : tr("Failed")}</span>{' '}
+        {system.last_result.ok ? tr("The last system update finished.") : tr("The last system update failed. See the log.")}</p>}
+      {system.log?.length > 0 && (sysRunning
+        ? <pre className="update-progress-log">{system.log.join('\n')}</pre>
+        : <details className="service-versions-log">
+            <summary>{tr("System update log")}</summary>
+            <pre className="update-progress-log">{system.log.join('\n')}</pre>
+          </details>)}
+    </div>;
   }
 
   function renderSecurity() {

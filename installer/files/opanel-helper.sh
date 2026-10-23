@@ -1154,13 +1154,26 @@ run_os_update() {
     return 0
   fi
   if command -v systemd-run >/dev/null 2>&1; then
+    # The Updates page follows it (service-packages prints its state and log):
+    # it used to start and say nothing more, so nobody could tell whether the
+    # packages were updated (operator, 2026-10-24). The journal outlives the
+    # unit, so the result is still there once it is collected.
+    # shellcheck disable=SC2016 # expanded by the unit's bash, not here
     systemd-run \
       --unit="$unit" \
       --collect \
       --description="Update OS packages for opanel" \
-      /bin/bash -lc 'export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none; apt-get update --allow-releaseinfo-change; apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y'
+      /bin/bash -c '
+export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_SUSPEND=1
+echo "opanel-os-update: started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+status=0
+apt-get -o DPkg::Lock::Timeout=600 update --allow-releaseinfo-change || status=$?
+if [ "$status" -eq 0 ]; then
+  apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y || status=$?
+fi
+echo "opanel-os-update: finished (exit $status)"
+exit "$status"'
     echo "OS update started: ${unit}.service"
-    echo "Check progress: journalctl -u ${unit}.service -f"
     return 0
   fi
   nohup /bin/bash -lc 'export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none; apt-get update --allow-releaseinfo-change; apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y' \
@@ -1198,11 +1211,18 @@ service_packages_status() {
   echo "== installed"
   COLUMNS=250 dpkg-query -l "${SERVICE_PACKAGE_GLOBS[@]}" 2>/dev/null | awk '$1 == "ii" { print $2, $3 }' || true
   echo "== upgradable"
-  apt list --upgradable 2>/dev/null | awk -F'[/ ]' '/upgradable from/ { print $1, $3 }' || true
+  # name, new version, installed version ("[upgradable from: X]").
+  apt list --upgradable 2>/dev/null | awk -F'[/ ]' '/upgradable from/ { from = $NF; sub(/\]$/, "", from); print $1, $3, from }' || true
   echo "== state"
   systemctl is-active opanel-service-update.service 2>/dev/null || true
   echo "== log"
   journalctl -u opanel-service-update.service -n 60 --no-pager --output=cat 2>/dev/null \
+    | grep -v "Failed to open /run/systemd/transient" || true
+  # "Update OS now": every other package, as its own unit.
+  echo "== os-state"
+  systemctl is-active opanel-os-update.service 2>/dev/null || true
+  echo "== os-log"
+  journalctl -u opanel-os-update.service -n 60 --no-pager --output=cat 2>/dev/null \
     | grep -v "Failed to open /run/systemd/transient" || true
 }
 
