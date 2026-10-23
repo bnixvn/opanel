@@ -175,6 +175,11 @@ def test_a_newer_full_scan_of_the_same_files_clears_older_threats():
     whole = {"job_id": "x", "status": "done", "scope": "system", "scan_root": "/", "infected": 0}
     assert dashboard._malware_state([whole, one_site, old], installed=True)["state"] == "clean"
 
-def test_os_updates_are_counted_for_the_dashboard():
-    output = "Listing...\nbash/noble 5.2 amd64 [upgradable from: 5.1]\ncurl/noble 8 amd64 [upgradable from: 7]\n"
-    assert dashboard._count_os_updates(output) == 2
+def test_the_bell_counts_what_update_os_now_would_install(monkeypatch):
+    """Not apt's whole list: a package Ubuntu is phasing in stays after an
+    update, and the bell went on announcing it (operator, 2026-10-24)."""
+    from app.services import service_versions
+
+    monkeypatch.setattr(service_versions, "status", lambda: {"system": {"pending": 2, "deferred": [{"name": "cloud-init"}]}})
+    admin = SimpleNamespace(role="admin")
+    assert dashboard.dashboard_updates(current_user=admin)["os"] == 2

@@ -8574,6 +8574,14 @@ function App() {
         <summary>{tr("{0} other package(s)", others.length)}</summary>
         <ul>{others.map(item => <li key={item.name}><code>{item.name}</code> {item.from ? `${item.from} → ` : ''}{item.to}</li>)}</ul>
       </details>}
+      {/* apt-get upgrade leaves these alone, so they are neither counted nor
+          what the button does: they stayed "available" after every update. */}
+      {(system.deferred || []).length > 0 && <details className="system-packages-list">
+        <summary>{tr("{0} package(s) Ubuntu installs later", system.deferred.length)}</summary>
+        <p className="hint">{tr("Ubuntu rolls some updates out to servers a few at a time (phased updates); they install on their own within days. A kept-back package needs others added or removed: apt full-upgrade over SSH.")}</p>
+        <ul>{system.deferred.map(item => <li key={item.name}><code>{item.name}</code> {item.from ? `${item.from} → ` : ''}{item.to}
+          {' '}<span className="badge">{item.reason === 'phasing' ? tr("Phased") : tr("Kept back")}</span></li>)}</ul>
+      </details>}
       {sysRunning && <p className="hint"><span className="badge warn">{tr("Running")}</span> {tr("Updating packages. This page reads the progress every few seconds.")}</p>}
       {!sysRunning && system.last_result && <p className="hint">
         <span className={system.last_result.ok ? 'badge ok' : 'badge bad'}>{system.last_result.ok ? tr("Finished") : tr("Failed")}</span>{' '}

@@ -81,6 +81,15 @@ def _parse(stdout: str) -> dict:
                 upgradable_from[parts[0].split(":", 1)[0]] = parts[2]
     state = next((line.strip() for line in sections.get("state", []) if line.strip()), "inactive")
     os_state = next((line.strip() for line in sections.get("os-state", []) if line.strip()), "inactive")
+    # apt-get upgrade, simulated: what it installs, and what Ubuntu defers.
+    os_install: list[str] = []
+    os_deferred: dict[str, str] = {}
+    for line in sections.get("os-plan", []):
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "install":
+            os_install.append(parts[1].split(":", 1)[0])
+        elif len(parts) == 2 and parts[0] in {"phasing", "kept-back"}:
+            os_deferred[parts[1].split(":", 1)[0]] = parts[0]
     return {
         "installed": installed,
         "upgradable": upgradable,
@@ -88,6 +97,9 @@ def _parse(stdout: str) -> dict:
         "running": state in RUNNING_STATES,
         "log": [line for line in sections.get("log", []) if line.strip()],
         "os_running": os_state in RUNNING_STATES,
+        "os_plan": "os-plan" in sections,
+        "os_install": os_install,
+        "os_deferred": os_deferred,
         "os_log": [line for line in sections.get("os-log", []) if line.strip()],
         "check_error": "\n".join(sections.get("warning", [])).strip(),
     }
@@ -146,6 +158,10 @@ def status(refresh: bool = False) -> dict:
             "updates": updates,
         })
     in_services = {item["name"] for service in services for item in service["updates"]}
+    # What "Update OS now" installs; an older helper with no plan: all of apt's list.
+    will_install = parsed["os_install"] if parsed["os_plan"] else sorted(upgradable)
+    deferred = parsed["os_deferred"]
+    version_from = lambda name: installed.get(name) or parsed["upgradable_from"].get(name, "")
     return {
         "services": services,
         "running": parsed["running"],
@@ -156,10 +172,13 @@ def status(refresh: bool = False) -> dict:
         # "Update OS now": everything apt would upgrade, the services' packages
         # too; `others` are the ones no service row shows (the bell counts all).
         "system": {
-            "pending": len(upgradable),
-            "others": [{"name": name, "to": upgradable[name],
-                        "from": installed.get(name) or parsed["upgradable_from"].get(name, "")}
-                       for name in sorted(upgradable) if name not in in_services],
+            "pending": len(will_install),
+            "others": [{"name": name, "to": upgradable.get(name, ""), "from": version_from(name)}
+                       for name in sorted(set(will_install)) if name not in in_services],
+            # Left for later by Ubuntu: a phased update reaches every machine
+            # over a few days, a kept-back one needs packages added or removed.
+            "deferred": [{"name": name, "to": upgradable.get(name, ""), "from": version_from(name), "reason": reason}
+                         for name, reason in sorted(deferred.items())],
             "running": parsed["os_running"],
             "log": parsed["os_log"][-40:],
             "last_result": _last_result(parsed["os_log"], OS_LOG_MARK),

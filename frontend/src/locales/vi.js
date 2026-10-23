@@ -3444,4 +3444,8 @@ export default {
   "The last system update failed. See the log.": "Lần cập nhật hệ thống gần nhất bị lỗi. Xem log.",
   "System update log": "Log cập nhật hệ thống",
   "Finished": "Xong",
+  "{0} package(s) Ubuntu installs later": "{0} gói Ubuntu sẽ cài sau",
+  "Ubuntu rolls some updates out to servers a few at a time (phased updates); they install on their own within days. A kept-back package needs others added or removed: apt full-upgrade over SSH.": "Ubuntu phát hành một số bản cập nhật dần dần cho từng nhóm máy (phased update); chúng tự cài trong vài ngày. Gói bị giữ lại (kept back) cần thêm hoặc gỡ gói khác: chạy apt full-upgrade qua SSH.",
+  "Phased": "Đang phát hành dần",
+  "Kept back": "Bị giữ lại",
 };

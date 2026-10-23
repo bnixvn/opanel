@@ -169,6 +169,34 @@ def test_the_system_packages_no_service_row_shows_are_listed(monkeypatch):
     ]
 
 
+def test_what_ubuntu_defers_is_shown_apart_and_not_counted(monkeypatch):
+    """apt-get upgrade leaves a phased update (and a kept-back one) alone:
+    counted, it said "update available" after every update (.41, 2026-10-24)."""
+    planned = OS_LISTING.replace("== os-state", """== os-plan
+install libc6
+install openlitespeed
+install lsphp84
+install lsphp84-mysql
+install libmariadb3
+phasing tmux
+kept-back cloud-init
+== os-state""")
+    _fake(monkeypatch, planned)
+    system = service_versions.status()["system"]
+    assert system["pending"] == 5
+    assert [item["name"] for item in system["others"]] == ["libc6"]
+    assert system["deferred"] == [
+        {"name": "cloud-init", "to": "", "from": "", "reason": "kept-back"},
+        {"name": "tmux", "to": "3.4-1ubuntu0.2", "from": "3.4-1ubuntu0.1", "reason": "phasing"},
+    ]
+
+
+def test_the_helper_asks_apt_what_an_upgrade_would_do():
+    status = HELPER.split("\nservice_packages_status() {\n", 1)[1].split("\n}\n", 1)[0]
+    assert "apt-get -s -o Debug::NoLocking=1 upgrade" in status
+    assert "deferred due to phasing:" in status and "have been kept back:" in status
+
+
 def test_the_os_update_is_followed_to_its_end(monkeypatch):
     _fake(monkeypatch, OS_LISTING)
     system = service_versions.status()["system"]

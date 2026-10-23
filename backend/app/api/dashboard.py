@@ -277,10 +277,6 @@ def dashboard_summary(db: Session = Depends(get_db), current_user: User = Depend
     return summary
 
 
-def _count_os_updates(output: str) -> int:
-    return sum(1 for line in (output or "").splitlines() if "upgradable from" in line)
-
-
 @router.get("/updates")
 def dashboard_updates(current_user: User = Depends(get_current_user)):
     """System packages waiting and a newer panel, for the dashboard's "Open
@@ -288,8 +284,12 @@ def dashboard_updates(current_user: User = Depends(get_current_user)):
     the package manager takes a moment, so the dashboard asks this second."""
     if not is_admin_role(current_user.role):
         return {"os": None, "panel": {"available": None, "latest": None}}
-    result = _safe(lambda: shell.privileged("updates-status", check=False,
-                                            fallback=["bash", "-lc", "apt list --upgradable 2>/dev/null | head -40"]))
-    os_count = _count_os_updates(result.stdout) if result is not None and result.returncode == 0 else None
+    # What "Update OS now" would install: apt's whole upgradable list also has
+    # the packages Ubuntu is phasing in, which an update leaves alone, so the
+    # bell went on saying they were waiting (operator, 2026-10-24).
+    from app.services import service_versions
+
+    system = (_safe(service_versions.status, {}) or {}).get("system") or {}
+    os_count = system.get("pending")
     panel = _safe(updates.cached_release_summary, {}) or {}
     return {"os": os_count, "panel": {"available": panel.get("update_available"), "latest": panel.get("latest_version")}}

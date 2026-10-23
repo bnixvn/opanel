@@ -1218,6 +1218,18 @@ service_packages_status() {
   echo "== log"
   journalctl -u opanel-service-update.service -n 60 --no-pager --output=cat 2>/dev/null \
     | grep -v "Failed to open /run/systemd/transient" || true
+  # What "Update OS now" (apt-get upgrade) would install, simulated. apt list
+  # --upgradable also names the packages Ubuntu is phasing in or holding back,
+  # which upgrade leaves alone: counted, they kept "3 system update(s)
+  # available" on the bell after an update that had done all it could
+  # (cloud-init on .41, 2026-10-24).
+  echo "== os-plan"
+  apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | awk '
+    /^Inst / { print "install", $2; next }
+    /deferred due to phasing:/ { mode = "phasing"; next }
+    /have been kept back:/ { mode = "kept-back"; next }
+    /^[^ ]/ { mode = "" }
+    mode != "" && /^ / { for (i = 1; i <= NF; i++) print mode, $i }' || true
   # "Update OS now": every other package, as its own unit.
   echo "== os-state"
   systemctl is-active opanel-os-update.service 2>/dev/null || true
