@@ -491,6 +491,8 @@ function App() {
   const [siteType, setSiteType] = useState('wordpress');
   const [installSslAfterCreate, setInstallSslAfterCreate] = useState(false);
   const [installWordPress, setInstallWordPress] = useState(true);
+  // LiteSpeed Cache in a new WordPress, on unless unticked (operator, 2026-10-22).
+  const [installLsCache, setInstallLsCache] = useState(true);
   const [nginxCustomEditing, setNginxCustomEditing] = useState(null); // Website settings editor state
   const [websiteSettingsForm, setWebsiteSettingsForm] = useState(websiteConfigForm());
   const [logViewer, setLogViewer] = useState(null); // {id, domain, kind, lines, path, content, exists}
@@ -803,7 +805,7 @@ function App() {
   const [plans, setPlans] = useState([]);
   const [editingPlan, setEditingPlan] = useState(null);
   const [editingPlanForm, setEditingPlanForm] = useState({ name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, php_version: '8.4', app_type: 'php', auto_ssl: false, active: true });
-  const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false });
+  const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false, open_basedir: false });
   // WordPress manager
   const [wpManagerSite, setWpManagerSite] = useState(null);
   const [wpManagerMode, setWpManagerMode] = useState('install'); // the WordPress install sheet
@@ -1450,6 +1452,8 @@ function App() {
       database_limit: Number(newUser.database_limit), mailbox_limit: Number(newUser.mailbox_limit),
     };
     if (canGrantTerminal) body.terminal_enabled = !!newUser.terminal_enabled;
+    // The package picked in the form, so its settings can follow the account.
+    if (newUser._planId) body.plan_id = Number(newUser._planId);
     if (isAdmin && newUser.role === 'end_user' && newUser.reseller_id) body.reseller_id = Number(newUser.reseller_id);
     if (isAdmin && newUser.role === 'reseller') {
       POOL_FIELDS.forEach(field => { body[field] = Number(newUser[field]) || 0; });
@@ -1487,7 +1491,7 @@ function App() {
       terminal_enabled: !!user.terminal_enabled,
       ...Object.fromEntries(RL_FIELDS.flatMap(field => [[field, user[field] ?? 0], [`group_${field}`, user[`group_${field}`] ?? 0]])),
       _password: '',
-      _planId: matchedPlan ? String(matchedPlan.id) : '',
+      _planId: user.plan_id ? String(user.plan_id) : (matchedPlan ? String(matchedPlan.id) : ''),
     });
   }
 
@@ -1522,6 +1526,8 @@ function App() {
     if (Number.isInteger(databaseLimit) && databaseLimit >= 0 && databaseLimit <= 1000) payload.database_limit = databaseLimit;
     // Left out when this caller may not set it, so saving keeps what is there.
     if (canGrantTerminal && editingUser.id !== currentUser?.id) payload.terminal_enabled = !!editingUserForm.terminal_enabled;
+    // The package in the form, or none (0) once a limit was changed by hand.
+    if (editingUserForm.role !== 'admin') payload.plan_id = Number(editingUserForm._planId) || 0;
     if (isAdmin) {
       if (editingUser.id !== currentUser?.id) payload.role = editingUserForm.role;
       if (editingUserForm.role === 'end_user') payload.reseller_id = Number(editingUserForm.reseller_id) || 0;
@@ -2482,7 +2488,7 @@ function App() {
     const data = await request('/plans', { method: 'POST', body: JSON.stringify({ ...newPlan, ...limitValues(newPlan) }) }, tr("Creating plan..."));
     if (data?.id) {
       setNotice(tr("Plan \"{0}\" created.", data.name));
-      setNewPlan({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false });
+      setNewPlan({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false, open_basedir: false });
       loadPlans();
       return true;
     }
@@ -2491,13 +2497,18 @@ function App() {
 
   function startEditingPlan(plan) {
     setEditingPlan(plan);
-    setEditingPlanForm({ name: plan.name, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? 10, mailbox_limit: plan.mailbox_limit ?? 10, ...limitValues(plan), php_version: plan.php_version, app_type: plan.app_type, auto_ssl: plan.auto_ssl, active: plan.active, terminal_enabled: !!plan.terminal_enabled });
+    setEditingPlanForm({ name: plan.name, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? 10, mailbox_limit: plan.mailbox_limit ?? 10, ...limitValues(plan), php_version: plan.php_version, app_type: plan.app_type, auto_ssl: plan.auto_ssl, active: plan.active, terminal_enabled: !!plan.terminal_enabled, open_basedir: !!plan.open_basedir });
   }
 
   async function updatePlan() {
     if (!editingPlan) return;
     const data = await request(`/plans/${editingPlan.id}`, { method: 'PATCH', body: JSON.stringify({ ...editingPlanForm, ...limitValues(editingPlanForm) }) }, tr("Updating plan..."));
-    if (data?.id) { setNotice(tr("Plan updated.")); setEditingPlan(null); loadPlans(); }
+    if (data?.id) {
+      const failed = data.open_basedir_failed || [];
+      if (failed.length) setError(tr("Plan updated, but open_basedir could not be changed on: {0}", failed.join(', ')));
+      else setNotice(tr("Plan updated."));
+      setEditingPlan(null); loadPlans();
+    }
   }
 
   async function deletePlanItem(plan) {
@@ -2797,6 +2808,7 @@ function App() {
       body.admin_user = wpAdminUser;
       body.admin_email = cleanAdminEmail || `admin@${cleanDomain}`;
       body.admin_password = wpPassword;
+      body.install_lscache = !!installLsCache;
     }
     const data = await request('/websites', { method: 'POST', body: JSON.stringify(body) },
       installWp ? tr("Creating WordPress website...") : tr("Creating website..."));
@@ -5037,12 +5049,12 @@ function App() {
       // The website list and one website's page (pages/Websites.jsx, pages/WebsiteDetail.jsx).
       API, NGINX_REWRITE_MODES, addWebsiteAlias, adminEmail, aliasDrafts, aliasModes, canManageUsers, canOpenTerminal,
       createSslCerts, createSslForm, createSslMode, createWordPress, deleteWebsite, deleteWebsiteAlias, domain,
-      fixNginxSecurity, fixWordPressPermissions, installSslAfterCreate, installWordPress, installWpOnSite,
+      fixNginxSecurity, fixWordPressPermissions, installLsCache, installSslAfterCreate, installWordPress, installWpOnSite,
       loadCreateSslCerts, loadUsers, loadWebsiteLog, loadWebsiteWafConfig, loading, logViewer, nginxCustomEditing,
       openNginxCustom, openWebsiteFileManager, openWpInstall, phpVersion, phpVersionOptions, phpVersions, quickLoginUser,
       refreshAll, renderSslManage, renderWafSite, renderWildcardProvider, saveWebsiteSettings, selectedWafWebsiteId,
       setAdminEmail, setAliasDrafts, setAliasModes, setBackupTab, setCreateSslForm, setCreateSslMode, setDomain,
-      setInstallSslAfterCreate, setInstallWordPress, setNginxCustomEditing, setPhpVersion, setSelectedWebsiteId,
+      setInstallLsCache, setInstallSslAfterCreate, setInstallWordPress, setNginxCustomEditing, setPhpVersion, setSelectedWebsiteId,
       setShowCreateSite, setSiteOwnerId, setSiteType, setWebsiteSearch, setWebsiteSettingsForm, setWpAdminPassword,
       setWpAdminUser, setWpInstallForm, setWpManagerSite, showCreateSite, siteOwnerId, siteType, updateWordPressAll,
       users, viewFullNginxConfig, wafSiteConfig, websiteConfigForm, websiteSearch, websiteSettingsForm, websiteUrl,
@@ -9208,6 +9220,7 @@ function App() {
     if (limitsOn && plan.cpu_percent) chips.push([Cpu, `CPU ${plan.cpu_percent}%`]);
     if (limitsOn && plan.memory_mb) chips.push([MemoryStick, `RAM ${formatMegabytes(plan.memory_mb)}`]);
     if (plan.terminal_enabled) chips.push([TerminalIcon, tr("Terminal")]);
+    if (plan.open_basedir) chips.push([Lock, 'open_basedir']);
     return <div className="plan-chips">{chips.map(([Icon, text]) => <span className="plan-chip" key={text}><Icon size={13}/>{text}</span>)}</div>;
   }
 
@@ -9227,6 +9240,8 @@ function App() {
           {mailInfo?.installed && <label><span>{tr("Mailboxes")}</span><input type="number" min="0" value={form.mailbox_limit} onChange={number('mailbox_limit')} /></label>}
         </div>
         {canGrantTerminal && <label className="check-line"><input type="checkbox" checked={!!form.terminal_enabled} onChange={e => setForm(prev => ({ ...prev, terminal_enabled: e.target.checked }))} /> {tr("Browser terminal")}</label>}
+        <label className="check-line"><input type="checkbox" checked={!!form.open_basedir} onChange={e => setForm(prev => ({ ...prev, open_basedir: e.target.checked }))} /> {tr("Fence PHP into each site's folder (open_basedir)")}</label>
+        <p className="hint">{tr("Off is faster: open_basedir turns PHP's path cache off, about a fifth of an uncached page. Sites stay apart either way. Turning it on or off here changes every site of the accounts on this package.")}</p>
       </fieldset>
       {limitsOn && renderLimitInputs(form, setForm)}
     </div>;

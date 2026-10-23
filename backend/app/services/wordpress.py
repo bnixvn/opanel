@@ -205,6 +205,22 @@ def wp_update(path: str, action: str, linux_user: str | None = None):
     return shell.privileged("wp-site", helper_args=[linux_user, *args], fallback=["wp", *args])
 
 
+def install_lscache(path: str, linux_user: str | None):
+    """LiteSpeed Cache, installed and on, in a WordPress just made.
+
+    Best effort: the site is already there, and the plugin comes from
+    wordpress.org, which a server may not reach. The caller logs a failure.
+    """
+    if not linux_user:
+        raise ValueError("This website has no Linux user; cannot run wp-cli safely")
+    return shell.privileged(
+        "wp-site",
+        helper_args=[linux_user, "plugin", "install", "litespeed-cache", "--activate", f"--path={path}"],
+        check=False,
+        fallback=["wp", "plugin", "install", "litespeed-cache", "--activate", f"--path={path}"],
+    )
+
+
 def reset_admin_password(path: str, user: str, password: str, linux_user: str | None = None):
     safe_user = _safe_value(user, WP_USER_RE, "WordPress username")
     if not isinstance(password, str) or len(password) < 10 or "\x00" in password:

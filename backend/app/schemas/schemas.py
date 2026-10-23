@@ -258,6 +258,8 @@ class UserCreate(ResourceLimitsIn, GroupLimitsIn):
     group_io_write_mbps: int = 0
     # The browser terminal; off unless the package says otherwise.
     terminal_enabled: bool = False
+    # The package the account is made from, when one was picked.
+    plan_id: Optional[int] = None
 
     @field_validator("username")
     @classmethod
@@ -298,6 +300,8 @@ class UserUpdate(ResourceLimitsIn, GroupLimitsIn):
     group_io_read_mbps: Optional[int] = None
     group_io_write_mbps: Optional[int] = None
     terminal_enabled: Optional[bool] = None
+    # A package picked for the account; 0 takes it off any package.
+    plan_id: Optional[int] = None
 
 
 class UserPasswordUpdate(BaseModel):
@@ -366,6 +370,7 @@ class UserOut(BaseModel):
     group_io_read_mbps: int = 0
     group_io_write_mbps: int = 0
     terminal_enabled: bool = False
+    plan_id: Optional[int] = None
     sftp_enabled: bool = True
     sftp_own_password: bool = False
     # None means "not measured yet" -- the accounts list leaves these out so it
@@ -416,6 +421,10 @@ class WebsiteCreate(BaseModel):
     php_version: str = "8.4"
     app_type: str = "wordpress"
     install_wordpress: bool = True
+    # With a new WordPress: LiteSpeed Cache installed and on, so OpenLiteSpeed
+    # serves its pages from the page cache - 2-3 ms instead of 180-300 ms on
+    # .41 (operator's choice, 2026-10-22, untickable in the form).
+    install_lscache: bool = True
     title: str = "My WordPress Site"
     admin_user: str = "admin"
     admin_email: Optional[EmailStr] = None
@@ -750,6 +759,7 @@ class WebsiteOut(BaseModel):
     ssl_updated_at: Optional[datetime] = None
     ssl_has_ca: bool = False
     lscache_enabled: bool = True
+    open_basedir: bool = False
     custom_rules: str = ""
     ssl_cert_path: Optional[str] = Field(default=None, exclude=True)
     ssl_key_path: Optional[str] = Field(default=None, exclude=True)

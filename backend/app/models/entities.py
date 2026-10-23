@@ -58,6 +58,9 @@ class User(Base):
     # customers": a reseller, like the administrator, opens a shell only by
     # logging in as the customer.
     terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    # The package the account was given (services/php_isolation.py): a package
+    # setting that follows its accounts' sites (open_basedir) reaches them by it.
+    plan_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # The account's main SFTP login (services/sftp_access.py): open or shut,
     # and signing in with the panel password or one of its own. Pending: put
     # back on the panel password, which is only known at the next sign-in.
@@ -86,6 +89,9 @@ class Website(Base):
     # LiteSpeed's page cache looked up for the site (what its application marks
     # cacheable), in a folder of its own - openlitespeed.lscache_dir.
     lscache_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    # PHP fenced into the site's tree by open_basedir. Off unless the site or
+    # its package asks: it turns PHP's realpath cache off (services/php_isolation.py).
+    open_basedir: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # The site's own rewrite rules and response headers (openlitespeed.parse_custom_rules).
     custom_rules: Mapped[str] = mapped_column(Text, default="", server_default="")
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
@@ -394,6 +400,8 @@ class HostingPlan(Base):
     io_write_mbps: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     # Copied to an account made from the plan, like the limits.
     terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    # open_basedir for every site of the package's accounts (services/php_isolation.py).
+    open_basedir: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
     app_type: Mapped[str] = mapped_column(String(32), default="php")
     auto_ssl: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -4138,9 +4138,72 @@ ensure_ols_js_expires() {
   grep -qE '^[[:space:]]*expiresByType[[:space:]]' "$conf" || return 0
   grep -qE '^[[:space:]]*expiresByType[[:space:]].*text/javascript=' "$conf" && return 0
   cp -a "$conf" "${conf}.bak.jsexpires"
-  sed -i -E '/^[[:space:]]*expiresByType[[:space:]]/{/text\/javascript=/!s/[[:space:]]*$/,text\/javascript=A604800/}' "$conf"
+  sed -i -E '/^[[:space:]]*expiresByType[[:space:]]/{/text\/javascript=/!s/[[:space:]]*$/,text\/javascript=A31536000/}' "$conf"
   restart_openlitespeed 2>/dev/null || true
   echo "OpenLiteSpeed: .js files now get the same browser cache lifetime as CSS"
+}
+
+# A year of browser cache for images, CSS, JavaScript and fonts instead of
+# OpenLiteSpeed's stock week: what PageSpeed asks for ("serve static assets
+# with an efficient cache policy"), and what wptangtoc-ols ships. WordPress
+# adds ?ver= to its assets, so an update still reaches browsers. Only the
+# stock week is raised; a lifetime an admin set stays.
+ensure_ols_long_expires() {
+  local conf=/usr/local/lsws/conf/httpd_config.conf
+  [[ -f "$conf" ]] || return 0
+  grep -qE '^[[:space:]]*expiresByType[[:space:]].*=A604800' "$conf" || return 0
+  cp -a "$conf" "${conf}.bak.expires"
+  sed -i -E '/^[[:space:]]*expiresByType[[:space:]]/s/=A604800/=A31536000/g' "$conf"
+  restart_openlitespeed 2>/dev/null || true
+  echo "OpenLiteSpeed: static files now get a year of browser cache"
+}
+
+# OPcache re-checked every included file's mtime on every request
+# (revalidate_freq = 0), several hundred stat calls per WordPress page. The
+# panel now writes 10; an existing box only gets it here, and only where the
+# old default is still in place.
+ensure_php_revalidate_freq() {
+  local ini changed=0
+  for ini in /usr/local/lsws/lsphp*/etc/php/*/mods-available/99-opanel.ini; do
+    [[ -f "$ini" ]] || continue
+    if grep -qE '^[[:space:]]*opcache\.revalidate_freq[[:space:]]*=[[:space:]]*0[[:space:]]*$' "$ini"; then
+      sed -i -E 's/^[[:space:]]*opcache\.revalidate_freq[[:space:]]*=[[:space:]]*0[[:space:]]*$/opcache.revalidate_freq  = 10/' "$ini"
+      changed=$((changed + 1))
+    fi
+  done
+  if (( changed > 0 )); then
+    restart_openlitespeed 2>/dev/null || true
+    echo "PHP: OPcache now re-checks files every 10 seconds (${changed} file(s))"
+  fi
+}
+
+# TCP for a web server: BBR with fq (better throughput to far or lossy
+# clients than cubic), room in the accept queues, TCP Fast Open. The same
+# family of settings wptangtoc-ols applies. BBR only where the kernel has it.
+ensure_network_tuning() {
+  local conf=/etc/sysctl.d/60-opanel-network.conf tmp
+  tmp="$(mktemp)"
+  {
+    echo "# Managed by OPanel (ensure_network_tuning)."
+    if modprobe tcp_bbr 2>/dev/null || grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+      echo "net.core.default_qdisc = fq"
+      echo "net.ipv4.tcp_congestion_control = bbr"
+      echo "tcp_bbr" >/etc/modules-load.d/opanel-bbr.conf
+    fi
+    echo "net.core.somaxconn = 65535"
+    echo "net.core.netdev_max_backlog = 16384"
+    echo "net.ipv4.tcp_max_syn_backlog = 16384"
+    echo "net.ipv4.tcp_fastopen = 3"
+    echo "net.ipv4.tcp_slow_start_after_idle = 0"
+  } >"$tmp"
+  if cmp -s "$tmp" "$conf"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  install -m 0644 -o root -g root "$tmp" "$conf"
+  rm -f "$tmp"
+  sysctl -q -p "$conf" >/dev/null 2>&1 || true
+  echo "Network: TCP tuned for serving (${conf})"
 }
 
 # 99-opanel.ini is only written when a PHP version is installed, so an existing
@@ -4513,6 +4576,7 @@ delete_panel_user_runtime() {
   rm -rf "$HOME_ROOT/$user" 2>/dev/null || true
   rm -rf "/var/lib/php/sessions/$user" 2>/dev/null || true
   rm -rf "/var/lib/php/uploads/$user" 2>/dev/null || true
+  rm -rf "/var/lib/php/opcache/$user" "/etc/opanel/php-users/$user" 2>/dev/null || true
 }
 
 site_php_pool_glob() {
@@ -5054,6 +5118,52 @@ ensure_php_runtime_dirs() {
   install -d -o "$user" -g "$user" -m 0700 "$sess_dir"
   install -d -o "$user" -g "$user" -m 0700 "$upload_dir"
   chmod g-s "$upload_dir" 2>/dev/null || true
+  ensure_php_file_cache "$user"
+}
+
+# OPcache's file cache for one site user: compiled scripts are kept on disk as
+# well as in shared memory, so a PHP process starting cold (after an idle
+# spell, an OLS restart) loads them instead of compiling WordPress again. On
+# .41 that took the first request after idle from 1.7 s to 0.5 s.
+#   - /var/lib/php/opcache/<user>: the user's own, 0700. A cache file is code
+#     PHP runs, so no other uid may write where this user's PHP reads.
+#   - /etc/opanel/php-users/<user>/: root-owned, read through
+#     PHP_INI_SCAN_DIR from the site's vhost; the user cannot add settings.
+# Outside /home, so it is neither in backups nor counted against the quota.
+ensure_php_file_cache() {
+  local user="$1" cache ini_dir
+  require_linux_user "$user"
+  cache="/var/lib/php/opcache/${user}"
+  ini_dir="/etc/opanel/php-users/${user}"
+  install -d -o root -g root -m 0755 /var/lib/php
+  install -d -o root -g root -m 0751 /var/lib/php/opcache
+  chown root:root /var/lib/php/opcache
+  chmod 0751 /var/lib/php/opcache
+  install -d -o "$user" -g "$user" -m 0700 "$cache"
+  install -d -o root -g root -m 0755 /etc/opanel /etc/opanel/php-users "$ini_dir"
+  printf '%s\n' \
+    "; Managed by OPanel (ensure_php_file_cache). Do not edit." \
+    "opcache.file_cache=${cache}" \
+    "opcache.file_cache_consistency_checks=1" \
+    >"${ini_dir}/90-opanel-file-cache.ini.tmp"
+  chmod 0644 "${ini_dir}/90-opanel-file-cache.ini.tmp"
+  mv -f "${ini_dir}/90-opanel-file-cache.ini.tmp" "${ini_dir}/90-opanel-file-cache.ini"
+}
+
+# Every site user an existing box already has: their vhosts now point
+# PHP_INI_SCAN_DIR at a directory that has to exist. Rides on log-hygiene.
+ensure_php_file_cache_all() {
+  local conf user done_users=" "
+  for conf in "$OLS_VHOSTS_DIR"/*/vhost.conf; do
+    [[ -f "$conf" ]] || continue
+    while read -r user; do
+      [[ -n "$user" && "$user" != "www-data" && "$user" != "nobody" ]] || continue
+      [[ "$done_users" == *" $user "* ]] && continue
+      id -u "$user" >/dev/null 2>&1 || continue
+      ensure_php_file_cache "$user" 2>/dev/null || true
+      done_users+="$user "
+    done < <(awk '$1 == "extUser" { print $2 }' "$conf")
+  done
 }
 
 fix_site_tree() {
@@ -9102,7 +9212,11 @@ PY
     ensure_site_log_rotation
     ensure_ols_server_log_level
     ensure_ols_js_expires
+    ensure_ols_long_expires
     ensure_php_jit_disabled
+    ensure_php_revalidate_freq
+    ensure_php_file_cache_all
+    ensure_network_tuning
     ensure_journal_cap
     ensure_lmd_monitor_layout
     ensure_ols_defaults_private

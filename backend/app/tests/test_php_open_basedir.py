@@ -32,6 +32,10 @@ LINUX_USER = "op_example_a1b2c3d4"
 
 
 def _render(**kwargs) -> str:
+    # These are about where open_basedir is written when a site has it. Since
+    # 2026-10-23 it is off unless the site or its package asks
+    # (services/php_isolation.py, test_php_isolation.py).
+    kwargs.setdefault("open_basedir", True)
     return openlitespeed.render_vhost(
         "example.test", ROOT_PATH, linux_user=LINUX_USER, **kwargs
     )
@@ -90,7 +94,7 @@ def test_a_legacy_row_is_resolved_rather_than_downgraded_to_www_data() -> None:
     (/home/<linux-user>/<domain>), so it is recovered from there instead.
     """
     conf = openlitespeed.render_vhost(
-        "example.test", ROOT_PATH, app_type="php", php_version="8.4", linux_user=None
+        "example.test", ROOT_PATH, app_type="php", php_version="8.4", linux_user=None, open_basedir=True
     )
     assert f"extUser               {LINUX_USER}" in conf
     assert "extUser               www-data" not in conf

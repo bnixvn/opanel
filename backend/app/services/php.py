@@ -430,7 +430,12 @@ def recommend_php_config() -> dict:
     # old opcode stays until every LSAPI worker for that pool exits. On a quiet
     # site the workers idle out within LSAPI_MAX_IDLE and the edit appears to
     # take effect, so the breakage only shows up once a site has real traffic.
-    revalidate = 0
+    #
+    # 10, not 0 (2026-10-23): 0 stats every included file on every request,
+    # several hundred for WordPress; at 10 an edit is live within 10 seconds
+    # and an uncached page on .41 went 0.22 s -> 0.17 s. WordPress invalidates
+    # the files it updates itself (wp_opcache_invalidate).
+    revalidate = 10
 
     return {
         "ram_mb": ram_mb,

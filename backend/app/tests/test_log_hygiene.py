@@ -132,7 +132,7 @@ def test_javascript_gets_a_browser_cache_lifetime():
 
     # Appends to the existing list instead of replacing an admin's values,
     # and does nothing once the type is there.
-    assert "text\\/javascript=/!s/[[:space:]]*$/,text\\/javascript=A604800/" in block
+    assert "text\\/javascript=/!s/[[:space:]]*$/,text\\/javascript=A31536000/" in block
     assert "text/javascript=' \"$conf\" && return 0" in block
     assert ".bak" in block
     assert "restart_openlitespeed" in block

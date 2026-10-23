@@ -22,8 +22,8 @@ export default function WebsitesPage() {
   const t = useT();
   const {
     adminEmail, canManageUsers, createSslCerts, createSslForm, createSslMode, createWordPress, currentUser, domain,
-    installSslAfterCreate, installWordPress, loadCreateSslCerts, loading, phpVersion, phpVersionOptions, phpVersions,
-    refreshAll, renderWildcardProvider, setAdminEmail, setCreateSslForm, setCreateSslMode, setDomain, setInstallSslAfterCreate,
+    installLsCache, installSslAfterCreate, installWordPress, loadCreateSslCerts, loading, phpVersion, phpVersionOptions, phpVersions,
+    refreshAll, renderWildcardProvider, setAdminEmail, setCreateSslForm, setCreateSslMode, setDomain, setInstallLsCache, setInstallSslAfterCreate,
     setInstallWordPress, setPhpVersion, setShowCreateSite, setSiteOwnerId, setSiteType, setWebsiteSearch, setWpAdminPassword,
     setWpAdminUser, showCreateSite, siteOwnerId, siteType, users, websiteSearch, websiteUrl, websites, wildcardProvider,
     wpAdminPassword, wpAdminUser,
@@ -118,6 +118,8 @@ export default function WebsitesPage() {
         </div>
         {siteType === 'wordpress' && <Checkbox checked={installWordPress} onChange={setInstallWordPress}
           label={t('Install WordPress (creates database, downloads WP, configures vhost)')}/>}
+        {wpFieldsEnabled && <Checkbox checked={installLsCache} onChange={setInstallLsCache}
+          label={t('Install LiteSpeed Cache (pages served from the cache, without running PHP)')}/>}
         {wpFieldsEnabled && <div className="sn-drawer-section">
           <h3>{t('WordPress administrator')}</h3>
           <div className="sn-drawer-grid">

@@ -56,7 +56,7 @@ def create_plan(db: Session, *, slug: str, name: str, website_limit: int = 1,
                 database_limit: int = 10, mailbox_limit: int = 10,
                 owner_id: Optional[int] = None, cpu_percent: int = 0, memory_mb: int = 0,
                 process_limit: int = 0, io_read_mbps: int = 0, io_write_mbps: int = 0,
-                terminal_enabled: bool = False) -> HostingPlan:
+                terminal_enabled: bool = False, open_basedir: bool = False) -> HostingPlan:
     if db.query(HostingPlan).filter(HostingPlan.slug == slug).first():
         raise ValueError(f"Plan slug '{slug}' already exists")
     plan = HostingPlan(
@@ -66,6 +66,7 @@ def create_plan(db: Session, *, slug: str, name: str, website_limit: int = 1,
         database_limit=database_limit, mailbox_limit=mailbox_limit, owner_id=owner_id,
         cpu_percent=cpu_percent, memory_mb=memory_mb, process_limit=process_limit,
         io_read_mbps=io_read_mbps, io_write_mbps=io_write_mbps, terminal_enabled=bool(terminal_enabled),
+        open_basedir=bool(open_basedir),
     )
     db.add(plan)
     db.commit()
@@ -261,6 +262,7 @@ def create_account(
         io_read_mbps=plan.io_read_mbps or 0,
         io_write_mbps=plan.io_write_mbps or 0,
         terminal_enabled=bool(plan.terminal_enabled),
+        plan_id=plan.id,
     )
     db.add(user)
     db.commit()
@@ -291,6 +293,7 @@ def create_account(
             php_version=php_version,
             app_type=app_type if not install_wordpress else "wordpress",
             nginx_rewrite_mode="front_controller" if (app_type == "wordpress" or install_wordpress) else "none",
+            open_basedir=bool(getattr(plan, "open_basedir", False)),
             status="provisioning",
         )
         db.add(website)
@@ -367,6 +370,7 @@ def create_account(
                 document_root="public_html",
                 rewrite_mode=website.nginx_rewrite_mode,
                 waf_enabled=website.waf_enabled,
+                open_basedir=bool(website.open_basedir),
             )
         except (RuntimeError, ValueError) as exc:
             _cleanup_failed(db, user, website)
@@ -642,12 +646,16 @@ def change_package(db: Session, external_id: str, package_id: int) -> HostingAcc
     for field in ("cpu_percent", "memory_mb", "process_limit", "io_read_mbps", "io_write_mbps"):
         setattr(user, field, getattr(plan, field) or 0)
     user.terminal_enabled = bool(plan.terminal_enabled)
+    user.plan_id = plan.id
     account.plan_id = plan.id
     account.updated_at = datetime.utcnow()
 
     _finish_job(db, job, "completed")
     db.commit()
     db.refresh(account)
+    # The new package's open_basedir for the account's sites.
+    from app.services import php_isolation
+    php_isolation.sync_user(db, user)
     return account
 
 

@@ -474,6 +474,13 @@ def _wordpress_folder_rules(folders: list[str]) -> str:
 # ---------------------------------------------------------------------------
 PHP_SESSION_ROOT = "/var/lib/php/sessions"
 PHP_UPLOAD_ROOT = "/var/lib/php/uploads"
+# One directory of PHP settings per site user, read after the version's own
+# (PHP_INI_SCAN_DIR in the site's extprocessor). Root-owned: the user cannot
+# write its own php.ini. It holds the OPcache file cache path, so a PHP process
+# that starts cold loads compiled scripts from /var/lib/php/opcache/<user>
+# instead of compiling WordPress again: 1.7 s -> 0.5 s for the first request
+# after an idle spell, measured on .41 (2026-10-23).
+PHP_USER_INI_ROOT = "/etc/opanel/php-users"
 
 
 def _linux_user_from_root_path(root_path: str) -> str:
@@ -552,6 +559,7 @@ def _build_context(
     lsphp_socket_override: str | None = None,
     lscache: bool = True,
     custom_rules: str = "",
+    open_basedir: bool = False,
 ) -> dict:
     """Build the template context for vhost rendering."""
     custom_rewrites, custom_headers = parse_custom_rules(custom_rules)
@@ -611,12 +619,21 @@ def _build_context(
         derived = _linux_user_from_root_path(root_path)
         site_user = derived or site_user
 
-    # open_basedir only means anything where PHP actually runs.
+    # open_basedir only means anything where PHP actually runs, and only for a
+    # site that asks for it (off by default, operator 2026-10-22): it turns
+    # PHP's realpath cache off, which cost about a fifth of every uncached
+    # WordPress page on .41. Tenants stay apart without it - each site's PHP
+    # runs as its own user and /home/<user> is 0750.
     php_session_dir, php_upload_dir = ("", "")
     php_open_basedir = ""
+    php_ini_scan_dir = ""
     if lsphp_app:
         php_session_dir, php_upload_dir = _php_runtime_dirs(site_user)
-        php_open_basedir = _php_open_basedir(root_path, php_session_dir, php_upload_dir)
+        if open_basedir:
+            php_open_basedir = _php_open_basedir(root_path, php_session_dir, php_upload_dir)
+        if php_session_dir:
+            # A leading ":" keeps the version's own scan directory first.
+            php_ini_scan_dir = f":{PHP_USER_INI_ROOT}/{site_user}"
 
     return {
         "domain": safe_domain,
@@ -649,6 +666,7 @@ def _build_context(
         "php_error_log": _php_error_log_path(safe_domain).as_posix(),
         "acme_webroot": ACME_WEBROOT,
         "php_open_basedir": php_open_basedir,
+        "php_ini_scan_dir": php_ini_scan_dir,
         "php_session_path": php_session_dir,
         "php_upload_tmp": php_upload_dir,
         "security_headers": SECURITY_HEADERS,
@@ -716,6 +734,7 @@ def render_vhost(
     lsphp_socket_override: str | None = None,
     lscache: bool = True,
     custom_rules: str = "",
+    open_basedir: bool = False,
 ) -> str:
     """Render an OLS vhost config from the template."""
     ctx = _build_context(
@@ -736,6 +755,7 @@ def render_vhost(
         lsphp_socket_override=lsphp_socket_override,
         lscache=lscache,
         custom_rules=custom_rules,
+        open_basedir=open_basedir,
     )
     env = _get_jinja_env()
     template_name = f"{ctx['app_type']}.conf.j2"

@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_reseller_role
 from app.models.entities import User
 from app.schemas.schemas import RESOURCE_LIMIT_FIELDS, ResourceLimitsIn
-from app.services import provisioning
+from app.services import php_isolation, provisioning
 
 router = APIRouter(prefix="/plans", tags=["plans"])
 
@@ -32,6 +32,8 @@ class PlanCreate(ResourceLimitsIn):
     io_write_mbps: int = 0
     # The browser terminal for accounts made from it.
     terminal_enabled: bool = False
+    # open_basedir for every site of its accounts (services/php_isolation.py).
+    open_basedir: bool = False
     php_version: str = "8.4"
     app_type: str = "php"
     auto_ssl: bool = False
@@ -50,6 +52,7 @@ class PlanUpdate(ResourceLimitsIn):
     io_read_mbps: Optional[int] = None
     io_write_mbps: Optional[int] = None
     terminal_enabled: Optional[bool] = None
+    open_basedir: Optional[bool] = None
     php_version: Optional[str] = None
     app_type: Optional[str] = None
     auto_ssl: Optional[bool] = None
@@ -67,6 +70,7 @@ def _plan_dict(plan) -> dict:
         "mailbox_limit": plan.mailbox_limit,
         **{field: int(getattr(plan, field) or 0) for field in RESOURCE_LIMIT_FIELDS},
         "terminal_enabled": bool(plan.terminal_enabled),
+        "open_basedir": bool(getattr(plan, "open_basedir", False)),
         "php_version": plan.php_version,
         "app_type": plan.app_type,
         "auto_ssl": plan.auto_ssl,
@@ -107,6 +111,7 @@ def create_plan(payload: PlanCreate, db: Session = Depends(get_db), current_user
             database_limit=payload.database_limit, mailbox_limit=payload.mailbox_limit,
             php_version=payload.php_version, app_type=payload.app_type, auto_ssl=payload.auto_ssl,
             terminal_enabled=payload.terminal_enabled,
+            open_basedir=payload.open_basedir,
             owner_id=owner_id, **{field: getattr(payload, field) for field in RESOURCE_LIMIT_FIELDS},
         )
         if not payload.active:
@@ -123,11 +128,17 @@ def update_plan(plan_id: int, payload: PlanUpdate, db: Session = Depends(get_db)
     if provisioning.get_plan(db, plan_id, owner_id) is None:
         raise HTTPException(status_code=404, detail="Plan not found")
     _check_terminal(current_user, payload.terminal_enabled)
+    before = bool(getattr(provisioning.get_plan(db, plan_id, owner_id), "open_basedir", False))
     try:
         plan = provisioning.update_plan(db, plan_id, owner_id, **payload.model_dump(exclude_unset=True))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return _plan_dict(plan)
+    # Turned on or off for the package: every site of its accounts follows
+    # (operator, 2026-10-22).
+    result = _plan_dict(plan)
+    if bool(plan.open_basedir) != before:
+        result["open_basedir_failed"] = php_isolation.sync_plan(db, plan)
+    return result
 
 
 @router.delete("/{plan_id}")

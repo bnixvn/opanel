@@ -93,6 +93,9 @@ extprocessor {{ lsphp_app }} {
     address               UDS://{{ lsphp_socket }}
     maxConns              {{ php_workers }}
     env                   LSAPI_CHILDREN={{ php_workers }}
+{% if php_ini_scan_dir %}
+    env                   PHP_INI_SCAN_DIR={{ php_ini_scan_dir }}
+{% endif %}
     initTimeout           60
     retryTimeout          0
     persistConn           1

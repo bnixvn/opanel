@@ -24,9 +24,24 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, reseller as reseller_pool, resource_limits, sftp_access, sftp_accounts, site_users, ssl, storage_quota, terminal, wordpress, wp_manager
+from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, php_isolation, provisioning, reseller as reseller_pool, resource_limits, sftp_access, sftp_accounts, site_users, ssl, storage_quota, terminal, wordpress, wp_manager
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+def _checked_plan_id(db: Session, current_user: User, plan_id: int | None) -> int | None:
+    """A package the caller may hand out (its own, or the admin's), or none.
+
+    0 means "no package". An unknown or someone else's package is refused
+    rather than stored, so a site setting never follows a package nobody here
+    manages.
+    """
+    if not plan_id:
+        return None
+    owner_id = current_user.id if is_reseller_role(current_user.role) else None
+    if provisioning.get_plan(db, plan_id, owner_id) is None:
+        raise HTTPException(status_code=400, detail="Package not found")
+    return plan_id
 
 
 def _user_out(user: User, db: Session) -> dict:
@@ -176,6 +191,7 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         # An administrator never opens a shell as itself, so the setting means
         # nothing on one.
         terminal_enabled=bool(payload.terminal_enabled) and role != "admin",
+        plan_id=_checked_plan_id(db, current_user, payload.plan_id) if role != "admin" else None,
     )
     db.add(user)
     db.commit()
@@ -339,6 +355,11 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         user.terminal_enabled = bool(payload.terminal_enabled)
     if new_role == "admin":
         user.terminal_enabled = False
+    plan_changed = False
+    if payload.plan_id is not None:
+        next_plan = _checked_plan_id(db, current_user, payload.plan_id) if new_role != "admin" else None
+        plan_changed = next_plan != user.plan_id
+        user.plan_id = next_plan
 
     if role_changed:
         # New role -> existing tokens with old role claim should be invalidated.
@@ -354,6 +375,9 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
     if not user.is_active or not user.terminal_enabled or role_changed:
         terminal.end_sessions(user.id, "access-changed")
     db.refresh(user)
+    if plan_changed:
+        # The package's open_basedir for the account's sites.
+        php_isolation.sync_user(db, user)
     log_action(db, current_user.id, "update_user", user.username, request=request)
     # Its limits, its reseller or its role may have moved its slice.
     resource_limits.sync_in_background()

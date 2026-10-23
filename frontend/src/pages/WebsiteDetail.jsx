@@ -268,7 +268,34 @@ function PhpTab({ site }) {
       {dirty && <button type="button" className="secondary-light" disabled={!!loading} onClick={() => setWebsiteSettingsForm(base)}><RotateCcw size={14} aria-hidden="true"/> {t('Undo changes')}</button>}
       <button type="button" disabled={!ready || !dirty || !!loading} onClick={saveWebsiteSettings}><Save size={14} aria-hidden="true"/> {t('Save changes')}</button>
     </div>
+    {appType !== 'static' && <PhpFence site={site}/>}
   </section>;
+}
+
+// open_basedir for the site's PHP: the host's setting (admin or reseller),
+// off by default and moved with the site's package (services/php_isolation.py).
+function PhpFence({ site }) {
+  const t = useT();
+  const { isAdmin, isReseller, loading, refreshAll, request, setNotice } = usePanel();
+  const [pending, setPending] = useState(null);
+  const on = !!site.open_basedir;
+  async function toggle(next) {
+    setPending(next);
+    try {
+      const data = await request(`/websites/${site.id}/open-basedir`, { method: 'PUT', body: JSON.stringify({ on: next }) },
+        next ? t('Turning open_basedir on...') : t('Turning open_basedir off...'));
+      if (data) { setNotice(next ? t('open_basedir is on for {domain}.', { domain: site.domain }) : t('open_basedir is off for {domain}.', { domain: site.domain })); await refreshAll(); }
+    } finally { setPending(null); }
+  }
+  return <div className="wsd-php-fence">
+    <h3>{t('PHP folder fence (open_basedir)')}</h3>
+    {(isAdmin || isReseller)
+      ? <Switch checked={pending ?? on} pending={pending !== null} disabled={!!loading} onChange={toggle}>
+          <span>{(pending ?? on) ? t('PHP may only open files in this site\'s folder') : t('Off: faster, sites stay apart by their own users')}</span>
+        </Switch>
+      : <p className="hint">{on ? t('On, set by your host.') : t('Off.')}</p>}
+    <p className="hint">{t('open_basedir turns PHP\'s path cache off, so pages that are not cached run about a fifth slower. A package can turn it on for all of its sites.')}</p>
+  </div>;
 }
 
 // LiteSpeed's page cache for the site, as SNPanel's Cache tab: on or off, and

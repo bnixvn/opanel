@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -16,10 +17,12 @@ from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, User, Website, WebsiteAlias
 from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCacheUpdate, WebsiteCreate, WebsiteCustomRules, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
-from app.services import autossl, dns_manager, file_manager, mail, mariadb, openlitespeed, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress, wp_manager
+from app.services import autossl, dns_manager, file_manager, mail, mariadb, openlitespeed, php_isolation, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress, wp_manager
 from app.services.audit import log_action
 
 _PLACEHOLDER_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "openlitespeed"
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/websites", tags=["websites"])
 
@@ -204,6 +207,7 @@ def _rewrite_website_vhost(website: Website, **overrides) -> str:
         "aliases": overrides.pop("aliases", _alias_domains(website)),
         "redirects": overrides.pop("redirects", _redirect_domains(website)),
         "lscache": overrides.pop("lscache", getattr(website, "lscache_enabled", True) is not False),
+        "open_basedir": overrides.pop("open_basedir", bool(getattr(website, "open_basedir", False))),
         "custom_rules": overrides.pop("custom_rules", getattr(website, "custom_rules", "") or ""),
     }
     if overrides.pop("include_ssl", True):
@@ -309,6 +313,8 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
         php_version=payload.php_version,
         app_type=app_type_value,
         nginx_rewrite_mode="front_controller" if app_type_value == "wordpress" else "none",
+        # Its package's value; off when it has none (services/php_isolation.py).
+        open_basedir=php_isolation.default_for(db, owner),
         status="provisioning",
     )
     db.add(website)
@@ -358,12 +364,22 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
                 document_root="public_html",
                 rewrite_mode="front_controller",
                 waf_enabled=website.waf_enabled,
+                open_basedir=bool(website.open_basedir),
             )
         except (RuntimeError, ValueError) as exc:
             mariadb.drop_database(db_info["db_name"], db_info["db_user"])
             _cleanup_failed_site(root_path, linux_user)
             _delete_website_reservation(db, website.id)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if payload.install_lscache:
+            # The site is made; a plugin that cannot be fetched does not undo it.
+            try:
+                result = wordpress.install_lscache(site_users.document_root(root_path).as_posix(), linux_user)
+                if result.returncode != 0:
+                    logger.warning("LiteSpeed Cache was not installed on %s: %s", payload.domain,
+                                   (result.stderr or result.stdout or "").strip()[:300])
+            except (RuntimeError, ValueError, OSError) as exc:
+                logger.warning("LiteSpeed Cache was not installed on %s: %s", payload.domain, exc)
     else:
         runtime_php_version = payload.php_version if app_type_value in {"wordpress", "php"} else None
         try:
@@ -382,8 +398,9 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
                 linux_user=linux_user,
                 lsphp_socket_override=site_users.site_lsphp_socket(linux_user, root_path, runtime_php_version),
                 document_root="public_html",
-                rewrite_mode="none",
+                rewrite_mode=website.nginx_rewrite_mode,
                 waf_enabled=website.waf_enabled,
+                open_basedir=bool(website.open_basedir),
             )
         except (RuntimeError, ValueError, OSError) as exc:
             _cleanup_failed_site(root_path, linux_user)
@@ -781,6 +798,27 @@ def set_website_lscache(website_id: int, payload: WebsiteCacheUpdate, request: R
         except (RuntimeError, ValueError):
             pass
     log_action(db, current_user.id, "website_lscache", website.domain, "on" if payload.on else "off", request=request)
+    return website
+
+
+@router.put("/{website_id}/open-basedir", response_model=WebsiteOut)
+def set_website_open_basedir(website_id: int, payload: WebsiteCacheUpdate, request: Request,
+                             db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Fence the site's PHP into its own tree with open_basedir, or not.
+
+    A host's setting, not the customer's: the administrator or the account's
+    reseller. Off by default - it turns PHP's realpath cache off - and moved
+    with the package when the package's value changes (services/php_isolation.py).
+    """
+    ensure_role(current_user.role, Role.reseller)
+    website = _get_authorized_website(db, website_id, current_user)
+    if (website.app_type or "wordpress") not in {"wordpress", "php"}:
+        raise HTTPException(status_code=400, detail="open_basedir is for PHP and WordPress sites")
+    failed = php_isolation.apply(db, [website], payload.on)
+    if failed:
+        raise HTTPException(status_code=400, detail="Could not rewrite the site's configuration")
+    db.refresh(website)
+    log_action(db, current_user.id, "website_open_basedir", website.domain, "on" if payload.on else "off", request=request)
     return website
 
 
