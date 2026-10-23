@@ -129,7 +129,6 @@ def _install_out(install: WpInstall, website: Optional[Website], owners: dict[in
         "checked": install.last_checked_at is not None,
         "security_warnings": wp_manager.security_warnings(json.loads(install.inventory or "{}")),
         "auto_points": wp_manager.auto_points(install),
-        "auto_points": wp_manager.auto_points(install),
         "last_checked_at": install.last_checked_at.isoformat() + "Z" if install.last_checked_at else None,
         "last_error": install.last_error,
     }

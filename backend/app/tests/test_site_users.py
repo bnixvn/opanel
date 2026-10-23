@@ -410,7 +410,11 @@ def test_wp_cli_wrapper_disables_jit_for_ioncube_compat():
         if "/usr/local/bin/wp" in line and "runuser" in line
     ]
     assert len(invocations) >= 2
+    # wp-site builds its flags in an array (2026-10-23: the user's OPcache file
+    # cache is added to them), which starts with the same two.
+    array = 'WP_CLI_PHP_ARGS="${wp_php_args[*]}" php "${wp_php_args[@]}" /usr/local/bin/wp'
+    assert "wp_php_args=(-d pcre.jit=0 -d opcache.jit=disable)" in helper
     for line in invocations:
-        assert marker in line, f"wp-cli entrypoint without the JIT flags: {line.strip()}"
+        assert marker in line or array in line, f"wp-cli entrypoint without the JIT flags: {line.strip()}"
     assert "-d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp" in helper
     assert "WP_CLI_PHP_ARGS='-d pcre.jit=0'" not in helper

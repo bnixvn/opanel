@@ -10192,18 +10192,31 @@ PY
       # The home itself is root's (the SFTP jail): the account cannot make a
       # folder at its top, so the points' folder is made for it, as its own.
       install -d -o "$user" -g "$user" -m 0700 "$HOME_ROOT/$user/.opanel-wp-points"
-      exec runuser -u "$user" -- bash -c '
+      # zstd on every core when the box has it: 1.9 s and 88 MB for a site
+      # gzip -6 took 27.5 s and 96 MB over (.41, 2026-10-23). Otherwise gzip
+      # at its fastest level. Niced: a restore point must not slow the sites.
+      exec runuser -u "$user" -- nice -n 10 bash -c '
         set -euo pipefail
         umask 077
         mkdir -p "$1"
-        tar -czf "$1/files.tar.gz" -C "$2" --exclude=./wp-content/uploads --exclude=./wp-content/cache \
-          --exclude=./wp-content/upgrade --exclude=./wp-content/updraft --exclude=./wp-content/ai1wm-backups .
+        excludes=(--exclude=./wp-content/uploads --exclude=./wp-content/cache --exclude=./wp-content/upgrade
+                  --exclude=./wp-content/updraft --exclude=./wp-content/ai1wm-backups)
+        if command -v zstd >/dev/null 2>&1; then
+          tar -cf - -C "$2" "${excludes[@]}" . | zstd -3 -T0 -q -o "$1/files.tar.zst"
+        else
+          tar -cf - -C "$2" "${excludes[@]}" . | gzip -1 >"$1/files.tar.gz"
+        fi
         du -sb "$1" | cut -f1
       ' _ "$point" "$target"
     fi
-    [[ -f "$point/files.tar.gz" ]] || deny "restore point has no files: $point"
     # Put back over what is there: a file added since the point stays, every
-    # file the point had comes back as it was.
+    # file the point had comes back as it was. Points made before 2026-10-23
+    # are gzip.
+    if [[ -f "$point/files.tar.zst" ]]; then
+      command -v zstd >/dev/null 2>&1 || deny "zstd is needed to put this restore point back"
+      exec runuser -u "$user" -- tar -I zstd -xf "$point/files.tar.zst" -C "$target"
+    fi
+    [[ -f "$point/files.tar.gz" ]] || deny "restore point has no files: $point"
     exec runuser -u "$user" -- tar -xzf "$point/files.tar.gz" -C "$target"
     ;;
 
@@ -10267,7 +10280,17 @@ PY
     [[ $# -ge 2 ]] || deny "usage: wp-site <site-user> <args...>"
     user="$1"; shift
     require_linux_user "$user"
-    exec runuser -u "$user" -- env HOME="$HOME_ROOT/$user" WP_CLI_PHP_ARGS='-d pcre.jit=0 -d opcache.jit=disable' php -d pcre.jit=0 -d opcache.jit=disable /usr/local/bin/wp "$@"
+    # Every WP-CLI command is a new PHP process, which compiled WP-CLI and
+    # WordPress from scratch each time: `wp eval` took 2.1 s on .41, 0.65 s
+    # with the user's own OPcache file cache (ensure_php_file_cache), the one
+    # the site's lsphp fills as well. Only the user's own folder, as for lsphp.
+    wp_php_args=(-d pcre.jit=0 -d opcache.jit=disable)
+    wp_cache="/var/lib/php/opcache/${user}"
+    if [[ -d "$wp_cache" && ! -L "$wp_cache" && "$(stat -c %U -- "$wp_cache")" == "$user" ]]; then
+      wp_php_args+=(-d opcache.enable_cli=1 -d "opcache.file_cache=${wp_cache}" -d opcache.file_cache_only=1
+                    -d opcache.file_cache_consistency_checks=1 -d opcache.validate_timestamps=1)
+    fi
+    exec runuser -u "$user" -- env HOME="$HOME_ROOT/$user" WP_CLI_PHP_ARGS="${wp_php_args[*]}" php "${wp_php_args[@]}" /usr/local/bin/wp "$@"
     ;;
 
   # ---- crontab managed for www-data ------------------------------------

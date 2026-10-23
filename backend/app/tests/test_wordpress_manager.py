@@ -314,8 +314,12 @@ def test_restore_points_are_made_and_put_back_as_the_site_user():
     body = _helper_case("wp-point-create|wp-point-restore")
     # Only a folder of the account's own, and only as the account.
     assert '^/home/${user}/\\.opanel-wp-points/[a-f0-9]{16}/[0-9]{8}T[0-9]{6}$' in body
-    assert 'exec runuser -u "$user" -- bash -c' in body and 'exec runuser -u "$user" -- tar -xzf' in body
+    assert 'exec runuser -u "$user" -- nice -n 10 bash -c' in body and 'exec runuser -u "$user" -- tar -xzf' in body
     assert "--exclude=./wp-content/uploads" in body
+    # zstd on every core when there is one (27.5 s -> 1.9 s for a site on .41),
+    # gzip at its fastest otherwise; both put back, old gzip points included.
+    assert 'zstd -3 -T0 -q -o "$1/files.tar.zst"' in body and 'gzip -1 >"$1/files.tar.gz"' in body
+    assert 'exec runuser -u "$user" -- tar -I zstd -xf "$point/files.tar.zst" -C "$target"' in body
     # The home is root's (the SFTP jail): the points' folder is made for the account.
     assert 'install -d -o "$user" -g "$user" -m 0700 "$HOME_ROOT/$user/.opanel-wp-points"' in body
     delete = _helper_case("wp-point-delete")
@@ -374,3 +378,70 @@ def test_restore_points_before_an_update_can_be_switched_off(env):
     assert client.get(f"/api/wordpress/installs/{row.id}").json()["auto_points"] is False
     # Another account cannot switch it.
     assert env.as_user("bob").put(f"/api/wordpress/installs/{row.id}/points/auto", json={"on": True}).status_code == 403
+
+
+# --- One WP-CLI process per check (2026-10-23) -------------------------------------------
+
+def _eval_inventory():
+    """What the inventory's `wp eval` prints for the same WordPress as fake_wp_output."""
+    plugins = [dict(item, title=item["title"]) for item in PLUGINS]
+    return "PHP Notice: [x] before the output\n" + wp_manager.INVENTORY_MARK + json.dumps({
+        "core_version": "6.4.3",
+        "core_offers": [{"version": "6.6.1", "update_type": "major"}, {"version": "6.4.5", "update_type": "minor"}],
+        "plugins": plugins, "themes": THEMES, "admins": ADMINS,
+        "title": "My Blog", "home": "https://alice.example/", "blog_public": "1",
+        "maintenance": False, "debug": True, "auto_update_core": "", "file_edit_disallowed": False,
+        "config_path": "", "config_mode": "",
+    })
+
+
+def _answer_eval(env, monkeypatch):
+    real = wp_manager.shell.privileged
+
+    def privileged(command, helper_args=None, **kwargs):
+        args = list(helper_args or [])
+        if command == "wp-site" and args[1:3] == ["eval", wp_manager.INVENTORY_PHP]:
+            env.calls.append({"command": command, "user": args[0], "args": args[1:], "input": None, "sensitive": False})
+            return SimpleNamespace(returncode=0, stdout=_eval_inventory(), stderr="")
+        return real(command, helper_args=helper_args, **kwargs)
+
+    monkeypatch.setattr(wp_manager.shell, "privileged", privileged)
+
+
+def test_a_check_is_one_wp_cli_process_and_reads_what_sixteen_did(env, monkeypatch):
+    """Sixteen WP-CLI processes per check took 26 s on .41; one does the work."""
+    slow = wp_manager._read_inventory_slow(env.sites["alice"], "/x")
+    env.calls.clear()
+    _answer_eval(env, monkeypatch)
+    fast = wp_manager.read_inventory(env.sites["alice"], "/x")
+    assert [call["args"][0] for call in env.calls] == ["eval"]
+    # fake_wp_output does not model `wp config path`; everything else is the same.
+    unmodelled = {"config_path", "config_mode"}
+    assert {k: v for k, v in fast.items() if k not in unmodelled} == {k: v for k, v in slow.items() if k not in unmodelled}
+
+
+def test_a_wordpress_the_one_process_cannot_read_is_read_command_by_command(env):
+    # fake_wp_output answers the eval with no inventory, as a broken site would.
+    inventory = wp_manager.read_inventory(env.sites["alice"], "/x")
+    assert inventory["core_version"] == "6.4.3"
+    assert [call["args"][0] for call in env.calls][:2] == ["eval", "core"]
+
+
+def test_a_scan_checks_every_wordpress_and_writes_from_its_own_thread(env, monkeypatch):
+    _answer_eval(env, monkeypatch)
+    for owner in ("alice", "bob"):
+        _scan(env, owner)
+    rows = env.db.query(WpInstall).all()
+    for row in rows:
+        env.db.refresh(row)
+    assert len(rows) == 2 and all(row.core_version == "6.4.3" and row.last_error == "" for row in rows)
+    assert {call["user"] for call in env.calls} == {"alice", "bob"}
+
+
+def test_wp_cli_uses_the_site_user_s_own_opcache_file_cache():
+    verb = HELPER.split("  wp-site)\n", 1)[1].split("\n    ;;\n", 1)[0]
+    assert 'wp_cache="/var/lib/php/opcache/${user}"' in verb
+    # Only a real folder that user owns: compiled code from anywhere else is code run as them.
+    assert '! -L "$wp_cache"' in verb and '"$(stat -c %U -- "$wp_cache")" == "$user"' in verb
+    assert "opcache.file_cache_only=1" in verb and "opcache.validate_timestamps=1" in verb
+    assert 'exec runuser -u "$user" --' in verb

@@ -17,13 +17,14 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import string
 import threading
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -54,7 +55,12 @@ ITEM_ACTIONS = {
     "theme": {"install", "activate", "update", "update_all", "delete", "auto_on", "auto_off"},
 }
 
-_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="opanel-wpm")
+# Tasks of different WordPress run side by side (one at a time per WordPress,
+# see _run): a bulk update of 110 sites two at a time took four hours on .41.
+WORKERS = max(2, min(4, (os.cpu_count() or 2) // 3))
+# A scan reads each WordPress in its own WP-CLI process; these run in parallel.
+SCAN_WORKERS = max(2, min(6, (os.cpu_count() or 2) // 2))
+_executor = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="opanel-wpm")
 _locks: dict[str, threading.Lock] = {}
 _locks_lock = threading.Lock()
 # The tasks this process has started and not finished: a row still queued or
@@ -168,7 +174,139 @@ def _version_key(version: str) -> tuple:
     return tuple(int(part) if part.isdigit() else 0 for part in re.split(r"[.-]", version or "0"))
 
 
+# Everything read_inventory needs, in one WP-CLI process instead of sixteen:
+# each one loaded WordPress again, and a check took 26 s on .41. The same
+# sources WP-CLI's own commands read - the update transients after the same
+# wp_*_check calls (which ask wordpress.org at most every 12 hours), the
+# plugin and theme headers, the auto-update options, the .maintenance file.
+INVENTORY_MARK = "OPANEL-INVENTORY:"
+INVENTORY_PHP = r"""
+require_once ABSPATH . 'wp-admin/includes/plugin.php';
+require_once ABSPATH . 'wp-admin/includes/update.php';
+require_once ABSPATH . WPINC . '/update.php';
+global $wp_version;
+$current = str_replace('-src', '', $wp_version);
+$out = array('core_version' => $wp_version, 'core_offers' => array());
+wp_version_check();
+$core = get_site_transient('update_core');
+if ($core && !empty($core->updates)) {
+    $have = explode('.', $current);
+    foreach ($core->updates as $offer) {
+        if (empty($offer->version) || !version_compare($offer->version, $current, '>')) continue;
+        $v = explode('.', $offer->version);
+        $same = ($v[0] ?? '') === ($have[0] ?? '') && ($v[1] ?? '0') === ($have[1] ?? '0');
+        $out['core_offers'][] = array('version' => $offer->version, 'update_type' => $same ? 'minor' : 'major');
+    }
+}
+wp_update_plugins();
+$updates = get_site_transient('update_plugins');
+$auto = (array) get_site_option('auto_update_plugins', array());
+$plugins = array();
+foreach (get_plugins() as $file => $data) {
+    $name = dirname($file) === '.' ? preg_replace('/\.php$/', '', basename($file)) : dirname($file);
+    $status = is_plugin_active_for_network($file) ? 'active-network' : (is_plugin_active($file) ? 'active' : 'inactive');
+    $offer = isset($updates->response[$file]) ? $updates->response[$file] : null;
+    $plugins[] = array('name' => $name, 'title' => $data['Name'], 'status' => $status, 'version' => $data['Version'],
+        'update' => $offer ? 'available' : 'none', 'update_version' => ($offer && isset($offer->new_version)) ? $offer->new_version : '',
+        'auto_update' => in_array($file, $auto, true) ? 'on' : 'off');
+}
+foreach (get_mu_plugins() as $file => $data) {
+    $plugins[] = array('name' => preg_replace('/\.php$/', '', basename($file)), 'title' => $data['Name'], 'status' => 'must-use',
+        'version' => $data['Version'], 'update' => 'none', 'update_version' => '', 'auto_update' => 'off');
+}
+foreach (get_dropins() as $file => $data) {
+    // WP-CLI lists a drop-in with no title; WordPress puts the file name there.
+    $plugins[] = array('name' => $file, 'title' => '', 'status' => 'dropin', 'version' => $data['Version'],
+        'update' => 'none', 'update_version' => '', 'auto_update' => 'off');
+}
+$out['plugins'] = $plugins;
+wp_update_themes();
+$theme_updates = get_site_transient('update_themes');
+$theme_auto = (array) get_site_option('auto_update_themes', array());
+$stylesheet = get_stylesheet();
+$template = get_template();
+$themes = array();
+foreach (wp_get_themes() as $slug => $theme) {
+    $offer = isset($theme_updates->response[$slug]) ? $theme_updates->response[$slug] : null;
+    $themes[] = array('name' => $slug, 'title' => $theme->get('Name'), 'version' => $theme->get('Version'),
+        'status' => $slug === $stylesheet ? 'active' : ($slug === $template ? 'parent' : 'inactive'),
+        'update' => $offer ? 'available' : 'none', 'update_version' => ($offer && isset($offer['new_version'])) ? $offer['new_version'] : '',
+        'auto_update' => in_array($slug, $theme_auto, true) ? 'on' : 'off');
+}
+$out['themes'] = $themes;
+$admins = array();
+foreach (get_users(array('role' => 'administrator', 'fields' => array('ID', 'user_login', 'user_email', 'display_name'))) as $user) {
+    $admins[] = array('ID' => (int) $user->ID, 'user_login' => $user->user_login, 'user_email' => $user->user_email, 'display_name' => $user->display_name);
+}
+$out['admins'] = $admins;
+$out['title'] = (string) get_option('blogname');
+$out['home'] = (string) get_option('home');
+$out['blog_public'] = (string) get_option('blog_public');
+$maintenance = false;
+if (is_file(ABSPATH . '.maintenance')) {
+    $text = (string) @file_get_contents(ABSPATH . '.maintenance');
+    if (preg_match('/upgrading\s*=\s*(\d+)\s*;/i', $text, $m)) $maintenance = (time() - (int) $m[1]) < 600;
+}
+$out['maintenance'] = $maintenance;
+$out['debug'] = defined('WP_DEBUG') && WP_DEBUG;
+$out['auto_update_core'] = defined('WP_AUTO_UPDATE_CORE') ? (WP_AUTO_UPDATE_CORE === true ? 'true' : (WP_AUTO_UPDATE_CORE === false ? 'false' : (string) WP_AUTO_UPDATE_CORE)) : '';
+$out['file_edit_disallowed'] = defined('DISALLOW_FILE_EDIT') && DISALLOW_FILE_EDIT;
+$config = '';
+if (is_file(ABSPATH . 'wp-config.php')) {
+    $config = ABSPATH . 'wp-config.php';
+} elseif (is_file(dirname(ABSPATH) . '/wp-config.php') && !is_file(dirname(ABSPATH) . '/wp-settings.php')) {
+    $config = dirname(ABSPATH) . '/wp-config.php';
+}
+$out['config_path'] = $config;
+$out['config_mode'] = $config ? sprintf('%o', fileperms($config) & 0777) : '';
+echo "OPANEL-INVENTORY:" . json_encode($out);
+"""
+
+
+def _read_inventory_once(website: Website, path: str) -> Optional[dict]:
+    """The inventory from one `wp eval`, or None for the per-command read."""
+    result = wp(website, path, ["eval", INVENTORY_PHP], check=False)
+    text = result.stdout or ""
+    if result.returncode != 0 or INVENTORY_MARK not in text:
+        return None
+    try:
+        data = json.loads(text.split(INVENTORY_MARK, 1)[1].strip())
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or not data.get("core_version"):
+        return None
+    offers = [item for item in data.get("core_offers") or [] if isinstance(item, dict) and item.get("version")]
+    latest = max((item["version"] for item in offers), key=_version_key, default="")
+    minor = max((item["version"] for item in offers if item.get("update_type") == "minor"), key=_version_key, default="")
+    auto_value = str(data.get("auto_update_core") or "").strip("'\"").lower()
+    return {
+        "core_version": str(data["core_version"]),
+        "core_update": latest,
+        "core_minor_update": minor,
+        "title": str(data.get("title") or ""),
+        "url": str(data.get("home") or ""),
+        "plugins": [_item(entry) for entry in data.get("plugins") or [] if isinstance(entry, dict)],
+        "themes": [_item(entry) for entry in data.get("themes") or [] if isinstance(entry, dict)],
+        "admins": [{"id": int(entry.get("ID") or 0), "login": entry.get("user_login", ""), "email": entry.get("user_email", ""),
+                    "name": entry.get("display_name", "")} for entry in data.get("admins") or [] if isinstance(entry, dict)],
+        "maintenance": bool(data.get("maintenance")),
+        "debug": bool(data.get("debug")),
+        "auto_update_core": "all" if auto_value in {"1", "true"} else "off" if auto_value in {"false", "0"} else "minor",
+        "file_edit_disallowed": bool(data.get("file_edit_disallowed")),
+        "blog_public": str(data.get("blog_public", "1")) != "0",
+        "config_path": str(data.get("config_path") or ""),
+        "config_mode": str(data.get("config_mode") or ""),
+    }
+
+
 def read_inventory(website: Website, path: str) -> dict:
+    """What a WordPress runs: one WP-CLI process, or command by command when
+    that one cannot run (a WordPress too old or too broken for it)."""
+    inventory = _read_inventory_once(website, path)
+    return inventory if inventory is not None else _read_inventory_slow(website, path)
+
+
+def _read_inventory_slow(website: Website, path: str) -> dict:
     """What a WordPress runs, as WP-CLI reads it."""
     core_version = wp(website, path, ["core", "version"]).stdout.strip()
     updates = _json(wp(website, path, ["core", "check-update", "--format=json"], check=False)) or []
@@ -411,12 +549,33 @@ def _handle_scan(db: Session, task: _Task, params: dict) -> None:
         except Exception as exc:
             task.log(f"{website.domain}: {exc}")
     checked = [pair for pair in rows if pair[0].state == "installed"]
-    for index, (row, website) in enumerate(checked, 1):
-        task.stage(f"Checking {row.url or website.domain} ({index}/{len(checked)})")
-        try:
-            refresh_install(db, None, row, website)
-        except Exception as exc:
-            task.log(f"{website.domain}/{row.rel_path}: {exc}")
+    # WP-CLI runs in parallel, one process per WordPress; the database is
+    # written here, in this thread, which owns the session. 170 WordPress took
+    # 2 h 10 min one after another on .41.
+    with ThreadPoolExecutor(max_workers=SCAN_WORKERS, thread_name_prefix="opanel-wpm-scan") as pool:
+        futures = {pool.submit(read_inventory, _SiteRef(website), row.path): (row, website) for row, website in checked}
+        done = 0
+        for future in as_completed(futures):
+            row, website = futures[future]
+            done += 1
+            task.stage(f"Checking {row.url or website.domain} ({done}/{len(checked)})")
+            try:
+                apply_inventory(row, future.result())
+            except Exception as exc:
+                row.last_error = str(exc)[:2000]
+                row.last_checked_at = datetime.utcnow()
+                task.log(f"{website.domain}/{row.rel_path}: {exc}")
+            db.commit()
+
+
+class _SiteRef:
+    """What WP-CLI needs of a website, read before it leaves this thread: the
+    worker threads do not touch the database session."""
+
+    def __init__(self, website: Website):
+        self.domain = website.domain
+        self.root_path = website.root_path
+        self.linux_user = site_users.require_site_linux_user(website)
 
 
 def _handle_refresh(db: Session, task: _Task, params: dict) -> None:
