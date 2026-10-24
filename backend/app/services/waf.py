@@ -127,12 +127,12 @@ SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:40
         "id": "php2shell",
         "category": "PHP",
         "title": "php2shell (PHP request parsing RCE)",
-        "description": "Blocks the request shapes of the php2shell exploits (CVE-2026-109618/109619/115560): the session upload progress field, multipart floods of hundreds of fields or files, field names nested 16 deep or over 1 KB, and code in upload file names. Reads the body of form POSTs only.",
+        "description": "Blocks the request shapes of the php2shell exploits (CVE-2026-109618/109619/115560): the session upload progress field, multipart bodies of hundreds of fields or files, field names nested 16 deep or over 1 KB, and code in upload file names. Reads the body of form POSTs only.",
         "rules": r"""SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*(?:multipart/form-data|application/x-www-form-urlencoded)" "id:1003001,phase:1,pass,nolog,ctl:requestBodyAccess=On"
 SecRule ARGS_POST_NAMES "@rx (?i)^php_session_upload_progress$" "id:1003002,phase:2,deny,status:403,log,msg:'opanel blocked php2shell upload progress field'"
-SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003003,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart field flood',chain"
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003003,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart with too many fields',chain"
   SecRule &ARGS_POST "@gt 400" "t:none"
-SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003004,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart file flood',chain"
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003004,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart with too many files',chain"
   SecRule &FILES "@gt 100" "t:none"
 SecRule ARGS_NAMES "@rx (?:\[[^\]]*\]){16}" "id:1003005,phase:2,deny,status:403,log,msg:'opanel blocked php2shell nested field name'"
 SecRule ARGS_NAMES "@gt 1024" "id:1003006,phase:2,t:none,t:length,deny,status:403,log,msg:'opanel blocked php2shell oversized field name'"
