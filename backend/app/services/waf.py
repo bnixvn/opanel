@@ -136,7 +136,7 @@ SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:10030
   SecRule &FILES "@gt 100" "t:none"
 SecRule ARGS_NAMES "@rx (?:\[[^\]]*\]){16}" "id:1003005,phase:2,deny,status:403,log,msg:'opanel blocked php2shell nested field name'"
 SecRule ARGS_NAMES "@gt 1024" "id:1003006,phase:2,t:none,t:length,deny,status:403,log,msg:'opanel blocked php2shell oversized field name'"
-SecRule FILES "@rx (?i)<\?php|\|O:\d+:|[\x00-\x08\x0b\x0c\x0e-\x1f]" "id:1003007,phase:2,deny,status:403,log,msg:'opanel blocked php2shell upload file name'"
+SecRule FILES "@rx (?i)<\?php|\|O:\d|[\x00-\x08\x0b\x0c\x0e-\x1f]" "id:1003007,phase:2,deny,status:403,log,msg:'opanel blocked php2shell upload file name'"
 """,
     },
     {
