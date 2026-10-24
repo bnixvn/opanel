@@ -3451,7 +3451,7 @@ export default {
   "What's new in the update": "Có gì mới trong bản cập nhật",
   "What's new": "Có gì mới",
   "Read what the update changes before you run it.": "Đọc bản cập nhật thay đổi những gì trước khi chạy.",
-  "This server runs the newest release. Its notes:": "Server đang chạy bản mới nhất. Ghi chú của bản này:",
+  "This server runs the newest release. Its notes:": "Server đang chạy bản mới nhất. Nội dung của bản này:",
   "Changelog": "Lịch sử thay đổi",
   "Every release of the panel, newest first.": "Tất cả các bản phát hành của panel, mới nhất trước.",
   "New": "Mới",

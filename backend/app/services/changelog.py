@@ -46,6 +46,11 @@ def releases_api(repo_url: str) -> str:
             f"/releases?per_page={FETCH_LIMIT}")
 
 
+def _version_tuple(text: str) -> tuple:
+    """"1.10.0" above "1.9.8", which comparing strings gets backwards."""
+    return tuple(int(part) for part in re.findall(r"[0-9]+", text or "")[:4])
+
+
 def _version(tag: str) -> str:
     match = _TAG_RE.match((tag or "").strip())
     return match.group(1) if match else ""
@@ -71,7 +76,7 @@ def _normalise(rows: list) -> list[dict]:
             "notes": str(notes or "")[:NOTES_LIMIT],
             "url": link if str(link).startswith("https://") else "",
         })
-    releases.sort(key=lambda item: updates._version_tuple(item["version"]), reverse=True)
+    releases.sort(key=lambda item: _version_tuple(item["version"]), reverse=True)
     return releases
 
 
@@ -109,15 +114,15 @@ def releases(refresh: bool = False) -> tuple[list[dict], str, str]:
         rows = _fetch()
     except (OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
         return cached.get("releases") or [], cached.get("fetched_at", ""), f"Could not read the releases: {exc}"
-    data = {"releases": rows, "fetched_ts": time.time(), "fetched_at": updates._utc_now()}
+    data = {"releases": rows, "fetched_ts": time.time(), "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     _write_cache(data)
     return rows, data["fetched_at"], ""
 
 
 def page(page: int = 1, per_page: int = 10, newer_only: bool = False, refresh: bool = False) -> dict:
     rows, fetched_at, error = releases(refresh)
-    current = updates._version_tuple(APP_VERSION)
-    marked = [{**row, "newer": updates._version_tuple(row["version"]) > current,
+    current = _version_tuple(APP_VERSION)
+    marked = [{**row, "newer": _version_tuple(row["version"]) > current,
                "current": row["version"] == APP_VERSION} for row in rows]
     newer_count = sum(1 for row in marked if row["newer"])
     if newer_only:
