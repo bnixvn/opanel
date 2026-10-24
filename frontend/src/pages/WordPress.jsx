@@ -528,7 +528,8 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
     if (!file) return;
     const form = new FormData();
     form.append('file', file);
-    form.append('activate', activate ? '1' : '0');
+    // A theme is only put in place, never switched to (operator, 2026-10-24).
+    form.append('activate', plugin && activate ? '1' : '0');
     const data = await request(`${path}/upload`, { method: 'POST', body: form }, t('Uploading {name}...', { name: file.name }));
     if (data) {
       post.watch(data);
@@ -585,8 +586,10 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
         <input type="file" accept=".zip,application/zip" disabled={busy}
           onChange={(e) => { upload(e.target.files?.[0], activateUpload); e.target.value = ''; }}/>
       </label>
-      <label className="check-line"><input type="checkbox" checked={activateUpload} onChange={(e) => setActivateUpload(e.target.checked)}/>
-        {plugin ? t('Activate the plugin once it is installed') : t('Activate the theme once it is installed')}</label>
+      {plugin
+        ? <label className="check-line"><input type="checkbox" checked={activateUpload} onChange={(e) => setActivateUpload(e.target.checked)}/>
+          {t('Activate the plugin once it is installed')}</label>
+        : <p className="hint">{t('The theme is installed, not activated: the site keeps its current theme. A theme of the same name is replaced.')}</p>}
     </div>}
     {items.length === 0 ? <p className="hint">{t('None found yet: refresh.')}</p> : <div className="data-table-wrap">
       <table className="data-table wpm-items wpm-cards">

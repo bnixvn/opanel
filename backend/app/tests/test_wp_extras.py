@@ -113,6 +113,20 @@ def test_a_zip_is_taken_in_and_installed_as_the_account(env, monkeypatch, tmp_pa
     assert install_call["args"][2] == "/home/alice/.opanel-wp-stage/My-Plugin.zip" and "--activate" in install_call["args"]
     assert not list((tmp_path / "uploads").iterdir())  # the waiting copy is gone
 
+def test_an_uploaded_theme_replaces_one_of_its_name_and_is_never_activated(env, monkeypatch, tmp_path):
+    """Operator, 2026-10-24: a Flatsome .zip switched the site's theme - the
+    activate box was ticked by default. A theme is only put in place."""
+    install = _scan(env)
+    monkeypatch.setattr("app.api.wordpress_manager.UPLOAD_DIR", tmp_path / "uploads")
+    client = env.as_user("alice")
+    answer = client.post(f"/api/wordpress/installs/{install.id}/themes/upload",
+                         files={"file": ("flatsome-3.20.11.zip", b"PK\x03\x04rest")}, data={"activate": "1"})
+    assert answer.status_code == 200 and answer.json()["job"]["status"] == "completed", answer.text
+    install_call = next(call for call in env.calls if call["command"] == "wp-site" and call["args"][:2] == ["theme", "install"])
+    assert "--force" in install_call["args"]
+    assert "--activate" not in install_call["args"]
+    assert not any(call["args"][:2] == ["theme", "activate"] for call in env.calls if call["command"] == "wp-site")
+
 
 def test_litespeed_cache_purge_loads_the_plugin(env):
     install = _scan(env)

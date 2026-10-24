@@ -257,8 +257,13 @@ def handle_upload(db: Session, task, params: dict) -> None:
             raise wp_manager.WpError("The file could not be taken in: " + wp_manager._clean_error(result.stderr or result.stdout))
         placed = f"/home/{user}/{STAGE_DIR}/{name}"
         task.stage(f"Installing {name}")
-        args = [kind, "install", placed, "--force"] + (["--activate"] if params.get("activate") else [])
-        out = wp_manager.wp(website, install.path, args, skip=not params.get("activate"))
+        # --force: one of the same name is replaced. A theme is never
+        # activated by an upload (operator, 2026-10-24: a Flatsome .zip
+        # switched a site's theme, the box being ticked by default); a plugin
+        # is when asked.
+        activate = kind == "plugin" and bool(params.get("activate"))
+        args = [kind, "install", placed, "--force"] + (["--activate"] if activate else [])
+        out = wp_manager.wp(website, install.path, args, skip=not activate)
         task.log(wp_manager._short(out.stdout))
     finally:
         Path(staged).unlink(missing_ok=True)

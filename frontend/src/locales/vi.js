@@ -3372,7 +3372,6 @@ export default {
   "No website domain matches: email can still be turned on for the domain typed here.": "Không có tên miền website nào khớp: vẫn có thể bật email cho tên miền bạn gõ ở đây.",
   "Not a website here": "Không phải website trên máy này",
   "Activate the plugin once it is installed": "Bật plugin sau khi cài xong",
-  "Activate the theme once it is installed": "Bật theme sau khi cài xong",
   "Choose a .zip file, or drop it here": "Chọn file .zip, hoặc thả file vào đây",
   "Upload a plugin (.zip)": "Tải lên plugin (.zip)",
   "Upload a theme (.zip)": "Tải lên theme (.zip)",
@@ -3448,4 +3447,5 @@ export default {
   "Ubuntu rolls some updates out to servers a few at a time (phased updates); they install on their own within days. A kept-back package needs others added or removed: apt full-upgrade over SSH.": "Ubuntu phát hành một số bản cập nhật dần dần cho từng nhóm máy (phased update); chúng tự cài trong vài ngày. Gói bị giữ lại (kept back) cần thêm hoặc gỡ gói khác: chạy apt full-upgrade qua SSH.",
   "Phased": "Đang phát hành dần",
   "Kept back": "Bị giữ lại",
+  "The theme is installed, not activated: the site keeps its current theme. A theme of the same name is replaced.": "Theme chỉ được cài, không kích hoạt: site vẫn giữ theme đang dùng. Theme trùng tên sẽ bị ghi đè.",
 };
