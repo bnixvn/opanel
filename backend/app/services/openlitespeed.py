@@ -519,6 +519,18 @@ def _php_runtime_dirs(linux_user: str | None) -> tuple[str, str]:
     return f"{PHP_SESSION_ROOT}/{linux_user}", f"{PHP_UPLOAD_ROOT}/{linux_user}"
 
 
+def php2shell_ini(php_version: str | None) -> list[tuple[str, str]]:
+    """PHP's mitigation for php2shell (CVE-2026-109619 and -115560): session
+    upload progress off, and on 8.5 fatal error backtraces off."""
+    if not php_version:
+        return []
+    settings = [("session.upload_progress.enabled", "0")]
+    major, _, minor = php_version.partition(".")
+    if (int(major), int(minor or 0)) >= (8, 5):
+        settings.append(("fatal_error_backtraces", "0"))
+    return settings
+
+
 def _php_open_basedir(root_path: str, session_dir: str, upload_dir: str) -> str:
     """Build the open_basedir list for one site.
 
@@ -634,6 +646,9 @@ def _build_context(
         if php_session_dir:
             # A leading ":" keeps the version's own scan directory first.
             php_ini_scan_dir = f":{PHP_USER_INI_ROOT}/{site_user}"
+    # php2shell: as php_admin_value, which a site's .user.ini cannot undo
+    # (opanel-helper's ensure_php2shell_ini says why).
+    php_hardening = php2shell_ini(checked_php) if lsphp_app else []
 
     return {
         "domain": safe_domain,
@@ -667,6 +682,7 @@ def _build_context(
         "acme_webroot": ACME_WEBROOT,
         "php_open_basedir": php_open_basedir,
         "php_ini_scan_dir": php_ini_scan_dir,
+        "php_hardening": php_hardening,
         "php_session_path": php_session_dir,
         "php_upload_tmp": php_upload_dir,
         "security_headers": SECURITY_HEADERS,

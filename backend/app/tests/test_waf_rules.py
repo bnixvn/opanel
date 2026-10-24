@@ -64,10 +64,21 @@ def test_rule_ids_are_unique():
 
 def test_every_rule_declares_a_phase_and_an_action():
     for rule in waf.DEFAULT_RULES:
+        chained = False
         for line in rule["rules"].splitlines():
             if not line.strip():
                 continue
+            if chained:
+                # A chain's later links take the phase and action of its first.
+                chained = ",chain" in line
+                continue
+            chained = ",chain" in line
             assert re.search(r"phase:[12]", line), rule["id"]
+            if "ctl:requestBodyAccess=On" in line:
+                # php2shell's first rule only turns bodies on, for its own
+                # phase 2 rules: it passes, and says nothing.
+                assert "pass" in line and "nolog" in line and "phase:1" in line, rule["id"]
+                continue
             assert "deny" in line and "status:403" in line, rule["id"]
 
 

@@ -548,6 +548,16 @@ SecRule REQUEST_URI "@rx (?i)(?:/wp-config\.php(?:\.|$|[?])|/wp-content/(?:uploa
 SecRule REQUEST_URI "@rx (?i)/xmlrpc\.php(?:$|[?/;%#])" "id:1001102,phase:1,t:none,t:urlDecodeUni,deny,status:403,log,msg:'opanel blocked WordPress XML-RPC access'"
 SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'opanel blocked WordPress author enumeration'"
 SecRule REQUEST_URI "@rx (?i)(?:/wp-admin/install\.php(?:$|[?])|/wp-admin/setup-config\.php(?:$|[?]))" "id:1001104,phase:1,deny,status:403,log,msg:'opanel blocked WordPress installer probe'"
+# php2shell (CVE-2026-109618/109619/115560): see waf.py's php2shell group.
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*(?:multipart/form-data|application/x-www-form-urlencoded)" "id:1003001,phase:1,pass,nolog,ctl:requestBodyAccess=On"
+SecRule ARGS_POST_NAMES "@rx (?i)^php_session_upload_progress$" "id:1003002,phase:2,deny,status:403,log,msg:'opanel blocked php2shell upload progress field'"
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003003,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart field flood',chain"
+  SecRule &ARGS_POST "@gt 400" "t:none"
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003004,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart file flood',chain"
+  SecRule &FILES "@gt 100" "t:none"
+SecRule ARGS_NAMES "@rx (?:\[[^\]]*\]){16}" "id:1003005,phase:2,deny,status:403,log,msg:'opanel blocked php2shell nested field name'"
+SecRule ARGS_NAMES "@gt 1024" "id:1003006,phase:2,t:none,t:length,deny,status:403,log,msg:'opanel blocked php2shell oversized field name'"
+SecRule FILES "@rx (?i)<\?php|\|O:\d+:|[\x00-\x08\x0b\x0c\x0e-\x1f]" "id:1003007,phase:2,deny,status:403,log,msg:'opanel blocked php2shell upload file name'"
 RULES
 }
 

@@ -1446,6 +1446,16 @@ SecRule REQUEST_URI "@rx (?i)(?:/wp-config\.php(?:\.|$|[?])|/wp-content/(?:uploa
 SecRule REQUEST_URI "@rx (?i)/xmlrpc\.php(?:$|[?/;%#])" "id:1001102,phase:1,t:none,t:urlDecodeUni,deny,status:403,log,msg:'opanel blocked WordPress XML-RPC access'"
 SecRule ARGS:author "@rx ^[0-9]+$" "id:1001103,phase:2,deny,status:403,log,msg:'opanel blocked WordPress author enumeration'"
 SecRule REQUEST_URI "@rx (?i)(?:/wp-admin/install\.php(?:$|[?])|/wp-admin/setup-config\.php(?:$|[?]))" "id:1001104,phase:1,deny,status:403,log,msg:'opanel blocked WordPress installer probe'"
+# php2shell (CVE-2026-109618/109619/115560): see waf.py's php2shell group.
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*(?:multipart/form-data|application/x-www-form-urlencoded)" "id:1003001,phase:1,pass,nolog,ctl:requestBodyAccess=On"
+SecRule ARGS_POST_NAMES "@rx (?i)^php_session_upload_progress$" "id:1003002,phase:2,deny,status:403,log,msg:'opanel blocked php2shell upload progress field'"
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003003,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart field flood',chain"
+  SecRule &ARGS_POST "@gt 400" "t:none"
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003004,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart file flood',chain"
+  SecRule &FILES "@gt 100" "t:none"
+SecRule ARGS_NAMES "@rx (?:\[[^\]]*\]){16}" "id:1003005,phase:2,deny,status:403,log,msg:'opanel blocked php2shell nested field name'"
+SecRule ARGS_NAMES "@gt 1024" "id:1003006,phase:2,t:none,t:length,deny,status:403,log,msg:'opanel blocked php2shell oversized field name'"
+SecRule FILES "@rx (?i)<\?php|\|O:\d+:|[\x00-\x08\x0b\x0c\x0e-\x1f]" "id:1003007,phase:2,deny,status:403,log,msg:'opanel blocked php2shell upload file name'"
 RULES
 }
 
@@ -2623,6 +2633,7 @@ install_php_version() {
   apt-get install -y "${available_packages[@]}" || { echo "Failed to install LSPHP $version"; return 1; }
   ini_dir="/usr/local/lsws/lsphp${lsphp_ver}/etc/php/${version}/mods-available"
   install -d -o root -g root -m 0755 "$ini_dir"
+  ensure_php2shell_ini >/dev/null || true
   cat >"${ini_dir}/99-opanel.ini" <<INI
 upload_max_filesize = 1024M
 post_max_size = 1024M
@@ -4206,6 +4217,39 @@ ensure_php_revalidate_freq() {
   if (( changed > 0 )); then
     restart_openlitespeed 2>/dev/null || true
     echo "PHP: OPcache now re-checks files every 10 seconds (${changed} file(s))"
+  fi
+}
+
+# php2shell (CVE-2026-109619, and CVE-2026-115560): PHP's own mitigation is
+# session upload progress off - it runs while PHP parses a request, before any
+# script and without session_start() - and on 8.5 fatal error backtraces off
+# too. Patched branches (8.2.35, 8.3.36, 8.4.27, 8.5.12) do not need it;
+# 7.4-8.1 get no release from PHP (operator, 2026-10-24: "các bản php cũ không
+# được cập nhật bản vá"). Every lsphp gets it; each vhost also sets it as
+# php_admin_value, so a site's .user.ini or .htaccess cannot turn it back on.
+# No WordPress uses upload progress.
+ensure_php2shell_ini() {
+  local dir ver ini tmp changed=0
+  for dir in /usr/local/lsws/lsphp*/etc/php/*/mods-available; do
+    [[ -d "$dir" ]] || continue
+    ver="$(basename "$(dirname "$dir")")"
+    ini="$dir/97-opanel-php2shell.ini"
+    tmp="$(mktemp)"
+    {
+      echo "; Managed by OPanel: php2shell mitigation (CVE-2026-109619, CVE-2026-115560)."
+      echo "session.upload_progress.enabled = 0"
+      [[ "$ver" == 8.5 || "$ver" > 8.5 ]] && echo "fatal_error_backtraces = 0"
+    } >"$tmp"
+    if ! cmp -s "$tmp" "$ini"; then
+      install -m 0644 -o root -g root "$tmp" "$ini"
+      changed=$((changed + 1))
+    fi
+    rm -f "$tmp"
+  done
+  if (( changed > 0 )); then
+    # New PHP workers read it; the running ones have to go.
+    restart_openlitespeed 2>/dev/null || true
+    echo "PHP: session upload progress off for php2shell (${changed} version(s))"
   fi
 }
 
@@ -9267,6 +9311,7 @@ PY
     ensure_ols_long_expires
     ensure_php_jit_disabled
     ensure_php_revalidate_freq
+    ensure_php2shell_ini
     ensure_php_file_cache_all
     ensure_network_tuning
     ensure_no_release_upgrade_prompt

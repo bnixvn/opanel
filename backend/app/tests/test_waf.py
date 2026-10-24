@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from pathlib import Path
 
@@ -100,10 +102,20 @@ def test_wordpress_wp2shell_rules_block_batch_paths():
 
 
 def test_default_rules_do_not_scan_request_body_or_headers():
-    content = waf.render_site_rules("example.com", [rule["id"] for rule in waf.DEFAULT_RULES])
+    content = waf.render_site_rules("example.com", [rule["id"] for rule in waf.DEFAULT_RULES if rule["id"] != "php2shell"])
 
     assert "REQUEST_BODY" not in content
     assert "REQUEST_HEADERS" not in content
+
+
+def test_php2shell_reads_only_form_fields_and_the_content_type():
+    """The one group that reads bodies (2026-10-24): parsed form field names,
+    counts and upload file names - never the raw body - and of the headers
+    only Content-Type, to pick the form POSTs."""
+    content = waf.render_site_rules("example.com", ["php2shell"])
+    assert "REQUEST_BODY" not in content
+    assert set(re.findall(r"REQUEST_HEADERS:[\w-]+", content)) == {"REQUEST_HEADERS:Content-Type"}
+    assert "ctl:requestBodyAccess=On" in content
 
 
 def test_unknown_rule_ids_are_rejected():
