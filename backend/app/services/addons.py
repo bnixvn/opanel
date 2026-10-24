@@ -68,6 +68,35 @@ ADDONS: dict[str, dict] = {
             "suggested there so a misconfiguration cannot lock you out.",
         ],
     },
+    "sharedblocklist": {
+        "id": "sharedblocklist",
+        "name": "Shared blocklist",
+        "summary": "Reports attackers to the BNIX shared list and blocks the addresses other servers reported.",
+        "description": (
+            "This server sends the addresses its Fail2ban jails banned and its "
+            "WAF denied on rules only an attack trips (php2shell, wp2shell, "
+            "probes for .env, .git, keys and webshells) to blocklist.bnix.io.vn, "
+            "and blocks at its firewall every address that at least two other "
+            "approved servers reported within a week. A server's reports count "
+            "once the operator approves it on the collector. Cloudflare, the "
+            "Google and Bing crawlers, private ranges and the reporting servers "
+            "themselves are never listed."
+        ),
+        "category": "security",
+        "version": "1",
+        # Panel code plus a firewall URL list and a WAF audit log, which the
+        # minute tick sets up and takes down (shared_blocklist.reconcile).
+        "kind": "panel",
+        "packages": [],
+        "service": "",
+        "features": ["shared_blocklist"],
+        "notes": [
+            "Sent: an address, the jail or WAF rule id, nothing else - no URL, "
+            "no request, no site name.",
+            "The list is read again every hour. Removing the addon takes the "
+            "list off the firewall and forgets this server's key.",
+        ],
+    },
     "mcp": {
         "id": "mcp",
         "name": "MCP server",
@@ -782,6 +811,15 @@ def _after_lifecycle(addon_id: str, action: str) -> None:
         _update_state(addon_id, last_error=f"Installed, but the mailboxes could not be written out: {exc}")
 
 
+def _panel_addon_changed(addon_id: str) -> None:
+    """A panel addon that leaves things on the box sets them up or takes them
+    down now, rather than at the next minute tick."""
+    if addon_id == "sharedblocklist":
+        from app.services import shared_blocklist
+
+        shared_blocklist.reconcile_in_background()
+
+
 def _background_call(addon_id: str, action: str, work) -> None:
     """_background for an addon whose work is panel code, not a helper call."""
     def worker() -> None:
@@ -813,6 +851,7 @@ def install(addon_id: str, actor: str = "") -> dict:
     if _is_panel_addon(definition):
         _update_state(addon_id, installed=True, running=True, last_error="", installed_by=actor,
                       installed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        _panel_addon_changed(addon_id)
         return status(addon_id)
     if _is_managed(definition):
         _update_state(addon_id, busy=True, busy_action="install", last_error="", installed_by=actor)
@@ -833,6 +872,7 @@ def uninstall(addon_id: str, actor: str = "") -> dict:
     if _is_panel_addon(definition):
         _update_state(addon_id, installed=False, running=False, last_error="",
                       installed_at="", installed_by="")
+        _panel_addon_changed(addon_id)
         return status(addon_id)
     if _is_managed(definition):
         _malware_stop()
@@ -852,6 +892,7 @@ def set_running(addon_id: str, running: bool) -> dict:
         raise ValueError(f"{definition['name']} is not installed")
     if _is_panel_addon(definition):
         _update_state(addon_id, running=bool(running))
+        _panel_addon_changed(addon_id)
         return status(addon_id)
     if _is_managed(definition):
         if running:

@@ -1411,7 +1411,116 @@ write_modsec_base_conf() {
     echo "SecRequestBodyLimit 134217728"
     echo "SecRequestBodyNoFilesLimit 1048576"
     echo "SecRequestBodyLimitAction ProcessPartial"
+    # Every site's rules include this file, so the audit log the Shared
+    # blocklist addon reads is switched on and off here, for all of them.
+    [[ -f "$SHARED_BLOCKLIST_AUDIT_CONF" ]] && echo "Include $SHARED_BLOCKLIST_AUDIT_CONF"
   } >/usr/local/lsws/conf/opanel/waf/opanel-base.conf
+}
+
+# ---------------------------------------------------------------------------
+# Shared blocklist addon (backend: services/shared_blocklist.py)
+# ---------------------------------------------------------------------------
+# OpenLiteSpeed writes a ModSecurity denial to its own log only at INFO
+# level, so the addon turns on an audit log of denied requests instead:
+# parts A (time, client) and H (the rule) only - no headers, no bodies, no
+# cookies of anyone's request.
+SHARED_BLOCKLIST_AUDIT_CONF=/usr/local/lsws/conf/opanel/waf/opanel-audit.conf
+SHARED_BLOCKLIST_AUDIT_DIR=/var/log/opanel-waf
+
+shared_blocklist_waf_audit() {
+  case "${1:-}" in
+    on)
+      install -d -o root -g root -m 0750 "$SHARED_BLOCKLIST_AUDIT_DIR"
+      cat >"$SHARED_BLOCKLIST_AUDIT_CONF" <<CONF
+# Shared blocklist addon: denied requests, so their address and rule can be
+# reported. Parts A and H only.
+SecAuditEngine RelevantOnly
+SecAuditLogRelevantStatus "^403\$"
+SecAuditLogParts AHZ
+SecAuditLogType Serial
+SecAuditLog $SHARED_BLOCKLIST_AUDIT_DIR/audit.log
+CONF
+      cat >/etc/logrotate.d/opanel-waf <<CONF
+$SHARED_BLOCKLIST_AUDIT_DIR/audit.log {
+  daily
+  rotate 2
+  maxsize 50M
+  missingok
+  notifempty
+  compress
+  copytruncate
+}
+CONF
+      ;;
+    off)
+      [[ -f "$SHARED_BLOCKLIST_AUDIT_CONF" || -d "$SHARED_BLOCKLIST_AUDIT_DIR" ]] || return 0
+      rm -f "$SHARED_BLOCKLIST_AUDIT_CONF" /etc/logrotate.d/opanel-waf
+      rm -rf -- "$SHARED_BLOCKLIST_AUDIT_DIR"
+      ;;
+    *) deny "usage: shared-blocklist-waf-audit on|off" ;;
+  esac
+  write_modsec_base_conf
+  restart_openlitespeed
+  echo "WAF audit log ${1}"
+}
+
+# What this server saw after <since> (unix time), one "time<TAB>source<TAB>ip"
+# a line: Fail2ban bans from its database, and WAF denials on the rules only
+# an attack trips (php2shell, wp2shell, .env/.git/key/webshell probes,
+# Ignition RCE) - never SQL/XSS heuristics or bad bots, which a real visitor
+# can trip.
+shared_blocklist_events() {
+  local since="${1:-}"
+  [[ "$since" =~ ^[0-9]{1,12}$ ]] || deny "usage: shared-blocklist-events <unix-time>"
+  python3 - "$since" "$SHARED_BLOCKLIST_AUDIT_DIR/audit.log" /var/lib/fail2ban/fail2ban.sqlite3 <<'PY'
+import ipaddress, os, re, sqlite3, sys
+from datetime import datetime
+
+since, audit, db = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+WAF_IDS = {"1000001", "1000002", "1001202", "1001301", "1001303", "1001401",
+           "1003002", "1003003", "1003004", "1003005", "1003006", "1003007"}
+rows = []
+
+if os.path.exists(db):
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        for jail, ip, at in conn.execute(
+                "SELECT jail, ip, timeofban FROM bans WHERE timeofban > ? ORDER BY timeofban LIMIT 5000", (since,)):
+            rows.append((int(at), f"fail2ban:{jail}", ip))
+    except sqlite3.Error as exc:
+        print(f"fail2ban: {exc}", file=sys.stderr)
+
+if os.path.exists(audit) and os.path.getmtime(audit) > since:
+    with open(audit, "rb") as handle:
+        size = os.path.getsize(audit)
+        handle.seek(max(0, size - 8 * 1024 * 1024))
+        text = handle.read().decode("utf-8", "replace")
+    head = re.compile(r"^\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\] \S+ (\S+) ")
+    rule = re.compile(r'\[id "(\d+)"\]')
+    at = ip = None
+    for line in text.splitlines():
+        match = head.match(line)
+        if match:
+            try:
+                at = int(datetime.strptime(match.group(1), "%d/%b/%Y:%H:%M:%S %z").timestamp())
+            except ValueError:
+                at = None
+            ip = match.group(2)
+            continue
+        if at and ip and at > since and "Access denied" in line:
+            found = rule.search(line)
+            if found and found.group(1) in WAF_IDS:
+                rows.append((at, f"waf:{found.group(1)}", ip))
+                at = None
+
+for at, source, ip in rows[-5000:]:
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        continue
+    if address.is_global:
+        print(f"{at}\t{source}\t{address}")
+PY
 }
 
 write_modsec_main_conf() {
@@ -9594,6 +9703,14 @@ PY
   firewall-blocklist-delete|iptables-blocklist-delete|blocklist-delete|nginx-blocklist-delete)
     [[ $# -eq 1 ]] || deny "usage: firewall-blocklist-delete <url>"
     firewall_blocklist_delete_url "$1"
+    ;;
+  shared-blocklist-events)
+    [[ $# -eq 1 ]] || deny "usage: shared-blocklist-events <unix-time>"
+    shared_blocklist_events "$1"
+    ;;
+  shared-blocklist-waf-audit)
+    [[ $# -eq 1 ]] || deny "usage: shared-blocklist-waf-audit on|off"
+    shared_blocklist_waf_audit "$1"
     ;;
   firewall-blocklist-run|iptables-blocklist-run|blocklist-run|nginx-blocklist-run)
     [[ $# -eq 0 ]] || deny "usage: firewall-blocklist-run"

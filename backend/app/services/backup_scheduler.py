@@ -372,3 +372,11 @@ if __name__ == "__main__":
             print(f"opanel PHP workers re-rendered: {', '.join(changed)}")
     except Exception as exc:  # noqa: BLE001
         print(f"opanel PHP workers tick failed: {exc}")
+    # Shared blocklist: report, read the list, or take it all down once the
+    # addon is off (a file read and nothing else while it never was on).
+    try:
+        from app.services import shared_blocklist
+
+        shared_blocklist.tick()
+    except Exception as exc:  # noqa: BLE001
+        print(f"opanel shared blocklist tick failed: {exc}")

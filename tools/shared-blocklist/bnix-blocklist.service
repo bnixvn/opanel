@@ -1,0 +1,29 @@
+[Unit]
+Description=BNIX shared blocklist collector (blocklist.bnix.io.vn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bnix-blocklist
+Group=bnix-blocklist
+ExecStart=/usr/bin/python3 /opt/bnix-blocklist/collector.py
+Environment=BLOCKLIST_LISTEN=127.0.0.1:8790
+Environment=BLOCKLIST_DATA=/var/lib/bnix-blocklist
+Restart=always
+RestartSec=5
+# The host is the GitLab server and short of memory.
+MemoryMax=192M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/bnix-blocklist
+ReadOnlyPaths=/etc/bnix-blocklist
+
+[Install]
+WantedBy=multi-user.target

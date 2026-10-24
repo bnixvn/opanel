@@ -106,6 +106,23 @@ def get_fail2ban_log(lines: int = 40, current_user: User = Depends(get_current_u
 # ---------------------------------------------------------------------------
 # The catalog
 # ---------------------------------------------------------------------------
+@router.get("/sharedblocklist/status")
+def get_shared_blocklist(current_user: User = Depends(get_current_user)):
+    _admin(current_user)
+    from app.services import shared_blocklist
+
+    return shared_blocklist.status()
+
+
+@router.post("/sharedblocklist/check")
+def check_shared_blocklist(current_user: User = Depends(get_current_user)):
+    """Ask the collector whether this server was approved, now."""
+    _admin(current_user)
+    from app.services import shared_blocklist
+
+    return shared_blocklist.check_now()
+
+
 @router.get("")
 def list_addons(current_user: User = Depends(get_current_user)):
     _admin(current_user)

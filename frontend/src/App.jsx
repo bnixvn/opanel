@@ -23,6 +23,7 @@ import { UsageChart } from './components/UsageChart';
 import './pages/AccountResources.css';
 import HubTabs from './components/HubTabs';
 import { ChangelogHistory, ChangelogPreview } from './components/Changelog.jsx';
+import { SharedBlocklistSection } from './components/SharedBlocklist.jsx';
 import PageHeader from './components/PageHeader';
 import Drawer from './components/Drawer.jsx';
 import DashboardPage from './pages/Dashboard';
@@ -8180,6 +8181,7 @@ function App() {
       </section>
       </div>
       {renderFirewallFail2ban()}
+      <SharedBlocklistSection request={request} t={tr}/>
       <section className="section">
         <div className="section-title">
           <div><h2>{tr("Blocklist URLs")}</h2><p className="hint">{tr("TXT files are fetched daily at 01:00 and enforced by ipset, so large lists do not create thousands of firewall rules.")}</p></div>
