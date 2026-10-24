@@ -1,0 +1,25 @@
+.changelog-release{border:1px solid var(--border);border-radius:8px;background:var(--surface);margin-top:10px}
+.changelog-release>summary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;cursor:pointer;list-style-position:inside}
+.changelog-release[open]>summary{border-bottom:1px solid var(--border)}
+.changelog-date{color:var(--text-muted);font-size:13px}
+.changelog-link{margin-left:auto;display:inline-flex;color:var(--primary-ink)}
+.changelog-notes{padding:4px 16px 12px}
+.changelog-pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:14px}
+
+.markdown{line-height:1.6;overflow-wrap:anywhere}
+.markdown h3,.markdown h4,.markdown h5,.markdown h6{margin:14px 0 6px;line-height:1.35}
+.markdown h3{font-size:17px}
+.markdown h4{font-size:15px}
+.markdown h5,.markdown h6{font-size:14px}
+.markdown p{margin:6px 0}
+.markdown ul,.markdown ol{margin:6px 0;padding-left:22px}
+.markdown li{margin:2px 0}
+.markdown code{background:var(--surface-muted);border-radius:4px;padding:1px 5px;font-size:.92em}
+.markdown pre{background:var(--surface-muted);border-radius:6px;padding:10px 12px;overflow-x:auto;margin:8px 0}
+.markdown pre code{background:none;padding:0}
+.markdown blockquote{margin:8px 0;padding:4px 12px;border-left:3px solid var(--border-hover);color:var(--text-muted)}
+.markdown a{color:var(--primary-ink)}
+.markdown-table{overflow-x:auto;margin:8px 0}
+.markdown table{border-collapse:collapse;font-size:14px}
+.markdown th,.markdown td{border:1px solid var(--border);padding:5px 10px;text-align:left}
+.markdown th{background:var(--surface-alt)}

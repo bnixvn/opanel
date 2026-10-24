@@ -4,7 +4,7 @@ from app.api.deps import get_current_user
 from app.core.permissions import Role, ensure_role
 from app.models.entities import User
 from app.schemas.schemas import PanelAutoUpdateConfig, ServiceUpdateRun, SystemAutoUpdateConfig
-from app.services import service_versions, updates
+from app.services import changelog, service_versions, updates
 
 router = APIRouter(prefix="/updates", tags=["updates"])
 
@@ -13,6 +13,14 @@ router = APIRouter(prefix="/updates", tags=["updates"])
 def get_update_status(refresh: bool = Query(default=False), current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
     return updates.status(force_refresh=refresh)
+
+
+@router.get("/changelog")
+def get_changelog(page: int = Query(default=1, ge=1), per_page: int = Query(default=10, ge=1, le=50),
+                  newer: bool = Query(default=False), refresh: bool = Query(default=False),
+                  current_user: User = Depends(get_current_user)):
+    ensure_role(current_user.role, Role.admin)
+    return changelog.page(page=page, per_page=per_page, newer_only=newer, refresh=refresh)
 
 
 @router.post("/os/run")
