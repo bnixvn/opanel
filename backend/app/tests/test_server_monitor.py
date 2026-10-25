@@ -91,19 +91,25 @@ def test_traffic_reads_each_interface_but_lo(tmp_path, monkeypatch):
                                      "tx_bytes": 81000, "tx_packets": 300, "tx_errors": 0}]
 
 
-def test_the_top_bar_has_the_language_theme_and_account_as_snpanel():
-    # Operator, 2026-10-17: laid out as SNPanel. The server's figures leave the
-    # top bar for the Dashboard; the account menu moves up from the sidebar.
-    assert "{isAdmin && renderTopStats()}" not in APP
-    assert '<div className="sidebar-foot">' not in APP
-    assert "renderLanguageToggle('top-tool')" in APP and '<div className="user-menu top-user" ref={userMenuRef}>' in APP
+def test_the_top_bar_has_the_figures_bell_and_account_the_sidebar_foot_the_rest():
+    # Operator, 2026-10-25 (after 2026-10-17's SNPanel layout): CPU, RAM and
+    # disk are back in the top bar beside the bell and the account; the
+    # language, the theme and the version sit in one row at the sidebar's foot.
+    top = APP.split('<div className="top-actions">', 1)[1].split("<PanelContext.Provider", 1)[0]
+    assert "{isAdmin && renderTopStats()}" in top
+    assert '<div className="user-menu top-user" ref={userMenuRef}>' in APP
+    foot = APP.split('<div className="sidebar-foot">', 1)[1].split("</div>", 1)[0]
+    assert "renderLanguageToggle('sidebar-tool')" in foot and "toggleTheme" in foot
     for route in ("processes: '/processes'", "ramUsage: '/ram-usage'", "diskUsage: '/disk-usage'", "traffic: '/traffic'"):
         assert route in APP, route
 
 
 def test_the_version_opens_updates_and_marks_a_waiting_release():
     assert "const panelWaiting = isAdmin && resourceUsage?.panel_update?.update_available === true;" in APP
-    assert "user-menu-version-item${panelWaiting ? ' has-update' : ''}" in APP and "navigateToPage('updates'); }}>" in APP
+    # At the sidebar's foot now, not in the account menu.
+    foot = APP.split('<div className="sidebar-foot">', 1)[1].split("</div>", 1)[0]
+    assert "sidebar-version${panelWaiting ? ' has-update' : ''}" in foot and "navigateToPage('updates')" in foot
+    assert "user-menu-version-item" not in APP
     # Operator, 2026-10-18: an end user must not see the panel's version or
     # whether an update is waiting, not even the plain version number.
     assert "appVersion && isAdmin &&" in APP
