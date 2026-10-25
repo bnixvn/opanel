@@ -94,6 +94,10 @@ class Website(Base):
     open_basedir: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # The site's own rewrite rules and response headers (openlitespeed.parse_custom_rules).
     custom_rules: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Set when app_type is "proxy": the http(s) address OpenLiteSpeed forwards
+    # to, and whether the visitor's Host goes with it (openlitespeed.validate_proxy_url).
+    proxy_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    proxy_preserve_host: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
     app_type: Mapped[str] = mapped_column(String(32), default="wordpress")
     ssl_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

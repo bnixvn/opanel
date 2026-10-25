@@ -33,7 +33,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "openlites
 # Constants
 # ---------------------------------------------------------------------------
 ALLOWED_PHP_VERSIONS = {"5.6", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"}
-ALLOWED_APP_TYPES = {"wordpress", "php", "static"}
+ALLOWED_APP_TYPES = {"wordpress", "php", "static", "proxy"}
 ALLOWED_REWRITE_MODES = {"none", "front_controller", "laravel", "codeigniter", "seohburl"}
 ALLOWED_LOG_KINDS = {"access", "error"}
 DOMAIN_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+")
@@ -551,6 +551,81 @@ def _php_open_basedir(root_path: str, session_dir: str, upload_dir: str) -> str:
     return ":".join(parts)
 
 
+# What an upstream may look like: scheme, host (a name, IPv4 or [IPv6]), an
+# optional port and path. Nothing LiteSpeed would read as syntax - no spaces,
+# quotes, ;, {}, $ or % - since it lands in an external app and a rewrite rule.
+PROXY_URL_RE = re.compile(
+    r"^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
+    r"|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~!*'()+,=:@/-]*)?$"
+)
+
+
+def validate_proxy_url(url: str | None, allow_private: bool = True) -> str:
+    """The address a "proxy" website forwards to.
+
+    allow_private=False is a customer's: only an address that resolves to the
+    public internet. A customer pointing a domain at 127.0.0.1 or the LAN
+    would publish what the server keeps to itself - the panel's API, Rspamd,
+    another customer's PHP.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+
+    value = (url or "").strip()
+    if not value:
+        raise ValueError("Enter the address to proxy to, for example http://127.0.0.1:3000")
+    if len(value) > 500 or not PROXY_URL_RE.fullmatch(value):
+        raise ValueError("Not a proxy address: use http:// or https://, a host, an optional :port and path")
+    parts = urlsplit(value)
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError("The port must be between 1 and 65535") from exc
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("The port must be between 1 and 65535")
+    host = (parts.hostname or "").strip("[]").lower()
+    if not host:
+        raise ValueError("The proxy address has no host")
+    if not allow_private:
+        if host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".lan")):
+            raise ValueError("Only an administrator can proxy to this server or a private network")
+        try:
+            addresses = {ipaddress.ip_address(host)}
+        except ValueError:
+            try:
+                infos = socket.getaddrinfo(host, port or (443 if parts.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+            except OSError as exc:
+                raise ValueError(f"{host} does not resolve") from exc
+            addresses = {ipaddress.ip_address(info[4][0]) for info in infos}
+        if not addresses or any(not address.is_global for address in addresses):
+            raise ValueError("Only an administrator can proxy to this server or a private network")
+    return value
+
+
+def _proxy_context(domain: str, proxy_url: str, preserve_host: bool) -> dict:
+    """The external app and rewrite target a proxy vhost needs."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(proxy_url)
+    host = parts.hostname or ""
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    hostport = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+    return {
+        "proxy_url": proxy_url,
+        "proxy_app": "opanel_proxy_" + re.sub(r"[^a-z0-9]+", "_", domain.lower()).strip("_"),
+        # An https upstream is named with its scheme; LiteSpeed speaks TLS to it.
+        "proxy_address": f"https://{hostport}" if parts.scheme == "https" else hostport,
+        "proxy_path": (parts.path or "").rstrip("/"),
+        "proxy_preserve_host": bool(preserve_host),
+        # The upstream's own name when the visitor's is not sent.
+        "proxy_host": host if port in (80, 443) else f"{host}:{port}",
+        # WebSocket upgrades go straight to a plain upstream - with the
+        # visitor's path as it is, so only where the address has none.
+        "proxy_ws_address": hostport if parts.scheme == "http" and not (parts.path or "").strip("/") else "",
+    }
+
+
 def _build_context(
     domain: str,
     root_path: str,
@@ -572,12 +647,18 @@ def _build_context(
     lscache: bool = True,
     custom_rules: str = "",
     open_basedir: bool = False,
+    proxy_url: str | None = None,
+    proxy_preserve_host: bool = True,
 ) -> dict:
     """Build the template context for vhost rendering."""
     custom_rewrites, custom_headers = parse_custom_rules(custom_rules)
     safe_domain = _safe_domain(domain)
     checked_app = _check_app_type(app_type)
-    checked_php = _check_php_version(php_version) if checked_app != "static" else None
+    checked_php = _check_php_version(php_version) if checked_app not in {"static", "proxy"} else None
+    # Who may name a private address is the caller's to check; here only that
+    # it is an address LiteSpeed can take.
+    proxy = (_proxy_context(safe_domain, validate_proxy_url(proxy_url), proxy_preserve_host)
+             if checked_app == "proxy" else {})
     checked_rewrite = _check_rewrite_mode(rewrite_mode)
     safe_doc_root = _effective_document_root(document_root, checked_rewrite)
     safe_aliases = _safe_alias_domains(aliases)
@@ -587,7 +668,7 @@ def _build_context(
     lsphp_app = ""
     lsphp_path = ""
     lsphp_socket = ""
-    if checked_php and checked_app != "static":
+    if checked_php and checked_app not in {"static", "proxy"}:
         lsphp_app = _lsphp_listener_name(checked_php)
         lsphp_path = _lsphp_binary(checked_php)
         lsphp_socket = lsphp_socket_override or f"/tmp/lshttpd/{lsphp_app}.sock"
@@ -604,7 +685,7 @@ def _build_context(
     # all. The folder's rule goes first: in `context /` beside the website's own
     # WordPress rules, at vhost scope beside the other front controllers.
     wp_folder_rules = ""
-    if checked_app != "static":
+    if checked_app not in {"static", "proxy"}:
         folder_rules = _wordpress_folder_rules(_wordpress_folders(root_path, safe_doc_root))
         if checked_app == "wordpress":
             wp_folder_rules = folder_rules
@@ -700,6 +781,7 @@ def _build_context(
         # Per account, not per site, and no more than the CPU and the memory
         # can run: see php_workers.
         "php_workers": _php_workers(safe_domain) if lsphp_app else 0,
+        **proxy,
     }
 
 
@@ -751,6 +833,8 @@ def render_vhost(
     lscache: bool = True,
     custom_rules: str = "",
     open_basedir: bool = False,
+    proxy_url: str | None = None,
+    proxy_preserve_host: bool = True,
 ) -> str:
     """Render an OLS vhost config from the template."""
     ctx = _build_context(
@@ -772,6 +856,8 @@ def render_vhost(
         lscache=lscache,
         custom_rules=custom_rules,
         open_basedir=open_basedir,
+        proxy_url=proxy_url,
+        proxy_preserve_host=proxy_preserve_host,
     )
     env = _get_jinja_env()
     template_name = f"{ctx['app_type']}.conf.j2"
@@ -966,7 +1052,10 @@ def _rewrite_existing_vhost(domain: str, **overrides) -> str:
     existing = read_vhost_config(safe_domain)
     root_path, document_root = _config_document_root(existing)
     php_version = _php_version_from_config(existing)
-    if "# Static site: no PHP processor needed" in existing:
+    proxy_target = _first_match(r"(?m)^# OPANEL PROXY TARGET: (\S+)\s*$", existing)
+    if proxy_target:
+        app_type = "proxy"
+    elif "# Static site: no PHP processor needed" in existing:
         app_type = "static"
     else:
         app_type = "wordpress" if "wp-admin" in existing or "wp-content" in existing else "php"
@@ -993,6 +1082,9 @@ def _rewrite_existing_vhost(domain: str, **overrides) -> str:
         "lscache": not re.search(r"(?s)# OPANEL LSCACHE BEGIN.*?ls_enabled\s+0", existing),
         "linux_user": _first_match(r"(?m)^\s*extUser\s+(.+?)\s*$", existing) or "www-data",
     }
+    if proxy_target:
+        kwargs.update(proxy_url=proxy_target,
+                      proxy_preserve_host="# OPANEL PROXY HOST: upstream" not in existing)
     cert_path = _first_match(r"(?m)^\s*certFile\s+(.+?)\s*$", existing)
     key_path = _first_match(r"(?m)^\s*keyFile\s+(.+?)\s*$", existing)
     ca_path = _first_match(r"(?m)^\s*CACertFile\s+(.+?)\s*$", existing)

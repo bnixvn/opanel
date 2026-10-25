@@ -1193,3 +1193,31 @@ button svg,.button-link svg,.upload-button svg{flex:none}
   .web-terminal-screen{height:60vh;padding:4px}
   .web-terminal-where{flex-basis:100%;order:3}
 }
+
+/* Top bar: CPU, RAM and disk, each opening its page (operator, 2026-10-25). */
+.top-stats{display:flex;align-items:center;gap:6px}
+.top-stat{display:inline-flex;align-items:center;gap:6px;height:32px;min-height:32px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;box-shadow:none;cursor:pointer}
+.top-stat:hover{border-color:var(--border-hover);background:var(--surface-hover)}
+.top-stat.active{border-color:var(--primary)}
+.top-stat .top-stat-label{color:var(--text-muted);font-weight:600}
+.top-stat b{font-variant-numeric:tabular-nums}
+.top-stat.tone-warn b{color:var(--warning-text)}
+.top-stat.tone-bad b{color:var(--danger-text)}
+@media (max-width:1100px){.top-stat .top-stat-label{display:none}}
+@media (max-width:640px){.top-stats{display:none}}
+
+/* Sidebar foot: language, theme and version in one row, on the navy. The
+   shared `.sidebar button` paints sidebar buttons full-width and light on
+   hover; these keep the sidebar's own colours. */
+.sidebar{display:flex;flex-direction:column}
+.sidebar-nav{flex:1 1 auto;overflow-y:auto}
+.sidebar-foot{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;padding:12px 14px;border-top:1px solid var(--nav-border)}
+.sidebar .sidebar-foot button{width:auto;justify-content:center}
+.sidebar .sidebar-foot .sidebar-tool{width:34px;min-width:34px;height:34px;min-height:34px;padding:0;flex:none;display:inline-grid;place-items:center;background:transparent;color:var(--nav-text);border:1px solid var(--nav-border);border-radius:var(--radius-sm);box-shadow:none;font-size:12px;font-weight:700;letter-spacing:.04em}
+.sidebar .sidebar-foot .sidebar-tool svg{width:15px;height:15px}
+.sidebar .sidebar-foot .sidebar-version{position:relative;flex:1 1 auto;min-width:0;justify-content:flex-end;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none;border:0;box-shadow:none;padding:4px 10px 4px 2px;min-height:0;height:auto;color:var(--nav-text);font-size:12px;font-weight:600}
+.sidebar .sidebar-foot button:hover:not(.active):not(:disabled){background:var(--nav-hover);color:var(--nav-text-strong);border-color:var(--nav-border)}
+.sidebar .sidebar-foot .sidebar-version:hover:not(.active):not(:disabled){background:none;text-decoration:underline}
+.sidebar-version-dot{position:absolute;top:4px;right:0;width:7px;height:7px;border-radius:50%;background:var(--warning, #f6c431)}
+/* The Dashboard's server card keeps the network only: one figure, its width. */
+.cp-side .dash-figures{grid-template-columns:1fr}

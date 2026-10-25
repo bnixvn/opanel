@@ -68,7 +68,7 @@ export default function WebsiteDetailPage() {
     { id: 'domains', label: t('Domains'), icon: Globe, badge: (site.aliases || []).length || undefined },
     { id: 'ssl', label: 'SSL', icon: Lock },
     { id: 'php', label: 'PHP', icon: Code2 },
-    { id: 'cache', label: t('Cache'), icon: Gauge, hidden: site.app_type === 'static' },
+    { id: 'cache', label: t('Cache'), icon: Gauge, hidden: site.app_type === 'static' || site.app_type === 'proxy' },
     { id: 'security', label: t('Security'), icon: ShieldCheck },
     { id: 'logs', label: t('Logs'), icon: FileText },
     { id: 'advanced', label: t('Advanced'), icon: SlidersHorizontal },
@@ -85,7 +85,8 @@ export default function WebsiteDetailPage() {
   }
   const owner = ownerOf(site);
   const facts = [siteTypeLabel(site, t)];
-  if (site.app_type !== 'static') facts.push(`PHP ${site.php_version}`);
+  if (site.app_type !== 'static' && site.app_type !== 'proxy') facts.push(`PHP ${site.php_version}`);
+  if (site.app_type === 'proxy' && site.proxy_url) facts.push(`→ ${site.proxy_url}`);
   if (owner) facts.push(t('Owner: {name}', { name: owner }));
 
   return <>
@@ -122,7 +123,8 @@ function OverviewTab({ site, owner, goTab }) {
       <dl className="wsd-facts">
         <div><dt>{t('Address')}</dt><dd><a href={websiteUrl(site)} target="_blank" rel="noopener noreferrer">{websiteUrl(site)} <ExternalLink size={12} aria-hidden="true"/></a></dd></div>
         <div><dt>{t('Type')}</dt><dd>{siteTypeLabel(site, t)}</dd></div>
-        {site.app_type !== 'static' && <div><dt>{t('PHP version')}</dt><dd>{site.php_version}</dd></div>}
+        {site.app_type !== 'static' && site.app_type !== 'proxy' && <div><dt>{t('PHP version')}</dt><dd>{site.php_version}</dd></div>}
+        {site.app_type === 'proxy' && <div><dt>{t('Proxy to')}</dt><dd>{site.proxy_url}</dd></div>}
         {site.app_type === 'php' && rewrite && rewrite.value !== 'none' && <div><dt>{t('Rewrite rules')}</dt><dd>{rewrite.label}</dd></div>}
         {canManageUsers && <div><dt>{t('Owner')}</dt><dd>{owner || `#${site.owner_id}`}</dd></div>}
         {site.linux_user && <div><dt>{t('Linux user')}</dt><dd><code>{site.linux_user}</code></dd></div>}
@@ -153,7 +155,7 @@ function OverviewTab({ site, owner, goTab }) {
             <button type="button" className="secondary-light" disabled={!!loading} onClick={() => updateWordPressAll(site)}><RefreshCw size={14} aria-hidden="true"/> {t('Update WordPress (core + plugins + themes)')}</button>
           </div>
         </>
-        : site.app_type === 'static'
+        : site.app_type === 'static' || site.app_type === 'proxy'
           ? <p className="hint">{t('A static website runs no PHP, so WordPress cannot run here. Change the mode on the PHP tab first.')}</p>
           : <>
             <p className="hint">{t('No WordPress here yet.')}</p>
@@ -229,14 +231,14 @@ function PhpTab({ site }) {
   const t = useT();
   const {
     NGINX_REWRITE_MODES, loading, nginxCustomEditing, phpVersionOptions, phpVersions, saveWebsiteSettings, setWebsiteSettingsForm,
-    websiteConfigForm, websiteSettingsForm,
+    websiteConfigForm, websiteSettingsForm, isAdmin,
   } = usePanel();
   const ready = nginxCustomEditing?.id === site.id;
   const base = websiteConfigForm(ready ? nginxCustomEditing.site || site : site);
   const form = ready ? websiteSettingsForm : base;
   const appType = form.app_type || 'wordpress';
   const rewriteFixed = appType !== 'php';
-  const dirty = ready && ['app_type', 'php_version', 'nginx_rewrite_mode'].some((key) => String(form[key] ?? '') !== String(base[key] ?? ''));
+  const dirty = ready && ['app_type', 'php_version', 'nginx_rewrite_mode', 'proxy_url', 'proxy_preserve_host'].some((key) => String(form[key] ?? '') !== String(base[key] ?? ''));
   const set = (patch) => setWebsiteSettingsForm((prev) => ({ ...prev, ...patch }));
   return <section className="section">
     <PageHeader title={t('How the website runs')} subtitle={t('Managed settings rewrite the main vhost safely.')}/>
@@ -249,9 +251,16 @@ function PhpTab({ site }) {
           <option value="wordpress">{t('WordPress')}</option>
           <option value="php">{t('PHP')}</option>
           <option value="static">{t('Static')}</option>
+          <option value="proxy">{t('Proxy')}</option>
         </select>
       </Field>
-      {appType !== 'static' && <Field label={t('PHP version')}>
+      {appType === 'proxy' && <Field className="is-wide" label={t('Proxy to')} hint={isAdmin ? t('Any http:// or https:// address, this server included (http://127.0.0.1:3000).') : t('A public http:// or https:// address.')}>
+        <input value={form.proxy_url || ''} placeholder="http://127.0.0.1:3000" spellCheck={false} autoCapitalize="none"
+          disabled={!ready || !!loading} onChange={(e) => set({ proxy_url: e.target.value })}/>
+      </Field>}
+      {appType === 'proxy' && <label className="check-line"><input type="checkbox" checked={form.proxy_preserve_host !== false}
+        disabled={!ready || !!loading} onChange={(e) => set({ proxy_preserve_host: e.target.checked })}/> {t("Send the visitor's Host header (off: the address's own)")}</label>}
+      {appType !== 'static' && appType !== 'proxy' && <Field label={t('PHP version')}>
         <select value={form.php_version} disabled={!ready || !!loading} onChange={(e) => set({ php_version: e.target.value })}>
           {phpVersionOptions(phpVersions.installed, form.php_version).map((v) => <option key={v} value={v}>PHP {v}</option>)}
         </select>
@@ -268,7 +277,7 @@ function PhpTab({ site }) {
       {dirty && <button type="button" className="secondary-light" disabled={!!loading} onClick={() => setWebsiteSettingsForm(base)}><RotateCcw size={14} aria-hidden="true"/> {t('Undo changes')}</button>}
       <button type="button" disabled={!ready || !dirty || !!loading} onClick={saveWebsiteSettings}><Save size={14} aria-hidden="true"/> {t('Save changes')}</button>
     </div>
-    {appType !== 'static' && <PhpFence site={site}/>}
+    {appType !== 'static' && appType !== 'proxy' && <PhpFence site={site}/>}
   </section>;
 }
 

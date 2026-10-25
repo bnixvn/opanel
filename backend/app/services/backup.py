@@ -448,6 +448,8 @@ def create_user_backup(user: User, db, filename: str | None = None,
                 "domain": website.domain,
                 "php_version": website.php_version,
                 "app_type": website.app_type or "wordpress",
+                "proxy_url": getattr(website, "proxy_url", "") or "",
+                "proxy_preserve_host": getattr(website, "proxy_preserve_host", True) is not False,
                 "status": website.status or "active",
                 "document_root": getattr(website, "document_root", "public_html") or "public_html",
                 "nginx_custom": website.nginx_custom or "",
@@ -1177,7 +1179,14 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
                 raise ValueError(f"Invalid domain in backup: {domain}")
             php_version = site_info.get("php_version") or settings.default_php_version
             app_type = site_info.get("app_type") or "wordpress"
-            if app_type not in {"wordpress", "php", "static"}:
+            proxy_url = ""
+            if app_type == "proxy":
+                # Restored by the administrator, who may name any address.
+                try:
+                    proxy_url = openlitespeed.validate_proxy_url(site_info.get("proxy_url"))
+                except ValueError:
+                    app_type = "static"
+            if app_type not in {"wordpress", "php", "static", "proxy"}:
                 app_type = "wordpress"
             nginx_rewrite_mode = site_info.get("nginx_rewrite_mode")
             if nginx_rewrite_mode not in {"none", "front_controller", "laravel", "codeigniter", "seohburl"}:
@@ -1359,12 +1368,16 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
                     website.ssl_mode = "none"
                     ssl_warnings.append(f"{domain}: {exc}")
 
+            website.proxy_url = proxy_url
+            website.proxy_preserve_host = site_info.get("proxy_preserve_host", True) is not False
             result = waf.sync_website_rules(website)
             if result.returncode != 0:
                 raise RuntimeError((result.stderr or result.stdout or "Could not write WAF rules").strip())
             openlitespeed.rewrite_vhost(
                 domain,
                 root_path,
+                proxy_url=proxy_url,
+                proxy_preserve_host=website.proxy_preserve_host,
                 app_type=app_type,
                 php_version=php_version,
                 custom_directives="",

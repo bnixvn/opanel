@@ -183,6 +183,14 @@ def _hostname_conflicts(db: Session, domain: str, *, exclude_website_id: int | N
     return bool({safe_domain, f"www.{safe_domain}"} & _reserved_hostnames(db, exclude_website_id=exclude_website_id, exclude_alias_id=exclude_alias_id))
 
 
+def _checked_proxy_url(url: str | None, current_user: User) -> str:
+    """A proxy website's address; a private one is the administrator's to name."""
+    try:
+        return openlitespeed.validate_proxy_url(url, allow_private=is_admin_role(current_user.role))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def _rewrite_website_vhost(website: Website, **overrides) -> str:
     app_type = overrides.pop("app_type", website.app_type or "wordpress")
     php_version = overrides.pop("php_version", website.php_version)
@@ -209,6 +217,8 @@ def _rewrite_website_vhost(website: Website, **overrides) -> str:
         "lscache": overrides.pop("lscache", getattr(website, "lscache_enabled", True) is not False),
         "open_basedir": overrides.pop("open_basedir", bool(getattr(website, "open_basedir", False))),
         "custom_rules": overrides.pop("custom_rules", getattr(website, "custom_rules", "") or ""),
+        "proxy_url": overrides.pop("proxy_url", getattr(website, "proxy_url", "") or ""),
+        "proxy_preserve_host": overrides.pop("proxy_preserve_host", getattr(website, "proxy_preserve_host", True) is not False),
     }
     if overrides.pop("include_ssl", True):
         rewrite_kwargs.update(_rewrite_ssl_kwargs(website))
@@ -293,6 +303,7 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
     # vhost without WordPress's front controller, so every permalink of the
     # uploaded site answered 404 (operator, 2026-10-22).
     app_type_value = payload.app_type
+    proxy_url = _checked_proxy_url(payload.proxy_url, current_user) if app_type_value == "proxy" else ""
     create_estimate_bytes = storage_quota.WORDPRESS_SITE_ESTIMATE_BYTES if install_wp else storage_quota.STATIC_SITE_ESTIMATE_BYTES
     try:
         storage_quota.enforce_user_storage_quota(db, owner, incoming_bytes=create_estimate_bytes)
@@ -315,6 +326,8 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
         nginx_rewrite_mode="front_controller" if app_type_value == "wordpress" else "none",
         # Its package's value; off when it has none (services/php_isolation.py).
         open_basedir=php_isolation.default_for(db, owner),
+        proxy_url=proxy_url,
+        proxy_preserve_host=bool(payload.proxy_preserve_host),
         status="provisioning",
     )
     db.add(website)
@@ -401,6 +414,8 @@ def create_website(payload: WebsiteCreate, request: Request, db: Session = Depen
                 rewrite_mode=website.nginx_rewrite_mode,
                 waf_enabled=website.waf_enabled,
                 open_basedir=bool(website.open_basedir),
+                proxy_url=proxy_url,
+                proxy_preserve_host=bool(payload.proxy_preserve_host),
             )
         except (RuntimeError, ValueError, OSError) as exc:
             _cleanup_failed_site(root_path, linux_user)
@@ -553,6 +568,11 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
     if payload.app_type is not None and payload.app_type != (website.app_type or "wordpress"):
         try:
             next_app_type = payload.app_type
+            next_proxy_url = (
+                _checked_proxy_url(payload.proxy_url if payload.proxy_url is not None else website.proxy_url, current_user)
+                if next_app_type == "proxy" else ""
+            )
+            next_preserve = payload.proxy_preserve_host if payload.proxy_preserve_host is not None else website.proxy_preserve_host is not False
             runtime_php_version = website.php_version if next_app_type in {"wordpress", "php"} else None
             if website.linux_user and runtime_php_version:
                 site_users.ensure_site_runtime(
@@ -566,7 +586,7 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
                 raise RuntimeError(_command_error(result))
             next_rewrite_mode = (
                 "front_controller" if next_app_type == "wordpress"
-                else "none" if next_app_type == "static"
+                else "none" if next_app_type in {"static", "proxy"}
                 else payload.nginx_rewrite_mode or _website_rewrite_mode(website)
             )
             _rewrite_website_vhost(
@@ -574,11 +594,25 @@ def update_website(website_id: int, payload: WebsiteUpdate, db: Session = Depend
                 app_type=next_app_type,
                 php_version=website.php_version,
                 rewrite_mode=next_rewrite_mode,
+                proxy_url=next_proxy_url,
+                proxy_preserve_host=next_preserve,
             )
         except (RuntimeError, ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=f"Cannot change website mode: {exc}") from exc
         website.app_type = next_app_type
         website.nginx_rewrite_mode = next_rewrite_mode
+        website.proxy_url = next_proxy_url
+        website.proxy_preserve_host = next_preserve
+    elif (website.app_type or "") == "proxy" and (payload.proxy_url is not None or payload.proxy_preserve_host is not None):
+        # Same mode, another address (or Host header) behind it.
+        next_proxy_url = _checked_proxy_url(payload.proxy_url if payload.proxy_url is not None else website.proxy_url, current_user)
+        next_preserve = payload.proxy_preserve_host if payload.proxy_preserve_host is not None else website.proxy_preserve_host is not False
+        try:
+            _rewrite_website_vhost(website, proxy_url=next_proxy_url, proxy_preserve_host=next_preserve)
+        except (RuntimeError, ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=f"Cannot point this website at {next_proxy_url}: {exc}") from exc
+        website.proxy_url = next_proxy_url
+        website.proxy_preserve_host = next_preserve
     if payload.status is not None:
         # Suspension is the admin's decision, or a reseller's about its
         # customers' sites; an owner could otherwise flip their own site back

@@ -182,9 +182,11 @@ function websiteConfigForm(site = {}) {
   return {
     app_type: appType,
     php_version: site.php_version || '8.4',
+    proxy_url: site.proxy_url || '',
+    proxy_preserve_host: site.proxy_preserve_host !== false,
     nginx_rewrite_mode: appType === 'wordpress'
       ? 'front_controller'
-      : appType === 'static'
+      : appType === 'static' || appType === 'proxy'
         ? 'none'
         : site.nginx_rewrite_mode || 'none',
   };
@@ -460,6 +462,26 @@ function App() {
   }, [theme]);
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   // Shows the language in use; a click switches to the other one (and reloads).
+  // CPU, RAM and disk in the top bar, each opening its page. Administrators.
+  function renderTopStats() {
+    const known = !!resourceUsage;
+    const tone = percent => { const value = Number(percent) || 0; return value >= 90 ? 'bad' : value >= 75 ? 'warn' : 'ok'; };
+    const chips = [
+      ['processes', Cpu, 'CPU', resourceUsage?.cpu?.percent, 'CPU: open the process monitor'],
+      ['ramUsage', MemoryStick, 'RAM', resourceUsage?.memory?.percent, 'RAM: where the memory is'],
+      ['diskUsage', HardDrive, 'Disk', resourceUsage?.disk?.percent, 'Disk: what takes the space'],
+    ];
+    return <nav className="top-stats" aria-label={tr("Server status")}>
+      {chips.map(([key, Icon, label, percent, title]) => {
+        const value = known ? formatPercent(percent) : '--';
+        return <button key={key} type="button" className={`top-stat tone-${known ? tone(percent) : 'ok'}${page === key ? ' active' : ''}`}
+          onClick={() => navigateToPage(key)} title={tr(title)} aria-label={`${tr(label)} ${value}`}>
+          <Icon size={14} aria-hidden="true"/><span className="top-stat-label">{tr(label)}</span><b>{value}</b>
+        </button>;
+      })}
+    </nav>;
+  }
+
   function renderLanguageToggle(className) {
     const current = LANGUAGES.find(lang => lang.code === currentLanguage) || LANGUAGES[0];
     const next = nextLanguage();
@@ -491,6 +513,8 @@ function App() {
   const [wpAdminPassword, setWpAdminPassword] = useState('');
   const [phpVersion, setPhpVersion] = useState('8.4');
   const [siteType, setSiteType] = useState('wordpress');
+  const [createProxyUrl, setCreateProxyUrl] = useState('');
+  const [createProxyPreserve, setCreateProxyPreserve] = useState(true);
   const [installSslAfterCreate, setInstallSslAfterCreate] = useState(false);
   const [installWordPress, setInstallWordPress] = useState(true);
   // LiteSpeed Cache in a new WordPress, on unless unticked (operator, 2026-10-22).
@@ -2797,6 +2821,7 @@ function App() {
     const cleanDomain = domain.trim().toLowerCase();
     const cleanAdminEmail = adminEmail.trim();
     if (!cleanDomain) { setError(tr("Please enter a domain name.")); return; }
+    if (siteType === 'proxy' && !createProxyUrl.trim()) { setError(tr("Enter the address to proxy to, for example http://127.0.0.1:3000")); return false; }
     const installWp = siteType === 'wordpress' && installWordPress;
     const body = {
       domain: cleanDomain,
@@ -2806,6 +2831,7 @@ function App() {
       title: cleanDomain,
     };
     if (siteOwnerId) body.owner_id = Number(siteOwnerId);
+    if (siteType === 'proxy') { body.proxy_url = createProxyUrl.trim(); body.proxy_preserve_host = !!createProxyPreserve; }
     // Blank means a random one, as the form says; it was a fixed
     // 'StrongPass123!', the same on every site made without one.
     const wpPassword = installWp ? (wpAdminPassword || generatePassword()) : '';
@@ -2820,6 +2846,9 @@ function App() {
     if (data) {
       if (installWp) {
         setNotice(tr("Created WordPress site: https://{0}\nAdmin: {1} | Password: {2}", cleanDomain, wpAdminUser, wpPassword));
+      } else if (siteType === 'proxy') {
+        setNotice(tr("Created {0}, proxying to {1}.", cleanDomain, createProxyUrl.trim()));
+        setCreateProxyUrl('');
       } else {
         setNotice(tr("Created site {0}. Upload your files to public_html/ folder.", cleanDomain));
       }
@@ -3037,12 +3066,19 @@ function App() {
     const nextPhp = websiteSettingsForm.php_version || original.php_version || '8.4';
     const nextRewrite = nextAppType === 'wordpress'
       ? 'front_controller'
-      : nextAppType === 'static'
+      : nextAppType === 'static' || nextAppType === 'proxy'
         ? 'none'
         : websiteSettingsForm.nginx_rewrite_mode || 'none';
 
+    if (nextAppType === 'proxy') {
+      const target = (websiteSettingsForm.proxy_url || '').trim();
+      if (!target) { setError(tr("Enter the address to proxy to, for example http://127.0.0.1:3000")); return; }
+      if (target !== (original.proxy_url || '') || nextAppType !== original.app_type) body.proxy_url = target;
+      const keep = websiteSettingsForm.proxy_preserve_host !== false;
+      if (keep !== (original.proxy_preserve_host !== false)) body.proxy_preserve_host = keep;
+    }
     if (nextAppType !== (original.app_type || 'wordpress')) body.app_type = nextAppType;
-    if (nextAppType !== 'static' && nextPhp !== original.php_version) body.php_version = nextPhp;
+    if (nextAppType !== 'static' && nextAppType !== 'proxy' && nextPhp !== original.php_version) body.php_version = nextPhp;
     if (nextRewrite !== (original.nginx_rewrite_mode || (original.app_type === 'wordpress' ? 'front_controller' : 'none'))) {
       body.nginx_rewrite_mode = nextRewrite;
     }
@@ -4682,17 +4718,20 @@ function App() {
     return () => clearInterval(timer);
   }, [isAuthenticated, page, gitRepo?.repo?.id, gitRepo?.repo?.busy, gitRepo?.operations?.[0]?.status, gitOpLog?.id]);
 
-  // The top bar's CPU, RAM, disk and network chips, on every page.
-  // The server's figures are the Dashboard's, which reads them every 10
-  // seconds while it is open. Elsewhere: one reading at sign-in, for the
-  // account menu's update dot, and the RAM page's own faster one.
+  // The top bar's CPU, RAM and disk (operator, 2026-10-25), on every page:
+  // read every 10 seconds while the tab is in front, every 5 on the RAM page.
+  // The Dashboard reads them itself.
   useEffect(() => {
     if (!isAuthenticated || !isAdmin) return undefined;
     if (page === 'dashboard') return undefined;
-    if (page !== 'ramUsage') { if (!resourceUsage) loadResourceUsage(); return undefined; }
-    loadResourceUsage();
-    const timer = setInterval(loadResourceUsage, 5000);
-    return () => clearInterval(timer);
+    const tick = () => { if (!document.hidden) loadResourceUsage(); };
+    tick();
+    const timer = setInterval(tick, page === 'ramUsage' ? 5000 : 10000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [isAuthenticated, page, isAdmin]);
   useEffect(() => {
     if (!isAuthenticated || !isAdmin || page !== 'processes' || processPaused || currentUser?.demo) return undefined;
@@ -5075,6 +5114,7 @@ function App() {
       setAdminEmail, setAliasDrafts, setAliasModes, setBackupTab, setCreateSslForm, setCreateSslMode, setDomain,
       setInstallLsCache, setInstallSslAfterCreate, setInstallWordPress, setNginxCustomEditing, setPhpVersion, setSelectedWebsiteId,
       setShowCreateSite, setSiteOwnerId, setSiteType, setWebsiteSearch, setWebsiteSettingsForm, setWpAdminPassword,
+      createProxyUrl, setCreateProxyUrl, createProxyPreserve, setCreateProxyPreserve,
       setWpAdminUser, setWpInstallForm, setWpManagerSite, showCreateSite, siteOwnerId, siteType, updateWordPressAll,
       users, viewFullNginxConfig, wafSiteConfig, websiteConfigForm, websiteSearch, websiteSettingsForm, websiteUrl,
       wildcardProvider, wpAdminPassword, wpAdminUser, wpInstallForm, wpManagerMode, wpManagerSite,
@@ -9462,6 +9502,18 @@ function App() {
             })}
           </div>
         </nav>
+        {/* The language, the theme and - for an administrator, never an end
+            user (operator, 2026-10-18) - the version, opening Updates with a
+            dot while a release waits. One row. */}
+        <div className="sidebar-foot">
+          {renderLanguageToggle('sidebar-tool')}
+          <button type="button" className="sidebar-tool" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
+          {appVersion && isAdmin && <button type="button" className={`sidebar-version${panelWaiting ? ' has-update' : ''}`}
+            onClick={() => { setMobileMenuOpen(false); navigateToPage('updates'); }}
+            title={panelWaiting ? tr("Panel update {0} is available.", resourceUsage?.panel_update?.latest_version) : tr("Updates")}>
+            {panelSettings.app_name || 'OPanel'} v{appVersion}{panelWaiting && <i className="sidebar-version-dot" aria-hidden="true"/>}
+          </button>}
+        </div>
       </aside>
       <div className="content">
         <section className="topbar">
@@ -9481,13 +9533,15 @@ function App() {
           {/* What needs attention (the bell), the language, the theme and the
               account's menu, as SNPanel has them. The server's figures are the
               Dashboard's; the version is in the account's menu, and opens Updates. */}
+          {/* CPU, RAM and disk, the bell and the account; the language, the
+              theme and the version are at the foot of the sidebar (operator,
+              2026-10-25, as in BPanel). */}
           <div className="top-actions">
+            {isAdmin && renderTopStats()}
             {currentUser && <PanelContext.Provider value={panelContext()}><NotificationBell/></PanelContext.Provider>}
-            {renderLanguageToggle('top-tool')}
-            <button type="button" className="top-tool" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
             <div className="user-menu top-user" ref={userMenuRef}>
               <button type="button" className="user-menu-trigger" onClick={() => setUserMenuOpen(open => !open)} aria-haspopup="menu" aria-expanded={userMenuOpen} title={tr("Logged in as")}>
-                <span className="user-avatar" aria-hidden="true">{(currentUser?.username || username || '?').slice(0, 1).toUpperCase()}{panelWaiting && <i className="user-menu-dot"/>}</span>
+                <span className="user-avatar" aria-hidden="true">{(currentUser?.username || username || '?').slice(0, 1).toUpperCase()}</span>
                 <span className="user-menu-name">{currentUser?.username || username}</span>
                 <ChevronDown size={14} className="user-menu-chevron"/>
               </button>
@@ -9499,13 +9553,6 @@ function App() {
                 <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); openProfileModal(); }}><KeyRound size={15}/>{tr("Profile")}</button>
                 <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); navigateToPage('security'); }}><LockKeyhole size={15}/>{tr("Account security")}</button>
                 {currentUser?.impersonator && <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); returnToImpersonator(); }}><ArrowLeft size={15}/>{tr("Back to {0}", currentUser.impersonator)}</button>}
-                {/* The panel's own version, and whether an update is waiting, is an
-                    administrator's concern (operator, 2026-10-18: an end user
-                    must not see it, not even the plain version number). */}
-                {appVersion && isAdmin && <button type="button" role="menuitem" className={`user-menu-version-item${panelWaiting ? ' has-update' : ''}`} onClick={() => { setUserMenuOpen(false); navigateToPage('updates'); }}>
-                  <RefreshCw size={15}/><span>{panelSettings.app_name || 'OPanel'} v{appVersion}</span>
-                  <small>{panelWaiting ? tr("Panel update {0} is available.", resourceUsage?.panel_update?.latest_version) : tr("Updates")}</small>
-                </button>}
                 <button type="button" role="menuitem" className="user-menu-logout" onClick={() => { setUserMenuOpen(false); logout(); }}><LogOut size={15}/>{tr("Logout")}</button>
               </div>}
             </div>

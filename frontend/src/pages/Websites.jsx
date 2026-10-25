@@ -26,7 +26,7 @@ export default function WebsitesPage() {
     refreshAll, renderWildcardProvider, setAdminEmail, setCreateSslForm, setCreateSslMode, setDomain, setInstallLsCache, setInstallSslAfterCreate,
     setInstallWordPress, setPhpVersion, setShowCreateSite, setSiteOwnerId, setSiteType, setWebsiteSearch, setWpAdminPassword,
     setWpAdminUser, showCreateSite, siteOwnerId, siteType, users, websiteSearch, websiteUrl, websites, wildcardProvider,
-    wpAdminPassword, wpAdminUser,
+    wpAdminPassword, wpAdminUser, isAdmin, createProxyUrl, setCreateProxyUrl, createProxyPreserve, setCreateProxyPreserve,
   } = usePanel();
   const ownerOf = useSiteOwners();
   const openSite = useOpenSite();
@@ -108,14 +108,21 @@ export default function WebsitesPage() {
             <select value={siteType} onChange={(e) => setSiteType(e.target.value)}>
               <option value="wordpress">{t('WordPress')}</option>
               <option value="php">{t('PHP')}</option>
+              <option value="proxy">{t('Proxy')}</option>
             </select>
           </Field>
-          <Field label={t('PHP version')}>
-            <select value={phpVersion} onChange={(e) => setPhpVersion(e.target.value)}>
-              {phpVersionOptions(phpVersions.installed, phpVersion).map((v) => <option key={v} value={v}>PHP {v}</option>)}
-            </select>
-          </Field>
+          {siteType === 'proxy'
+            ? <Field className="is-wide" label={t('Proxy to')} hint={isAdmin ? t('Any http:// or https:// address, this server included (http://127.0.0.1:3000).') : t('A public http:// or https:// address.')}>
+              <input value={createProxyUrl} onChange={(e) => setCreateProxyUrl(e.target.value)} placeholder="http://127.0.0.1:3000" spellCheck={false} autoCapitalize="none"/>
+            </Field>
+            : <Field label={t('PHP version')}>
+              <select value={phpVersion} onChange={(e) => setPhpVersion(e.target.value)}>
+                {phpVersionOptions(phpVersions.installed, phpVersion).map((v) => <option key={v} value={v}>PHP {v}</option>)}
+              </select>
+            </Field>}
         </div>
+        {siteType === 'proxy' && <Checkbox checked={createProxyPreserve} onChange={setCreateProxyPreserve}
+          label={t("Send the visitor's Host header (off: the address's own)")}/>}
         {siteType === 'wordpress' && <Checkbox checked={installWordPress} onChange={setInstallWordPress}
           label={t('Install WordPress (creates database, downloads WP, configures vhost)')}/>}
         {wpFieldsEnabled && <Checkbox checked={installLsCache} onChange={setInstallLsCache}

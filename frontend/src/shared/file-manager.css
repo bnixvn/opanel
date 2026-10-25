@@ -729,3 +729,30 @@
     justify-content: flex-start;
   }
 }
+
+/* The folder tree beside the file list, as cPanel and DirectAdmin have it,
+   and one white card instead of grey boxes inside boxes (operator,
+   2026-10-25). Every label keeps the body text's contrast. */
+.file-manager .file-panel{padding:0;border:0;gap:10px}
+.file-controls .file-meta{background:transparent;border:0;padding:0 2px;min-height:34px;color:var(--text-secondary)}
+.path-pill.breadcrumb-line{background:transparent;border:0;padding:0}
+.file-manager .crumb{background:var(--surface);color:var(--text-secondary)}
+.file-manager .crumb:disabled{background:var(--primary-light);color:var(--primary-ink)}
+.fm-body{display:grid;grid-template-columns:minmax(200px,250px) minmax(0,1fr);border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;background:var(--surface);min-height:360px}
+.fm-body .file-list-header{margin:0;border:0;border-bottom:1px solid var(--border);border-radius:0;background:var(--surface-alt);color:var(--text-secondary)}
+.fm-body .file-list{border:0;border-radius:0;max-height:min(70vh,780px)}
+.fm-body .file-list .empty-box{grid-column:1/-1;color:var(--text-secondary)}
+.fm-body .file-item:hover{background:var(--surface-hover)}
+.fm-body .file-item.selected{background:var(--primary-light)}
+.fm-tree{border-right:1px solid var(--border);background:var(--surface-alt);overflow:auto;max-height:min(70vh,820px);padding:6px 0}
+.fm-tree ul{list-style:none;margin:0;padding:0}
+.fm-tree-row{display:flex;align-items:center;gap:2px;padding-right:8px;min-height:30px}
+.fm-tree-row:hover{background:var(--surface-hover)}
+.fm-tree-row.active{background:var(--primary-light)}
+.fm-tree-row.active .fm-tree-name{color:var(--primary-ink);font-weight:700}
+.fm-tree-toggle{flex:none;width:20px;height:22px;min-height:22px;padding:0;display:inline-grid;place-items:center;background:none;border:0;box-shadow:none;color:var(--text-secondary);cursor:pointer}
+.fm-tree-name{flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;height:28px;min-height:28px;padding:0 4px;background:none;border:0;box-shadow:none;color:var(--text);font-size:13px;font-weight:500;text-align:left;cursor:pointer}
+.fm-tree-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fm-tree-name svg{flex:none;color:var(--primary-ink)}
+.fm-tree-loading{padding:4px 0;font-size:12px;color:var(--text-secondary)}
+@media (max-width:900px){.fm-body{grid-template-columns:1fr}.fm-tree{display:none}}

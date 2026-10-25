@@ -9,6 +9,7 @@ import { Field } from '../components/Form.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import './Files.css';
+import { FolderTree } from '../components/FolderTree.jsx';
 
 // Folders first, whichever way the list is turned - as the server lists them -
 // then by the column chosen, and by name where that column ties. A folder has
@@ -38,7 +39,7 @@ export default function FilesPage() {
     dismissFileJob, downloadFile, extractArchive, fileBreadcrumbs, fileJobs, fileListPath, files, formatBytes, formatFileTime, isAdmin,
     isExtractableArchive, isTextEditable, listFiles, loading, makeFile, makeFileDirectory, moveSelectedFiles, openChmod, openFileEditorTab,
     parentFilePath, renameFileItem, selectedFilePaths, selectedWebsiteId, storageUsageText, toggleAllFiles, toggleFileSelection,
-    uploadProgress, uploadSiteFile,
+    uploadProgress, uploadSiteFile, request,
   } = usePanel();
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
   const shownFiles = useMemo(() => [...files].sort((a, b) => compareFiles(a, b, sort.key, sort.dir)), [files, sort]);
@@ -121,6 +122,10 @@ export default function FilesPage() {
               </div>)}
             </div>}
           </div>
+          <div className="fm-body">
+          <FolderTree request={request} base={hasTarget ? `/maintenance/files/${selectedWebsiteId}` : ''} targetKey={String(selectedWebsiteId || '')}
+            current={fileListPath} currentItems={files} onOpen={(path) => listFiles(path)} t={t}
+            rootLabel={currentSite?.domain || t('root')}/>
           <div className="file-list">
             <div className="file-list-header">
               <input type="checkbox" checked={allSelected} ref={(el) => { if (el) el.indeterminate = selectedFilePaths.length > 0 && !allSelected; }}
@@ -164,6 +169,7 @@ export default function FilesPage() {
                 ]}/>
               </div>
             </div>)}
+          </div>
           </div>
         </div>
       </div>

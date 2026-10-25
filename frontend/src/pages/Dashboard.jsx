@@ -395,10 +395,9 @@ export default function DashboardPage() {
     <aside className="cp-side">
       <section className="section side-card">
         <h3 className="side-card-title">{t('Server')}</h3>
+        {/* CPU, RAM and disk are in the top bar (operator, 2026-10-25: not
+            twice); the network, which is not, stays here. */}
         <div className="dash-figures">
-          {figure('processes', 'CPU', pct(cpu.percent), resourceUsage ? Number(cpu.percent) || 0 : null, history.map((h) => h.cpu))}
-          {figure('ramUsage', 'RAM', pct(memory.percent), resourceUsage ? Number(memory.percent) || 0 : null, history.map((h) => h.memory))}
-          {figure('diskUsage', t('Disk'), pct(disk.percent), resourceUsage ? Number(disk.percent) || 0 : null, history.map((h) => h.disk))}
           {figure('traffic', t('Network'), resourceUsage ? `${formatBytes(throughput)}/s` : '—', null, history.map((h) => h.network), 0)}
         </div>
         <InfoRow label={t('Hostname')} value={server.hostname}/>

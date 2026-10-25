@@ -3472,4 +3472,11 @@ export default {
   "This server sends the addresses its Fail2ban jails banned and its WAF denied on rules only an attack trips (php2shell, wp2shell, probes for .env, .git, keys and webshells) to blocklist.bnix.io.vn, and blocks at its firewall every address that at least two other approved servers reported within a week. A server's reports count once the operator approves it on the collector. Cloudflare, the Google and Bing crawlers, private ranges and the reporting servers themselves are never listed.": "Server này gửi các IP mà jail Fail2ban đã ban và WAF đã chặn bằng những luật chỉ đòn tấn công mới chạm phải (php2shell, wp2shell, dò .env, .git, khoá và webshell) lên blocklist.bnix.io.vn, rồi chặn ở tường lửa mọi IP mà ít nhất hai server đã duyệt khác cùng báo trong một tuần. Báo cáo của một server chỉ được tính khi quản trị viên duyệt nó trên collector. Cloudflare, bot của Google và Bing, dải mạng nội bộ và chính các server báo cáo không bao giờ bị đưa vào danh sách.",
   "Sent: an address, the jail or WAF rule id, nothing else - no URL, no request, no site name.": "Chỉ gửi: địa chỉ IP, tên jail hoặc mã luật WAF - không gửi URL, nội dung request hay tên site.",
   "The list is read again every hour. Removing the addon takes the list off the firewall and forgets this server's key.": "Danh sách được đọc lại mỗi giờ. Gỡ addon sẽ bỏ danh sách khỏi tường lửa và xoá khoá của server này.",
+  "Folders": "Thư mục",
+  "Proxy to": "Chuyển tiếp tới",
+  "Enter the address to proxy to, for example http://127.0.0.1:3000": "Nhập địa chỉ cần chuyển tiếp tới, ví dụ http://127.0.0.1:3000",
+  "Send the visitor's Host header (off: the address's own)": "Gửi Host của người truy cập (tắt: dùng Host của địa chỉ đích)",
+  "Any http:// or https:// address, this server included (http://127.0.0.1:3000).": "Bất kỳ địa chỉ http:// hoặc https:// nào, kể cả trên server này (http://127.0.0.1:3000).",
+  "A public http:// or https:// address.": "Một địa chỉ http:// hoặc https:// công khai.",
+  "Created {0}, proxying to {1}.": "Đã tạo {0}, chuyển tiếp tới {1}.",
 };

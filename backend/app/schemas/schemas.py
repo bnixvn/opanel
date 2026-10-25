@@ -9,7 +9,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 
 DOMAIN_RE = re.compile(r"^(?!-)([a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,}$")
 SUPPORTED_PHP_VERSIONS = {"7.4", "8.1", "8.2", "8.3", "8.4", "8.5"}
-SUPPORTED_APP_TYPES = {"wordpress", "php", "static"}
+SUPPORTED_APP_TYPES = {"wordpress", "php", "static", "proxy"}
 SUPPORTED_NGINX_REWRITE_MODES = {"none", "front_controller", "laravel", "codeigniter", "seohburl"}
 SUPPORTED_WEBSERVER_REWRITE_MODES = SUPPORTED_NGINX_REWRITE_MODES  # alias — same modes apply to OLS
 SUPPORTED_ROLES = {"admin", "end_user"}
@@ -420,6 +420,9 @@ class WebsiteCreate(BaseModel):
     owner_id: Optional[int] = None
     php_version: str = "8.4"
     app_type: str = "wordpress"
+    # Required when app_type is "proxy": the http(s) address to forward to.
+    proxy_url: Optional[str] = Field(default=None, max_length=500)
+    proxy_preserve_host: bool = True
     install_wordpress: bool = True
     # With a new WordPress: LiteSpeed Cache installed and on, so OpenLiteSpeed
     # serves its pages from the page cache - 2-3 ms instead of 180-300 ms on
@@ -515,6 +518,8 @@ class AvailableCertificateOut(BaseModel):
 class WebsiteUpdate(BaseModel):
     php_version: Optional[str] = None
     app_type: Optional[str] = None
+    proxy_url: Optional[str] = Field(default=None, max_length=500)
+    proxy_preserve_host: Optional[bool] = None
     document_root: Optional[str] = None
     status: Optional[str] = None
     owner_id: Optional[int] = None
@@ -761,6 +766,8 @@ class WebsiteOut(BaseModel):
     lscache_enabled: bool = True
     open_basedir: bool = False
     custom_rules: str = ""
+    proxy_url: str = ""
+    proxy_preserve_host: bool = True
     ssl_cert_path: Optional[str] = Field(default=None, exclude=True)
     ssl_key_path: Optional[str] = Field(default=None, exclude=True)
     ssl_ca_path: Optional[str] = Field(default=None, exclude=True)

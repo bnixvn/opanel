@@ -18,4 +18,9 @@ export const WEBSITE_MODES = [
   ['wordpress', 'WordPress'],
   ['php', 'PHP'],
   ['static', 'Static'],
+  // OpenLiteSpeed in front of any http(s) address (operator, 2026-10-25).
+  ['proxy', 'Proxy'],
 ];
+
+// A mode with no PHP of its own.
+export const isPhplessMode = (appType) => appType === 'static' || appType === 'proxy';
