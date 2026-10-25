@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import { ArrowRightLeft, Ban, ChevronDown, FolderKey, FolderX, LogIn, Package, Pencil, Play, Plus, Save, Search, ShieldCheck, ShieldOff, Trash2, Users } from 'lucide-react';
+import { ArrowRightLeft, Ban, ChevronDown, FolderKey, FolderX, LogIn, Package, Pencil, Play, Plus, Save, Search, ShieldCheck, ShieldOff, Trash2, Users, RefreshCw } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
 import PageHeader from '../components/PageHeader.jsx';
@@ -32,6 +32,13 @@ export default function UsersPage() {
   const [filter, setFilter] = useState('all');
   const [expanded, setExpanded] = useState([]);
   const [moveOpen, setMoveOpen] = useState(false);
+  // Moving copies the files and rewrites the site's users, which takes a
+  // while; the sheet says so instead of sitting still (operator, 2026-10-24).
+  const [moving, setMoving] = useState(false);
+  const moveDomain = async () => {
+    setMoving(true);
+    try { if (await assignDomainToUser()) setMoveOpen(false); } finally { setMoving(false); }
+  };
   const [packageSheet, setPackageSheet] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // The account whose main SFTP login is being set.
@@ -246,12 +253,12 @@ export default function UsersPage() {
       </>}
     </Drawer>
 
-    {isAdmin && <Drawer open={moveOpen} onClose={() => setMoveOpen(false)} title={t('Move a domain')}
+    {isAdmin && <Drawer open={moveOpen} onClose={() => { if (!moving) setMoveOpen(false); }} title={t('Move a domain')}
       subtitle={t('Give a website to another account.')}
       footer={<>
-        <button type="button" className="secondary-light" onClick={() => setMoveOpen(false)}>{t('Cancel')}</button>
-        <button type="button" disabled={!assignWebsiteId || !assignUserId || sameOwner || !!loading}
-          onClick={async () => { if (await assignDomainToUser()) setMoveOpen(false); }}><ArrowRightLeft size={14} aria-hidden="true"/> {t('Move domain')}</button>
+        <button type="button" className="secondary-light" disabled={moving} onClick={() => setMoveOpen(false)}>{t('Cancel')}</button>
+        <button type="button" disabled={!assignWebsiteId || !assignUserId || sameOwner || !!loading || moving} onClick={moveDomain}>
+          {moving ? <RefreshCw size={14} className="spin" aria-hidden="true"/> : <ArrowRightLeft size={14} aria-hidden="true"/>} {moving ? t('Moving...') : t('Move domain')}</button>
       </>}>
       <div className="form-sections">
         <Field label={t('Domain')} required>
@@ -266,6 +273,8 @@ export default function UsersPage() {
             {users.map((user) => <option key={user.id} value={user.id}>{user.username} ({roleLabel(user.role)})</option>)}
           </select>
         </Field>
+        {moving && <div className="info-box"><span className="job-progress"><span className="progress-bar indeterminate"><span className="progress-bar-fill" /></span></span>
+          <p className="hint">{t('Moving the website: its files, database and settings go to the new account. This can take a minute for a large site; keep this sheet open.')}</p></div>}
       </div>
     </Drawer>}
     <SftpAccessDrawer user={sftpUser} onClose={() => { setSftpUser(null); loadUsers(); }}/>

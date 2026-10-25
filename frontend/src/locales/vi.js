@@ -3479,4 +3479,6 @@ export default {
   "Any http:// or https:// address, this server included (http://127.0.0.1:3000).": "Bất kỳ địa chỉ http:// hoặc https:// nào, kể cả trên server này (http://127.0.0.1:3000).",
   "A public http:// or https:// address.": "Một địa chỉ http:// hoặc https:// công khai.",
   "Created {0}, proxying to {1}.": "Đã tạo {0}, chuyển tiếp tới {1}.",
+  "Moving...": "Đang chuyển...",
+  "Moving the website: its files, database and settings go to the new account. This can take a minute for a large site; keep this sheet open.": "Đang chuyển website: file, database và cấu hình sang tài khoản mới. Site lớn có thể mất một phút; đừng đóng khung này.",
 };
