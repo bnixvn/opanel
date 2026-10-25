@@ -127,3 +127,23 @@ def test_the_readme_no_longer_claims_the_firewall_cannot_lock_you_out():
         "the ACCEPT policy stops a bad allow rule locking you out; it does "
         "nothing about a DROP reached before any allowance"
     )
+
+
+def test_an_allowed_address_is_exempt_from_the_url_blocklists():
+    """Operator, 2026-10-25: an address the admin allowed is never dropped by
+    a URL blocklist (the shared one included), as on BPanel."""
+    from pathlib import Path
+
+    helper = (Path(__file__).resolve().parents[3] / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    sync = helper[helper.index("firewall_allow_exempt_sync() {"):]
+    sync = sync[:sync.index("\n}\n")]
+    # The ACCEPT rules of OPANEL_USER that name a source; open-to-all ones exempt nobody.
+    assert "-S OPANEL_USER" in sync and "/ -j ACCEPT/" in sync
+    assert "grep -vE '^(0\.0\.0\.0/0|::/0)$'" in sync
+    # RETURNed first in OPANEL_BLOCKLIST, ahead of the set's DROP.
+    assert '-I OPANEL_BLOCKLIST 1 -m set --match-set "$set" src -j RETURN' in sync
+    apply = helper[helper.index("firewall_blocklist_apply() {"):]
+    apply = apply[:apply.index("\n}\n")]
+    assert apply.rstrip().endswith("firewall_allow_exempt_sync")
+    # The saved rules name the sets, so they exist before the rules load at boot.
+    assert "create ${ALLOW_IPSET_V4} hash:net family inet -exist" in helper

@@ -756,3 +756,40 @@
 .fm-tree-name svg{flex:none;color:var(--primary-ink)}
 .fm-tree-loading{padding:4px 0;font-size:12px;color:var(--text-secondary)}
 @media (max-width:900px){.fm-body{grid-template-columns:1fr}.fm-tree{display:none}}
+
+/* Each kind of file in its own colour (operator, 2026-10-25, from a
+   reference): folders solid yellow, PHP purple, HTML orange, styles blue,
+   scripts amber, configuration slate, text violet, images green, archives
+   brown. Strong enough to read in both themes. */
+.file-list button.file-name svg.fti{flex:none;width:22px;height:22px}
+.fm-tree-name svg.fti{flex:none;width:18px;height:18px}
+.file-list button.file-name svg.fti-folder,.fm-tree-name svg.fti-folder{color:#f2ad2c}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-folder,:root[data-theme="dark"] .fm-tree-name svg.fti-folder{color:#f5bd4f}
+.file-list button.file-name svg.fti-php{color:#5f63b8}
+.file-list button.file-name svg.fti-html{color:#e0461f}
+.file-list button.file-name svg.fti-css{color:#2563d9}
+.file-list button.file-name svg.fti-js{color:#b7860b}
+.file-list button.file-name svg.fti-code{color:#0f8a7a}
+.file-list button.file-name svg.fti-json{color:#a35c0a}
+.file-list button.file-name svg.fti-config{color:#56657a}
+.file-list button.file-name svg.fti-text{color:#7a4fb0}
+.file-list button.file-name svg.fti-sql{color:#0b7fae}
+.file-list button.file-name svg.fti-image{color:#1f9257}
+.file-list button.file-name svg.fti-media{color:#c2337a}
+.file-list button.file-name svg.fti-archive{color:#9a5b1e}
+.file-list button.file-name svg.fti-pdf{color:#d0302b}
+.file-list button.file-name svg.fti-file{color:#647185}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-php{color:#9ea2f0}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-html{color:#ff7a52}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-css{color:#6c9ef8}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-js{color:#e8b931}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-code{color:#3cc5b1}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-json{color:#e09a4a}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-config{color:#9aa8bb}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-text{color:#b893ea}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-sql{color:#4cb8e4}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-image{color:#4fca8a}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-media{color:#ee6fae}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-archive{color:#d49450}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-pdf{color:#ff6b66}
+:root[data-theme="dark"] .file-list button.file-name svg.fti-file{color:#a3afc0}

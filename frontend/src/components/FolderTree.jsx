@@ -3,7 +3,8 @@
 // is opened, through the same listing the file list uses; the folder the list
 // shows is always open in the tree, with its ancestors.
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, HardDrive } from 'lucide-react';
+import { ChevronDown, ChevronRight, HardDrive } from 'lucide-react';
+import { FileTypeIcon } from './FileTypeIcon.jsx';
 
 const dirsOf = items => (items || []).filter(item => item.is_dir)
   .map(item => ({ name: item.name, path: item.path }))
@@ -68,7 +69,6 @@ export function FolderTree({ request, base, targetKey, current, currentItems, ro
     const expanded = open.has(path);
     const active = (current || '') === path;
     const leaf = Array.isArray(kids) && kids.length === 0;
-    const Icon = isRoot ? HardDrive : (expanded && !leaf ? FolderOpen : Folder);
     return <li key={path || '/'} role="treeitem" aria-expanded={leaf ? undefined : expanded} aria-selected={active}>
       <div className={`fm-tree-row${active ? ' active' : ''}`} style={{ paddingLeft: `${8 + depth * 14}px` }}>
         <button type="button" className="fm-tree-toggle" tabIndex={-1} aria-hidden="true"
@@ -77,7 +77,7 @@ export function FolderTree({ request, base, targetKey, current, currentItems, ro
         </button>
         <button type="button" className="fm-tree-name" title={path ? `/${path}` : rootLabel}
           onClick={() => { onOpen(path); if (!expanded) toggle(path); }}>
-          <Icon size={15} aria-hidden="true"/><span>{name}</span>
+          {isRoot ? <HardDrive size={15} aria-hidden="true"/> : <FileTypeIcon isDir size={18}/>}<span>{name}</span>
         </button>
       </div>
       {expanded && kids === 'loading' && <div className="fm-tree-loading" style={{ paddingLeft: `${30 + depth * 14}px` }}>{t('Loading...')}</div>}

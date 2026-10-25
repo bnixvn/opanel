@@ -10,6 +10,7 @@ import PageHeader from '../components/PageHeader.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import './Files.css';
 import { FolderTree } from '../components/FolderTree.jsx';
+import { FileTypeIcon } from '../components/FileTypeIcon.jsx';
 
 // Folders first, whichever way the list is turned - as the server lists them -
 // then by the column chosen, and by name where that column ties. A folder has
@@ -143,7 +144,7 @@ export default function FilesPage() {
             {shownFiles.map((item) => <div className={`file-item ${selectedFilePaths.includes(item.path) ? 'selected' : ''}`} key={item.path}>
               <input type="checkbox" checked={selectedFilePaths.includes(item.path)} onChange={() => toggleFileSelection(item.path)} aria-label={t('Select {name}', { name: item.name })}/>
               <button className="file-name" onClick={() => item.is_dir ? listFiles(item.path) : (isTextEditable(item) ? openFileEditorTab(item.path) : downloadFile(item.path))}>
-                {item.is_dir ? <FolderOpen size={16}/> : <FileText size={16}/>} <strong>{item.name}</strong>
+                <FileTypeIcon name={item.name} isDir={item.is_dir} size={17}/> <strong>{item.name}</strong>
               </button>
               <button className="file-mode" type="button" disabled={!!loading}
                 title={t('Permissions {value} - click to change', { value: item.mode || '---' })}

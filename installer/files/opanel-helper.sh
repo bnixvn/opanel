@@ -43,6 +43,9 @@ FIREWALL_BLOCKLIST_WORK="${opanel_DATA_DIR}/firewall-blocklists.current"
 BLOCKLIST_DIR="${opanel_DATA_DIR}/firewall"
 BLOCKLIST_IPSET_V4="opanel_blocklist4"
 BLOCKLIST_IPSET_V6="opanel_blocklist6"
+# Every source an admin rule ACCEPTs: exempt from the URL blocklists.
+ALLOW_IPSET_V4="opanel_allow4"
+ALLOW_IPSET_V6="opanel_allow6"
 OLS_CUSTOM_DIR="/usr/local/lsws/conf/opanel/custom"
 LSPHP_DEFAULT_WORKER_MB=128
 LSPHP_DEFAULT_REQUEST_TERMINATE_TIMEOUT=300
@@ -558,7 +561,9 @@ ensure_firewall_restorable() {
   content="# Managed by opanel: the saved rules need these sets to exist.
 [Service]
 ExecStartPre=-${ipset_bin} create ${BLOCKLIST_IPSET_V4} hash:net family inet hashsize 32768 maxelem 65536 -exist
-ExecStartPre=-${ipset_bin} create ${BLOCKLIST_IPSET_V6} hash:net family inet6 hashsize 32768 maxelem 65536 -exist"
+ExecStartPre=-${ipset_bin} create ${BLOCKLIST_IPSET_V6} hash:net family inet6 hashsize 32768 maxelem 65536 -exist
+ExecStartPre=-${ipset_bin} create ${ALLOW_IPSET_V4} hash:net family inet -exist
+ExecStartPre=-${ipset_bin} create ${ALLOW_IPSET_V6} hash:net family inet6 -exist"
   if [[ -f "$dropin" && "$(cat "$dropin")" == "$content" ]]; then
     return 0
   fi
@@ -798,6 +803,8 @@ run_managed_iptables_command() {
   [[ -n "$network" ]] && argv+=("-s" "$network")
   argv+=("-j" "$target")
   "${argv[@]}"
+  # An allowed source is exempt from the URL blocklists at once.
+  firewall_allow_exempt_sync
   # Without this the rule lives only in the running kernel: the on-disk snapshot
   # is taken elsewhere and never refreshed, so every admin rule vanished on the
   # next reboot while the panel kept listing it.
@@ -3136,6 +3143,35 @@ TIMER
   systemctl enable --now opanel-firewall-blocklist.timer >/dev/null 2>&1 || true
 }
 
+# An address the admin allowed is trusted: a URL blocklist - a third party's,
+# or the shared one other servers fill - must not drop it. OPANEL_BLOCKLIST
+# runs ahead of OPANEL_USER (an admin's "block this IP" has to beat the
+# default ports), so the exemption is a set here, filled from the ACCEPT
+# rules in OPANEL_USER that name a source, and RETURNed from first. A rule
+# open to everyone (no source, or 0.0.0.0/0) exempts nobody. As on BPanel,
+# whose allow sets RETURN before its blocklist (operator, 2026-10-25).
+firewall_allow_exempt_sync() {
+  command -v ipset >/dev/null 2>&1 || return 0
+  local binary set family src
+  for binary in iptables ip6tables; do
+    if [[ "$binary" == iptables ]]; then set="$ALLOW_IPSET_V4"; family=inet; else set="$ALLOW_IPSET_V6"; family=inet6; fi
+    "$binary" -N OPANEL_BLOCKLIST 2>/dev/null || true
+    ipset create "$set" hash:net family "$family" -exist 2>/dev/null || continue
+    ipset create "${set}_new" hash:net family "$family" -exist 2>/dev/null || continue
+    ipset flush "${set}_new" 2>/dev/null || true
+    while IFS= read -r src; do
+      [[ -n "$src" ]] && ipset add "${set}_new" "$src" -exist 2>/dev/null || true
+    done < <("$binary" -S OPANEL_USER 2>/dev/null \
+      | awk '/ -j ACCEPT/ { for (i = 1; i <= NF; i++) if ($i == "-s") print $(i + 1) }' \
+      | grep -vE '^(0\.0\.0\.0/0|::/0)$' | sort -u)
+    ipset swap "${set}_new" "$set" 2>/dev/null || true
+    ipset destroy "${set}_new" 2>/dev/null || true
+    # Always first in the chain, whatever was inserted since.
+    while "$binary" -D OPANEL_BLOCKLIST -m set --match-set "$set" src -j RETURN 2>/dev/null; do :; done
+    "$binary" -I OPANEL_BLOCKLIST 1 -m set --match-set "$set" src -j RETURN 2>/dev/null || true
+  done
+}
+
 firewall_blocklist_apply() {
   local v4_count=0 v6_count=0 v4_max=65536 v6_max=65536
   local v4_new="${BLOCKLIST_IPSET_V4}_new" v6_new="${BLOCKLIST_IPSET_V6}_new"
@@ -3212,6 +3248,7 @@ firewall_blocklist_apply() {
     ip6tables -I OPANEL_BLOCKLIST 1 -i lo -j RETURN 2>/dev/null || true
   fi
   ensure_firewall_rule_store >/dev/null 2>&1 || true
+  firewall_allow_exempt_sync
 }
 
 firewall_blocklist_status() {
@@ -9675,6 +9712,8 @@ PY
   iptables-allow-ip)
     [[ $# -ge 1 && $# -le 3 ]] || deny "usage: iptables-allow-ip <ip> [port] [proto]"
     run_ip_rule allow "$1" "${2:-}" "${3:-tcp}"
+    firewall_allow_exempt_sync
+    firewall_persist_rules 2>/dev/null || true
     ;;
   iptables-deny-ip)
     [[ $# -ge 1 && $# -le 3 ]] || deny "usage: iptables-deny-ip <ip> [port] [proto]"
@@ -9685,6 +9724,8 @@ PY
     iptables -D OPANEL_USER "$1" 2>/dev/null \
       || iptables -D OPANEL_INPUT "$1" 2>/dev/null \
       || deny "could not delete rule $1"
+    # A removed allow no longer exempts its source from the blocklists.
+    firewall_allow_exempt_sync
     echo "Rule $1 deleted"
     ;;
 
