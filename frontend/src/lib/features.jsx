@@ -63,7 +63,7 @@ export const TILES = {
   'da-import': { label: msg('DirectAdmin Import'), icon: 'directadmin-import', page: 'importDirectadmin', roles: ['admin'], addon: 'directadmin' },
   'cpanel-import': { label: msg('cPanel Import'), icon: 'cpanel-import', page: 'importCpanel', roles: ['admin'], addon: 'cpanel' },
   'fastpanel-import': { label: msg('FastPanel Import'), icon: 'migration', page: 'importFastpanel', roles: ['admin'], addon: 'fastpanel' },
-  // Extensions
+  // In Advanced.
   addons: { label: msg('Manage addons'), icon: 'addons', page: 'addons', roles: ['admin'] },
 };
 
@@ -76,9 +76,10 @@ const ADMIN = [
   ['files', msg('Files and backups'), ['files', 'sftp', 'git', 'backups']],
   ['security', msg('Security'), ['firewall', 'waf', 'access-logs', 'fail2ban', 'malware', 'security']],
   ['server', msg('Server'), ['php', 'services', 'processes', 'ram', 'disk', 'traffic', 'account-resources', 'updates']],
-  ['advanced', msg('Advanced'), ['cron', 'mcp', 'notifications', 'panel-settings']],
+  // Addons with the rest of Advanced, not a section of one tile of their own
+  // (operator, 2026-10-25, as on BPanel).
+  ['advanced', msg('Advanced'), ['cron', 'mcp', 'notifications', 'panel-settings', 'addons']],
   ['migration', msg('Migration'), ['da-import', 'cpanel-import', 'fastpanel-import']],
-  ['extensions', msg('Extensions'), ['addons']],
 ];
 const CUSTOMER = [
   ['websites', msg('Websites and domains'), ['websites', 'website-add', 'ssl', 'dns', 'wordpress']],
