@@ -462,18 +462,23 @@ function App() {
   }, [theme]);
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   // Shows the language in use; a click switches to the other one (and reloads).
-  // CPU, RAM and disk in the top bar, each opening its page. Administrators.
+  // CPU, RAM, disk and the network in the top bar, each opening its page.
+  // Administrators. The network moved up from the Dashboard (operator,
+  // 2026-10-26); it has no percent, so no tone.
   function renderTopStats() {
     const known = !!resourceUsage;
-    const tone = percent => { const value = Number(percent) || 0; return value >= 90 ? 'bad' : value >= 75 ? 'warn' : 'ok'; };
+    const tone = percent => { if (percent === null) return 'ok'; const value = Number(percent) || 0; return value >= 90 ? 'bad' : value >= 75 ? 'warn' : 'ok'; };
+    const network = resourceUsage?.network || {};
+    const throughput = `${formatBytes((Number(network.rx_per_sec) || 0) + (Number(network.tx_per_sec) || 0))}/s`;
     const chips = [
       ['processes', Cpu, 'CPU', resourceUsage?.cpu?.percent, 'CPU: open the process monitor'],
       ['ramUsage', MemoryStick, 'RAM', resourceUsage?.memory?.percent, 'RAM: where the memory is'],
       ['diskUsage', HardDrive, 'Disk', resourceUsage?.disk?.percent, 'Disk: what takes the space'],
+      ['traffic', Activity, 'Network', null, 'Network: traffic of each interface', throughput],
     ];
     return <nav className="top-stats" aria-label={tr("Server status")}>
-      {chips.map(([key, Icon, label, percent, title]) => {
-        const value = known ? formatPercent(percent) : '--';
+      {chips.map(([key, Icon, label, percent, title, text]) => {
+        const value = known ? (text ?? formatPercent(percent)) : '--';
         return <button key={key} type="button" className={`top-stat tone-${known ? tone(percent) : 'ok'}${page === key ? ' active' : ''}`}
           onClick={() => navigateToPage(key)} title={tr(title)} aria-label={`${tr(label)} ${value}`}>
           <Icon size={14} aria-hidden="true"/><span className="top-stat-label">{tr(label)}</span><b>{value}</b>
@@ -534,7 +539,6 @@ function App() {
   const [usageLoading, setUsageLoading] = useState(false);
   const [resourceUsage, setResourceUsage] = useState(null);
   // The Dashboard's Server card draws the last readings as a line each.
-  const [usageHistory, setUsageHistory] = useState([]);
   // The server pages behind the top bar's status chips (admin only).
   const [processTop, setProcessTop] = useState(null);
   const [processPaused, setProcessPaused] = useState(false);
@@ -1430,14 +1434,7 @@ function App() {
 
   async function loadResourceUsage() {
     const data = await request('/services/resource-usage', { silent: true });
-    if (data) {
-      setResourceUsage(data);
-      const network = data.network || {};
-      setUsageHistory(prev => [...prev, {
-        cpu: Number(data.cpu?.percent) || 0, memory: Number(data.memory?.percent) || 0, disk: Number(data.disk?.percent) || 0,
-        network: (Number(network.rx_per_sec) || 0) + (Number(network.tx_per_sec) || 0),
-      }].slice(-30));
-    }
+    if (data) setResourceUsage(data);
   }
 
   async function loadProcessTop() {
@@ -4718,12 +4715,11 @@ function App() {
     return () => clearInterval(timer);
   }, [isAuthenticated, page, gitRepo?.repo?.id, gitRepo?.repo?.busy, gitRepo?.operations?.[0]?.status, gitOpLog?.id]);
 
-  // The top bar's CPU, RAM and disk (operator, 2026-10-25), on every page:
-  // read every 10 seconds while the tab is in front, every 5 on the RAM page.
-  // The Dashboard reads them itself.
+  // The top bar's CPU, RAM, disk and network (operator, 2026-10-25/26), on
+  // every page, the Dashboard included: read every 10 seconds while the tab
+  // is in front, every 5 on the RAM page.
   useEffect(() => {
     if (!isAuthenticated || !isAdmin) return undefined;
-    if (page === 'dashboard') return undefined;
     const tick = () => { if (!document.hidden) loadResourceUsage(); };
     tick();
     const timer = setInterval(tick, page === 'ramUsage' ? 5000 : 10000);
@@ -5103,7 +5099,7 @@ function App() {
       addons: addonList.map(addon => ({ slug: addon.id, name: addon.name, installed: !!addon.installed })),
       appVersion, currentUser, formatBytes, formatPercent, isAdmin, isReseller, loadResourceUsage,
       navCtx: pageNavCtx, navigateToPage, request, resellerPool, resourceUsage, routeForPage,
-      runBefore: (name) => beforeActions[name]?.(), storageLimitBytes, usageHistory, websites,
+      runBefore: (name) => beforeActions[name]?.(), storageLimitBytes, websites,
       // The website list and one website's page (pages/Websites.jsx, pages/WebsiteDetail.jsx).
       API, NGINX_REWRITE_MODES, addWebsiteAlias, adminEmail, aliasDrafts, aliasModes, canManageUsers, canOpenTerminal,
       createSslCerts, createSslForm, createSslMode, createWordPress, deleteWebsite, deleteWebsiteAlias, domain,

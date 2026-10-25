@@ -100,6 +100,14 @@ def test_the_top_bar_has_the_figures_bell_and_account_the_sidebar_foot_the_rest(
     assert '<div className="user-menu top-user" ref={userMenuRef}>' in APP
     foot = APP.split('<div className="sidebar-foot">', 1)[1].split("</div>", 1)[0]
     assert "renderLanguageToggle('sidebar-tool')" in foot and "toggleTheme" in foot
+    # The network too (operator, 2026-10-26): up from the Dashboard, not on it.
+    stats = APP.split("function renderTopStats() {", 1)[1].split("\n  }\n", 1)[0]
+    assert "['traffic', Activity, 'Network', null," in stats
+    dashboard = (PROJECT_ROOT / "frontend" / "src" / "pages" / "Dashboard.jsx").read_text(encoding="utf-8")
+    assert "dash-figures" not in dashboard and "Sparkline" not in dashboard
+    # Read on every page, the Dashboard included.
+    poll = APP.split("// The top bar's CPU, RAM, disk and network", 1)[1].split("}, [isAuthenticated, page, isAdmin]);", 1)[0]
+    assert "page === 'dashboard'" not in poll
     for route in ("processes: '/processes'", "ramUsage: '/ram-usage'", "diskUsage: '/disk-usage'", "traffic: '/traffic'"):
         assert route in APP, route
 

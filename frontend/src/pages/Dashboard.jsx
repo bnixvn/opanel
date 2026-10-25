@@ -102,29 +102,14 @@ function InfoRow({ label, value }) {
   return <div className="info-row"><span>{label}</span><strong title={String(value)}>{value}</strong></div>;
 }
 
-// A line of the last readings, scaled to 0-100 (or to its own peak).
-function Sparkline({ values: readings, max = 100 }) {
-  if (!readings || readings.length === 0) return <svg className="dash-spark" viewBox="0 0 80 22" aria-hidden="true"/>;
-  const values = readings.length === 1 ? [readings[0], readings[0]] : readings;
-  const top = Math.max(max || 0, ...values, 1);
-  const step = 80 / (values.length - 1);
-  const points = values.map((value, i) => `${(i * step).toFixed(1)},${(20 - (Math.max(0, value) / top) * 18).toFixed(1)}`);
-  return <svg className="dash-spark" viewBox="0 0 80 22" aria-hidden="true" preserveAspectRatio="none">
-    <polyline className="dash-spark-area" points={`0,22 ${points.join(' ')} 80,22`}/>
-    <polyline className="dash-spark-line" points={points.join(' ')}/>
-  </svg>;
-}
-
 export default function DashboardPage() {
   const {
     addons,
     appVersion,
     currentUser,
     formatBytes,
-    formatPercent,
     isAdmin,
     isReseller,
-    loadResourceUsage,
     navCtx,
     navigateToPage,
     request,
@@ -133,7 +118,6 @@ export default function DashboardPage() {
     routeForPage,
     runBefore,
     storageLimitBytes,
-    usageHistory,
     websites,
   } = usePanel();
   const t = useT();
@@ -149,20 +133,6 @@ export default function DashboardPage() {
     if (data) setSummary(data);
   }
   useEffect(() => { load(); }, [isAdmin]);
-
-  // The Server card's figures and their lines: read every 10 seconds while
-  // the Dashboard is open, and not while the browser tab is in the background.
-  useEffect(() => {
-    if (!isAdmin) return undefined;
-    const tick = () => { if (!document.hidden) loadResourceUsage(); };
-    tick();
-    const timer = setInterval(tick, 10000);
-    document.addEventListener('visibilitychange', tick);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', tick);
-    };
-  }, [isAdmin]);
 
   // "/" anywhere but in a field goes to the tool search.
   useEffect(() => {
@@ -374,18 +344,8 @@ export default function DashboardPage() {
   // ---- an administrator's ----
   const cpu = resourceUsage?.cpu || {};
   const memory = resourceUsage?.memory || {};
-  const disk = resourceUsage?.disk || {};
-  const network = resourceUsage?.network || {};
-  const throughput = (Number(network.rx_per_sec) || 0) + (Number(network.tx_per_sec) || 0);
   const server = summary?.server || {};
   const uptime = Number(server.uptime_seconds) > 0 ? duration(server.uptime_seconds) : '';
-  const history = usageHistory || [];
-  const figure = (page, label, value, percent, values, max) => <PanelLink key={page} to={to(page)} className={`dash-figure tone-${percent === null ? 'ok' : toneOf(percent)}`}>
-    <span className="dash-figure-label">{label}</span>
-    <strong>{value}</strong>
-    <Sparkline values={values} max={max}/>
-  </PanelLink>;
-  const pct = (value) => (resourceUsage ? formatPercent(value) : '—');
 
   return <div className="dashboard cp-layout">
     <div className="cp-main">
@@ -395,11 +355,8 @@ export default function DashboardPage() {
     <aside className="cp-side">
       <section className="section side-card">
         <h3 className="side-card-title">{t('Server')}</h3>
-        {/* CPU, RAM and disk are in the top bar (operator, 2026-10-25: not
-            twice); the network, which is not, stays here. */}
-        <div className="dash-figures">
-          {figure('traffic', t('Network'), resourceUsage ? `${formatBytes(throughput)}/s` : '—', null, history.map((h) => h.network), 0)}
-        </div>
+        {/* CPU, RAM, disk and the network are in the top bar (operator,
+            2026-10-25/26: not twice). */}
         <InfoRow label={t('Hostname')} value={server.hostname}/>
         <InfoRow label={t('IP address')} value={server.ipv4}/>
         <InfoRow label={t('Operating system')} value={server.os}/>
