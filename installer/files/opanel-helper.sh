@@ -4059,7 +4059,13 @@ terminal_session() {
     -E "HOME=$home" -E "USER=$user" -E "LOGNAME=$user" -E SHELL=/bin/bash
     -E TERM=xterm-256color -E LANG=C.UTF-8 -E "COMPOSER_HOME=$home/.composer"
     -E "npm_config_cache=$home/.npm"
+    # `npm install -g` writes to the prefix, /usr by default, which is
+    # read-only here: every global install failed with EACCES (operator,
+    # 2026-10-24, on BPanel). The account's own ~/.local takes them, and its
+    # bin - with composer's global one - is on the PATH.
+    -E "npm_config_prefix=$home/.local"
   )
+  path_value="$home/.local/bin:$home/.composer/vendor/bin:$path_value"
   # The website's PHP first, so `php`, composer and wp-cli use its version.
   if [[ -n "$php_dir" ]]; then path_value="$php_dir:$path_value"; fi
   props+=(-E "PATH=$path_value")

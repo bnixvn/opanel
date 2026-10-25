@@ -294,3 +294,10 @@ def test_deleting_an_account_ends_its_sessions_before_userdel():
     from app.api import users as users_api
     delete = inspect.getsource(users_api.delete_user)
     assert delete.index("terminal.end_sessions") < delete.index("site_users.delete_panel_user")
+
+
+def test_global_npm_and_composer_installs_land_in_the_account_home():
+    # /usr is read-only in the sandbox: `npm install -g` failed with EACCES
+    # (operator, 2026-10-24, on BPanel). The prefix is ~/.local, on PATH.
+    assert '-E "npm_config_prefix=$home/.local"' in SESSION_FN
+    assert 'path_value="$home/.local/bin:$home/.composer/vendor/bin:$path_value"' in SESSION_FN
