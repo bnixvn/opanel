@@ -1,31 +1,3 @@
-.file-manager {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-  align-items: stretch;
-}
-
-.file-panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 10px;
-  min-width: 0;
-  box-shadow: none;
-}
-
-.file-panel {
-  display: grid;
-  gap: 0;
-}
-
-.file-controls {
-  display: grid;
-  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
-  gap: 6px 8px;
-  align-items: start;
-}
-
 .compact-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -153,31 +125,6 @@
   border-color: var(--primary-soft);
   color: var(--primary-ink);
   opacity: 1;
-}
-
-.file-controls .file-meta {
-  /* Level with the website picker, not with its label (operator, 2026-10-26). */
-  align-self: end;
-  min-height: 34px;
-  align-items: center;
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  background: var(--surface-alt);
-  border-color: var(--border);
-  color: var(--text-secondary);
-  gap: 4px 10px;
-  font-size: 12px;
-}
-
-.file-controls .file-meta span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-controls .file-meta strong {
-  color: var(--text);
 }
 
 .file-list-header {
@@ -492,61 +439,41 @@
   font-weight: 700;
 }
 
-/* The File manager's own browser tab (operator, 2026-10-26): a slim bar with
-   the panel's mark, then the files - nothing else of the panel. */
-.standalone-files-page {
-  min-height: 100vh;
-  background: var(--bg);
-  color: var(--text);
-}
-
-.standalone-files-top {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-}
-
-.standalone-files-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.standalone-files-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.standalone-files-link:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-hover);
-  color: var(--text);
-}
-
-.standalone-files-body {
-  padding: 16px;
-}
-
-/* In its own tab the page scrolls, once: no list or tree with a scrollbar of
-   its own inside it (operator, 2026-10-26). */
-.standalone-files-page .fm-body .file-list,
-.standalone-files-page .fm-tree {
-  max-height: none;
-}
-
-.standalone-files-page .demo-banner {
-  margin: 12px 16px 0;
+/* The File manager's own browser tab (operator, 2026-10-26): <main> is the
+   grid itself - a bar across the top, the folder tree, the files - with no
+   box inside a box, and the page scrolls once. */
+.fm-app{display:grid;grid-template-columns:minmax(220px,270px) minmax(0,1fr);grid-template-rows:auto 1fr;min-height:100vh;min-height:100dvh;background:var(--surface);color:var(--text)}
+.fm-app-top{grid-column:1/-1;position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border)}
+.fm-app-brand{display:flex;align-items:center;gap:10px;flex:none}
+.fm-app-brand strong{font-size:15px}
+.fm-app-target{display:flex;align-items:center;gap:8px 12px;flex:1 1 320px;min-width:0}
+.fm-app-target select{width:auto;min-width:200px;max-width:320px;height:36px;min-height:36px}
+.fm-app-root{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--text-secondary)}
+.fm-app-root strong{color:var(--text)}
+.fm-app-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.fm-app-actions button,.fm-app-link{height:34px;min-height:34px}
+.fm-app-link{display:inline-flex;align-items:center;gap:6px;padding:0 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:13px;font-weight:700;text-decoration:none}
+.fm-app-link:hover{background:var(--surface-hover);border-color:var(--border-hover);color:var(--text)}
+.fm-app>.fm-tree{max-height:none;overflow:visible;padding:8px 0}
+.fm-main{min-width:0;display:flex;flex-direction:column;gap:10px;padding:12px 16px 24px}
+.fm-main .demo-banner{margin:0}
+.fm-main .fm-selection{top:64px}
+.fm-main .file-list{max-height:none;border:1px solid var(--border);border-radius:var(--radius-sm)}
+.fm-main .file-list-header{margin:0;border:0;border-bottom:1px solid var(--border);border-radius:0;background:var(--surface-alt);color:var(--text-secondary)}
+.fm-main .file-list .empty-box{grid-column:1/-1;color:var(--text-secondary)}
+.fm-main .file-item:hover{background:var(--surface-hover)}
+.fm-main .file-item.selected{background:var(--primary-light)}
+.fm-main .crumb{background:var(--surface);color:var(--text-secondary)}
+.fm-main .crumb:disabled{background:var(--primary-light);color:var(--primary-ink)}
+@media (max-width:900px){
+  .fm-app{grid-template-columns:minmax(0,1fr)}
+  /* Wrapped, the bar is tall: on a phone it scrolls away with the page. */
+  .fm-app-top{position:static}
+  .fm-main .fm-selection{top:8px}
+  .fm-app>.fm-tree{display:none}
+  .fm-app-target{flex-basis:100%;flex-wrap:wrap}
+  .fm-app-target select{flex:1 1 100%;max-width:none}
+  .fm-app-root{white-space:normal;overflow-wrap:anywhere}
 }
 
 .file-list .empty-box {
@@ -591,11 +518,6 @@
 }
 
 @media (max-width: 1100px) {
-  .file-manager,
-  .file-controls {
-    grid-template-columns: 1fr;
-  }
-
   .file-list {
     max-height: 360px;
   }
@@ -624,48 +546,6 @@
 }
 
 @media (max-width: 760px) {
-  .file-manager {
-    max-width: 100%;
-    overflow: hidden;
-  }
-
-  .file-panel {
-    max-width: 100%;
-    overflow: hidden;
-    padding: 8px;
-  }
-
-  .file-controls {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 7px;
-    min-width: 0;
-  }
-
-  .file-controls > * {
-    max-width: 100%;
-    min-width: 0;
-  }
-
-  .file-controls select {
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .file-controls .file-meta {
-    display: grid;
-    gap: 3px;
-    min-height: 0;
-    padding: 7px 8px;
-  }
-
-  .file-controls .file-meta span {
-    overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    line-height: 1.45;
-  }
-
   .path-pill.breadcrumb-line {
     flex-wrap: nowrap;
     max-width: 100%;
@@ -789,20 +669,9 @@
   }
 }
 
-/* The folder tree beside the file list, as cPanel and DirectAdmin have it,
-   and one white card instead of grey boxes inside boxes (operator,
-   2026-10-25). Every label keeps the body text's contrast. */
-.file-manager .file-panel{padding:0;border:0;gap:10px}
-.file-controls .file-meta{background:transparent;border:0;padding:0 2px;min-height:34px;color:var(--text-secondary)}
+/* The folder tree beside the file list, as cPanel and DirectAdmin have it
+   (operator, 2026-10-25). Every label keeps the body text's contrast. */
 .path-pill.breadcrumb-line{background:transparent;border:0;padding:0}
-.file-manager .crumb{background:var(--surface);color:var(--text-secondary)}
-.file-manager .crumb:disabled{background:var(--primary-light);color:var(--primary-ink)}
-.fm-body{display:grid;grid-template-columns:minmax(200px,250px) minmax(0,1fr);border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;background:var(--surface);min-height:360px}
-.fm-body .file-list-header{margin:0;border:0;border-bottom:1px solid var(--border);border-radius:0;background:var(--surface-alt);color:var(--text-secondary)}
-.fm-body .file-list{border:0;border-radius:0;max-height:min(70vh,780px)}
-.fm-body .file-list .empty-box{grid-column:1/-1;color:var(--text-secondary)}
-.fm-body .file-item:hover{background:var(--surface-hover)}
-.fm-body .file-item.selected{background:var(--primary-light)}
 .fm-tree{border-right:1px solid var(--border);background:var(--surface-alt);overflow:auto;max-height:min(70vh,820px);padding:6px 0}
 .fm-tree ul{list-style:none;margin:0;padding:0}
 .fm-tree-row{display:flex;align-items:center;gap:2px;padding-right:8px;min-height:30px}
@@ -816,7 +685,6 @@
 .fm-tree-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.6}
 .fm-tree-name svg{flex:none;color:var(--primary-ink)}
 .fm-tree-loading{padding:4px 0;font-size:12px;color:var(--text-secondary)}
-@media (max-width:900px){.fm-body{grid-template-columns:1fr}.fm-tree{display:none}}
 
 /* Each kind of file in its own colour (operator, 2026-10-25, from a
    reference): folders solid yellow, PHP purple, HTML orange, styles blue,

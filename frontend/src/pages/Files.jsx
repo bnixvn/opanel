@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react';
 import {
   Archive, ArchiveRestore, ArrowDown, ArrowUp, Clock, Copy, CornerLeftUp, Download, FilePen, FilePlus, FileText, FolderOpen, FolderPlus,
-  Lock, MoveRight, PencilLine, RefreshCw, Trash2, Upload, X,
+  Eye, Lock, MoveRight, PencilLine, RefreshCw, Trash2, Upload, X,
 } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
-import { Field } from '../components/Form.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import './Files.css';
 import { FolderTree } from '../components/FolderTree.jsx';
@@ -32,7 +31,12 @@ const FIRST_DIR = { name: 'asc', modified: 'desc', size: 'desc' };
 // in the folder is the toolbar; what can be done with a selection is a bar
 // under it, there only while something is ticked; each row's own actions
 // are one "…" menu. The columns sort.
-export default function FilesPage() {
+//
+// It is the whole of its browser tab (operator, 2026-10-26): what it returns
+// are the three parts of App's <main className="fm-app"> grid - the bar
+// across the top, the folder tree, the files - with no box inside a box.
+// `brand` and `actions` are App's: the panel's mark, and theme/Dashboard/Close.
+export default function FilesPage({ brand, actions }) {
   const t = useT();
   const {
     WebsiteSelect, archiveSelectedFiles, clearFileSelection, copySelectedFiles, currentSite, currentUser, deleteSelectedFiles,
@@ -68,113 +72,109 @@ export default function FilesPage() {
   const visibleFileJobs = fileJobs.filter((job) => String(job.website_id) === String(selectedWebsiteId) && job.status !== 'done').slice(0, 4);
   const uploadPercent = uploadProgress?.total ? Math.round((uploadProgress.loaded / uploadProgress.total) * 100) : 0;
 
-  // No page head over it (operator, 2026-10-26: the room is the files'):
-  // Refresh sits in the toolbar with the folder's other actions.
+  const rootPath = currentSite ? `${currentSite.root_path}${fileListPath ? `/${fileListPath}` : ''}` : '';
   return <>
-    <section className="section">
-      <div className="file-manager">
-        <div className="file-panel">
-          <div className="file-controls">
-            <Field label={t('Website')}><WebsiteSelect/></Field>
-            {currentSite && <div className="file-meta">
-              <span>{t('Website: {domain}', { domain: <strong>{currentSite.domain}</strong> })}</span>
-              <span>{t('Root: {path}', { path: <strong>{currentSite.root_path}{fileListPath ? `/${fileListPath}` : ''}</strong> })}</span>
-              {currentUser && !isAdmin && <span>{t('Storage: {usage}', { usage: <strong>{storageUsageText(currentUser)}</strong> })}</span>}
-            </div>}
-            <div className="path-pill breadcrumb-line">
-              <button className="crumb" disabled={!hasTarget || fileListPath === ''} onClick={() => listFiles('')}>{t('root')}</button>
-              {fileBreadcrumbs(fileListPath).map((crumb) => <button className="crumb" key={crumb.path} onClick={() => listFiles(crumb.path)}>{crumb.label}</button>)}
-            </div>
-            <div className="file-toolbar fm-toolbar">
-              <button className="secondary-light" disabled={!hasTarget || fileListPath === '' || !!loading} onClick={() => listFiles(parentFilePath(fileListPath))}><CornerLeftUp size={14} aria-hidden="true"/> {t('Up')}</button>
-              <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={makeFileDirectory}><FolderPlus size={14} aria-hidden="true"/> {t('New folder')}</button>
-              <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={makeFile}><FilePlus size={14} aria-hidden="true"/> {t('New file')}</button>
-              <label className={`upload-button ${(!hasTarget || !!loading || !!uploadProgress) ? 'disabled' : ''}`}>
-                <Upload size={14} aria-hidden="true"/> {t('Upload')}
-                <input type="file" disabled={!hasTarget || !!loading || !!uploadProgress} onChange={(e) => { uploadSiteFile(e.target.files?.[0]); e.target.value = ''; }}/>
-              </label>
-              <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14} aria-hidden="true"/> {t('Refresh')}</button>
-            </div>
-            {selectedFilePaths.length > 0 && <div className="fm-selection" role="region" aria-label={t('Selected items')}>
-              <strong>{t('{count} selected', { count: selectedFilePaths.length })}</strong>
-              <div className="fm-selection-actions">
-                <button className="secondary-light" disabled={!!loading} onClick={() => copySelectedFiles()}><Copy size={14} aria-hidden="true"/> {t('Copy')}</button>
-                <button className="secondary-light" disabled={!!loading} onClick={() => moveSelectedFiles()}><MoveRight size={14} aria-hidden="true"/> {t('Move')}</button>
-                <ActionMenu text={t('Archive')} icon={Archive} label={t('Compress the selection')} disabled={!!loading} items={[
-                  { label: t('Compress as {format}', { format: '.zip' }), icon: Archive, onClick: () => archiveSelectedFiles('zip') },
-                  { label: t('Compress as {format}', { format: '.tar.gz' }), icon: Archive, onClick: () => archiveSelectedFiles('tar.gz') },
-                ]}/>
-                {selectedArchive && <button className="secondary-light" disabled={!!loading} onClick={() => extractArchive(selectedArchive)}><ArchiveRestore size={14} aria-hidden="true"/> {t('Extract')}</button>}
-                <button className="secondary-light" disabled={!!loading} onClick={() => openChmod(selectedItems)}><Lock size={14} aria-hidden="true"/> {t('Permissions')}</button>
-                <button className="danger" disabled={!!loading} onClick={() => deleteSelectedFiles()}><Trash2 size={14} aria-hidden="true"/> {t('Delete')}</button>
-              </div>
-              <button type="button" className="secondary-light fm-selection-clear" onClick={clearFileSelection}><X size={14} aria-hidden="true"/> {t('Clear selection')}</button>
-            </div>}
-            {uploadProgress && <div className="file-upload-progress" role="status">
-              <Upload size={14} aria-hidden="true"/>
-              <span>{t('Uploading {name}: {done} of {total} ({percent}%)', { name: uploadProgress.name, done: formatBytes(uploadProgress.loaded), total: formatBytes(uploadProgress.total), percent: uploadPercent })}</span>
-              <progress max={100} value={uploadPercent}/>
-            </div>}
-            {visibleFileJobs.length > 0 && <div className="file-job-list">
-              {visibleFileJobs.map((job) => <div className={`file-job ${job.status}`} key={job.job_id}>
-                <Clock size={14} aria-hidden="true"/>
-                <span><strong>{job.archive_path?.split('/').pop() || t('Archive')}</strong> {job.status === 'error' ? t('failed') : job.status}</span>
-                {job.error && <small>{job.error}</small>}
-                <button type="button" className="file-job-dismiss" onClick={() => dismissFileJob(job.job_id)} aria-label={t('Dismiss')}><X size={13} aria-hidden="true"/></button>
-              </div>)}
-            </div>}
-          </div>
-          <div className="fm-body">
-          <FolderTree request={request} base={hasTarget ? `/maintenance/files/${selectedWebsiteId}` : ''} targetKey={String(selectedWebsiteId || '')}
-            current={fileListPath} currentItems={files} onOpen={(path) => listFiles(path)} t={t}
-            rootLabel={currentSite?.domain || t('root')}/>
-          <div className="file-list">
-            <div className="file-list-header">
-              <input type="checkbox" checked={allSelected} ref={(el) => { if (el) el.indeterminate = selectedFilePaths.length > 0 && !allSelected; }}
-                onChange={toggleAllFiles} disabled={files.length === 0} aria-label={t('Select all')}/>
-              <div className="file-col-name">
-                {sortHeading('name', t('Name'))}
-                <span className="file-count">{t('{count} item(s)', { count: files.length })}</span>
-              </div>
-              <span className="file-col-mode">{t('Permissions')}</span>
-              {sortHeading('size', t('Size'), 'file-col-size')}
-              {sortHeading('modified', t('Modified'), 'file-col-date')}
-              <span className="file-col-actions" aria-hidden="true"></span>
-            </div>
-            {files.length === 0 && <div className="empty-box">{t('No files in this folder.')}</div>}
-            {shownFiles.map((item) => <div className={`file-item ${selectedFilePaths.includes(item.path) ? 'selected' : ''}`} key={item.path}>
-              <input type="checkbox" checked={selectedFilePaths.includes(item.path)} onChange={() => toggleFileSelection(item.path)} aria-label={t('Select {name}', { name: item.name })}/>
-              <button className="file-name" onClick={() => item.is_dir ? listFiles(item.path) : (isTextEditable(item) ? openFileEditorTab(item.path) : downloadFile(item.path))}>
-                <FileTypeIcon name={item.name} isDir={item.is_dir} size={17}/> <strong>{item.name}</strong>
-              </button>
-              <button className="file-mode" type="button" disabled={!!loading}
-                title={t('Permissions {value} - click to change', { value: item.mode || '---' })}
-                onClick={() => openChmod(item)}>{item.mode || '---'}</button>
-              <span className="file-facts">
-                <span className="file-size">{item.is_dir ? t('Folder') : formatBytes(item.size)}</span>
-                <time className="file-date" dateTime={item.modified ? new Date(item.modified * 1000).toISOString() : undefined}
-                  title={item.modified ? new Date(item.modified * 1000).toLocaleString() : undefined}>{formatFileTime(item.modified)}</time>
-              </span>
-              <div className="file-row-actions">
-                <ActionMenu label={t('More actions for {name}', { name: item.name })} items={[
-                  { label: t('Open'), icon: FolderOpen, hidden: !item.is_dir, onClick: () => listFiles(item.path) },
-                  { label: t('Edit in a new tab'), icon: FilePen, hidden: item.is_dir || !isTextEditable(item), onClick: () => openFileEditorTab(item.path) },
-                  { label: t('Download'), icon: Download, hidden: item.is_dir, disabled: !!loading, onClick: () => downloadFile(item.path) },
-                  { label: t('Extract'), icon: ArchiveRestore, hidden: !isExtractableArchive(item), disabled: !!loading, onClick: () => extractArchive(item) },
-                  'separator',
-                  { label: t('Rename'), icon: PencilLine, disabled: !!loading, onClick: () => renameFileItem(item) },
-                  { label: t('Copy'), icon: Copy, disabled: !!loading, onClick: () => copySelectedFiles([item.path]) },
-                  { label: t('Move'), icon: MoveRight, disabled: !!loading, onClick: () => moveSelectedFiles([item.path]) },
-                  { label: t('Permissions'), icon: Lock, disabled: !!loading, onClick: () => openChmod(item) },
-                  'separator',
-                  { label: t('Delete'), icon: Trash2, danger: true, disabled: !!loading, onClick: () => deleteSelectedFiles([item.path]) },
-                ]}/>
-              </div>
-            </div>)}
-          </div>
-          </div>
-        </div>
+    <header className="fm-app-top">
+      <div className="fm-app-brand">{brand}<strong>{t('File manager')}</strong></div>
+      <div className="fm-app-target">
+        <WebsiteSelect/>
+        {currentSite && <span className="fm-app-root" title={rootPath}>{t('Root: {path}', { path: <strong>{rootPath}</strong> })}</span>}
+        {currentUser && !isAdmin && <span className="fm-app-root">{t('Storage: {usage}', { usage: <strong>{storageUsageText(currentUser)}</strong> })}</span>}
       </div>
+      <div className="fm-app-actions">{actions}</div>
+    </header>
+    <FolderTree request={request} base={hasTarget ? `/maintenance/files/${selectedWebsiteId}` : ''} targetKey={String(selectedWebsiteId || '')}
+      current={fileListPath} currentItems={files} onOpen={(path) => listFiles(path)} t={t}
+      rootLabel={currentSite?.domain || t('root')}/>
+    <section className="fm-main" aria-label={t('Files')}>
+      {currentUser?.demo && <div className="demo-banner" role="status"><Eye size={15} aria-hidden="true"/> <span>{t('You are viewing a read-only demo: you can open every page, and nothing you change is saved.')}</span></div>}
+      <div className="path-pill breadcrumb-line">
+        <button className="crumb" disabled={!hasTarget || fileListPath === ''} onClick={() => listFiles('')}>{t('root')}</button>
+        {fileBreadcrumbs(fileListPath).map((crumb) => <button className="crumb" key={crumb.path} onClick={() => listFiles(crumb.path)}>{crumb.label}</button>)}
+      </div>
+      <div className="file-toolbar fm-toolbar">
+        <button className="secondary-light" disabled={!hasTarget || fileListPath === '' || !!loading} onClick={() => listFiles(parentFilePath(fileListPath))}><CornerLeftUp size={14} aria-hidden="true"/> {t('Up')}</button>
+        <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={makeFileDirectory}><FolderPlus size={14} aria-hidden="true"/> {t('New folder')}</button>
+        <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={makeFile}><FilePlus size={14} aria-hidden="true"/> {t('New file')}</button>
+        <label className={`upload-button ${(!hasTarget || !!loading || !!uploadProgress) ? 'disabled' : ''}`}>
+          <Upload size={14} aria-hidden="true"/> {t('Upload')}
+          <input type="file" disabled={!hasTarget || !!loading || !!uploadProgress} onChange={(e) => { uploadSiteFile(e.target.files?.[0]); e.target.value = ''; }}/>
+        </label>
+        <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14} aria-hidden="true"/> {t('Refresh')}</button>
+      </div>
+      {selectedFilePaths.length > 0 && <div className="fm-selection" role="region" aria-label={t('Selected items')}>
+        <strong>{t('{count} selected', { count: selectedFilePaths.length })}</strong>
+        <div className="fm-selection-actions">
+          <button className="secondary-light" disabled={!!loading} onClick={() => copySelectedFiles()}><Copy size={14} aria-hidden="true"/> {t('Copy')}</button>
+          <button className="secondary-light" disabled={!!loading} onClick={() => moveSelectedFiles()}><MoveRight size={14} aria-hidden="true"/> {t('Move')}</button>
+          <ActionMenu text={t('Archive')} icon={Archive} label={t('Compress the selection')} disabled={!!loading} items={[
+            { label: t('Compress as {format}', { format: '.zip' }), icon: Archive, onClick: () => archiveSelectedFiles('zip') },
+            { label: t('Compress as {format}', { format: '.tar.gz' }), icon: Archive, onClick: () => archiveSelectedFiles('tar.gz') },
+          ]}/>
+          {selectedArchive && <button className="secondary-light" disabled={!!loading} onClick={() => extractArchive(selectedArchive)}><ArchiveRestore size={14} aria-hidden="true"/> {t('Extract')}</button>}
+          <button className="secondary-light" disabled={!!loading} onClick={() => openChmod(selectedItems)}><Lock size={14} aria-hidden="true"/> {t('Permissions')}</button>
+          <button className="danger" disabled={!!loading} onClick={() => deleteSelectedFiles()}><Trash2 size={14} aria-hidden="true"/> {t('Delete')}</button>
+        </div>
+        <button type="button" className="secondary-light fm-selection-clear" onClick={clearFileSelection}><X size={14} aria-hidden="true"/> {t('Clear selection')}</button>
+      </div>}
+      {uploadProgress && <div className="file-upload-progress" role="status">
+        <Upload size={14} aria-hidden="true"/>
+        <span>{t('Uploading {name}: {done} of {total} ({percent}%)', { name: uploadProgress.name, done: formatBytes(uploadProgress.loaded), total: formatBytes(uploadProgress.total), percent: uploadPercent })}</span>
+        <progress max={100} value={uploadPercent}/>
+      </div>}
+      {visibleFileJobs.length > 0 && <div className="file-job-list">
+        {visibleFileJobs.map((job) => <div className={`file-job ${job.status}`} key={job.job_id}>
+          <Clock size={14} aria-hidden="true"/>
+          <span><strong>{job.archive_path?.split('/').pop() || t('Archive')}</strong> {job.status === 'error' ? t('failed') : job.status}</span>
+          {job.error && <small>{job.error}</small>}
+          <button type="button" className="file-job-dismiss" onClick={() => dismissFileJob(job.job_id)} aria-label={t('Dismiss')}><X size={13} aria-hidden="true"/></button>
+        </div>)}
+      </div>}
+      <div className="file-list">
+        <div className="file-list-header">
+          <input type="checkbox" checked={allSelected} ref={(el) => { if (el) el.indeterminate = selectedFilePaths.length > 0 && !allSelected; }}
+            onChange={toggleAllFiles} disabled={files.length === 0} aria-label={t('Select all')}/>
+          <div className="file-col-name">
+            {sortHeading('name', t('Name'))}
+            <span className="file-count">{t('{count} item(s)', { count: files.length })}</span>
+          </div>
+          <span className="file-col-mode">{t('Permissions')}</span>
+          {sortHeading('size', t('Size'), 'file-col-size')}
+          {sortHeading('modified', t('Modified'), 'file-col-date')}
+          <span className="file-col-actions" aria-hidden="true"></span>
+        </div>
+        {files.length === 0 && <div className="empty-box">{t('No files in this folder.')}</div>}
+        {shownFiles.map((item) => <div className={`file-item ${selectedFilePaths.includes(item.path) ? 'selected' : ''}`} key={item.path}>
+          <input type="checkbox" checked={selectedFilePaths.includes(item.path)} onChange={() => toggleFileSelection(item.path)} aria-label={t('Select {name}', { name: item.name })}/>
+          <button className="file-name" onClick={() => item.is_dir ? listFiles(item.path) : (isTextEditable(item) ? openFileEditorTab(item.path) : downloadFile(item.path))}>
+            <FileTypeIcon name={item.name} isDir={item.is_dir} size={17}/> <strong>{item.name}</strong>
+          </button>
+          <button className="file-mode" type="button" disabled={!!loading}
+            title={t('Permissions {value} - click to change', { value: item.mode || '---' })}
+            onClick={() => openChmod(item)}>{item.mode || '---'}</button>
+          <span className="file-facts">
+            <span className="file-size">{item.is_dir ? t('Folder') : formatBytes(item.size)}</span>
+            <time className="file-date" dateTime={item.modified ? new Date(item.modified * 1000).toISOString() : undefined}
+              title={item.modified ? new Date(item.modified * 1000).toLocaleString() : undefined}>{formatFileTime(item.modified)}</time>
+          </span>
+          <div className="file-row-actions">
+            <ActionMenu label={t('More actions for {name}', { name: item.name })} items={[
+              { label: t('Open'), icon: FolderOpen, hidden: !item.is_dir, onClick: () => listFiles(item.path) },
+              { label: t('Edit in a new tab'), icon: FilePen, hidden: item.is_dir || !isTextEditable(item), onClick: () => openFileEditorTab(item.path) },
+              { label: t('Download'), icon: Download, hidden: item.is_dir, disabled: !!loading, onClick: () => downloadFile(item.path) },
+              { label: t('Extract'), icon: ArchiveRestore, hidden: !isExtractableArchive(item), disabled: !!loading, onClick: () => extractArchive(item) },
+              'separator',
+              { label: t('Rename'), icon: PencilLine, disabled: !!loading, onClick: () => renameFileItem(item) },
+              { label: t('Copy'), icon: Copy, disabled: !!loading, onClick: () => copySelectedFiles([item.path]) },
+              { label: t('Move'), icon: MoveRight, disabled: !!loading, onClick: () => moveSelectedFiles([item.path]) },
+              { label: t('Permissions'), icon: Lock, disabled: !!loading, onClick: () => openChmod(item) },
+              'separator',
+              { label: t('Delete'), icon: Trash2, danger: true, disabled: !!loading, onClick: () => deleteSelectedFiles([item.path]) },
+            ]}/>
+          </div>
+        </div>)}
+      </div>
+      {loading && <div className="loading"><span></span>{loading}</div>}
     </section>
   </>;
 }

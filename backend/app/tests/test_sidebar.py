@@ -68,8 +68,15 @@ def test_the_file_manager_opens_in_a_browser_tab_of_its_own():
     # Nothing of the panel around it: no sidebar, no top bar.
     assert "if (page === 'files') return renderStandaloneFiles();" in APP_JSX
     tab = APP_JSX[APP_JSX.index("function renderStandaloneFiles() {"):APP_JSX.index("if (standaloneEditor) return renderStandaloneEditor();")]
-    assert "<FilesPage/>" in tab and "{renderChmodDialog()}" in tab
+    assert '<main className="fm-app">' in tab and "<FilesPage brand={renderBrandMark()} actions={actions}/>" in tab
+    assert "{renderChmodDialog()}" in tab
     assert "sidebar" not in tab and "renderTopStats" not in tab
+    # Under <main> the columns at once (operator, 2026-10-26): the bar, the
+    # tree and the files are FilesPage's top level - no card inside a card.
+    page = (FRONTEND / "pages" / "Files.jsx").read_text(encoding="utf-8")
+    assert '<header className="fm-app-top">' in page and '<section className="fm-main"' in page
+    for wrapper in ('className="section"', 'className="file-manager"', 'className="file-panel"', 'className="fm-body"'):
+        assert wrapper not in page, wrapper
 
 
 def test_an_addon_is_not_in_the_sidebar():

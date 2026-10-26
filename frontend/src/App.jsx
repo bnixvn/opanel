@@ -5229,7 +5229,7 @@ function App() {
   }
 
   function WebsiteSelect() {
-    return <select value={selectedWebsiteId} onChange={e => setSelectedWebsiteId(e.target.value)}>
+    return <select value={selectedWebsiteId} onChange={e => setSelectedWebsiteId(e.target.value)} aria-label={tr("Website")}>
       <option value="">{tr("-- Select website --")}</option>
       {websites.map(site => <option key={site.id} value={site.id}>{site.domain}</option>)}
     </select>;
@@ -9565,27 +9565,16 @@ function App() {
   }
 
   // The File manager's own tab: the files, and nothing else of the panel.
+  // <main> is the grid itself - FilesPage's bar, tree and files are its
+  // children (operator, 2026-10-26: no layers of boxes).
   function renderStandaloneFiles() {
-    return <main className="standalone-files-page">
-      <header className="standalone-editor-top standalone-files-top">
-        <div className="standalone-files-brand">
-          {renderBrandMark()}
-          <div className="standalone-editor-title">
-            <strong>{tr("File manager")}</strong>
-            <span>{currentSite?.domain || panelSettings.app_name || tr("opanel")}</span>
-          </div>
-        </div>
-        <div className="standalone-editor-actions">
-          <button type="button" className="secondary-light icon-only" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
-          <a className="standalone-files-link" href={routeForPage('dashboard')}><Home size={14}/> {tr("Dashboard")}</a>
-          <button type="button" className="secondary-light" onClick={() => window.close()}><X size={14}/> {tr("Close")}</button>
-        </div>
-      </header>
-      {currentUser?.demo && <div className="demo-banner" role="status"><Eye size={15}/> <span>{tr("You are viewing a read-only demo: you can open every page, and nothing you change is saved.")}</span></div>}
-      <section className="standalone-files-body">
-        <PanelContext.Provider value={panelContext()}><FilesPage/></PanelContext.Provider>
-        {loading && <div className="loading"><span></span>{loading}</div>}
-      </section>
+    const actions = <>
+      <button type="button" className="secondary-light icon-only" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
+      <a className="fm-app-link" href={routeForPage('dashboard')}><Home size={14}/> {tr("Dashboard")}</a>
+      <button type="button" className="secondary-light" onClick={() => window.close()}><X size={14}/> {tr("Close")}</button>
+    </>;
+    return <main className="fm-app">
+      <PanelContext.Provider value={panelContext()}><FilesPage brand={renderBrandMark()} actions={actions}/></PanelContext.Provider>
       {renderChmodDialog()}
       {renderNotifications()}
     </main>;
