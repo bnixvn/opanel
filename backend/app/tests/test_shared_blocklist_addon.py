@@ -2,6 +2,7 @@
 what it sends, and that turning it off leaves nothing behind."""
 import json
 import sqlite3
+import shutil
 import subprocess
 import sys
 import time
@@ -67,7 +68,7 @@ def test_the_audit_log_keeps_no_request_content():
     assert "SecAuditLogParts AHZ" in conf
     assert "SecAuditEngine RelevantOnly" in conf
     # Every site includes the base file; the audit include follows the switch.
-    assert '[[ -f "$SHARED_BLOCKLIST_AUDIT_CONF" ]] && echo "Include $SHARED_BLOCKLIST_AUDIT_CONF"' in HELPER
+    assert 'if [[ -f "$SHARED_BLOCKLIST_AUDIT_CONF" ]]; then\n      echo "Include $SHARED_BLOCKLIST_AUDIT_CONF"' in HELPER
 
 
 @pytest.fixture
@@ -156,3 +157,29 @@ def test_it_is_a_panel_addon_off_by_default(tmp_path, monkeypatch):
     assert addons.ADDONS["sharedblocklist"]["kind"] == "panel"
     assert addons.is_enabled("sharedblocklist") is False
     assert "sharedblocklist" not in addons.helper_addon_ids()
+
+
+@pytest.mark.parametrize("addon_on", [False, True])
+def test_the_waf_base_conf_is_written_with_the_addon_off_too(tmp_path, addon_on):
+    """With the addon off there is no audit include, and that must not fail
+    the function: under set -e a false `[[ -f ]] && echo` as the last command
+    stopped every waf-site-save, so every new website (1.37.0-1.38.0, a
+    customer's box on 2026-10-26)."""
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("no bash")
+    start = HELPER.index("write_modsec_base_conf() {")
+    function = HELPER[start:HELPER.index("\n}\n", start) + 3]
+    waf = tmp_path / "waf"
+    function = (function.replace("install -d -o root -g root -m 0755", "mkdir -p")
+                .replace("/usr/local/lsws/conf/opanel/waf", waf.as_posix())
+                .replace("/etc/modsecurity/modsecurity.conf", (tmp_path / "none.conf").as_posix()))
+    audit = tmp_path / "audit.conf"
+    if addon_on:
+        audit.write_text("SecAuditEngine RelevantOnly\n", encoding="utf-8")
+    script = f'set -euo pipefail\nSHARED_BLOCKLIST_AUDIT_CONF="{audit.as_posix()}"\n{function}\nwrite_modsec_base_conf\necho done\n'
+    out = subprocess.run([bash, "-c", script], capture_output=True, text=True)
+    assert out.returncode == 0 and out.stdout.strip() == "done", out.stderr
+    base = (waf / "opanel-base.conf").read_text(encoding="utf-8")
+    assert "SecRuleEngine On" in base
+    assert (f"Include {audit.as_posix()}" in base) is addon_on

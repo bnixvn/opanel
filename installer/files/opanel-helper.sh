@@ -1420,7 +1420,12 @@ write_modsec_base_conf() {
     echo "SecRequestBodyLimitAction ProcessPartial"
     # Every site's rules include this file, so the audit log the Shared
     # blocklist addon reads is switched on and off here, for all of them.
-    [[ -f "$SHARED_BLOCKLIST_AUDIT_CONF" ]] && echo "Include $SHARED_BLOCKLIST_AUDIT_CONF"
+    # An if, not `[[ ]] && echo`: as the block's last command a false test
+    # failed the function under set -e whenever the addon was off - every
+    # waf-site-save, so every new website, stopped there (1.37.0-1.38.0).
+    if [[ -f "$SHARED_BLOCKLIST_AUDIT_CONF" ]]; then
+      echo "Include $SHARED_BLOCKLIST_AUDIT_CONF"
+    fi
   } >/usr/local/lsws/conf/opanel/waf/opanel-base.conf
 }
 
