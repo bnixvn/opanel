@@ -201,6 +201,14 @@ function editorParamsFromLocation() {
   return { websiteId: String(websiteId), path };
 }
 
+// The File manager's own browser tab (operator, 2026-10-26): /filemanager,
+// with ?website_id= for the website it opens on.
+function fileManagerSiteFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('view') === 'editor') return '';
+  return params.get('website_id') || '';
+}
+
 function aceModeName(mode) {
   if (mode === 'PHP') return 'php';
   if (mode === 'JavaScript') return 'javascript';
@@ -588,7 +596,7 @@ function App() {
   };
   const [newSftpTarget, setNewSftpTarget] = useState(BLANK_TARGET);
   const [targetObjects, setTargetObjects] = useState({ id: null, bucket: '', items: [] });
-  const [selectedWebsiteId, setSelectedWebsiteId] = useState(() => standaloneEditor?.websiteId || '');
+  const [selectedWebsiteId, setSelectedWebsiteId] = useState(() => standaloneEditor?.websiteId || fileManagerSiteFromLocation());
   const [sslMode, setSslMode] = useState('letsencrypt');
   const [manualSslForm, setManualSslForm] = useState({ certificate: '', private_key: '', ca_bundle: '' });
   const [manualSslFiles, setManualSslFiles] = useState({ certificate: null, private_key: null, ca_bundle: null });
@@ -861,6 +869,12 @@ function App() {
   const navigateToPage = useCallback((nextPage, options = {}) => {
     // A hub's own address opens its first tab this role may see.
     if (isHubKey(nextPage)) nextPage = hubLanding(nextPage, navCtxRef.current) || 'dashboard';
+    // The File manager opens in a browser tab of its own, with nothing of
+    // the panel around it, as cPanel's (operator, 2026-10-26).
+    if (nextPage === 'files') {
+      window.open(fileManagerUrl(options.websiteId), '_blank', 'noopener');
+      return;
+    }
     // `path`: an address of the page's own (/website/<domain>/<tab>);
     // `hash`: a part of it to scroll to.
     const route = options.path || routeForPage(nextPage);
@@ -3277,6 +3291,15 @@ function App() {
     return url.toString();
   }
 
+  function fileManagerUrl(websiteId) {
+    const url = new URL(window.location.href);
+    url.pathname = routeForPage('files');
+    url.search = '';
+    url.hash = '';
+    if (websiteId) url.searchParams.set('website_id', String(websiteId));
+    return url.toString();
+  }
+
   function openFileEditorTab(path, websiteId = selectedWebsiteId) {
     if (!websiteId || !path) return;
     window.open(fileEditorUrl(websiteId, path), '_blank', 'noopener,noreferrer');
@@ -3483,14 +3506,9 @@ function App() {
     if (page === 'files' && selectedWebsiteId) loadFileJobs(selectedWebsiteId);
   }, [page, selectedWebsiteId]);
 
-  async function openWebsiteFileManager(site) {
-    setNginxCustomEditing(null);
-    setLogViewer(null);
-    setSelectedWebsiteId(String(site.id));
-    navigateToPage('files');
-    setFileListPath('public_html');
-    setFileUploadDir('public_html');
-    await listFiles('public_html', site.id);
+  // The website's files, in the File manager's own tab.
+  function openWebsiteFileManager(site) {
+    navigateToPage('files', { websiteId: site.id });
   }
 
   async function uploadSiteFile(file) {
@@ -4719,7 +4737,7 @@ function App() {
   // every page, the Dashboard included: read every 10 seconds while the tab
   // is in front, every 5 on the RAM page.
   useEffect(() => {
-    if (!isAuthenticated || !isAdmin) return undefined;
+    if (!isAuthenticated || !isAdmin || page === 'files') return undefined;
     const tick = () => { if (!document.hidden) loadResourceUsage(); };
     tick();
     const timer = setInterval(tick, page === 'ramUsage' ? 5000 : 10000);
@@ -9470,7 +9488,111 @@ function App() {
     </main>;
   }
 
+  function renderChmodDialog() {
+    if (!chmodTarget) return null;
+    // The permissions of one item or several, as SNPanel's dialog: a grid of
+    // read, write and execute for owner, group and everyone, the octal and
+    // symbolic forms, presets, setgid on folders. Files and folders each get
+    // their own mode when both are chosen. The server refuses setuid and
+    // sticky; a folder keeps its owner's execute bit; world-writable is
+    // allowed with a warning.
+    const files = chmodTarget.items.filter(item => !item.is_dir);
+    const dirs = chmodTarget.items.filter(item => item.is_dir);
+    const digitsOf = (mode) => (mode || '').padStart(3, '0').slice(-3).split('').map(d => parseInt(d, 8) || 0);
+    const symbolic = (mode, isDir, setgid) => {
+      const d = digitsOf(mode);
+      const part = (n, who) => `${n & 4 ? 'r' : '-'}${n & 2 ? 'w' : '-'}${who === 1 && setgid ? (n & 1 ? 's' : 'S') : (n & 1 ? 'x' : '-')}`;
+      return `${isDir ? 'd' : '-'}${d.map(part).join('')}`;
+    };
+    const valid = (mode) => /^[0-7]{3}$/.test(mode || '');
+    const grid = (key, isDir) => {
+      const mode = chmodTarget[key];
+      const digits = digitsOf(mode);
+      const setBit = (who, bit, on) => {
+        const next = [...digits];
+        next[who] = on ? (next[who] | bit) : (next[who] & ~bit);
+        setChmodTarget(prev => ({ ...prev, [key]: next.join('') }));
+      };
+      const presets = isDir ? ['755', '750', '711', '700'] : ['644', '640', '600', '755'];
+      const worldWritable = valid(mode) && (digits[2] & 2) !== 0;
+      return <div className="chmod-section" key={key}>
+        {files.length > 0 && dirs.length > 0 && <h4>{isDir ? tr("Folders ({0})", dirs.length) : tr("Files ({0})", files.length)}</h4>}
+        <table className="chmod-grid">
+          <thead><tr><th></th><th>{tr("Read")}</th><th>{tr("Write")}</th><th>{tr("Execute")}</th></tr></thead>
+          <tbody>
+            {[tr("Owner"), tr("Group"), tr("Public")].map((label, who) => <tr key={label}>
+              <th scope="row">{label}</th>
+              {[4, 2, 1].map(bit => <td key={bit}>
+                <input type="checkbox" checked={(digits[who] & bit) !== 0} disabled={isDir && who === 0 && bit === 1}
+                  onChange={e => setBit(who, bit, e.target.checked)} aria-label={`${label} ${bit === 4 ? tr("Read") : bit === 2 ? tr("Write") : tr("Execute")}`} />
+              </td>)}
+            </tr>)}
+          </tbody>
+        </table>
+        <div className="chmod-mode-row">
+          <label><span>{tr("Numeric mode")}</span>
+            <input value={mode} maxLength={3} inputMode="numeric" onChange={e => setChmodTarget(prev => ({ ...prev, [key]: e.target.value.replace(/[^0-7]/g, '').slice(0, 3) }))} />
+          </label>
+          <code className="chmod-symbolic" aria-label={tr("Symbolic form")}>{valid(mode) ? symbolic(mode, isDir, isDir && chmodTarget.setgid) : '?'}</code>
+          <div className="chmod-presets">
+            {presets.map(preset => <button key={preset} type="button" className={`mini ${mode === preset ? 'toggle-on' : 'secondary'}`} onClick={() => setChmodTarget(prev => ({ ...prev, [key]: preset }))}>{preset}</button>)}
+          </div>
+        </div>
+        {isDir && <label className="chmod-setgid"><input type="checkbox" checked={!!chmodTarget.setgid} onChange={e => setChmodTarget(prev => ({ ...prev, setgid: e.target.checked }))}/>
+          <span>{tr("New files in the folder keep its group (setgid)")}</span></label>}
+        {worldWritable && <p className="chmod-warning" role="alert">{tr("Everyone may write here: anything that can reach it could change it. Use it only when an application asks for it.")}</p>}
+      </div>;
+    };
+    const ready = (!files.length || valid(chmodTarget.mode)) && (!dirs.length || valid(chmodTarget.dirMode));
+    const title = chmodTarget.items.length === 1 ? chmodTarget.items[0].name : tr("{0} items", chmodTarget.items.length);
+    return <div className="modal-overlay" onClick={() => setChmodTarget(null)}>
+      <div className="modal-card chmod-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{tr("Permissions")} — {title}</h3>
+          <button className="secondary-light" onClick={() => setChmodTarget(null)} aria-label={tr("Close")}><X size={16}/></button>
+        </div>
+        <div className="modal-body">
+          {files.length > 0 && grid('mode', false)}
+          {dirs.length > 0 && grid('dirMode', true)}
+          <p className="hint">{tr("Setuid and sticky bits are not offered, and a folder keeps its owner's execute bit, or the website could not open it. 644 for files and 755 for folders are the usual choices.")}</p>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-light" onClick={() => setChmodTarget(null)}>{tr("Cancel")}</button>
+          <button disabled={!!loading || !ready} onClick={saveFilePermissions}><Save size={14}/> {tr("Apply")}</button>
+        </div>
+      </div>
+    </div>;
+  }
+
+  // The File manager's own tab: the files, and nothing else of the panel.
+  function renderStandaloneFiles() {
+    return <main className="standalone-files-page">
+      <header className="standalone-editor-top standalone-files-top">
+        <div className="standalone-files-brand">
+          {renderBrandMark()}
+          <div className="standalone-editor-title">
+            <strong>{tr("File manager")}</strong>
+            <span>{currentSite?.domain || panelSettings.app_name || tr("opanel")}</span>
+          </div>
+        </div>
+        <div className="standalone-editor-actions">
+          <button type="button" className="secondary-light icon-only" onClick={toggleTheme} aria-label={tr("Toggle dark mode")} title={tr("Toggle dark mode")}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}</button>
+          <a className="standalone-files-link" href={routeForPage('dashboard')}><Home size={14}/> {tr("Dashboard")}</a>
+          <button type="button" className="secondary-light" onClick={() => window.close()}><X size={14}/> {tr("Close")}</button>
+        </div>
+      </header>
+      {currentUser?.demo && <div className="demo-banner" role="status"><Eye size={15}/> <span>{tr("You are viewing a read-only demo: you can open every page, and nothing you change is saved.")}</span></div>}
+      <section className="standalone-files-body">
+        <PanelContext.Provider value={panelContext()}><FilesPage/></PanelContext.Provider>
+        {loading && <div className="loading"><span></span>{loading}</div>}
+      </section>
+      {renderChmodDialog()}
+      {renderNotifications()}
+    </main>;
+  }
+
   if (standaloneEditor) return renderStandaloneEditor();
+  if (page === 'files') return renderStandaloneFiles();
 
   const ActiveIcon = litItem?.[2] || Home;
 
@@ -9635,80 +9757,7 @@ function App() {
         </div>
       </div>
     </div>}
-    {chmodTarget && (() => {
-      // The permissions of one item or several, as SNPanel's dialog: a grid of
-      // read, write and execute for owner, group and everyone, the octal and
-      // symbolic forms, presets, setgid on folders. Files and folders each get
-      // their own mode when both are chosen. The server refuses setuid and
-      // sticky; a folder keeps its owner's execute bit; world-writable is
-      // allowed with a warning.
-      const files = chmodTarget.items.filter(item => !item.is_dir);
-      const dirs = chmodTarget.items.filter(item => item.is_dir);
-      const digitsOf = (mode) => (mode || '').padStart(3, '0').slice(-3).split('').map(d => parseInt(d, 8) || 0);
-      const symbolic = (mode, isDir, setgid) => {
-        const d = digitsOf(mode);
-        const part = (n, who) => `${n & 4 ? 'r' : '-'}${n & 2 ? 'w' : '-'}${who === 1 && setgid ? (n & 1 ? 's' : 'S') : (n & 1 ? 'x' : '-')}`;
-        return `${isDir ? 'd' : '-'}${d.map(part).join('')}`;
-      };
-      const valid = (mode) => /^[0-7]{3}$/.test(mode || '');
-      const grid = (key, isDir) => {
-        const mode = chmodTarget[key];
-        const digits = digitsOf(mode);
-        const setBit = (who, bit, on) => {
-          const next = [...digits];
-          next[who] = on ? (next[who] | bit) : (next[who] & ~bit);
-          setChmodTarget(prev => ({ ...prev, [key]: next.join('') }));
-        };
-        const presets = isDir ? ['755', '750', '711', '700'] : ['644', '640', '600', '755'];
-        const worldWritable = valid(mode) && (digits[2] & 2) !== 0;
-        return <div className="chmod-section" key={key}>
-          {files.length > 0 && dirs.length > 0 && <h4>{isDir ? tr("Folders ({0})", dirs.length) : tr("Files ({0})", files.length)}</h4>}
-          <table className="chmod-grid">
-            <thead><tr><th></th><th>{tr("Read")}</th><th>{tr("Write")}</th><th>{tr("Execute")}</th></tr></thead>
-            <tbody>
-              {[tr("Owner"), tr("Group"), tr("Public")].map((label, who) => <tr key={label}>
-                <th scope="row">{label}</th>
-                {[4, 2, 1].map(bit => <td key={bit}>
-                  <input type="checkbox" checked={(digits[who] & bit) !== 0} disabled={isDir && who === 0 && bit === 1}
-                    onChange={e => setBit(who, bit, e.target.checked)} aria-label={`${label} ${bit === 4 ? tr("Read") : bit === 2 ? tr("Write") : tr("Execute")}`} />
-                </td>)}
-              </tr>)}
-            </tbody>
-          </table>
-          <div className="chmod-mode-row">
-            <label><span>{tr("Numeric mode")}</span>
-              <input value={mode} maxLength={3} inputMode="numeric" onChange={e => setChmodTarget(prev => ({ ...prev, [key]: e.target.value.replace(/[^0-7]/g, '').slice(0, 3) }))} />
-            </label>
-            <code className="chmod-symbolic" aria-label={tr("Symbolic form")}>{valid(mode) ? symbolic(mode, isDir, isDir && chmodTarget.setgid) : '?'}</code>
-            <div className="chmod-presets">
-              {presets.map(preset => <button key={preset} type="button" className={`mini ${mode === preset ? 'toggle-on' : 'secondary'}`} onClick={() => setChmodTarget(prev => ({ ...prev, [key]: preset }))}>{preset}</button>)}
-            </div>
-          </div>
-          {isDir && <label className="chmod-setgid"><input type="checkbox" checked={!!chmodTarget.setgid} onChange={e => setChmodTarget(prev => ({ ...prev, setgid: e.target.checked }))}/>
-            <span>{tr("New files in the folder keep its group (setgid)")}</span></label>}
-          {worldWritable && <p className="chmod-warning" role="alert">{tr("Everyone may write here: anything that can reach it could change it. Use it only when an application asks for it.")}</p>}
-        </div>;
-      };
-      const ready = (!files.length || valid(chmodTarget.mode)) && (!dirs.length || valid(chmodTarget.dirMode));
-      const title = chmodTarget.items.length === 1 ? chmodTarget.items[0].name : tr("{0} items", chmodTarget.items.length);
-      return <div className="modal-overlay" onClick={() => setChmodTarget(null)}>
-        <div className="modal-card chmod-card" onClick={e => e.stopPropagation()}>
-          <div className="modal-header">
-            <h3>{tr("Permissions")} — {title}</h3>
-            <button className="secondary-light" onClick={() => setChmodTarget(null)} aria-label={tr("Close")}><X size={16}/></button>
-          </div>
-          <div className="modal-body">
-            {files.length > 0 && grid('mode', false)}
-            {dirs.length > 0 && grid('dirMode', true)}
-            <p className="hint">{tr("Setuid and sticky bits are not offered, and a folder keeps its owner's execute bit, or the website could not open it. 644 for files and 755 for folders are the usual choices.")}</p>
-          </div>
-          <div className="modal-actions">
-            <button className="secondary-light" onClick={() => setChmodTarget(null)}>{tr("Cancel")}</button>
-            <button disabled={!!loading || !ready} onClick={saveFilePermissions}><Save size={14}/> {tr("Apply")}</button>
-          </div>
-        </div>
-      </div>;
-    })()}
+    {renderChmodDialog()}
     {renderNotifications()}
   </main>;
 }

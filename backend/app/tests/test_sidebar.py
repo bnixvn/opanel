@@ -40,11 +40,36 @@ def test_the_hubs_hold_the_rest_as_tabs():
     assert server == ["processes", "usage", "ramUsage", "diskUsage", "traffic", "php", "mysql", "services", "updates"]
     assert re.findall(r"page: '(\w+)'", _hub("security-center")) == ["firewall", "waf", "autossl", "wafLogs", "malware"]
     assert re.findall(r"page: '(\w+)'", _hub("config")) == ["settings", "addons", "notifications"]
-    assert re.findall(r"page: '(\w+)'", _hub("files")) == ["files", "sftp", "terminal"]
     assert re.findall(r"page: '(\w+)'", _hub("account")) == ["security", "usage"]
     # A tab whose addon is off is not shown.
     assert "{ page: 'malware', label: msg('Malware Scanner'), when: (c) => c.malware }" in NAV
-    assert "{ page: 'terminal', label: msg('Terminal'), when: (c) => c.terminal }" in NAV
+
+
+def test_the_file_manager_is_a_page_of_its_own():
+    """Operator, 2026-10-26: no File manager / SFTP tab row taking room over
+    the files. SFTP accounts and the terminal are the Dashboard's tools, and
+    keep the sidebar's Files lit."""
+    assert "{ key: 'files'," not in NAV
+    assert "sftp: 'files', terminal: 'files'" in NAV
+    features = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "lib" / "features.jsx").read_text(encoding="utf-8")
+    assert "terminal: { label: msg('Terminal'), icon: 'terminal', page: 'terminal', when: (c) => c.terminal }" in features
+    assert "['files', msg('Files and backups'), ['files', 'sftp', 'terminal', 'git', 'backups']]" in features
+
+
+def test_the_file_manager_opens_in_a_browser_tab_of_its_own():
+    """Operator, 2026-10-26: as cPanel's, with only the files in it. Every way
+    to it - the sidebar, the Dashboard, a website's own button - goes through
+    navigateToPage, which opens /filemanager in a new tab instead."""
+    navigate = APP_JSX[APP_JSX.index("const navigateToPage = useCallback("):APP_JSX.index("  }, []);", APP_JSX.index("const navigateToPage = useCallback("))]
+    assert "if (nextPage === 'files') {" in navigate and "window.open(fileManagerUrl(options.websiteId), '_blank', 'noopener');" in navigate
+    assert "navigateToPage('files', { websiteId: site.id });" in APP_JSX
+    # The tab opens on the website it was asked for.
+    assert "useState(() => standaloneEditor?.websiteId || fileManagerSiteFromLocation());" in APP_JSX
+    # Nothing of the panel around it: no sidebar, no top bar.
+    assert "if (page === 'files') return renderStandaloneFiles();" in APP_JSX
+    tab = APP_JSX[APP_JSX.index("function renderStandaloneFiles() {"):APP_JSX.index("if (standaloneEditor) return renderStandaloneEditor();")]
+    assert "<FilesPage/>" in tab and "{renderChmodDialog()}" in tab
+    assert "sidebar" not in tab and "renderTopStats" not in tab
 
 
 def test_an_addon_is_not_in_the_sidebar():

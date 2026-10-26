@@ -490,6 +490,56 @@
   font-weight: 700;
 }
 
+/* The File manager's own browser tab (operator, 2026-10-26): a slim bar with
+   the panel's mark, then the files - nothing else of the panel. */
+.standalone-files-page {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.standalone-files-top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.standalone-files-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.standalone-files-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.standalone-files-link:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+.standalone-files-body {
+  padding: 16px;
+}
+
+.standalone-files-page .demo-banner {
+  margin: 12px 16px 0;
+}
+
 .file-list .empty-box {
   border: 0;
   border-radius: 0;

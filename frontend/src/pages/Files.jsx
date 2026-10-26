@@ -1,12 +1,11 @@
 import { useMemo, useState } from 'react';
 import {
   Archive, ArchiveRestore, ArrowDown, ArrowUp, Clock, Copy, CornerLeftUp, Download, FilePen, FilePlus, FileText, FolderOpen, FolderPlus,
-  Lock, MoveRight, PencilLine, Trash2, Upload, X,
+  Lock, MoveRight, PencilLine, RefreshCw, Trash2, Upload, X,
 } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
 import { Field } from '../components/Form.jsx';
-import PageHeader from '../components/PageHeader.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import './Files.css';
 import { FolderTree } from '../components/FolderTree.jsx';
@@ -69,8 +68,9 @@ export default function FilesPage() {
   const visibleFileJobs = fileJobs.filter((job) => String(job.website_id) === String(selectedWebsiteId) && job.status !== 'done').slice(0, 4);
   const uploadPercent = uploadProgress?.total ? Math.round((uploadProgress.loaded / uploadProgress.total) * 100) : 0;
 
+  // No page head over it (operator, 2026-10-26: the room is the files'):
+  // Refresh sits in the toolbar with the folder's other actions.
   return <>
-    <PageHeader onRefresh={() => listFiles(fileListPath)} refreshDisabled={!hasTarget || !!loading}/>
     <section className="section">
       <div className="file-manager">
         <div className="file-panel">
@@ -93,6 +93,7 @@ export default function FilesPage() {
                 <Upload size={14} aria-hidden="true"/> {t('Upload')}
                 <input type="file" disabled={!hasTarget || !!loading || !!uploadProgress} onChange={(e) => { uploadSiteFile(e.target.files?.[0]); e.target.value = ''; }}/>
               </label>
+              <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14} aria-hidden="true"/> {t('Refresh')}</button>
             </div>
             {selectedFilePaths.length > 0 && <div className="fm-selection" role="region" aria-label={t('Selected items')}>
               <strong>{t('{count} selected', { count: selectedFilePaths.length })}</strong>

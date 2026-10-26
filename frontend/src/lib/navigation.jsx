@@ -92,12 +92,9 @@ export const HUBS = [
     { page: 'addons', label: msg('Addons') },
     { page: 'notifications', label: msg('Notifications'), when: (c) => c.notifications },
   ] },
-  { key: 'files', title: msg('Files'), roles: ['admin', 'reseller', 'customer'], tabs: [
-    { page: 'files', label: msg('File manager') },
-    { page: 'sftp', label: 'SFTP' },
-    // The browser terminal: a customer whose package has it (OPanel only).
-    { page: 'terminal', label: msg('Terminal'), when: (c) => c.terminal },
-  ] },
+  // No Files hub (operator, 2026-10-26): the File manager is a page of its
+  // own, without a row of tabs over it; SFTP accounts and the terminal are
+  // opened from the Dashboard's tools (see PARENTS below).
   // Accounts moved here from other panels: a tab per migration addon that is
   // on, reached from the Dashboard's Migration tools and the Addons page.
   { key: 'migration', title: msg('Migration'), roles: ['admin'], tabs: [
@@ -175,7 +172,7 @@ export function sidebarItems(ctx) {
 }
 
 // Pages that belong under a sidebar entry without being a tab of it.
-const PARENTS = { ssl: 'websites', 'website-detail': 'websites' };
+const PARENTS = { ssl: 'websites', 'website-detail': 'websites', sftp: 'files', terminal: 'files' };
 
 // The sidebar entry lit on a page: its hub's, its parent's, or the
 // Dashboard's - every other page is reached from there.
