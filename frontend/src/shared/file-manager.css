@@ -156,6 +156,8 @@
 }
 
 .file-controls .file-meta {
+  /* Level with the website picker, not with its label (operator, 2026-10-26). */
+  align-self: end;
   min-height: 34px;
   align-items: center;
   border-radius: var(--radius-sm);
@@ -536,6 +538,13 @@
   padding: 16px;
 }
 
+/* In its own tab the page scrolls, once: no list or tree with a scrollbar of
+   its own inside it (operator, 2026-10-26). */
+.standalone-files-page .fm-body .file-list,
+.standalone-files-page .fm-tree {
+  max-height: none;
+}
+
 .standalone-files-page .demo-banner {
   margin: 12px 16px 0;
 }
@@ -802,7 +811,9 @@
 .fm-tree-row.active .fm-tree-name{color:var(--primary-ink);font-weight:700}
 .fm-tree-toggle{flex:none;width:20px;height:22px;min-height:22px;padding:0;display:inline-grid;place-items:center;background:none;border:0;box-shadow:none;color:var(--text-secondary);cursor:pointer}
 .fm-tree-name{flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;height:28px;min-height:28px;padding:0 4px;background:none;border:0;box-shadow:none;color:var(--text);font-size:13px;font-weight:500;text-align:left;cursor:pointer}
-.fm-tree-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The button's line-height (1.15) with overflow:hidden cut the letters' tails
+   (g, p, y) off every row; the name gets a line tall enough for them. */
+.fm-tree-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.6}
 .fm-tree-name svg{flex:none;color:var(--primary-ink)}
 .fm-tree-loading{padding:4px 0;font-size:12px;color:var(--text-secondary)}
 @media (max-width:900px){.fm-body{grid-template-columns:1fr}.fm-tree{display:none}}
