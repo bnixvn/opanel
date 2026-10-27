@@ -10,6 +10,7 @@ import Tabs from '../components/Tabs.jsx';
 import Switch from '../components/Switch.jsx';
 import Drawer from '../components/Drawer.jsx';
 import EmptyState from '../components/EmptyState.jsx';
+import IconActions from '../components/IconActions.jsx';
 import { Field, PasswordField } from '../components/Form.jsx';
 import { confirmDialog } from '../components/Dialog.jsx';
 import WordPressGlyph from '../icons/WordPressGlyph.jsx';
@@ -264,7 +265,13 @@ export default function WordPressPage() {
                   <td className="wpm-site">
                     <button type="button" className="wpm-link" onClick={() => openInstall(item.id)}><strong>{item.title || item.domain}</strong></button>
                     {safeHref(item.url) && <a href={safeHref(item.url)} target="_blank" rel="noreferrer noopener" className="wpm-url">{item.url}</a>}
-                    <small><code>{item.rel_path ? `/${item.rel_path}` : '/'}</code>{item.owner_username && (isAdmin || overview.owners.length > 1) ? ` · ${item.owner_username}` : ''}</small>
+                    {/* The folder only for an install in one; the owner named as such
+                        (operator, 2026-10-27: a bare "/" before the name read badly). */}
+                    {(item.rel_path || (item.owner_username && (isAdmin || overview.owners.length > 1))) && <small>
+                      {item.rel_path && <code>/{item.rel_path}</code>}
+                      {item.rel_path && item.owner_username && (isAdmin || overview.owners.length > 1) && ' · '}
+                      {item.owner_username && (isAdmin || overview.owners.length > 1) && t('Owner: {name}', { name: item.owner_username })}
+                    </small>}
                     {item.status === 'missing' && <span className="badge bad">{t('Missing')}</span>}
                     {item.state !== 'installed' && item.status === 'ok' && <span className="badge warn">{t('Needs setup')}</span>}
                   </td>
@@ -277,10 +284,11 @@ export default function WordPressPage() {
                   <td className="wpm-when" data-label={t('Last checked')}>{job ? <span className="badge warn"><RefreshCw size={12} className="spin" aria-hidden="true"/> {t(JOB_LABELS[job.kind] || job.kind)}</span>
                     : item.last_error ? <span className="badge bad" title={item.last_error}>{t('Error')}</span>
                     : item.last_checked_at ? when(item.last_checked_at) : <span className="data-table-muted">{t('Not yet')}</span>}</td>
-                  <td className="wpm-actions"><div className="wpm-row-actions">
-                    <button type="button" className="mini secondary-light" disabled={busy || !usable} onClick={() => signIn(item)}><LogIn size={13} aria-hidden="true"/> {t('Log in')}</button>
-                    <button type="button" className="mini" disabled={busy} onClick={() => openInstall(item.id)}><Settings2 size={13} aria-hidden="true"/> {t('Manage')}</button>
-                  </div></td>
+                  {/* Icons, one click each (operator, 2026-10-27). */}
+                  <td className="wpm-actions"><IconActions className="wpm-row-actions" label={t('Actions for {name}', { name: item.title || item.domain })} items={[
+                    { label: t('Manage'), icon: Settings2, primary: true, disabled: busy, onClick: () => openInstall(item.id) },
+                    { label: t('Log in to wp-admin'), icon: LogIn, disabled: busy || !usable, onClick: () => signIn(item) },
+                  ]}/></td>
                 </tr>;
               })}
             </tbody>
@@ -507,7 +515,6 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
   // The .zip upload has its own button (operator, 2026-10-18: it was at the
   // foot of the wordpress.org search, where nobody found it).
   const [uploading, setUploading] = useState(false);
-  const [activateUpload, setActivateUpload] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [query, setQuery] = useState('');
   const [found, setFound] = useState(null);
@@ -524,12 +531,13 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
     if (data) setFound(data.items);
   }
   // A .zip of a plugin or theme from elsewhere (a paid one, a developer's).
-  async function upload(file, activate) {
+  async function upload(file) {
     if (!file) return;
     const form = new FormData();
     form.append('file', file);
-    // A theme is only put in place, never switched to (operator, 2026-10-24).
-    form.append('activate', plugin && activate ? '1' : '0');
+    // Put in place, never switched on: a theme since 2026-10-24, a plugin
+    // too since 2026-10-27 (operator) - the owner turns it on from the list.
+    form.append('activate', '0');
     const data = await request(`${path}/upload`, { method: 'POST', body: form }, t('Uploading {name}...', { name: file.name }));
     if (data) {
       post.watch(data);
@@ -539,7 +547,7 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
   function dropped(event) {
     event.preventDefault();
     setDragging(false);
-    if (!busy) upload(event.dataTransfer.files?.[0], activateUpload);
+    if (!busy) upload(event.dataTransfer.files?.[0]);
   }
   async function remove(item) {
     if (!(await confirmDialog({
@@ -584,12 +592,11 @@ function Items({ kind, detail, items: listed, base, post, busy }) {
         <Upload size={22} aria-hidden="true"/>
         <strong>{t('Choose a .zip file, or drop it here')}</strong>
         <input type="file" accept=".zip,application/zip" disabled={busy}
-          onChange={(e) => { upload(e.target.files?.[0], activateUpload); e.target.value = ''; }}/>
+          onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }}/>
       </label>
-      {plugin
-        ? <label className="check-line"><input type="checkbox" checked={activateUpload} onChange={(e) => setActivateUpload(e.target.checked)}/>
-          {t('Activate the plugin once it is installed')}</label>
-        : <p className="hint">{t('The theme is installed, not activated: the site keeps its current theme. A theme of the same name is replaced.')}</p>}
+      <p className="hint">{plugin
+        ? t('The plugin is installed, not activated: turn it on from the list when you want it. A plugin of the same name is replaced.')
+        : t('The theme is installed, not activated: the site keeps its current theme. A theme of the same name is replaced.')}</p>
     </div>}
     {items.length === 0 ? <p className="hint">{t('None found yet: refresh.')}</p> : <div className="data-table-wrap">
       <table className="data-table wpm-items wpm-cards">

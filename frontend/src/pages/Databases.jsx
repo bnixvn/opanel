@@ -5,6 +5,7 @@ import { useT } from '../lib/t.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Tabs from '../components/Tabs.jsx';
 import Drawer from '../components/Drawer.jsx';
+import InlinePanel from '../components/InlinePanel.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import { Checkbox, Field, PasswordField } from '../components/Form.jsx';
@@ -215,7 +216,44 @@ export default function DatabasesPage() {
         {databaseSearch && <button className="secondary-light icon-button" type="button" onClick={() => setDatabaseSearch('')}
           aria-label={t('Clear the search')} title={t('Clear the search')}><X size={15} aria-hidden="true"/></button>}
       </div>}
-      {shown.length === 0 && (query
+      {/* Under the search, not a sheet at the right edge (operator, 2026-10-27). */}
+      <InlinePanel open={creating} onClose={closeCreate} title={t('New database')} subtitle={t('A MariaDB database, with a user of its own.')}
+        footer={<>
+          {createTried && Object.values(createProblems).some(Boolean) && <span className="sn-drawer-foot-note" role="alert">{t('Some fields need attention.')}</span>}
+          <button type="button" className="secondary-light" onClick={closeCreate}>{t('Cancel')}</button>
+          <button type="submit" form="db-create-form" disabled={!!loading}><Plus size={15} aria-hidden="true"/> {t('Create database')}</button>
+        </>}>
+        <form id="db-create-form" noValidate onSubmit={submitCreate}>
+          <Field label={t('Database name')} required error={shownProblem('name')} hint={t('Letters, digits and underscores.')}>
+            <input value={newDatabase.db_name} onChange={(e) => setNewDatabase((prev) => ({ ...prev, db_name: e.target.value }))}
+              onBlur={() => setCreateTouched((s) => ({ ...s, name: true }))} placeholder={t('e.g. {example}', { example: 'shop' })} autoComplete="off" spellCheck={false}/>
+          </Field>
+          <Field label={t('Database user')} optional error={shownProblem('user')} hint={t('The database name, if left empty.')}>
+            <input value={newDatabase.db_user} onChange={(e) => setNewDatabase((prev) => ({ ...prev, db_user: e.target.value }))}
+              onBlur={() => setCreateTouched((s) => ({ ...s, user: true }))} autoComplete="off" spellCheck={false}/>
+          </Field>
+          <Field label={t('Password')} optional error={shownProblem('password')} hint={t('At least 12 characters. Left empty, one is made for you.')}>
+            <PasswordField value={newDatabase.db_password} onChange={(value) => setNewDatabase((prev) => ({ ...prev, db_password: value }))}
+              onBlur={() => setCreateTouched((s) => ({ ...s, password: true }))} generate copy/>
+          </Field>
+          <div className="sn-drawer-grid">
+            {canSeeOwners && <Field label={t('Owner')}>
+              <select value={createOwner} onChange={(e) => setNewDatabase((prev) => ({ ...prev, owner_id: e.target.value, website_id: '' }))}>
+                {owners.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+              </select>
+            </Field>}
+            <Field label={t('Website')} hint={t('Its backups include the database.')}>
+              <select value={newDatabase.website_id || ''} onChange={(e) => setNewDatabase((prev) => ({ ...prev, website_id: e.target.value }))}>
+                <option value="">{t('No website')}</option>
+                {sitesOf(createOwner).map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}
+              </select>
+            </Field>
+          </div>
+          {isAdmin && <Checkbox checked={!!newDatabase.force} onChange={(on) => setNewDatabase((prev) => ({ ...prev, force: on }))}
+            label={t('Ignore the package\'s database limit')}/>}
+        </form>
+      </InlinePanel>
+      {shown.length === 0 && !(creating && !query) && (query
         ? <EmptyState icon={Search} message={t('No databases match this search.')}
           action={{ label: t('Clear the search'), icon: X, secondary: true, onClick: () => setDatabaseSearch('') }}/>
         : <EmptyState icon={Database} title={t('No databases yet.')} message={t('A database for a website or an application: MariaDB, with phpMyAdmin.')}
@@ -245,43 +283,6 @@ export default function DatabasesPage() {
       <p className="hint">{t('phpMyAdmin signs you in directly; the link works for 60 seconds.')}</p>
       </>}
     </section>
-
-    <Drawer open={creating} onClose={closeCreate} title={t('New database')} subtitle={t('A MariaDB database, with a user of its own.')}
-      footer={<>
-        {createTried && Object.values(createProblems).some(Boolean) && <span className="sn-drawer-foot-note" role="alert">{t('Some fields need attention.')}</span>}
-        <button type="button" className="secondary-light" onClick={closeCreate}>{t('Cancel')}</button>
-        <button type="submit" form="db-create-form" disabled={!!loading}><Plus size={15} aria-hidden="true"/> {t('Create database')}</button>
-      </>}>
-      <form id="db-create-form" noValidate onSubmit={submitCreate}>
-        <Field label={t('Database name')} required error={shownProblem('name')} hint={t('Letters, digits and underscores.')}>
-          <input value={newDatabase.db_name} onChange={(e) => setNewDatabase((prev) => ({ ...prev, db_name: e.target.value }))}
-            onBlur={() => setCreateTouched((s) => ({ ...s, name: true }))} placeholder={t('e.g. {example}', { example: 'shop' })} autoComplete="off" spellCheck={false}/>
-        </Field>
-        <Field label={t('Database user')} optional error={shownProblem('user')} hint={t('The database name, if left empty.')}>
-          <input value={newDatabase.db_user} onChange={(e) => setNewDatabase((prev) => ({ ...prev, db_user: e.target.value }))}
-            onBlur={() => setCreateTouched((s) => ({ ...s, user: true }))} autoComplete="off" spellCheck={false}/>
-        </Field>
-        <Field label={t('Password')} optional error={shownProblem('password')} hint={t('At least 12 characters. Left empty, one is made for you.')}>
-          <PasswordField value={newDatabase.db_password} onChange={(value) => setNewDatabase((prev) => ({ ...prev, db_password: value }))}
-            onBlur={() => setCreateTouched((s) => ({ ...s, password: true }))} generate copy/>
-        </Field>
-        <div className="sn-drawer-grid">
-          {canSeeOwners && <Field label={t('Owner')}>
-            <select value={createOwner} onChange={(e) => setNewDatabase((prev) => ({ ...prev, owner_id: e.target.value, website_id: '' }))}>
-              {owners.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
-            </select>
-          </Field>}
-          <Field label={t('Website')} hint={t('Its backups include the database.')}>
-            <select value={newDatabase.website_id || ''} onChange={(e) => setNewDatabase((prev) => ({ ...prev, website_id: e.target.value }))}>
-              <option value="">{t('No website')}</option>
-              {sitesOf(createOwner).map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}
-            </select>
-          </Field>
-        </div>
-        {isAdmin && <Checkbox checked={!!newDatabase.force} onChange={(on) => setNewDatabase((prev) => ({ ...prev, force: on }))}
-          label={t('Ignore the package\'s database limit')}/>}
-      </form>
-    </Drawer>
 
     <Drawer open={!!moving} onClose={() => setMoving(null)} title={moving ? t('Change the owner of {name}', { name: moving.name }) : ''}
       subtitle={t('The database, its MySQL user and its password do not change, so anything already connected keeps working.')}

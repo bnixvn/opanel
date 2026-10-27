@@ -29,17 +29,19 @@ def _hub(key: str) -> str:
 
 
 def test_each_role_has_its_short_sidebar():
+    # Addons have their own entry (operator, 2026-10-27), not a Settings tab.
     assert _sidebar("admin") == ["dashboard", "websites", "databases", "files", "backups", "users",
-                                 "server", "security-center", "config"]
+                                 "server", "security-center", "addons", "config"]
     assert _sidebar("reseller") == ["dashboard", "users", "websites", "databases", "files", "backups", "account"]
     assert _sidebar("customer") == ["dashboard", "websites", "databases", "files", "backups", "account"]
 
 
 def test_the_hubs_hold_the_rest_as_tabs():
     server = re.findall(r"page: '(\w+)'", _hub("server"))
-    assert server == ["processes", "usage", "ramUsage", "diskUsage", "traffic", "php", "mysql", "services", "updates"]
+    # Account resources first (operator, 2026-10-27).
+    assert server == ["usage", "processes", "ramUsage", "diskUsage", "traffic", "php", "mysql", "services", "updates"]
     assert re.findall(r"page: '(\w+)'", _hub("security-center")) == ["firewall", "waf", "autossl", "wafLogs", "malware"]
-    assert re.findall(r"page: '(\w+)'", _hub("config")) == ["settings", "addons", "notifications"]
+    assert re.findall(r"page: '(\w+)'", _hub("config")) == ["settings", "notifications"]
     assert re.findall(r"page: '(\w+)'", _hub("account")) == ["security", "usage"]
     # A tab whose addon is off is not shown.
     assert "{ page: 'malware', label: msg('Malware Scanner'), when: (c) => c.malware }" in NAV

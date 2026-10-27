@@ -4,7 +4,7 @@ import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
 import { websiteRoute } from '../lib/websites.js';
 import PageHeader from '../components/PageHeader.jsx';
-import Drawer from '../components/Drawer.jsx';
+import InlinePanel from '../components/InlinePanel.jsx';
 import IconActions from '../components/IconActions.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import { Checkbox, Field, PasswordField } from '../components/Form.jsx';
@@ -15,7 +15,8 @@ import './Websites.css';
 // site - its address, what it is (type, PHP, owner, SSL), and two controls:
 // "Manage", which opens the site's own page with its tabs, and a "…" menu
 // of labelled actions with Delete apart at its end. A new website is made
-// in a side sheet, which keeps OPanel's own choices: whose site it is, and
+// in a form that opens under the search (operator, 2026-10-27: not a sheet
+// at the right edge), which keeps OPanel's own choices: whose site it is, and
 // a wildcard over this server's DNS, a certificate already on the server,
 // or one pasted in.
 export default function WebsitesPage() {
@@ -85,7 +86,7 @@ export default function WebsitesPage() {
 
   const wildcardVia = wildcardProvider(createSslForm.provider);
   function renderCreate() {
-    return <Drawer open={creating} onClose={closeCreate}
+    return <InlinePanel open={creating} onClose={closeCreate}
       title={websites.length ? t('Create website') : t('Attach first domain')}
       subtitle={websites.length ? null : t('This creates the first hosted site for the current account.')}
       footer={<>
@@ -93,7 +94,7 @@ export default function WebsitesPage() {
         <button type="button" className="secondary-light" onClick={closeCreate}>{t('Cancel')}</button>
         <button type="submit" form="website-create-form" disabled={!!loading}><Plus size={15} aria-hidden="true"/> {t('Create website')}</button>
       </>}>
-      <form id="website-create-form" noValidate onSubmit={submitCreate}>
+      <form id="website-create-form" className={owners.length > 0 ? 'is-pairs' : undefined} noValidate onSubmit={submitCreate}>
         <Field label={t('Domain')} required error={createTried ? createProblems.domain : ''}>
           <input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder={t('e.g. {example}', { example: 'domain.com' })} autoCapitalize="none" spellCheck={false}/>
         </Field>
@@ -184,7 +185,7 @@ export default function WebsitesPage() {
           ? t('WordPress will be installed and the panel will show the URL, admin account, and password after creation.')
           : t('A virtual host will be created with public_html/ folder. Upload your PHP, HTML, or static files via File Manager.')}</p>
       </form>
-    </Drawer>;
+    </InlinePanel>;
   }
 
   return <>
@@ -199,7 +200,8 @@ export default function WebsitesPage() {
           placeholder={t('Search domain, alias, path, or Linux user')} aria-label={t('Search websites')}/>
         {websiteSearch && <button className="secondary-light icon-button" type="button" onClick={() => setWebsiteSearch('')} aria-label={t('Clear website search')} title={t('Clear search')}><X size={15} aria-hidden="true"/></button>}
       </div>}
-      {visibleWebsites.length === 0 && (query
+      {renderCreate()}
+      {visibleWebsites.length === 0 && !(creating && !query) && (query
         ? <EmptyState icon={Search} message={t('No websites match this search.')}
           action={{ label: t('Clear search'), icon: X, secondary: true, onClick: () => setWebsiteSearch('') }}/>
         : <EmptyState icon={Globe} title={t('No websites yet.')} message={t('Attach a domain to host its first site.')}
@@ -240,7 +242,6 @@ export default function WebsitesPage() {
         })}
       </ul>}
     </section>
-    {renderCreate()}
     <WordPressInstallDrawer/>
   </>;
 }

@@ -6,7 +6,7 @@
 // A page key is App's (PAGE_ROUTES there); a hub's key is either its first
 // page (files, users) or an address of its own (server, security-center,
 // config, account) that opens its first tab.
-import { Archive, CircleUserRound, Database, FolderOpen, Globe, Home, Server, Settings, ShieldCheck, Users } from 'lucide-react';
+import { Archive, CircleUserRound, Database, FolderOpen, Globe, Home, PackageOpen, Server, Settings, ShieldCheck, Users } from 'lucide-react';
 import WordPressGlyph from '../icons/WordPressGlyph.jsx';
 
 const msg = (text) => text;
@@ -64,9 +64,10 @@ export const PAGE_TITLES = {
 // opened from inside it, which keep it lit.
 export const HUBS = [
   { key: 'server', title: msg('Server'), roles: ['admin'], tabs: [
-    { page: 'processes', label: msg('Processes') },
-    // Every account's use against its limits (the Resource limits addon).
+    // Every account's use against its limits (the Resource limits addon):
+    // first, the one opened most (operator, 2026-10-27).
     { page: 'usage', label: msg('Account resources'), when: (c) => c.limits },
+    { page: 'processes', label: msg('Processes') },
     { page: 'ramUsage', label: 'RAM' },
     { page: 'diskUsage', label: msg('Disk') },
     { page: 'traffic', label: msg('Traffic') },
@@ -87,9 +88,10 @@ export const HUBS = [
     // Who did what in the panel (GET /users/audit/log).
     { page: 'auditLog', label: msg('Activity log') },
   ] },
+  // Addons are a sidebar entry of their own (operator, 2026-10-27), not a tab
+  // of Settings.
   { key: 'config', title: msg('Settings'), roles: ['admin'], tabs: [
     { page: 'settings', label: msg('Panel settings') },
-    { page: 'addons', label: msg('Addons') },
     { page: 'notifications', label: msg('Notifications'), when: (c) => c.notifications },
   ] },
   // No Files hub (operator, 2026-10-26): the File manager is a page of its
@@ -144,6 +146,7 @@ export function sidebarItems(ctx) {
       ['users', msg('Users & packages'), Users],
       ['server', msg('Server'), Server],
       ['security-center', msg('Security'), ShieldCheck],
+      ['addons', msg('Addons'), PackageOpen],
       ['config', msg('Settings'), Settings],
       ...wordpress,
     ];

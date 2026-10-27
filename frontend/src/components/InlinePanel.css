@@ -1,0 +1,41 @@
+/* components/InlinePanel.jsx: a create form in the page, under the list's
+   search (operator, 2026-10-27). Its fields go across the width: a grid of
+   four, where a field takes two, the pair inside a .sn-drawer-grid one each,
+   and anything else - a checkbox, a section, a hint - the whole row. */
+.sn-inline-panel{margin:0 0 14px;border:1px solid var(--border-hover,var(--border));border-radius:var(--radius-md);background:var(--surface);color:var(--text)}
+.sn-inline-head{display:flex;align-items:flex-start;gap:12px;padding:14px 16px 12px 18px;border-bottom:1px solid var(--border)}
+.sn-inline-head h2{margin:0;font-size:16px;font-weight:700;line-height:1.35;color:var(--text);overflow-wrap:anywhere}
+.sn-inline-head p{margin:0;color:var(--text-muted);font-size:13px;line-height:1.5}
+.sn-inline-panel .sn-drawer-x{flex:none;display:grid;place-items:center;width:34px;height:34px;min-height:34px;padding:0;margin:-4px -4px 0 0;background:transparent;color:var(--text-muted);border:1px solid transparent;border-radius:var(--radius-sm)}
+.sn-inline-panel .sn-drawer-x:hover:not(:disabled){background:var(--surface-hover);color:var(--text);border-color:var(--border)}
+
+.sn-inline-body{padding:16px 18px}
+.sn-inline-body .hint{margin:0}
+.sn-inline-body>form{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:start;min-width:0}
+.sn-inline-body>form>*{grid-column:1/-1;min-width:0}
+.sn-inline-body>form>.sn-field{grid-column:span 2}
+.sn-inline-body>form>.sn-field.is-wide{grid-column:1/-1}
+.sn-inline-body>form>.sn-drawer-grid{display:contents}
+.sn-inline-body>form>.sn-drawer-grid>*{grid-column:span 1}
+.sn-inline-body>form>.sn-drawer-grid>.is-wide,.sn-inline-body>form>.sn-drawer-grid>.span-2{grid-column:span 2}
+/* After an even number of fields the pair would fill half a row: a half each. */
+.sn-inline-body>form.is-pairs>.sn-drawer-grid>*{grid-column:span 2}
+.sn-inline-body .sn-drawer-section .sn-drawer-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.sn-inline-body .sn-drawer-section .sn-drawer-grid>.is-wide{grid-column:auto}
+
+.sn-inline-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:12px 18px;border-top:1px solid var(--border);background:var(--surface-alt);border-radius:0 0 var(--radius-md) var(--radius-md)}
+.sn-inline-foot>button{min-width:110px}
+.sn-inline-foot .sn-drawer-foot-note{margin-right:auto;color:var(--danger-text);font-size:13px;font-weight:600}
+.sn-inline-foot .sn-drawer-foot-note.is-progress{color:var(--text-secondary)}
+
+@media (max-width:1000px){
+  .sn-inline-body>form{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sn-inline-body .sn-drawer-section .sn-drawer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sn-inline-body .sn-drawer-section .sn-drawer-grid>.is-wide{grid-column:1/-1}
+}
+@media (max-width:640px){
+  .sn-inline-body{padding:14px}
+  .sn-inline-body>form,.sn-inline-body .sn-drawer-section .sn-drawer-grid{grid-template-columns:minmax(0,1fr)}
+  .sn-inline-body>form>*,.sn-inline-body>form>.sn-field,.sn-inline-body>form>.sn-drawer-grid>*{grid-column:1/-1}
+  .sn-inline-foot{flex-direction:column-reverse;align-items:stretch}
+}

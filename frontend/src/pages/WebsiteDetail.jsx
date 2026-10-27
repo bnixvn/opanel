@@ -8,7 +8,7 @@ import { useT } from '../lib/t.js';
 import { websiteFromPathname, websiteRoute } from '../lib/websites.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Tabs from '../components/Tabs.jsx';
-import ActionMenu from '../components/ActionMenu.jsx';
+import IconActions from '../components/IconActions.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import { Field } from '../components/Form.jsx';
 import { Terminal } from '../components/Terminal';
@@ -94,7 +94,8 @@ export default function WebsiteDetailPage() {
       onRefresh={refresh} refreshing={refreshing} refreshDisabled={!!loading}
       actions={<>
         <a className="button-link secondary-light" href={websiteUrl(site)} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden="true"/> {t('Open website')}</a>
-        <ActionMenu label={t('More actions for {domain}', { domain: site.domain })} items={siteMenu(site, { inDetail: true })}/>
+        {/* Icons, one click each, not a "…" menu (operator, 2026-10-27). */}
+        <IconActions label={t('Website actions for {domain}', { domain: site.domain })} items={siteMenu(site, { inDetail: true })}/>
       </>}/>
     <Tabs className="wsd-tabs" label={t('Website sections')} value={shownTab} onChange={(next) => goTab(next)} tabs={tabs}/>
     {shownTab === 'overview' && <OverviewTab site={site} owner={owner} goTab={goTab}/>}
