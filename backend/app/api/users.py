@@ -24,7 +24,7 @@ from app.schemas.schemas import (
     UserUsageOut,
 )
 from app.services.audit import log_action
-from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, php_isolation, provisioning, reseller as reseller_pool, resource_limits, sftp_access, sftp_accounts, site_users, ssl, storage_quota, terminal, wordpress, wp_manager
+from app.services import dns_manager, git_repos, mail, mariadb, notifications, openlitespeed, php_isolation, provisioning, redis_user, reseller as reseller_pool, resource_limits, sftp_access, sftp_accounts, site_users, ssl, storage_quota, terminal, wordpress, wp_manager
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -191,6 +191,7 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         # An administrator never opens a shell as itself, so the setting means
         # nothing on one.
         terminal_enabled=bool(payload.terminal_enabled) and role != "admin",
+        redis_memory_mb=payload.redis_memory_mb,
         plan_id=_checked_plan_id(db, current_user, payload.plan_id) if role != "admin" else None,
     )
     db.add(user)
@@ -355,6 +356,8 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
         user.terminal_enabled = bool(payload.terminal_enabled)
     if new_role == "admin":
         user.terminal_enabled = False
+    if payload.redis_memory_mb is not None:
+        user.redis_memory_mb = payload.redis_memory_mb
     plan_changed = False
     if payload.plan_id is not None:
         next_plan = _checked_plan_id(db, current_user, payload.plan_id) if new_role != "admin" else None
@@ -378,6 +381,9 @@ def update_user(user_id: int, payload: UserUpdate, request: Request, db: Session
     if plan_changed:
         # The package's open_basedir for the account's sites.
         php_isolation.sync_user(db, user)
+    # Its own Redis follows its memory (package or custom), its slice and its
+    # suspension; off for good once it may not have one.
+    redis_user.sync_quietly(db, user)
     log_action(db, current_user.id, "update_user", user.username, request=request)
     # Its limits, its reseller or its role may have moved its slice.
     resource_limits.sync_in_background()
@@ -417,6 +423,7 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), c
         db.query(HostingPlan).filter(HostingPlan.owner_id == user.id).delete(synchronize_session=False)
         # userdel refuses a user with processes still running.
         terminal.end_sessions(user.id, "account-deleted")
+        redis_user.remove_account(user)
         site_users.delete_panel_user(user.username)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

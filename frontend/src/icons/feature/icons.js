@@ -210,6 +210,7 @@ export const PAGE_FEATURE_ICONS = {
   'object-cache': 'cache',
   addons: 'addons',
   wordpress: 'wordpress',
+  redis: 'cache',
   mysql: 'mysql',
   processes: 'processes',
   ram: 'ram',

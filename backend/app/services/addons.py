@@ -292,6 +292,36 @@ ADDONS: dict[str, dict] = {
             "Stopping or removing the addon lifts every limit at once.",
         ],
     },
+    "redis": {
+        "id": "redis",
+        "name": "Redis per account",
+        "summary": "Each hosting account can turn on a Redis of its own, for its websites' object cache.",
+        "description": (
+            "Every hosting account can switch on its own Redis from its Redis "
+            "page, as DirectAdmin offers it. It runs as the account's own Linux "
+            "user and listens only on a unix socket in the account's home, so "
+            "the account's websites reach it and no other account can. Set how "
+            "much memory it may use on each package, or on an account without "
+            "one: 64 MB unless you change it. Use it for WordPress (Redis "
+            "Object Cache), Laravel or any PHP that talks to Redis."
+        ),
+        "category": "hosting",
+        "version": "1",
+        "packages": ["redis-server"],
+        "service": "",
+        "features": ["redis"],
+        "notes": [
+            "The socket is /home/<user>/.redis/redis.sock; there is no TCP port.",
+            "It is a cache: nothing is saved to disk, and a restart of the "
+            "server or of the account's Redis empties it.",
+            "0 MB on a package (or an account) means that it may not use Redis.",
+            "Stopping the addon stops every account's Redis, and starting it "
+            "brings them back; removing it stops and removes them all and "
+            "turns Redis off for every account.",
+            "The server's own Redis on 127.0.0.1:6379, if there is one, is not "
+            "touched, and the redis-server package stays installed.",
+        ],
+    },
     "git": {
         "id": "git",
         "name": "Git",
@@ -801,6 +831,9 @@ def _after_lifecycle(addon_id: str, action: str) -> None:
         except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
             _update_state(addon_id, last_error=f"Done, but the websites' vhosts could not be re-rendered: {exc}")
         return
+    if addon_id == "redis":
+        _redis_after_lifecycle(action)
+        return
     if addon_id != "mail":
         return
     try:
@@ -809,6 +842,23 @@ def _after_lifecycle(addon_id: str, action: str) -> None:
         mail.after_lifecycle(action)
     except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
         _update_state(addon_id, last_error=f"Installed, but the mailboxes could not be written out: {exc}")
+
+
+def _redis_after_lifecycle(action: str) -> None:
+    """Redis per account: the helper removed every instance with the addon, so
+    every account's switch goes off; an install brings back any account still
+    marked on (there is none unless the database came from elsewhere)."""
+    try:
+        from app.core.database import SessionLocal
+        from app.services import redis_user
+
+        with SessionLocal() as db:
+            if action == "uninstall":
+                redis_user.forget_all(db)
+            elif action == "install":
+                redis_user.sync_all(db)
+    except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
+        _update_state("redis", last_error=f"Done, but the accounts' Redis could not all be updated: {exc}")
 
 
 def _panel_addon_changed(addon_id: str) -> None:
@@ -908,6 +958,13 @@ def set_running(addon_id: str, running: bool) -> dict:
         from app.services import resource_limits
 
         resource_limits.refresh_vhosts_in_background()
+    if addon_id == "redis" and running:
+        # The helper started every instance that has a configuration; the
+        # panel re-applies every account with Redis on, so a limit, package or
+        # suspension that changed while it was stopped is caught up.
+        from app.services import redis_user
+
+        redis_user.sync_all_in_background()
     return status(addon_id)
 
 

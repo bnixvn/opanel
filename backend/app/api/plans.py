@@ -11,8 +11,8 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.permissions import Role, ensure_role, is_reseller_role
 from app.models.entities import User
-from app.schemas.schemas import RESOURCE_LIMIT_FIELDS, ResourceLimitsIn
-from app.services import php_isolation, provisioning
+from app.schemas.schemas import REDIS_MAX_MB, RESOURCE_LIMIT_FIELDS, ResourceLimitsIn
+from app.services import php_isolation, provisioning, redis_user
 
 router = APIRouter(prefix="/plans", tags=["plans"])
 
@@ -34,6 +34,8 @@ class PlanCreate(ResourceLimitsIn):
     terminal_enabled: bool = False
     # open_basedir for every site of its accounts (services/php_isolation.py).
     open_basedir: bool = False
+    # Redis per account addon: what each of its accounts' Redis may use; 0 = not allowed.
+    redis_memory_mb: int = Field(default=64, ge=0, le=REDIS_MAX_MB)
     php_version: str = "8.4"
     app_type: str = "php"
     auto_ssl: bool = False
@@ -53,6 +55,7 @@ class PlanUpdate(ResourceLimitsIn):
     io_write_mbps: Optional[int] = None
     terminal_enabled: Optional[bool] = None
     open_basedir: Optional[bool] = None
+    redis_memory_mb: Optional[int] = Field(default=None, ge=0, le=REDIS_MAX_MB)
     php_version: Optional[str] = None
     app_type: Optional[str] = None
     auto_ssl: Optional[bool] = None
@@ -71,6 +74,7 @@ def _plan_dict(plan) -> dict:
         **{field: int(getattr(plan, field) or 0) for field in RESOURCE_LIMIT_FIELDS},
         "terminal_enabled": bool(plan.terminal_enabled),
         "open_basedir": bool(getattr(plan, "open_basedir", False)),
+        "redis_memory_mb": int(plan.redis_memory_mb if plan.redis_memory_mb is not None else 64),
         "php_version": plan.php_version,
         "app_type": plan.app_type,
         "auto_ssl": plan.auto_ssl,
@@ -112,6 +116,7 @@ def create_plan(payload: PlanCreate, db: Session = Depends(get_db), current_user
             php_version=payload.php_version, app_type=payload.app_type, auto_ssl=payload.auto_ssl,
             terminal_enabled=payload.terminal_enabled,
             open_basedir=payload.open_basedir,
+            redis_memory_mb=payload.redis_memory_mb,
             owner_id=owner_id, **{field: getattr(payload, field) for field in RESOURCE_LIMIT_FIELDS},
         )
         if not payload.active:
@@ -128,7 +133,9 @@ def update_plan(plan_id: int, payload: PlanUpdate, db: Session = Depends(get_db)
     if provisioning.get_plan(db, plan_id, owner_id) is None:
         raise HTTPException(status_code=404, detail="Plan not found")
     _check_terminal(current_user, payload.terminal_enabled)
-    before = bool(getattr(provisioning.get_plan(db, plan_id, owner_id), "open_basedir", False))
+    current = provisioning.get_plan(db, plan_id, owner_id)
+    before = bool(getattr(current, "open_basedir", False))
+    redis_before = current.redis_memory_mb
     try:
         plan = provisioning.update_plan(db, plan_id, owner_id, **payload.model_dump(exclude_unset=True))
     except ValueError as exc:
@@ -138,11 +145,21 @@ def update_plan(plan_id: int, payload: PlanUpdate, db: Session = Depends(get_db)
     result = _plan_dict(plan)
     if bool(plan.open_basedir) != before:
         result["open_basedir_failed"] = php_isolation.sync_plan(db, plan)
+    # Its accounts' Redis takes the new memory, or goes off at 0
+    # (operator, 2026-10-27).
+    if plan.redis_memory_mb != redis_before:
+        redis_user.sync_plan_in_background(plan.id)
     return result
 
 
 @router.delete("/{plan_id}")
 def delete_plan(plan_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    plan = provisioning.get_plan(db, plan_id, _owner(current_user))
+    if plan is not None:
+        # Accounts keep the limits it gave them: an account without a package
+        # has its own Redis memory, so it takes the package's.
+        db.query(User).filter(User.plan_id == plan.id).update(
+            {User.redis_memory_mb: plan.redis_memory_mb}, synchronize_session=False)
     if not provisioning.delete_plan(db, plan_id, _owner(current_user)):
         raise HTTPException(status_code=404, detail="Plan not found")
     return {"ok": True}

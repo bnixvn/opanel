@@ -11,6 +11,7 @@ export const ADDON_META = {
   mcp: { page: 'mcp', label: msg('AI assistants (MCP)'), featureIcon: 'mcp' },
   notifications: { page: 'notifications', label: msg('Notifications'), featureIcon: 'notifications' },
   limits: { page: 'usage', label: msg('Resource limits'), featureIcon: 'resource-usage' },
+  redis: { page: 'redis', label: msg('Redis per account'), featureIcon: 'cache' },
   git: { page: 'git', label: msg('Git'), featureIcon: 'git' },
   wordpress: { page: 'wordpress', label: msg('WordPress Manager'), featureIcon: 'wordpress' },
   demo: { page: 'addons', label: msg('Demo mode'), featureIcon: 'account' },

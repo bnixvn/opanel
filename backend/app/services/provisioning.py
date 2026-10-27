@@ -56,7 +56,8 @@ def create_plan(db: Session, *, slug: str, name: str, website_limit: int = 1,
                 database_limit: int = 10, mailbox_limit: int = 10,
                 owner_id: Optional[int] = None, cpu_percent: int = 0, memory_mb: int = 0,
                 process_limit: int = 0, io_read_mbps: int = 0, io_write_mbps: int = 0,
-                terminal_enabled: bool = False, open_basedir: bool = False) -> HostingPlan:
+                terminal_enabled: bool = False, open_basedir: bool = False,
+                redis_memory_mb: int = 64) -> HostingPlan:
     if db.query(HostingPlan).filter(HostingPlan.slug == slug).first():
         raise ValueError(f"Plan slug '{slug}' already exists")
     plan = HostingPlan(
@@ -66,7 +67,7 @@ def create_plan(db: Session, *, slug: str, name: str, website_limit: int = 1,
         database_limit=database_limit, mailbox_limit=mailbox_limit, owner_id=owner_id,
         cpu_percent=cpu_percent, memory_mb=memory_mb, process_limit=process_limit,
         io_read_mbps=io_read_mbps, io_write_mbps=io_write_mbps, terminal_enabled=bool(terminal_enabled),
-        open_basedir=bool(open_basedir),
+        open_basedir=bool(open_basedir), redis_memory_mb=int(redis_memory_mb),
     )
     db.add(plan)
     db.commit()
@@ -262,6 +263,7 @@ def create_account(
         io_read_mbps=plan.io_read_mbps or 0,
         io_write_mbps=plan.io_write_mbps or 0,
         terminal_enabled=bool(plan.terminal_enabled),
+        redis_memory_mb=plan.redis_memory_mb,
         plan_id=plan.id,
     )
     db.add(user)
@@ -438,6 +440,9 @@ def suspend_account(db: Session, external_id: str, reason: str = "Suspended by W
     user.is_active = False
     user.token_version = (user.token_version or 0) + 1
     db.commit()
+    # Its own Redis stops; the switch stays on for the unsuspend.
+    from app.services import redis_user
+    redis_user.sync_quietly(db, user)
 
     # Lock the Linux user. This is what removes SFTP; a failure here means the
     # account is not actually suspended, so it fails the job instead of being
@@ -503,6 +508,8 @@ def unsuspend_account(db: Session, external_id: str) -> HostingAccount:
     # already moved it forward, so every pre-suspension JWT stays rejected.
     user.is_active = True
     db.commit()
+    from app.services import redis_user
+    redis_user.sync_quietly(db, user)
 
     # Restore every vhost suspend took down. Same rule as suspend: one domain
     # must not keep the rest of the account offline.
@@ -582,6 +589,8 @@ def terminate_account(db: Session, external_id: str) -> bool:
         # before it, any extra SFTP logins that share its uid.
         from app.services import sftp_accounts
         sftp_accounts.delete_for_owner(db, user)
+        from app.services import redis_user
+        redis_user.remove_account(user)
         site_users.delete_panel_user(user.username)
         db.delete(user)
         db.commit()
@@ -646,6 +655,7 @@ def change_package(db: Session, external_id: str, package_id: int) -> HostingAcc
     for field in ("cpu_percent", "memory_mb", "process_limit", "io_read_mbps", "io_write_mbps"):
         setattr(user, field, getattr(plan, field) or 0)
     user.terminal_enabled = bool(plan.terminal_enabled)
+    user.redis_memory_mb = plan.redis_memory_mb
     user.plan_id = plan.id
     account.plan_id = plan.id
     account.updated_at = datetime.utcnow()
@@ -654,8 +664,10 @@ def change_package(db: Session, external_id: str, package_id: int) -> HostingAcc
     db.commit()
     db.refresh(account)
     # The new package's open_basedir for the account's sites.
-    from app.services import php_isolation
+    from app.services import php_isolation, redis_user
     php_isolation.sync_user(db, user)
+    # Its own Redis takes the new package's memory, or goes off at 0.
+    redis_user.sync_quietly(db, user)
     return account
 
 

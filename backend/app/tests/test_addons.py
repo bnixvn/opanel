@@ -96,7 +96,7 @@ def test_the_id_is_all_that_crosses_the_boundary(calls):
 # --------------------------------------------------------------------------
 def test_the_helper_validates_the_id_itself():
     assert "require_addon_id()" in HELPER
-    assert 'ADDON_IDS=("fail2ban" "mail" "dns" "limits")' in HELPER, (
+    assert 'ADDON_IDS=("fail2ban" "mail" "dns" "limits" "redis")' in HELPER, (
         "the helper must not take the panel's word for which addons exist"
     )
 
@@ -515,12 +515,15 @@ def test_every_addon_endpoint_requires_admin():
 
 
 def test_the_page_is_hidden_and_not_reachable_by_url():
-    # A tab of the administrator's Settings hub (lib/navigation.jsx).
+    # An entry of the administrator's sidebar (operator, 2026-10-27), no
+    # longer a tab of Settings (lib/navigation.jsx).
     from pathlib import Path
     NAV = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "lib" / "navigation.jsx").read_text(encoding="utf-8")
+    admin = NAV[NAV.index("if (ctx.isAdmin) {"):NAV.index("if (ctx.isReseller) {")]
+    assert "['addons', msg('Addons'), PackageOpen]," in admin
     hub = NAV[NAV.index("{ key: 'config',"):]
     hub = hub[:hub.index("] },")]
-    assert "roles: ['admin']" in hub and "{ page: 'addons'," in hub
+    assert "{ page: 'addons'," not in hub
     line_start = APP_JSX.index("if (page === 'addons')")
     line = APP_JSX[line_start:APP_JSX.index("\n", line_start)]
     assert "isAdmin" in line, "a deep link would paint a page whose requests all 403"

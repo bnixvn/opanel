@@ -58,6 +58,11 @@ class User(Base):
     # customers": a reseller, like the administrator, opens a shell only by
     # logging in as the customer.
     terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    # Redis per account addon (services/redis_user.py): the memory its own
+    # Redis may use when it has no package (a package's value wins), 0 = not
+    # allowed; and whether the account turned it on.
+    redis_memory_mb: Mapped[int] = mapped_column(Integer, default=64, server_default=text("64"))
+    redis_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # The package the account was given (services/php_isolation.py): a package
     # setting that follows its accounts' sites (open_basedir) reaches them by it.
     plan_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -406,6 +411,9 @@ class HostingPlan(Base):
     terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # open_basedir for every site of the package's accounts (services/php_isolation.py).
     open_basedir: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    # Redis per account addon: what each account on the package may give its
+    # own Redis, 0 = not allowed (services/redis_user.py).
+    redis_memory_mb: Mapped[int] = mapped_column(Integer, default=64, server_default=text("64"))
     php_version: Mapped[str] = mapped_column(String(16), default="8.4")
     app_type: Mapped[str] = mapped_column(String(32), default="php")
     auto_ssl: Mapped[bool] = mapped_column(Boolean, default=False)

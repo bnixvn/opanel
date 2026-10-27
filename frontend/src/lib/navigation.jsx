@@ -44,6 +44,7 @@ export const PAGE_TITLES = {
   usage: msg('Resource usage'),
   git: msg('Git'),
   wordpress: msg('WordPress Manager'),
+  redis: 'Redis',
   importDirectadmin: msg('DirectAdmin Import'),
   importCpanel: msg('cPanel Import'),
   importFastpanel: msg('FastPanel Import'),

@@ -201,6 +201,9 @@ RESOURCE_LIMIT_RULES = {
 }
 RESOURCE_LIMIT_FIELDS = tuple(RESOURCE_LIMIT_RULES)
 GROUP_LIMIT_FIELDS = tuple(f"group_{name}" for name in RESOURCE_LIMIT_FIELDS)
+# Redis per account addon: the most memory a package or an account may give
+# its own Redis (the helper's bound too, REDIS_MAX_MB there).
+REDIS_MAX_MB = 4096
 
 
 def check_resource_limit(name: str, value):
@@ -258,6 +261,9 @@ class UserCreate(ResourceLimitsIn, GroupLimitsIn):
     group_io_write_mbps: int = 0
     # The browser terminal; off unless the package says otherwise.
     terminal_enabled: bool = False
+    # Redis per account addon: the memory its own Redis may use when it has no
+    # package; 0 = not allowed (services/redis_user.py).
+    redis_memory_mb: int = Field(default=64, ge=0, le=REDIS_MAX_MB)
     # The package the account is made from, when one was picked.
     plan_id: Optional[int] = None
 
@@ -300,6 +306,7 @@ class UserUpdate(ResourceLimitsIn, GroupLimitsIn):
     group_io_read_mbps: Optional[int] = None
     group_io_write_mbps: Optional[int] = None
     terminal_enabled: Optional[bool] = None
+    redis_memory_mb: Optional[int] = Field(default=None, ge=0, le=REDIS_MAX_MB)
     # A package picked for the account; 0 takes it off any package.
     plan_id: Optional[int] = None
 
@@ -370,6 +377,8 @@ class UserOut(BaseModel):
     group_io_read_mbps: int = 0
     group_io_write_mbps: int = 0
     terminal_enabled: bool = False
+    redis_memory_mb: int = 64
+    redis_enabled: bool = False
     plan_id: Optional[int] = None
     sftp_enabled: bool = True
     sftp_own_password: bool = False

@@ -57,6 +57,8 @@ export const TILES = {
   // Advanced
   cron: { label: msg('Cron'), icon: 'cron', page: 'cron' },
   mcp: { label: msg('AI assistants'), icon: 'mcp', page: 'mcp', addon: 'mcp' },
+  // The account's own Redis (operator, 2026-10-27); an administrator has none.
+  redis: { label: 'Redis', icon: 'cache', page: 'redis', addon: 'redis', roles: ['reseller', 'customer'] },
   notifications: { label: msg('Notifications'), icon: 'notifications', page: 'notifications', addon: 'notifications', roles: ['admin'] },
   'panel-settings': { label: msg('Panel settings'), icon: 'panel-settings', page: 'settings', roles: ['admin'] },
   // Migration: each import addon's page, in the Migration hub.
@@ -87,7 +89,7 @@ const CUSTOMER = [
   ['databases', msg('Databases'), ['databases', 'database-add', 'phpmyadmin']],
   ['files', msg('Files and backups'), ['files', 'sftp', 'terminal', 'git', 'backups']],
   ['security', msg('Security'), ['security', 'waf', 'access-logs']],
-  ['advanced', msg('Advanced'), ['cron', 'mcp', 'resource-usage']],
+  ['advanced', msg('Advanced'), ['cron', 'redis', 'mcp', 'resource-usage']],
 ];
 const RESELLER = [
   ['customers', msg('Customers'), ['users', 'user-add', 'packages']],

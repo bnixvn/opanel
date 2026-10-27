@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from app.api import addons, autossl as autossl_api, api_tokens, auth, dashboard, databases, demo, dns, firewall, git, mail, maintenance, mcp, mysql, notifications, panel_settings as panel_settings_api, plans, provisioning, resource_limits, server_monitor, services, sftp, terminal, updates, users, waf, websites, wordpress_manager
+from app.api import addons, autossl as autossl_api, api_tokens, auth, dashboard, databases, demo, dns, firewall, git, mail, maintenance, mcp, mysql, notifications, panel_settings as panel_settings_api, plans, provisioning, redis_user as redis_user_api, resource_limits, server_monitor, services, sftp, terminal, updates, users, waf, websites, wordpress_manager
 from app.core.config import settings
 from app.core.database import get_db, run_migrations
 from app.core.version import APP_VERSION
@@ -127,6 +127,7 @@ app.include_router(demo.router, prefix="/api")
 app.include_router(mail.router, prefix="/api")
 app.include_router(dns.router, prefix="/api")
 app.include_router(resource_limits.router, prefix="/api")
+app.include_router(redis_user_api.router, prefix="/api")
 
 
 @app.get("/api/health")

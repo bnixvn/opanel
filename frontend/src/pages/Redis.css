@@ -1,0 +1,8 @@
+/* The Redis page (pages/Redis.jsx): the account's switch and figures, its
+   socket, and the snippets to use it. Not in a cascade layer: OPanel's
+   element rules are unlayered and would win over a layered class. */
+.redis-page{display:grid;gap:12px}
+.redis-status{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
+.redis-figures{display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--text);font-size:13.5px}
+.redis-detail{color:var(--text)}
+.redis-page .copy-block-code{overflow-wrap:anywhere}

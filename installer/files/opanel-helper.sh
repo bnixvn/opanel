@@ -5547,7 +5547,7 @@ audit_log "$@"
 # panel that has been talked into asking for something outside it gets nothing.
 # Two lists that must agree is a real cost, and the alternative -- letting the
 # caller say what to install -- is handing root to whoever can reach the API.
-ADDON_IDS=("fail2ban" "mail" "dns" "limits")
+ADDON_IDS=("fail2ban" "mail" "dns" "limits" "redis")
 
 require_addon_id() {
   local id="${1:-}" known
@@ -7796,6 +7796,345 @@ limits_apply() {
   echo "applied"
 }
 
+# --- Redis per account (operator, 2026-10-27, as DirectAdmin has it) -------------
+#
+# Each hosting account may run a Redis of its own: one instance of the template
+# unit below, as the account's Linux user, on a unix socket in its home and on
+# no TCP port at all, so no other tenant can reach it. It is a cache: nothing
+# is saved to disk, and a restart empties it.
+#
+# The server's own redis-server.service (127.0.0.1:6379, the panel's rate
+# limiter and whatever sites already use it) shares only the binary with
+# these: nothing here stops, disables, reconfigures or removes it or its
+# package.
+#
+# Stopping the addon stops and disables every instance but keeps their
+# configuration, and leaves a marker so an apply cannot start one meanwhile;
+# starting it brings back every instance that has a configuration. An account
+# that is suspended or has Redis off has none.
+REDIS_SERVER_BIN="/usr/bin/redis-server"
+REDIS_CLI_BIN="/usr/bin/redis-cli"
+REDIS_UNIT_DIR="/etc/systemd/system"
+REDIS_UNIT="${REDIS_UNIT_DIR}/opanel-redis@.service"
+REDIS_CONF_DIR="/etc/opanel-redis"
+REDIS_STOPPED_MARKER="${REDIS_CONF_DIR}/stopped"
+REDIS_MAX_MB=4096
+# The account's own slice (services/resource_limits.account_slice), so its
+# Redis counts against the account when the Resource limits addon caps it.
+REDIS_SLICE_RE='^hosting(-r[0-9]{1,9})?-a[0-9]{1,9}\.slice$'
+
+redis_installed() {
+  [[ -f "$REDIS_UNIT" && -x "$REDIS_SERVER_BIN" ]]
+}
+
+require_redis_installed() {
+  redis_installed || deny "the Redis per account addon is not installed"
+}
+
+require_redis_mb() {
+  [[ "$1" =~ ^[0-9]{1,4}$ ]] || deny "invalid Redis memory (MB): $1"
+  (( 10#$1 >= 1 && 10#$1 <= REDIS_MAX_MB )) || deny "Redis memory out of range (1-${REDIS_MAX_MB} MB): $1"
+}
+
+redis_unit_text() {
+  cat <<'UNIT'
+# Managed by opanel (Redis per account addon). One instance per hosting
+# account: opanel-redis@<user>.service. The server's own redis-server.service
+# is a different unit and is not touched by this one.
+[Unit]
+Description=OPanel Redis of %i (unix socket in its home)
+After=network.target
+
+[Service]
+Type=notify
+User=%i
+Group=%i
+ExecStart=/usr/bin/redis-server /etc/opanel-redis/%i.conf
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i/.redis
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+# Prints the instance configuration of <user> with <mb> of memory.
+redis_user_config() {
+  local user="$1" mb="$2" home="$HOME_ROOT/$1"
+  cat <<CONF
+# Managed by opanel (Redis per account addon): rewritten when the account's
+# Redis memory changes. A cache only - nothing is saved to disk.
+port 0
+unixsocket ${home}/.redis/redis.sock
+unixsocketperm 700
+dir ${home}/.redis
+maxmemory ${mb}mb
+maxmemory-policy allkeys-lru
+save ""
+appendonly no
+supervised systemd
+daemonize no
+logfile ""
+databases 16
+protected-mode yes
+CONF
+}
+
+# Prints the instance's drop-in: a memory ceiling a little above maxmemory
+# (Redis's own overhead and fragmentation), and the account's slice.
+redis_user_dropin() {
+  local mb="$1" slice="${2:-}"
+  echo "# Managed by opanel (Redis per account addon)."
+  echo "[Service]"
+  echo "MemoryMax=$(( mb * 5 / 4 + 16 ))M"
+  if [[ -n "$slice" ]]; then
+    echo "Slice=${slice}"
+  fi
+}
+
+# Replaces <target> with <tmp> when they differ; says whether it did.
+redis_install_if_changed() {
+  local tmp="$1" target="$2"
+  if cmp -s "$tmp" "$target"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$target"
+  return 0
+}
+
+# Every account that has an instance in some form: a configuration, a drop-in,
+# an enabled link or a unit systemd knows.
+redis_instance_users() {
+  local path name
+  {
+    for path in "$REDIS_CONF_DIR"/*.conf; do
+      [[ -f "$path" ]] || continue
+      name="${path##*/}"
+      echo "${name%.conf}"
+    done
+    for path in "$REDIS_UNIT_DIR"/opanel-redis@*.service.d "$REDIS_UNIT_DIR"/*.wants/opanel-redis@*.service; do
+      [[ -e "$path" || -L "$path" ]] || continue
+      name="${path##*/opanel-redis@}"
+      name="${name%.d}"
+      echo "${name%.service}"
+    done
+    systemctl list-units --all --type=service --no-legend --plain 'opanel-redis@*.service' 2>/dev/null \
+      | awk '{print $1}' | sed -n 's/^opanel-redis@\(.*\)\.service$/\1/p' || true
+  } | sort -u | grep -E '^[a-z_][a-z0-9_-]{2,31}$' || true
+}
+
+redis_write_unit() {
+  local tmp
+  tmp="$(mktemp "${REDIS_UNIT_DIR}/.opanel-redis.XXXXXX")"
+  redis_unit_text >"$tmp"
+  if redis_install_if_changed "$tmp" "$REDIS_UNIT"; then
+    systemctl daemon-reload
+    return 0
+  fi
+  return 1
+}
+
+addon_redis_status() {
+  local installed=0 running=0 enabled=0 version="" active=0
+  if redis_installed; then
+    installed=1
+    if [[ ! -f "$REDIS_STOPPED_MARKER" ]]; then
+      running=1
+      enabled=1
+    fi
+    version="$("$REDIS_SERVER_BIN" --version 2>/dev/null | grep -oE 'v=[0-9.]+' | head -n 1 | cut -d= -f2 || true)"
+    active="$(systemctl list-units --type=service --state=active --no-legend --plain 'opanel-redis@*.service' 2>/dev/null \
+      | grep -c '^opanel-redis@' || true)"
+    if [[ ! "$active" =~ ^[0-9]+$ ]]; then active=0; fi
+  fi
+  echo "installed=${installed} running=${running} enabled=${enabled} version=${version} active=${active}"
+}
+
+addon_redis_install() {
+  export DEBIAN_FRONTEND=noninteractive
+  # The binary only. Where the server already runs its own redis-server (the
+  # panel installs one for its rate limiter), apt is not run at all.
+  if [[ ! -x "$REDIS_SERVER_BIN" ]]; then
+    apt-get update --allow-releaseinfo-change >/dev/null 2>&1 || true
+    apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+      install -y redis-server >/dev/null || deny "apt-get install of redis-server failed"
+  fi
+  [[ -x "$REDIS_SERVER_BIN" ]] || deny "redis-server is missing after the install"
+  install -d -o root -g root -m 0755 "$REDIS_CONF_DIR"
+  rm -f "$REDIS_STOPPED_MARKER"
+  redis_write_unit || true
+  systemctl daemon-reload
+  echo "Redis per account installed: each account turns its own on"
+}
+
+addon_redis_disable() {
+  local user
+  install -d -o root -g root -m 0755 "$REDIS_CONF_DIR"
+  touch "$REDIS_STOPPED_MARKER"
+  chmod 0644 "$REDIS_STOPPED_MARKER"
+  for user in $(redis_instance_users); do
+    systemctl disable --now "opanel-redis@${user}.service" >/dev/null 2>&1 || true
+  done
+  echo "Redis per account stopped"
+}
+
+addon_redis_enable() {
+  require_redis_installed
+  local path user failed=()
+  rm -f "$REDIS_STOPPED_MARKER"
+  for path in "$REDIS_CONF_DIR"/*.conf; do
+    [[ -f "$path" ]] || continue
+    user="${path##*/}"
+    user="${user%.conf}"
+    if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]{2,31}$ ]] || ! id -u "$user" >/dev/null 2>&1; then
+      continue
+    fi
+    if ! systemctl enable --now "opanel-redis@${user}.service" >/dev/null 2>&1; then
+      failed+=("$user")
+    fi
+  done
+  if (( ${#failed[@]} )); then
+    echo "WARNING: Redis did not start for: ${failed[*]} -- check: journalctl -u opanel-redis@<user>" >&2
+  fi
+  echo "Redis per account started"
+}
+
+addon_redis_uninstall() {
+  local user
+  for user in $(redis_instance_users); do
+    systemctl disable --now "opanel-redis@${user}.service" >/dev/null 2>&1 || true
+    rm -rf "${REDIS_UNIT_DIR}/opanel-redis@${user}.service.d"
+    if [[ -d "$HOME_ROOT/$user" && ! -L "$HOME_ROOT/$user" ]]; then
+      rm -rf -- "$HOME_ROOT/$user/.redis"
+    fi
+  done
+  rm -rf "$REDIS_CONF_DIR"
+  rm -f "$REDIS_UNIT"
+  systemctl daemon-reload
+  systemctl reset-failed 'opanel-redis@*' >/dev/null 2>&1 || true
+  echo "Redis per account removed. The redis-server package and the server's own Redis are kept."
+}
+
+redis_refresh() {
+  # Brings an installed addon's template unit up to this release (run by
+  # log-hygiene on every update). Running instances keep their cache: the new
+  # unit applies from their next start.
+  redis_installed || return 0
+  if redis_write_unit; then
+    echo "Redis per account: unit updated"
+  fi
+  return 0
+}
+
+redis_user_apply() {
+  local user="$1" mb_arg="$2" slice="${3:-}" mb group home dir conf dropdir tmp changed=0 reload=0
+  require_redis_installed
+  require_terminal_user "$user"
+  require_redis_mb "$mb_arg"
+  mb=$(( 10#$mb_arg ))
+  if [[ -n "$slice" && ! "$slice" =~ $REDIS_SLICE_RE ]]; then
+    deny "invalid slice: $slice"
+  fi
+  if [[ -f "$REDIS_STOPPED_MARKER" ]]; then
+    deny "Redis per account is stopped; start it on the Addons page"
+  fi
+  group=$(id -gn "$user")
+  home="$HOME_ROOT/$user"
+  dir="$home/.redis"
+  # Root makes the folder, and may: the home is root:<user> 0750 (the SFTP
+  # chroot needs that), so the account can neither make an entry in it nor
+  # swap this one for a link after the check below - nor make the folder as
+  # itself. Anything in its place that is not a plain directory is refused.
+  # 0700: the sites' PHP runs as the account itself, so no group needs in
+  # (operator review, 2026-10-27).
+  if [[ -L "$dir" ]] || { [[ -e "$dir" ]] && [[ ! -d "$dir" ]]; }; then
+    deny "$dir is not a directory"
+  fi
+  install -d -o "$user" -g "$group" -m 0700 "$dir"
+  install -d -o root -g root -m 0755 "$REDIS_CONF_DIR"
+  conf="$REDIS_CONF_DIR/$user.conf"
+  tmp="$(mktemp "$REDIS_CONF_DIR/.conf.XXXXXX")"
+  redis_user_config "$user" "$mb" >"$tmp"
+  if redis_install_if_changed "$tmp" "$conf"; then
+    changed=1
+  fi
+  dropdir="${REDIS_UNIT_DIR}/opanel-redis@${user}.service.d"
+  install -d -o root -g root -m 0755 "$dropdir"
+  tmp="$(mktemp "$dropdir/.memory.XXXXXX")"
+  redis_user_dropin "$mb" "$slice" >"$tmp"
+  if redis_install_if_changed "$tmp" "$dropdir/memory.conf"; then
+    changed=1
+    reload=1
+  fi
+  if [[ $reload -eq 1 ]]; then
+    systemctl daemon-reload
+  fi
+  # Only a change restarts it, since a restart empties the cache.
+  if [[ $changed -eq 1 ]] && systemctl is-active --quiet "opanel-redis@${user}.service"; then
+    systemctl restart "opanel-redis@${user}.service" \
+      || deny "Redis of ${user} did not restart -- check: journalctl -u opanel-redis@${user}"
+  fi
+  systemctl enable --now "opanel-redis@${user}.service" >/dev/null 2>&1 \
+    || deny "Redis of ${user} did not start -- check: journalctl -u opanel-redis@${user}"
+  if [[ $changed -eq 1 ]]; then
+    echo "applied"
+  else
+    echo "unchanged"
+  fi
+}
+
+redis_user_remove() {
+  local user="$1" home
+  # Only the name is checked: the account may be on its way out, and nothing
+  # here reaches past this addon's own files.
+  require_linux_user "$user"
+  systemctl disable --now "opanel-redis@${user}.service" >/dev/null 2>&1 || true
+  systemctl reset-failed "opanel-redis@${user}.service" >/dev/null 2>&1 || true
+  rm -f "$REDIS_CONF_DIR/$user.conf"
+  if [[ -d "${REDIS_UNIT_DIR}/opanel-redis@${user}.service.d" ]]; then
+    rm -rf "${REDIS_UNIT_DIR}/opanel-redis@${user}.service.d"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+  home="$HOME_ROOT/$user"
+  if [[ -d "$home" && ! -L "$home" ]]; then
+    rm -rf -- "$home/.redis"
+  fi
+  echo "removed"
+}
+
+redis_user_status() {
+  local user="$1" used=""
+  require_terminal_user "$user"
+  if ! systemctl is-active --quiet "opanel-redis@${user}.service"; then
+    echo "state=inactive used_memory=0"
+    return 0
+  fi
+  # As the account: the socket is its own, and root reads nothing of it.
+  used="$(timeout 5 runuser -u "$user" -- "$REDIS_CLI_BIN" -s "$HOME_ROOT/$user/.redis/redis.sock" INFO memory 2>/dev/null \
+    | tr -d '\r' | sed -n 's/^used_memory:\([0-9][0-9]*\)$/\1/p' | head -n 1 || true)"
+  echo "state=active used_memory=${used:-0}"
+}
+
+redis_user_flush() {
+  local user="$1" answer=""
+  require_terminal_user "$user"
+  systemctl is-active --quiet "opanel-redis@${user}.service" || deny "the Redis of ${user} is not running"
+  answer="$(timeout 30 runuser -u "$user" -- "$REDIS_CLI_BIN" -s "$HOME_ROOT/$user/.redis/redis.sock" FLUSHALL 2>&1 | tr -d '\r' || true)"
+  [[ "$answer" == "OK" ]] || deny "Redis did not flush: ${answer:-no answer}"
+  echo "flushed"
+}
+
 dns_refresh() {
   # Brings an installed DNS Manager up to this release (run by log-hygiene on
   # every update): new packages, the configuration -- the server's addresses
@@ -9010,6 +9349,7 @@ EOF
       mail) addon_mail_status ;;
       dns) addon_dns_status ;;
       limits) addon_limits_status ;;
+      redis) addon_redis_status ;;
     esac
     ;;
 
@@ -9020,6 +9360,7 @@ EOF
       mail) addon_mail_install ;;
       dns) addon_dns_install ;;
       limits) addon_limits_install ;;
+      redis) addon_redis_install ;;
     esac
     ;;
 
@@ -9030,6 +9371,7 @@ EOF
       mail) addon_mail_uninstall ;;
       dns) addon_dns_uninstall ;;
       limits) addon_limits_uninstall ;;
+      redis) addon_redis_uninstall ;;
     esac
     ;;
 
@@ -9046,6 +9388,7 @@ EOF
       mail) addon_mail_enable ;;
       dns) addon_dns_enable ;;
       limits) addon_limits_enable ;;
+      redis) addon_redis_enable ;;
     esac
     ;;
 
@@ -9059,6 +9402,7 @@ EOF
       mail) addon_mail_disable ;;
       dns) addon_dns_disable ;;
       limits) addon_limits_disable ;;
+      redis) addon_redis_disable ;;
     esac
     ;;
 
@@ -9502,6 +9846,7 @@ PY
     # A subshell: a failed mail refresh must not stop the update's other steps.
     ( mail_refresh ) || echo "WARNING: the Email addon could not be refreshed" >&2
     ( dns_refresh ) || echo "WARNING: DNS Manager could not be refreshed" >&2
+    ( redis_refresh ) || echo "WARNING: Redis per account could not be refreshed" >&2
     echo "Log hygiene applied"
     ;;
 
@@ -10598,6 +10943,25 @@ PY
     [[ $# -eq 1 ]] || deny "usage: cron-write <site-user>"
     require_linux_user "$1"
     exec runuser -u "$1" -- crontab -
+    ;;
+
+  # ---- Redis per account (the "redis" addon) ---------------------------
+  # Args: <site-user> <maxmemory MB 1-4096> [<the account's slice>]
+  redis-user-apply)
+    [[ $# -eq 2 || $# -eq 3 ]] || deny "usage: redis-user-apply <user> <maxmemory_mb> [slice]"
+    redis_user_apply "$@"
+    ;;
+  redis-user-remove)
+    [[ $# -eq 1 ]] || deny "usage: redis-user-remove <user>"
+    redis_user_remove "$1"
+    ;;
+  redis-user-status)
+    [[ $# -eq 1 ]] || deny "usage: redis-user-status <user>"
+    redis_user_status "$1"
+    ;;
+  redis-user-flush)
+    [[ $# -eq 1 ]] || deny "usage: redis-user-flush <user>"
+    redis_user_flush "$1"
     ;;
 
   # ---- service status (read-only, no privilege change needed but useful)

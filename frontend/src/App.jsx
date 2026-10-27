@@ -39,6 +39,7 @@ import AuditLogPage from './pages/AuditLog';
 import MysqlPage from './pages/Mysql';
 import AutoSslPage from './pages/AutoSsl';
 import WordPressPage from './pages/WordPress';
+import RedisPage from './pages/Redis';
 import { DialogHost, confirmDialog, promptDialog } from './components/Dialog';
 import OlsThrottle from './components/OlsThrottle.jsx';
 import Switch from './components/Switch';
@@ -127,6 +128,7 @@ const PAGE_ROUTES = {
   mysql: '/mysql',
   autossl: '/autossl',
   wordpress: '/wordpress',
+  redis: '/redis',
   // The migration addons' pages (the Migration hub).
   importDirectadmin: '/migration/directadmin',
   importCpanel: '/migration/cpanel',
@@ -624,7 +626,7 @@ function App() {
   // The upload under way, and how far it has got: { name, loaded, total }.
   const [uploadProgress, setUploadProgress] = useState(null);
   const [editorCursor, setEditorCursor] = useState({ line: 1, column: 1 });
-  const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0, terminal_enabled: false });
+  const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0, terminal_enabled: false, redis_memory_mb: 64 });
   // A reseller's share of the server and what it has handed out (GET /users/pool).
   const [resellerPool, setResellerPool] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
@@ -768,6 +770,9 @@ function App() {
   const [mailInfo, setMailInfo] = useState(null);
   // Resource limits addon: whether it is installed, and each visible account's limits and use.
   const [limitsInfo, setLimitsInfo] = useState(null);
+  // Redis per account addon (GET /redis): whether it is installed, and this
+  // account's own Redis.
+  const [redisInfo, setRedisInfo] = useState(null);
   // The dashboard's view of it: the signed-in account's day and week of history,
   // which range the charts show, a reseller's own account or its whole group,
   // and what the administrator's busiest-accounts list is sorted by.
@@ -846,7 +851,7 @@ function App() {
   const [plans, setPlans] = useState([]);
   const [editingPlan, setEditingPlan] = useState(null);
   const [editingPlanForm, setEditingPlanForm] = useState({ name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, php_version: '8.4', app_type: 'php', auto_ssl: false, active: true });
-  const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false, open_basedir: false });
+  const [newPlan, setNewPlan] = useState({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false, open_basedir: false, redis_memory_mb: 64 });
   // WordPress manager
   const [wpManagerSite, setWpManagerSite] = useState(null);
   const [wpManagerMode, setWpManagerMode] = useState('install'); // the WordPress install sheet
@@ -1481,6 +1486,8 @@ function App() {
   const POOL_FIELDS = ['pool_user_limit', 'pool_storage_limit_mb'];
   // Resource limits addon: an account's own, and a reseller's caps on its group.
   const limitsOn = !!limitsInfo?.installed;
+  // Redis per account addon: its memory fields show only once it is installed.
+  const redisOn = !!redisInfo?.installed;
   const RL_FIELDS = ['cpu_percent', 'memory_mb', 'process_limit', 'io_read_mbps', 'io_write_mbps'];
   const limitValues = (form, prefix = '') => Object.fromEntries(RL_FIELDS.map(field => [prefix + field, Number(form[prefix + field]) || 0]));
 
@@ -1499,6 +1506,7 @@ function App() {
       POOL_FIELDS.forEach(field => { body[field] = Number(newUser[field]) || 0; });
       body.pool_oversell = !!newUser.pool_oversell;
     }
+    if (redisOn && newUser.role !== 'admin') body.redis_memory_mb = Number(newUser.redis_memory_mb) || 0;
     if (limitsOn) {
       Object.assign(body, limitValues(newUser));
       if (isAdmin && newUser.role === 'reseller') Object.assign(body, limitValues(newUser, 'group_'));
@@ -1506,7 +1514,7 @@ function App() {
     const data = await request('/users', { method: 'POST', body: JSON.stringify(body) }, tr("Creating user..."));
     if (data) {
       setNotice(tr("Created user {0}", data.username));
-      setNewUser({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0, terminal_enabled: false });
+      setNewUser({ username: '', email: '', password: '', role: 'end_user', website_limit: 5, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, reseller_id: '', pool_user_limit: 0, pool_storage_limit_mb: 0, pool_oversell: false, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, group_cpu_percent: 0, group_memory_mb: 0, group_process_limit: 0, group_io_read_mbps: 0, group_io_write_mbps: 0, terminal_enabled: false, redis_memory_mb: 64 });
       await loadUsers();
       if (isReseller) await loadResellerPool();
       return true;
@@ -1529,6 +1537,8 @@ function App() {
       pool_storage_limit_mb: user.pool_storage_limit_mb ?? 0,
       pool_oversell: !!user.pool_oversell,
       terminal_enabled: !!user.terminal_enabled,
+      // A package's Redis memory is the one that applies to its accounts.
+      redis_memory_mb: plans.find(p => p.id === user.plan_id)?.redis_memory_mb ?? user.redis_memory_mb ?? 64,
       ...Object.fromEntries(RL_FIELDS.flatMap(field => [[field, user[field] ?? 0], [`group_${field}`, user[`group_${field}`] ?? 0]])),
       _password: '',
       _planId: user.plan_id ? String(user.plan_id) : (matchedPlan ? String(matchedPlan.id) : ''),
@@ -1576,6 +1586,7 @@ function App() {
         payload.pool_oversell = !!editingUserForm.pool_oversell;
       }
     }
+    if (redisOn && editingUserForm.role !== 'admin' && editingUser.id !== currentUser?.id) payload.redis_memory_mb = Number(editingUserForm.redis_memory_mb) || 0;
     if (limitsOn) {
       Object.assign(payload, limitValues(editingUserForm));
       if (isAdmin && editingUserForm.role === 'reseller') Object.assign(payload, limitValues(editingUserForm, 'group_'));
@@ -1912,6 +1923,11 @@ function App() {
     setDnsSettingsForm({ ...data });
     setNotice(tr("DNS settings saved."));
     loadDnsInfo();
+  }
+
+  async function loadRedisInfo() {
+    const data = await request('/redis', { silent: true }, '');
+    if (data) setRedisInfo(data);
   }
 
   async function loadLimitsInfo() {
@@ -2528,7 +2544,7 @@ function App() {
     const data = await request('/plans', { method: 'POST', body: JSON.stringify({ ...newPlan, ...limitValues(newPlan) }) }, tr("Creating plan..."));
     if (data?.id) {
       setNotice(tr("Plan \"{0}\" created.", data.name));
-      setNewPlan({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false, open_basedir: false });
+      setNewPlan({ slug: '', name: '', website_limit: 1, storage_limit_mb: 1024, database_limit: 10, mailbox_limit: 10, cpu_percent: 0, memory_mb: 0, process_limit: 0, io_read_mbps: 0, io_write_mbps: 0, php_version: '8.4', app_type: 'php', auto_ssl: false, terminal_enabled: false, open_basedir: false, redis_memory_mb: 64 });
       loadPlans();
       return true;
     }
@@ -2537,7 +2553,7 @@ function App() {
 
   function startEditingPlan(plan) {
     setEditingPlan(plan);
-    setEditingPlanForm({ name: plan.name, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? 10, mailbox_limit: plan.mailbox_limit ?? 10, ...limitValues(plan), php_version: plan.php_version, app_type: plan.app_type, auto_ssl: plan.auto_ssl, active: plan.active, terminal_enabled: !!plan.terminal_enabled, open_basedir: !!plan.open_basedir });
+    setEditingPlanForm({ name: plan.name, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? 10, mailbox_limit: plan.mailbox_limit ?? 10, ...limitValues(plan), php_version: plan.php_version, app_type: plan.app_type, auto_ssl: plan.auto_ssl, active: plan.active, terminal_enabled: !!plan.terminal_enabled, open_basedir: !!plan.open_basedir, redis_memory_mb: plan.redis_memory_mb ?? 64 });
   }
 
   async function updatePlan() {
@@ -4921,6 +4937,12 @@ function App() {
     if (isAuthenticated) loadMailInfo();
   }, [isAuthenticated, addonList]);
 
+  // Redis per account: whether the addon is installed decides its tile, page
+  // and form fields.
+  useEffect(() => {
+    if (isAuthenticated) loadRedisInfo();
+  }, [isAuthenticated, addonList]);
+
   // Resource limits: whether the addon is on, then live use while a page shows it.
   useEffect(() => {
     if (isAuthenticated) loadLimitsInfo();
@@ -5108,7 +5130,7 @@ function App() {
     ...navCtx,
     installed: (slug) => ({
       mail: !!mailInfo?.installed, dns: !!dnsInfo?.installed, git: !!gitEnabled, wordpress: !!wordpressEnabled, mcp: !!mcpInfo?.enabled,
-      notifications: !!notifyInfo?.enabled, malware: !!malwareScanStatus?.enabled, limits: limitsOn,
+      notifications: !!notifyInfo?.enabled, malware: !!malwareScanStatus?.enabled, limits: limitsOn, redis: redisOn,
     }[slug] ?? installedAddons.has(slug)),
     webmailUrl: mailInfo?.webmail_url || '',
   };
@@ -5160,6 +5182,8 @@ function App() {
       processFilter, processPaused, processTop, setProcessFilter, setProcessPaused,
       // The WordPress Manager addon (pages/WordPress.jsx).
       wordpressEnabled,
+      // The Redis per account addon (pages/Redis.jsx).
+      redisInfo, setRedisInfo,
     };
   }
   const sideItems = sidebarItems(navCtx);
@@ -7957,6 +7981,11 @@ function App() {
                 <div className="addon-panel-head"><strong>{tr("Repositories, deploys and webhooks")}</strong>
                   <button className="mini" disabled={!addon.running} onClick={() => navigateToPage('git')}><GitBranch size={13}/> {tr("Open Git")}</button></div>
               </div>}
+              {addon.id === 'redis' && addon.installed && <div className="addon-panel">
+                <div className="addon-panel-head"><strong>{tr("Accounts with Redis on")}</strong>
+                  <button className="mini" onClick={() => navigateToPage('redis')}><Layers size={13}/> {tr("Open Redis")}</button></div>
+                {!addon.running && <p className="hint">{tr("Redis per account is stopped: no account's Redis runs.")}</p>}
+              </div>}
               {addon.id === 'notifications' && addon.installed && <div className="addon-panel">
                 <div className="addon-panel-head"><strong>{tr("Channels, recipients and events")}</strong>
                   <button className="mini" onClick={() => navigateToPage('notifications')}><Bell size={13}/> {tr("Open Notifications")}</button></div>
@@ -9246,7 +9275,7 @@ function App() {
     const self = !creating && user?.id === currentUser?.id;
     const pickPlan = planId => {
       const plan = plans.find(p => String(p.id) === planId);
-      if (plan) setForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? prev.database_limit, mailbox_limit: plan.mailbox_limit ?? prev.mailbox_limit, ...limitValues(plan), ...(canGrantTerminal ? { terminal_enabled: !!plan.terminal_enabled } : {}) }));
+      if (plan) setForm(prev => ({ ...prev, _planId: planId, website_limit: plan.website_limit, storage_limit_mb: plan.storage_limit_mb, database_limit: plan.database_limit ?? prev.database_limit, mailbox_limit: plan.mailbox_limit ?? prev.mailbox_limit, ...limitValues(plan), redis_memory_mb: plan.redis_memory_mb ?? prev.redis_memory_mb, ...(canGrantTerminal ? { terminal_enabled: !!plan.terminal_enabled } : {}) }));
       else setForm(prev => ({ ...prev, _planId: '' }));
     };
     return <div className="form-sections">
@@ -9279,6 +9308,8 @@ function App() {
           <label><span>{tr("Disk (MB)")}</span><input type="number" min="0" max="1048576" value={form.storage_limit_mb} onChange={e => set('storage_limit_mb', e.target.value)} /></label>
           <label><span>{tr("Databases")}</span><input type="number" min="0" max="1000" value={form.database_limit ?? 10} onChange={e => set('database_limit', e.target.value)} /></label>
           {mailInfo?.installed && <label><span>{tr("Mailboxes")}</span><input type="number" min="0" max="10000" value={form.mailbox_limit ?? 10} onChange={e => set('mailbox_limit', e.target.value)} /></label>}
+          {redisOn && !self && <label><span>{tr("Redis RAM (MB)")}</span><input type="number" min="0" max="4096" value={form.redis_memory_mb ?? 64} onChange={e => set('redis_memory_mb', e.target.value)} />
+            <small className="hint">{tr("0 = not allowed")}</small></label>}
         </div>
       </fieldset>}
       {isAdmin && form.role === 'reseller' && renderPoolInputs(form, setForm)}
@@ -9337,6 +9368,7 @@ function App() {
     if (mailInfo?.installed) chips.push([Mail, plan.mailbox_limit ? tr("{0} mailbox(es)", plan.mailbox_limit) : tr("Unlimited mailboxes")]);
     if (limitsOn && plan.cpu_percent) chips.push([Cpu, `CPU ${plan.cpu_percent}%`]);
     if (limitsOn && plan.memory_mb) chips.push([MemoryStick, `RAM ${formatMegabytes(plan.memory_mb)}`]);
+    if (redisOn) chips.push([Layers, plan.redis_memory_mb ? tr("Redis: {0} MB", plan.redis_memory_mb) : tr("No Redis")]);
     if (plan.terminal_enabled) chips.push([TerminalIcon, tr("Terminal")]);
     if (plan.open_basedir) chips.push([Lock, 'open_basedir']);
     return <div className="plan-chips">{chips.map(([Icon, text]) => <span className="plan-chip" key={text}><Icon size={13}/>{text}</span>)}</div>;
@@ -9356,6 +9388,8 @@ function App() {
           <label><span>{tr("Disk (MB)")}</span><input type="number" min="0" value={form.storage_limit_mb} onChange={number('storage_limit_mb')} /></label>
           <label><span>{tr("Databases")}</span><input type="number" min="0" value={form.database_limit} onChange={number('database_limit')} /></label>
           {mailInfo?.installed && <label><span>{tr("Mailboxes")}</span><input type="number" min="0" value={form.mailbox_limit} onChange={number('mailbox_limit')} /></label>}
+          {redisOn && <label><span>{tr("Redis RAM (MB)")}</span><input type="number" min="0" max="4096" value={form.redis_memory_mb ?? 64} onChange={number('redis_memory_mb')} />
+            <small className="hint">{tr("0 = not allowed")}</small></label>}
         </div>
         {canGrantTerminal && <label className="check-line"><input type="checkbox" checked={!!form.terminal_enabled} onChange={e => setForm(prev => ({ ...prev, terminal_enabled: e.target.checked }))} /> {tr("Browser terminal")}</label>}
         <label className="check-line"><input type="checkbox" checked={!!form.open_basedir} onChange={e => setForm(prev => ({ ...prev, open_basedir: e.target.checked }))} /> {tr("Fence PHP into each site's folder (open_basedir)")}</label>
@@ -9433,6 +9467,8 @@ function App() {
     if (page === 'mysql') return isAdmin ? <MysqlPage/> : <DashboardPage/>;
     if (page === 'autossl') return isAdmin ? <AutoSslPage/> : <DashboardPage/>;
     if (page === 'wordpress') return <WordPressPage/>;
+    // Not before the addon is known; never once it is known not to be installed.
+    if (page === 'redis') return redisInfo && !redisInfo.installed ? <DashboardPage/> : <RedisPage/>;
     if (page === 'usage') return renderResourceUsage();
     if (page === 'processes') return isAdmin ? <ProcessesPage/> : <DashboardPage/>;
     if (page === 'ramUsage') return isAdmin ? renderRamUsage() : <DashboardPage/>;
