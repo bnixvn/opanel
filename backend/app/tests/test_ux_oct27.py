@@ -35,3 +35,12 @@ def test_the_owner_is_named_as_such_in_the_wordpress_list():
     wp = read("pages/WordPress.jsx")
     assert "t('Owner: {name}', { name: item.owner_username })" in wp
     assert "item.rel_path ? `/${item.rel_path}` : '/'" not in wp
+
+
+def test_login_as_lands_on_the_accounts_dashboard():
+    """Operator, 2026-10-27: after "Login as" the account's Dashboard, not
+    its websites."""
+    app = (SRC / "App.jsx").read_text(encoding="utf-8")
+    login_as = app[app.index("async function quickLoginUser("):app.index("async function returnToImpersonator(")]
+    assert login_as.count("navigateToPage('dashboard');") == 2
+    assert "navigateToPage('websites')" not in login_as
