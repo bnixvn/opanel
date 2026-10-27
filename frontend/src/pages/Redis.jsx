@@ -111,6 +111,21 @@ export default function RedisPage() {
   const wpSnippet = `define('WP_REDIS_SCHEME', 'unix');\ndefine('WP_REDIS_PATH', '${socket}');`;
   const phpSnippet = `$redis = new Redis();\n$redis->connect('${socket}');`;
   const laravelSnippet = `REDIS_CLIENT=phpredis\nREDIS_HOST=${socket}\nREDIS_PORT=0\nREDIS_SCHEME=unix\nREDIS_PATH=${socket}`;
+  // LiteSpeed Cache's Object tab, field by field, named as the plugin names
+  // them: the socket is its Host, with Port 0 (operator, 2026-10-27: OPanel's
+  // WordPress has LiteSpeed Cache, so this is the guide most sites need).
+  const lscacheSettings = [
+    ['Object Cache', 'ON'],
+    ['Method', 'Redis'],
+    ['Host', <code key="host">{socket}</code>],
+    ['Port', '0'],
+    ['Default Object Lifetime', '360'],
+    ['Username / Password', t('leave empty')],
+    ['Redis Database ID', t('0 - a different number for each website')],
+    ['Persistent Connection', 'ON'],
+    ['Cache WP-Admin', 'OFF'],
+    ['Store Transients', 'ON'],
+  ];
 
   return <>
     {header}
@@ -140,6 +155,14 @@ export default function RedisPage() {
         <h2>{t('Use it')}</h2>
         <p className="hint">{t('Your websites connect to the socket; there is no host or port. It has 16 databases (0-15): give each website its own to keep their keys apart.')}</p>
       </div></div>
+      <div className="redis-lscache">
+        <h3>{t('WordPress with LiteSpeed Cache')}</h3>
+        <p className="hint">{t('In wp-admin open LiteSpeed Cache, then Cache, then the Object tab. Set these and press Save Changes: the Status box at the top of the tab should then show Connection Test: Passed.')}</p>
+        <dl className="redis-settings">
+          {lscacheSettings.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+        </dl>
+        {renderCopyBlock('Host', socket)}
+      </div>
       {renderCopyBlock(t('WordPress: the Redis Object Cache plugin, in wp-config.php'), wpSnippet, { multiline: true })}
       {renderCopyBlock('PHP (phpredis)', phpSnippet, { multiline: true })}
       {renderCopyBlock('Laravel (.env)', laravelSnippet, { multiline: true })}

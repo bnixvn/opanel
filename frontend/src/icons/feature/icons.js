@@ -78,6 +78,9 @@ export const FEATURE_ICONS = {
   // "W" in a ring. Drawn for SNPanel - not the WordPress logo.
   wordpress: 'C b2 24 24 20;C b 24 24 16;P xp M13 17l5.4 15L24 21l5.6 11L35 17',
   cache: `${doc('b')};P xb2 M13.5 14h15M13.5 20h15M13.5 26h9${BOLT}`,
+  // Redis per account: three stacked red slabs, the shape people know Redis
+  // by (operator, 2026-10-27: the cache picture did not read as Redis).
+  redis: `P r2 M24 24L40 31L24 38L8 31Z;P r M8 31v4l16 7l16-7v-4l-16 7Z;P r2 M24 16L40 23L24 30L8 23Z;P r M8 23v4l16 7l16-7v-4l-16 7Z;P r2 M24 8L40 15L24 22L8 15Z;P r M8 15v4l16 7l16-7v-4l-16 7Z`,
   'site-logs': `${doc('b')};C b 14.5 14 2;C b 14.5 21 2;C b 14.5 28 2;P xb2 M19.5 14h9M19.5 21h9M19.5 28h6${LOOK}`,
   terminal: 'R s 4 6 40 36 3;R k 7 12 34 27 1.5;P xg M13 20l5 5-5 5;P xp M22 31h9',
   // OPanel's Git addon (2026-10-17): a branch leaving the main line, its
@@ -210,7 +213,7 @@ export const PAGE_FEATURE_ICONS = {
   'object-cache': 'cache',
   addons: 'addons',
   wordpress: 'wordpress',
-  redis: 'cache',
+  redis: 'redis',
   mysql: 'mysql',
   processes: 'processes',
   ram: 'ram',

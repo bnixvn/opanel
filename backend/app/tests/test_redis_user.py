@@ -297,7 +297,7 @@ def test_the_addon_is_registered_off_by_default_and_run_by_the_helper(monkeypatc
 
 def test_the_page_and_its_fields_appear_only_with_the_addon():
     features = (ROOT / "frontend" / "src" / "lib" / "features.jsx").read_text(encoding="utf-8")
-    assert "redis: { label: 'Redis', icon: 'cache', page: 'redis', addon: 'redis'" in features
+    assert "redis: { label: 'Redis', icon: 'redis', page: 'redis', addon: 'redis'" in features
     app_jsx = (ROOT / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     assert "const redisOn = !!redisInfo?.installed;" in app_jsx
     assert app_jsx.count('{redisOn && ') >= 2, "the package and the account forms"
@@ -572,3 +572,13 @@ def test_removing_the_addon_turns_every_account_off(env):
     db.commit()
     redis_user.forget_all(db)
     assert not any(user.redis_enabled for user in db.query(User).all())
+
+
+def test_the_page_tells_how_to_set_litespeed_cache_on_the_socket():
+    """OPanel's WordPress has LiteSpeed Cache (operator, 2026-10-27): its
+    Object tab reaches the socket with the path as Host and Port 0."""
+    page = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "pages" / "Redis.jsx").read_text(encoding="utf-8")
+    for field in ("['Method', 'Redis']", "['Host', <code key=\"host\">{socket}</code>]", "['Port', '0']", "['Persistent Connection', 'ON']"):
+        assert field in page, field
+    icons = (Path(__file__).resolve().parents[3] / "frontend" / "src" / "icons" / "feature" / "icons.js").read_text(encoding="utf-8")
+    assert "  redis: 'redis'," in icons and "  redis: `P r2 " in icons
