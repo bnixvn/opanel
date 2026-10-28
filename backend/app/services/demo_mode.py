@@ -59,6 +59,10 @@ BLOCKED_GETS = [re.compile(pattern) for pattern in (
     # top -c: every process's command line, and a command line can carry a
     # password (mysqldump -p..., a cron job's curl with a token).
     r"^/api/system/processes$",
+    # The same command lines at rest: a site's crontab holds whatever the owner
+    # scheduled, passwords and tokens included. (The demo admin's published
+    # password otherwise reads every site's cron.)
+    r"^/api/maintenance/cron/[^/]+$",
 )]
 HASH_PREFIX = "opanel-demo$"
 READ_ONLY_MESSAGE = "This is a read-only demo: changes are not saved."
