@@ -48,13 +48,21 @@ READ_ONLY_POSTS = {
 }
 # GETs that hand out data wholesale rather than show it.
 BLOCKED_GETS = [re.compile(pattern) for pattern in (
-    r"^/api/databases/\d+/download$",
-    r"^/api/maintenance/backups/\d+/download$",
+    # The id segment is [^/]+, not \d+: Starlette matches the path segment as a
+    # string and pydantic coerces it to int in lax mode, so "+1", "%201" (" 1")
+    # and "1.0" all resolve to a record but would slip past a digits-only guard.
+    # [^/]+ blocks every spelling of the id (strictly more, never less).
+    r"^/api/databases/[^/]+/download$",
+    r"^/api/maintenance/backups/[^/]+/download$",
     r"^/api/maintenance/user-backups-download$",
-    r"^/api/maintenance/files/\d+/download$",
+    r"^/api/maintenance/files/[^/]+/download$",
     # top -c: every process's command line, and a command line can carry a
     # password (mysqldump -p..., a cron job's curl with a token).
     r"^/api/system/processes$",
+    # The same command lines at rest: a site's crontab holds whatever the owner
+    # scheduled, passwords and tokens included. (The demo admin's published
+    # password otherwise reads every site's cron.)
+    r"^/api/maintenance/cron/[^/]+$",
 )]
 HASH_PREFIX = "opanel-demo$"
 READ_ONLY_MESSAGE = "This is a read-only demo: changes are not saved."

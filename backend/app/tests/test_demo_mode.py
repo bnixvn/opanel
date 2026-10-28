@@ -125,6 +125,8 @@ def test_login_goes_through_the_demo_aware_check():
     ("GET", "/api/maintenance/backups/2/download", False),
     ("GET", "/api/maintenance/user-backups-download", False),
     ("GET", "/api/maintenance/files/4/download", False),
+    # A site's crontab carries whatever the owner scheduled, secrets included.
+    ("GET", "/api/maintenance/cron/1", False),
 ])
 def test_a_demo_session_reads_and_never_writes(people, method, path, allowed):
     db, admin, viewer, _ = people

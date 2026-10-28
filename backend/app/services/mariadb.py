@@ -102,6 +102,21 @@ def _quote_identifier(value: str) -> str:
     return f"`{_validate_identifier(value)}`"
 
 
+def _grant_db_object(value: str) -> str:
+    """Backtick-quote a database name for the ``ON <db>.*`` position of a GRANT.
+
+    In a grant the database part is a LIKE pattern, so ``_`` and ``%`` are
+    wildcards: an unescaped name like ``wp_shop`` would also grant rights over
+    ``wpXshop`` -- another tenant's schema. Escape the wildcard characters so the
+    grant covers exactly this one database. Identifiers are already restricted to
+    [a-z0-9_] by _validate_identifier (so only ``_`` can occur in practice), but
+    ``%`` and ``\\`` are escaped too for safety.
+    """
+    name = _validate_identifier(value)
+    name = name.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
+    return f"`{name}`"
+
+
 def _mysql_args(extra: list = None) -> list:
     args = ["mysql"]
     default_files = [
@@ -152,7 +167,7 @@ def create_database(seed: str, prefix: str = "wp", db_name: str | None = None, i
         f"{create_clause} {_quote_identifier(db_name)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"
         f"CREATE USER IF NOT EXISTS {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
         f"ALTER USER {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
-        f"GRANT ALL PRIVILEGES ON {_quote_identifier(db_name)}.* TO {_quote_sql_string(db_user)}@'localhost';\n"
+        f"GRANT ALL PRIVILEGES ON {_grant_db_object(db_name)}.* TO {_quote_sql_string(db_user)}@'localhost';\n"
         + connection_limit_sql(db_user)
         + "FLUSH PRIVILEGES;\n"
     )
@@ -188,7 +203,7 @@ def create_database_credentials(
             f"CREATE USER {_quote_sql_string(db_user)}@'localhost' IDENTIFIED BY {_quote_sql_string(db_password)};\n"
         )
     sql += (
-        f"GRANT ALL PRIVILEGES ON {_quote_identifier(db_name)}.* TO {_quote_sql_string(db_user)}@'localhost';\n"
+        f"GRANT ALL PRIVILEGES ON {_grant_db_object(db_name)}.* TO {_quote_sql_string(db_user)}@'localhost';\n"
         + connection_limit_sql(db_user)
         + "FLUSH PRIVILEGES;\n"
     )
@@ -381,7 +396,7 @@ def adopt_account(db_name: str, db_user: str, db_password: str, *, existing: boo
     verb = "ALTER USER" if existing else "CREATE USER"
     _run_sql(
         f"{verb} {who} IDENTIFIED BY {_quote_sql_string(db_password)};\n"
-        f"GRANT ALL PRIVILEGES ON {_quote_identifier(db_name)}.* TO {who};\n"
+        f"GRANT ALL PRIVILEGES ON {_grant_db_object(db_name)}.* TO {who};\n"
         + connection_limit_sql(db_user)
         + "FLUSH PRIVILEGES;\n"
     )

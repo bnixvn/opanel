@@ -858,7 +858,19 @@ schedule_panel_restart() {
 refresh_tools_ols() {
   local port domain host api_scheme tools_scheme pma_secure php_version panel_cert panel_key default_ver_no_dot lsphp_sock
   port="$(env_get PANEL_PORT)"; port="${port:-$DEFAULT_PANEL_PORT}"
-  domain="$(env_get PANEL_DOMAIN)"; host="${domain:-$(detect_ip)}"
+  domain="$(env_get PANEL_DOMAIN)"
+  # backend/.env is owned by the opanel account, so these values are not trusted
+  # input: they are interpolated into sed program text and config below. Validate
+  # on read (don't deny -- a stale/odd value must not brick the tools render):
+  # a non-numeric or out-of-range PANEL_PORT falls back to the default, and a
+  # PANEL_DOMAIN that is not a domain or IPv4 is dropped so host = detect_ip.
+  if ! [[ "$port" =~ ^[0-9]{1,5}$ ]] || (( port < 1 || port > 65535 )); then
+    port="$DEFAULT_PANEL_PORT"
+  fi
+  if [[ -n "$domain" ]] && ! is_domain "$domain" && ! is_ipv4 "$domain"; then
+    domain=""
+  fi
+  host="${domain:-$(detect_ip)}"
   panel_cert="$(env_get PANEL_SSL_CERT)"; panel_key="$(env_get PANEL_SSL_KEY)"
   php_version="${PHP_DEFAULT:-8.4}"
   default_ver_no_dot="${php_version//./}"

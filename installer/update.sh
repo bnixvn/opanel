@@ -357,7 +357,7 @@ elif status in {"completed", "failed"}:
 path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
   if id -u opanel >/dev/null 2>&1; then
-    chown opanel:opanel "$UPDATE_STATE_FILE" 2>/dev/null || true
+    chown -h opanel:opanel "$UPDATE_STATE_FILE" 2>/dev/null || true
   fi
   chmod 0640 "$UPDATE_STATE_FILE" 2>/dev/null || true
 }
@@ -389,7 +389,7 @@ if message:
 path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
   if id -u opanel >/dev/null 2>&1; then
-    chown opanel:opanel "$UPDATE_STATE_FILE" 2>/dev/null || true
+    chown -h opanel:opanel "$UPDATE_STATE_FILE" 2>/dev/null || true
   fi
   chmod 0640 "$UPDATE_STATE_FILE" 2>/dev/null || true
 }
@@ -1061,7 +1061,7 @@ user=opanel
 password="${password}"
 host=localhost
 MYCNF
-  chown opanel:opanel "$defaults_file"
+  chown -h opanel:opanel "$defaults_file"
   chmod 0600 "$defaults_file"
 }
 
@@ -1069,7 +1069,7 @@ ensure_panel_runtime_ownership() {
   id -u opanel >/dev/null 2>&1 || return 0
   [[ -d "$APP_DIR/backend" ]] && chown -R opanel:opanel "$APP_DIR/backend" 2>/dev/null || true
   [[ -d "$APP_DIR/frontend" ]] && chown -R opanel:opanel "$APP_DIR/frontend" 2>/dev/null || true
-  [[ -f "$APP_DIR/.my.cnf" ]] && chown opanel:opanel "$APP_DIR/.my.cnf" 2>/dev/null || true
+  [[ -f "$APP_DIR/.my.cnf" ]] && chown -h opanel:opanel "$APP_DIR/.my.cnf" 2>/dev/null || true
   [[ -f "$APP_DIR/.my.cnf" ]] && chmod 0600 "$APP_DIR/.my.cnf" 2>/dev/null || true
   [[ -d /var/lib/opanel ]] && chown opanel:opanel /var/lib/opanel 2>/dev/null || true
   [[ -d /var/lib/opanel/firewall ]] && chown -R opanel:opanel /var/lib/opanel/firewall 2>/dev/null || true
@@ -1086,7 +1086,7 @@ backup_db() {
   local snap_dir="${BACKUP_ROOT:-/var/backups/opanel}/db-snapshots"
   install -d -m 0750 "$snap_dir"
   if id -u opanel >/dev/null 2>&1; then
-    chown opanel:opanel "$snap_dir" 2>/dev/null || true
+    chown -h opanel:opanel "$snap_dir" 2>/dev/null || true
   fi
   local stamp
   stamp=$(date -u +%Y%m%d-%H%M%S)
@@ -1465,13 +1465,16 @@ fi
 log "Updating backend dependencies"
 update_progress 55 "backend" "Updating backend dependencies"
 cd "$APP_DIR/backend"
+# Run the venv and pip as the opanel account, not root. backend/ and its .venv
+# are opanel-owned, so a root `pip` / `source activate` executes setup hooks and
+# an interpreter the lower-trust opanel account could have edited -- the same
+# bypass of the helper boundary the project warns about. opanel owns the tree,
+# so it can create and populate the venv itself.
 if [[ ! -d .venv ]]; then
-  python3 -m venv .venv
+  sudo -u opanel python3 -m venv .venv
 fi
-# shellcheck disable=SC1091
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+sudo -u opanel env HOME="$APP_DIR" .venv/bin/pip install --upgrade pip
+sudo -u opanel env HOME="$APP_DIR" .venv/bin/pip install -r requirements.txt
 
 log "Refreshing MariaDB grants"
 refresh_opanel_mariadb_grants
@@ -1701,7 +1704,7 @@ PY
 fi
 
 log "Compiling backend modules"
-python -m py_compile \
+sudo -u opanel env HOME="$APP_DIR" .venv/bin/python -I -m py_compile \
   app/main.py \
   app/api/auth.py \
   app/api/users.py \
@@ -1734,7 +1737,6 @@ python -m py_compile \
   app/services/php.py \
   app/schemas/schemas.py \
   app/seed.py
-deactivate
 
 log "Restarting opanel-api"
 mkdir -p /etc/systemd/system/opanel-api.service.d
@@ -1771,14 +1773,17 @@ if [[ ! -d node_modules ]] || [[ package.json -nt node_modules ]]; then
   # See build_frontend in install.sh: the committed lockfile is the only thing
   # binding this root-run build to a reviewed dependency graph, so it stays.
   rm -rf node_modules
-  npm ci || {
+  # npm install scripts and `npm run build` execute node_modules/.bin code; run
+  # them as opanel (which owns frontend/) so root never executes a tree the
+  # lower-trust account controls.
+  sudo -u opanel env HOME="$APP_DIR" npm ci || {
     log "WARNING: npm ci failed (package-lock.json out of sync with package.json)"
     log "WARNING: falling back to npm install -- installed graph is NOT the reviewed one"
-    npm install
+    sudo -u opanel env HOME="$APP_DIR" npm install
   }
 fi
 log "Building frontend with VITE_API_URL=/api..."
-VITE_API_URL=/api npm run build 2>&1 || { log "BUILD FAILED"; exit 1; }
+sudo -u opanel env HOME="$APP_DIR" VITE_API_URL=/api npm run build 2>&1 || { log "BUILD FAILED"; exit 1; }
 
 [[ -f dist/index.html ]] || fail "Frontend build failed: dist/index.html missing"
 HASHED=$(grep -oE 'index-[a-zA-Z0-9_-]+\.js' dist/index.html | head -n1 || true)

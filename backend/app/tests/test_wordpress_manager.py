@@ -90,7 +90,7 @@ def env(monkeypatch, tmp_path):
     db.commit()
     calls = []
 
-    def fake_privileged(command, helper_args=None, check=True, input=None, sensitive=False, fallback=None):
+    def fake_privileged(command, helper_args=None, check=True, input=None, sensitive=False, fallback=None, **kwargs):
         args = list(helper_args or [])
         calls.append({"command": command, "user": args[0] if args else None, "args": args[1:], "input": input, "sensitive": sensitive})
         code, out = fake_wp_output([a for a in args[1:] if not a.startswith("--path=") and a not in ("--skip-plugins", "--skip-themes")])

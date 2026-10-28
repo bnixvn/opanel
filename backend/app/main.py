@@ -340,6 +340,7 @@ def _reject_cross_site_sso(request: Request) -> None:
 def _sso_user_or_error(db: Session, token: str):
     """Consume the token and return the account, or a RedirectResponse."""
     from app.models.entities import User
+    from app.services import passkeys
     from app.services.provisioning import consume_sso_token
 
     user_id = consume_sso_token(db, token)
@@ -352,13 +353,16 @@ def _sso_user_or_error(db: Session, token: str):
     # password path enforces user.totp_enabled and impersonation re-prompts the
     # admin's own code; these routes went straight from consume_sso_token to
     # _issue_login_session, so an account that had deliberately turned 2FA on
-    # still had a parallel door at lower assurance.
+    # still had a parallel door at lower assurance. A passkey is a second factor
+    # too (the password path stops at requires_passkey for a passkey-only
+    # account), so an account with a passkey and no TOTP must be diverted the
+    # same way -- checking only totp_enabled let an SSO link skip it.
     #
     # Sent to the login form rather than answered with a raw JSON 403: there is
     # no exception handler for HTTPException here, so a customer clicking
     # "Log in to OPanel" in WHMCS would have been shown a bare error blob in a
     # new tab with nowhere to go.
-    if getattr(user, "totp_enabled", False):
+    if getattr(user, "totp_enabled", False) or passkeys.has_passkeys(db, user):
         return RedirectResponse(url="/?sso=2fa", status_code=302)
     return user
 
