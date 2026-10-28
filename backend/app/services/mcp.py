@@ -14,10 +14,12 @@ Three rules shape the tools:
   user may not use does not appear in their tools/list at all.
 - A token is read-only unless it was created with can_write. Tools that change
   anything are hidden from a read-only token, not merely refused.
-- Every action is written to the audit log. The one that destroys data,
-  delete_file, is marked destructive so clients ask before running it; the
-  rest -- backups, certificates, the WAF, blocking and unblocking, writing a
-  site's files -- can be undone from the panel.
+- Every action is written to the audit log. The ones that destroy or overwrite
+  data -- delete_file, write_file (it replaces a file's whole content with no
+  saved copy), and unblock_ip (it removes a firewall rule, including one added
+  on the Firewall page) -- are marked destructive so clients ask before running
+  them. The rest -- backups, certificates, the WAF, blocking -- are additive or
+  reversible from the panel.
 """
 from __future__ import annotations
 
@@ -705,7 +707,7 @@ def _block_ip(ctx: Context, args: dict):
        "Remove the firewall block the panel holds for an IP address or network, as added by block_ip or on "
        "the Firewall page. Blocklists and Fail2ban bans are separate and not touched.",
        {"ip": {"type": "string", "description": "The address or network exactly as it was blocked"}},
-       required=("ip",), admin_only=True, writes=True)
+       required=("ip",), admin_only=True, writes=True, destructive=True)
 def _unblock_ip(ctx: Context, args: dict):
     import ipaddress
 
@@ -881,7 +883,7 @@ def _search_files(ctx: Context, args: dict):
        "Create a file or replace its whole content (folders on the way are created). Read the current file "
        "first when changing one: this overwrites it.",
        {"domain": DOMAIN_ARG, "path": PATH_ARG, "content": {"type": "string", "description": "The full new content"}},
-       required=("domain", "path"), writes=True)
+       required=("domain", "path"), writes=True, destructive=True)
 def _write_file(ctx: Context, args: dict):
     from app.api import maintenance
 
