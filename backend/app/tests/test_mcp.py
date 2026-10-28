@@ -188,10 +188,15 @@ def test_an_admin_action_token_gets_everything(env):
     assert {"list_users", "list_services", "restart_service", "run_backup_schedule", "create_backup"} <= names
 
 
-def test_only_delete_file_is_marked_destructive(env):
-    """Clients ask the user before a destructive tool; exactly one tool destroys data."""
+def test_destructive_tools_are_marked_destructive(env):
+    """Clients ask the user before a destructive tool. delete_file destroys data,
+    write_file overwrites a file's whole content with no saved copy, and unblock_ip
+    removes a firewall rule -- all three must carry destructiveHint so a client that
+    confirms only destructive tools does not run them unprompted."""
     tools = rpc(env, env.token(env.admin, can_write=True), "tools/list").json()["result"]["tools"]
-    assert [t["name"] for t in tools if t["annotations"]["destructiveHint"]] == ["delete_file"]
+    assert sorted(t["name"] for t in tools if t["annotations"]["destructiveHint"]) == [
+        "delete_file", "unblock_ip", "write_file",
+    ]
     assert all(tool["inputSchema"]["additionalProperties"] is False for tool in tools)
 
 
