@@ -145,7 +145,7 @@ def wp(website: Website, path: str, args: list[str], *, skip=True, input: Option
     if skip:
         argv += ["--skip-plugins", "--skip-themes"]
     result = shell.privileged("wp-site", helper_args=[_linux_user(website), *argv], check=False,
-                              input=input, sensitive=sensitive, fallback=["wp", *argv])
+                              input=input, sensitive=sensitive, fallback=["wp", *argv], timeout=900)
     if check and result.returncode != 0:
         message = _clean_error(result.stderr or result.stdout or f"wp {' '.join(args[:2])} failed")
         raise WpError(message)

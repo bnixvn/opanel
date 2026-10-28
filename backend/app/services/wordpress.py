@@ -202,7 +202,11 @@ def wp_update(path: str, action: str, linux_user: str | None = None):
     # site_users.require_site_linux_user.
     if not linux_user:
         raise ValueError("This website has no Linux user; cannot run wp-cli safely")
-    return shell.privileged("wp-site", helper_args=[linux_user, *args], fallback=["wp", *args])
+    # wp-cli loads the tenant's own wp-config.php and plugins, which a tenant can
+    # make block forever; these calls run in a request thread of the single API
+    # process, so a hang would park a shared worker. Cap them (generous: a large
+    # plugin/core update is minutes, not a quarter hour).
+    return shell.privileged("wp-site", helper_args=[linux_user, *args], fallback=["wp", *args], timeout=900)
 
 
 def install_lscache(path: str, linux_user: str | None):
