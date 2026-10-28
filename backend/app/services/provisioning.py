@@ -273,6 +273,18 @@ def create_account(
     # 3. Create website if domain provided
     website = None
     if domain:
+        # Use the panel's own hostname policy, not a bare exact-match: it also
+        # refuses www.<other site>, another site's alias, a mail/webmail host and
+        # the panel's own hostname. The interactive create path checks this; the
+        # WHMCS/provisioning path forwarded a client-chosen domain straight to a
+        # vhost, so an order could claim a name another tenant already serves.
+        from app.api.websites import _hostname_conflicts
+
+        if _hostname_conflicts(db, domain):
+            user.is_active = False
+            db.commit()
+            _finish_job(db, job, "failed", f"Domain already in use: {domain}")
+            raise ValueError(f"Domain already in use: {domain}")
         root_path = site_users.site_root_for_panel_user(username, domain)
         # root_path lives under the panel user's home (/home/<paneluser>/<domain>),
         # exactly like the canonical website-create path in websites.py. Pass the
