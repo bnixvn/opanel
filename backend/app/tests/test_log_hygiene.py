@@ -66,6 +66,15 @@ def test_copytruncate_is_used_because_openlitespeed_holds_the_handle():
     assert "copytruncate" in _rotation_block()
 
 
+def test_lsws_logs_use_dateext_to_avoid_the_numbered_rename_clash():
+    # error.log/stderr.log sit in OpenLiteSpeed's own log dir, where OLS also
+    # rolls error.log by size. logrotate's nightly numbered shuffle (renaming
+    # error.log.7 -> .8) collided with that and failed with EROFS, so
+    # logrotate.service went red every day. dateext replaces the shuffle with a
+    # single date-stamped archive per day and removes the collision.
+    assert "dateext" in _rotation_block()
+
+
 # --------------------------------------------------------------------------
 # OpenLiteSpeed's own date-stamped archives, which it never deletes
 # --------------------------------------------------------------------------

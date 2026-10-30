@@ -4227,7 +4227,7 @@ ensure_sites_group() {
 # Daily, seven days, uncompressed: logs stay greppable without zcat, which is
 # the point of keeping them. maxsize is the safety valve -- a site writing
 # gigabytes a day rotates before the daily run rather than after it.
-LOG_ROTATION_VERSION=3
+LOG_ROTATION_VERSION=4
 ensure_site_log_rotation() {
   command -v logrotate >/dev/null 2>&1 || return 0
   if [[ -f /etc/logrotate.d/opanel-sites ]] \
@@ -4258,6 +4258,14 @@ ${PHP_LOG_ROOT}/*/php_error.log
     notifempty
     nocompress
     copytruncate
+    # dateext: these two live in OpenLiteSpeed's own log dir, where OLS also
+    # rolls error.log by size. Numbered rotation (error.log.1..7, shuffled every
+    # night) collides with that and fails the rename of error.log.7 -> .8 with
+    # EROFS, so logrotate.service goes red daily. Date-stamped archives
+    # (error.log-YYYYMMDD) are created once and aged out by `rotate 7` with no
+    # rename shuffle, which removes the collision. The other stanza keeps its
+    # numbered scheme - its logs live outside the OLS dir and never clashed.
+    dateext
     postrotate
         # OpenLiteSpeed rolls these itself into date-stamped archives and never
         # removes them. Same seven days.
@@ -4268,6 +4276,11 @@ ${PHP_LOG_ROOT}/*/php_error.log
 }
 EOF
   chmod 0644 /etc/logrotate.d/opanel-sites
+  # A box that rotated under the old numbered scheme carries a failed
+  # logrotate.service (the error.log.7 -> .8 rename that threw EROFS). The new
+  # config can no longer produce it, so clear the stale failure now instead of
+  # leaving `systemctl --failed` red until the next midnight run succeeds.
+  systemctl reset-failed logrotate.service >/dev/null 2>&1 || true
 }
 
 # OpenLiteSpeed ships logLevel DEBUG in the server error log block. opanel sets
