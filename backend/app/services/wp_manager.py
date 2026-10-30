@@ -848,15 +848,60 @@ def security_warnings(inventory: dict) -> Optional[int]:
     return sum(1 for item in items if item["status"] == "warning") if items else None
 
 
+def _parse_core_checksums(output: str) -> dict:
+    """Categorise the Warning: lines `wp core verify-checksums` emits.
+
+    Only "doesn't verify against checksum" means a core file actually DIFFERS
+    from wordpress.org. "doesn't exist" is a missing core file - routinely
+    xmlrpc.php, readme.html or license.txt that a download left out or hardening
+    removed, not a modification. "should not exist" is an extra file, and "could
+    not retrieve the checksums" is a version/network problem. The old parser
+    counted every Warning: line as a modified core file, so a re-uploaded site
+    merely missing readme.html reported "core files differ from wordpress.org"
+    when nothing had changed.
+    """
+    modified: list[str] = []
+    missing: list[str] = []
+    extra: list[str] = []
+    unverifiable = False
+    for raw in (output or "").splitlines():
+        line = raw.strip()
+        if not line.startswith("Warning:"):
+            continue
+        low = line.lower()
+        tail = line.split(":")[-1].strip()
+        if "verify against checksum" in low:
+            modified.append(tail)
+        elif "should not exist" in low or "shouldn't exist" in low:
+            extra.append(tail)
+        elif "doesn't exist" in low or "does not exist" in low:
+            missing.append(tail)
+        elif "could not retrieve the checksums" in low:
+            unverifiable = True
+    return {
+        "count": len(set(modified)),
+        "modified": sorted(set(modified))[:200],
+        "missing": sorted(set(missing))[:200],
+        "extra": sorted(set(extra))[:200],
+        "unverifiable": unverifiable,
+    }
+
+
 def _handle_security_scan(db: Session, task: _Task, params: dict) -> None:
     install, website = _install_and_site(db, task.job)
     refresh_install(db, task, install, website)
     task.stage("Comparing WordPress's files with wordpress.org")
     core = wp(website, install.path, ["core", "verify-checksums"], check=False)
-    core_files = sorted({line.split(":", 2)[-1].strip() for line in (core.stdout + core.stderr).splitlines()
-                         if line.startswith("Warning:") and ":" in line})[:200]
-    core_result = {"count": len(core_files) if core.returncode != 0 else 0, "modified": core_files if core.returncode != 0 else [],
-                   "error": "" if core.returncode == 0 or core_files else _clean_error(core.stderr or core.stdout)}
+    parsed = _parse_core_checksums(core.stdout + core.stderr)
+    core_result = {
+        "count": parsed["count"],
+        "modified": parsed["modified"],
+        "missing": parsed["missing"],
+        "extra": parsed["extra"],
+        "error": (_clean_error(core.stderr or core.stdout)
+                  if (parsed["unverifiable"] and not parsed["count"]
+                      and not parsed["missing"] and not parsed["extra"]) else ""),
+    }
     task.stage("Comparing the plugins' files with wordpress.org")
     plugins = wp(website, install.path, ["plugin", "verify-checksums", "--all", "--format=json"], check=False)
     failures = [{"plugin": str(item.get("plugin_name", "")), "file": str(item.get("file", "")), "message": str(item.get("message", ""))}
@@ -871,7 +916,10 @@ def _handle_security_scan(db: Session, task: _Task, params: dict) -> None:
     }
     install.inventory = json.dumps(inventory)
     db.commit()
-    task.log(f"Core: {core_result['count']} file(s) differ; plugins: {len(failures)} file(s) differ")
+    task.log(
+        f"Core: {core_result['count']} file(s) differ, {len(core_result['missing'])} missing, "
+        f"{len(core_result['extra'])} extra; plugins: {len(failures)} file(s) differ"
+    )
 
 
 HARDEN_ITEMS = {"debug", "file_edit", "config_mode", "search_visibility", "salts"}
