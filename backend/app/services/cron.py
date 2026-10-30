@@ -272,6 +272,45 @@ def list_cron_entries(domain: str, cron_user: str) -> list[dict]:
     return [_parse_cron_line(index, line) for index, line in enumerate(list_cron(domain, cron_user).splitlines())]
 
 
+# --- WordPress's own scheduled tasks ---------------------------------------
+# When a site disables WP-Cron (which otherwise fires on page loads), a real
+# system cron has to run WordPress's due events instead. `wp cron event run
+# --due-now` is the WP-CLI way and is on the cron allow-list.
+WP_CRON_SCHEDULE = "*/5 * * * *"
+WP_CRON_COMMAND = "wp cron event run --due-now"
+_WP_CRON_MARK = "cron event run --due-now"
+
+
+def wp_cron_active(website: Website) -> bool:
+    """Whether a system cron already runs this site's WordPress scheduled tasks."""
+    cron_user = cron_user_for_website(website)
+    try:
+        return any(_WP_CRON_MARK in line for line in list_cron(website.domain, cron_user).splitlines())
+    except Exception:  # pragma: no cover - crontab read issues
+        return False
+
+
+def set_system_wp_cron(website: Website, enabled: bool) -> bool:
+    """Add or remove the system cron that runs WordPress scheduled tasks.
+
+    Added when WP-Cron is disabled so due events still fire; removed when
+    WP-Cron is turned back on. Returns whether the system cron is present
+    afterwards."""
+    cron_user = cron_user_for_website(website)
+    if enabled:
+        if not wp_cron_active(website):
+            add_cron(website, WP_CRON_SCHEDULE, WP_CRON_COMMAND)
+        return True
+    safe_domain = _validate_domain(website.domain).lower()
+    full = list_cron_all(cron_user).splitlines()
+    kept = [line for line in full if not (_WP_CRON_MARK in line and safe_domain in line.lower())]
+    if len(kept) != len(full):
+        new_content = "\n".join(kept) + ("\n" if kept else "")
+        shell.privileged("cron-write", helper_args=[cron_user], input=new_content,
+                         fallback=["bash", "-lc", "crontab -"])
+    return False
+
+
 def delete_cron(domain: str, index: int, cron_user: str) -> str:
     safe_domain = _validate_domain(domain)
     matching = list_cron(safe_domain, cron_user).splitlines()
