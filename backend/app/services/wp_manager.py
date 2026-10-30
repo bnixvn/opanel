@@ -251,6 +251,7 @@ $out['maintenance'] = $maintenance;
 $out['debug'] = defined('WP_DEBUG') && WP_DEBUG;
 $out['auto_update_core'] = defined('WP_AUTO_UPDATE_CORE') ? (WP_AUTO_UPDATE_CORE === true ? 'true' : (WP_AUTO_UPDATE_CORE === false ? 'false' : (string) WP_AUTO_UPDATE_CORE)) : '';
 $out['file_edit_disallowed'] = defined('DISALLOW_FILE_EDIT') && DISALLOW_FILE_EDIT;
+$out['wp_cron_disabled'] = defined('DISABLE_WP_CRON') && DISABLE_WP_CRON;
 $config = '';
 if (is_file(ABSPATH . 'wp-config.php')) {
     $config = ABSPATH . 'wp-config.php';
@@ -293,6 +294,7 @@ def _read_inventory_once(website: Website, path: str) -> Optional[dict]:
         "debug": bool(data.get("debug")),
         "auto_update_core": "all" if auto_value in {"1", "true"} else "off" if auto_value in {"false", "0"} else "minor",
         "file_edit_disallowed": bool(data.get("file_edit_disallowed")),
+        "wp_cron_disabled": bool(data.get("wp_cron_disabled")),
         "blog_public": str(data.get("blog_public", "1")) != "0",
         "config_path": str(data.get("config_path") or ""),
         "config_mode": str(data.get("config_mode") or ""),
@@ -324,6 +326,7 @@ def _read_inventory_slow(website: Website, path: str) -> dict:
     auto = wp(website, path, ["config", "get", "WP_AUTO_UPDATE_CORE", "--type=constant"], check=False)
     auto_value = auto.stdout.strip().lower() if auto.returncode == 0 else ""
     file_edit = wp(website, path, ["config", "get", "DISALLOW_FILE_EDIT", "--type=constant"], check=False)
+    wp_cron = wp(website, path, ["config", "get", "DISABLE_WP_CRON", "--type=constant"], check=False)
     blog_public = wp(website, path, ["option", "get", "blog_public"], check=False).stdout.strip()
     config_path = wp(website, path, ["config", "path"], check=False).stdout.strip()
     try:
@@ -345,6 +348,7 @@ def _read_inventory_slow(website: Website, path: str) -> dict:
         # WordPress's own default is minor (security) releases.
         "auto_update_core": "all" if auto_value in {"1", "true"} else "off" if auto_value in {"false", "0"} else "minor",
         "file_edit_disallowed": file_edit.returncode == 0 and file_edit.stdout.strip().lower() in {"1", "true"},
+        "wp_cron_disabled": wp_cron.returncode == 0 and wp_cron.stdout.strip().lower() in {"1", "true"},
         "blog_public": blog_public != "0",
         "config_path": config_path,
         "config_mode": config_mode,
@@ -831,6 +835,11 @@ def security_items(inventory: dict) -> list[dict]:
         {"id": "inactive_plugins", "status": "warning" if inactive else "ok", "count": inactive},
         {"id": "search_visibility", "status": "ok" if inventory.get("blog_public", True) else "warning",
          "apply": not inventory.get("blog_public", True), "revert": bool(inventory.get("blog_public", True))},
+        # Not a security warning: a performance/reliability toggle. WP-Cron off
+        # with a system cron is the recommended production setup, so "disabled"
+        # reads as ok and "on" as an available action rather than a fault.
+        {"id": "wp_cron", "status": "ok" if inventory.get("wp_cron_disabled") else "action",
+         "apply": not inventory.get("wp_cron_disabled"), "revert": bool(inventory.get("wp_cron_disabled"))},
     ]
     for key in ("core_checksums", "plugin_checksums"):
         result = full.get(key)
@@ -922,7 +931,7 @@ def _handle_security_scan(db: Session, task: _Task, params: dict) -> None:
     )
 
 
-HARDEN_ITEMS = {"debug", "file_edit", "config_mode", "search_visibility", "salts"}
+HARDEN_ITEMS = {"debug", "file_edit", "config_mode", "search_visibility", "salts", "wp_cron"}
 
 
 def _handle_harden(db: Session, task: _Task, params: dict) -> None:
@@ -952,6 +961,17 @@ def _handle_harden(db: Session, task: _Task, params: dict) -> None:
     elif item == "salts":
         task.stage("New security keys")
         wp(website, install.path, ["config", "shuffle-salts"])
+    elif item == "wp_cron":
+        from app.services import cron
+
+        if revert:
+            task.stage("WP-Cron back on page loads")
+            cron.set_system_wp_cron(website, False)
+            wp(website, install.path, ["config", "delete", "DISABLE_WP_CRON", "--type=constant"], check=False)
+        else:
+            task.stage("WP-Cron off; a system cron runs due events")
+            config_set(website, install.path, "DISABLE_WP_CRON", "true")
+            cron.set_system_wp_cron(website, True)
     refresh_install(db, task, install, website)
 
 

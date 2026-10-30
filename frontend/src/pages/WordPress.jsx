@@ -56,6 +56,7 @@ const SECURITY_TEXT = {
   inactive_plugins: [msg('No inactive plugins'), msg('{count} inactive plugin(s): delete what is not used.')],
   search_visibility: [msg('Search engines may index the site'), msg('Search engines are asked not to index the site.')],
   salts: [msg('Security keys'), msg('Security keys')],
+  wp_cron: [msg('WP-Cron is off; a system cron runs scheduled tasks'), msg('WP-Cron runs on page loads; switch it to a system cron.')],
 };
 const JOB_STATUS = {
   queued: ['', msg('Queued')],
@@ -680,9 +681,16 @@ function Security({ detail, base, post, busy }) {
             {item.id === 'salts' && <small>{t('New keys sign everyone out of this WordPress, attackers included.')}</small>}
             {item.detail?.error && <small>{item.detail.error}</small>}
             {files.length > 0 && <details><summary>{t('{count} file(s)', { count: item.count ?? files.length })}</summary><ul className="wpm-files">{files.slice(0, 50).map((f) => <li key={f}><code>{f}</code></li>)}</ul></details>}
+            {item.id === 'core_checksums' && ((item.detail?.missing?.length || 0) > 0 || (item.detail?.extra?.length || 0) > 0) && <>
+              <small>{t('{missing} missing and {extra} unexpected file(s) vs wordpress.org — usually a library WordPress bundles whose checksums differ for this version, not a change to your site.', { missing: item.detail.missing?.length || 0, extra: item.detail.extra?.length || 0 })}</small>
+              {(item.detail.missing?.length || 0) > 0 && <details><summary>{t('{count} missing', { count: item.detail.missing.length })}</summary><ul className="wpm-files">{item.detail.missing.slice(0, 50).map((f) => <li key={f}><code>{f}</code></li>)}</ul></details>}
+              {(item.detail.extra?.length || 0) > 0 && <details><summary>{t('{count} unexpected', { count: item.detail.extra.length })}</summary><ul className="wpm-files">{item.detail.extra.slice(0, 50).map((f) => <li key={f}><code>{f}</code></li>)}</ul></details>}
+            </>}
           </div>
           <div className="wpm-row-actions">
-            {item.apply && item.id !== 'salts' && <button type="button" className="mini" disabled={busy} onClick={() => apply(item, false)}>{t('Apply')}</button>}
+            {item.apply && !['salts', 'wp_cron'].includes(item.id) && <button type="button" className="mini" disabled={busy} onClick={() => apply(item, false)}>{t('Apply')}</button>}
+            {item.id === 'wp_cron' && item.apply && <button type="button" className="mini" disabled={busy} onClick={() => apply(item, false)}>{t('Disable WP-Cron')}</button>}
+            {item.id === 'wp_cron' && item.revert && <button type="button" className="mini secondary-light" disabled={busy} onClick={() => apply(item, true)}><RotateCcw size={13} aria-hidden="true"/> {t('Enable WP-Cron')}</button>}
             {item.revert && item.id === 'file_edit' && <button type="button" className="mini secondary-light" disabled={busy} onClick={() => apply(item, true)}><RotateCcw size={13} aria-hidden="true"/> {t('Revert')}</button>}
             {item.id === 'search_visibility' && item.revert && <button type="button" className="mini secondary-light" disabled={busy} onClick={() => apply(item, true)}>{t('Hide from search engines')}</button>}
             {item.id === 'salts' && <button type="button" className="mini secondary-light" disabled={busy} onClick={() => apply(item, false)}><RefreshCw size={13} aria-hidden="true"/> {t('Regenerate')}</button>}
