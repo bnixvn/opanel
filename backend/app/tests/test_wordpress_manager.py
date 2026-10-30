@@ -453,3 +453,41 @@ def test_wp_cli_uses_the_site_user_s_own_opcache_file_cache():
     assert '! -L "$wp_cache"' in verb and '"$(stat -c %U -- "$wp_cache")" == "$user"' in verb
     assert "opcache.file_cache_only=1" in verb and "opcache.validate_timestamps=1" in verb
     assert 'exec runuser -u "$user" --' in verb
+
+
+def test_core_checksum_parse_counts_only_real_modifications():
+    """A re-uploaded site missing readme.html/xmlrpc.php/license.txt must not be
+    reported as 'core files differ from wordpress.org'. Only a file that fails
+    its checksum is a modification; missing and extra files are tracked apart."""
+    from app.services.wp_manager import _parse_core_checksums
+
+    output = (
+        "Warning: File doesn't exist: readme.html\n"
+        "Warning: File doesn't verify against checksum: wp-login.php\n"
+        "Warning: File doesn't exist: xmlrpc.php\n"
+        "Warning: File doesn't exist: license.txt\n"
+        "Warning: File should not exist: wp-admin/EXTRA-FILE.php\n"
+        "Error: WordPress installation doesn't verify against checksums.\n"
+    )
+    r = _parse_core_checksums(output)
+    assert r["count"] == 1
+    assert r["modified"] == ["wp-login.php"]
+    assert r["missing"] == ["license.txt", "readme.html", "xmlrpc.php"]
+    assert r["extra"] == ["wp-admin/EXTRA-FILE.php"]
+    assert r["unverifiable"] is False
+
+
+def test_core_checksum_parse_ignores_could_not_retrieve():
+    from app.services.wp_manager import _parse_core_checksums
+
+    r = _parse_core_checksums(
+        "Warning: Could not retrieve the checksums for WordPress 6.4 from https://api.wordpress.org.\n")
+    assert r["count"] == 0 and not r["modified"] and not r["missing"] and not r["extra"]
+    assert r["unverifiable"] is True
+
+
+def test_core_checksum_parse_clean():
+    from app.services.wp_manager import _parse_core_checksums
+
+    r = _parse_core_checksums("Success: WordPress installation verifies against checksums.")
+    assert r["count"] == 0 and not r["modified"] and not r["missing"] and not r["extra"]
