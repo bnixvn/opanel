@@ -232,19 +232,19 @@ def test_cpanel_and_directadmin_account_lists_are_read():
     assert rows[0]["kind"] == "directadmin" and rows[0]["size"] == int(120.5 * 1024 ** 2)
 
 
-def test_directadmin_list_skips_the_super_admin_and_system_users():
+def test_directadmin_list_skips_only_the_super_admin():
     # The DA super-admin (usertype=admin) owns the whole server and must never
-    # be offered for import; OS/service pseudo-users (ntp) are skipped too.
-    # Resellers and ordinary users stay.
+    # be offered for import. Everything else is kept - including resellers and a
+    # customer account that happens to be named like a system user ("ntp").
     text = (
         "admin\tadmin\tadmin\tsrv.test\tno\t0\n"
-        "ntp\tuser\tadmin\t\tno\t0\n"
+        "ntp\tuser\tadmin\tntp.test\tno\t0\n"
         "daydeogr\tuser\tadmin\tdaydeogr.test\tno\t50\n"
         "bigreseller\treseller\tadmin\trs.test\tno\t0\n"
     )
     rows = migrate_ssh.parse_directadmin_accounts(text)
-    assert [r["account"] for r in rows] == ["daydeogr", "bigreseller"]
-    assert rows[1]["note"] == "reseller"
+    assert [r["account"] for r in rows] == ["ntp", "daydeogr", "bigreseller"]
+    assert rows[2]["note"] == "reseller"
 
 
 class _FakeServer:

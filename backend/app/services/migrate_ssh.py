@@ -35,18 +35,6 @@ LIST_TIMEOUT = 120
 # A big account takes a long time to pack; a stuck pack still has to end.
 PACK_TIMEOUT = 6 * 3600
 DA_USERS = "/usr/local/directadmin/data/users"
-# Usernames that must never be offered as importable hosting accounts even when
-# a panel lists them: OS/service pseudo-users and the local panel's own system
-# users. DirectAdmin's super-admin is excluded separately by usertype (it owns
-# the whole server/reseller tree, not a single hosting account). Resellers and
-# ordinary customer accounts are always kept.
-RESERVED_ACCOUNTS = frozenset({
-    "root", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail",
-    "news", "uucp", "proxy", "www-data", "backup", "list", "irc", "gnats",
-    "_apt", "nobody", "ntp", "sshd", "messagebus", "syslog", "systemd-network",
-    "systemd-resolve", "systemd-timesync", "mysql", "redis", "clamav",
-    "lsws", "lsadm", "diradmin", "opanel", "opanel-sites", "opanel-sftp",
-})
 
 StatusFn = Optional[Callable[[str], None]]
 ProgressFn = Optional[Callable[[int, int], None]]
@@ -178,9 +166,10 @@ def parse_directadmin_accounts(text: str) -> list[dict]:
         user, usertype, creator, domain, suspended, quota = parts[:6]
         # Never import DirectAdmin's super-admin (usertype=admin): it owns the
         # whole server and every reseller/user under it, not a single hosting
-        # account. Also skip OS/service pseudo-users (ntp, mysql, ...) that may
-        # exist as DA user dirs. Resellers and ordinary users are kept.
-        if usertype.strip().lower() == "admin" or user.lower() in RESERVED_ACCOUNTS:
+        # account. Everything else is kept, including resellers and ordinary
+        # customer accounts that happen to be named like a system user (e.g. a
+        # customer account literally called "ntp").
+        if usertype.strip().lower() == "admin":
             continue
         notes = ["reseller"] if usertype.strip().lower() == "reseller" else []
         if suspended.strip().lower() == "yes":
