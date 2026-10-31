@@ -45,5 +45,9 @@ Go to **System Settings → Products/Services → Module Settings**.
 | Package | select an OPanel package |
 | App Type | `php` |
 | PHP Version | `8.4` |
-| Install WordPress | unchecked by default |
-| Auto SSL | unchecked by default |
+
+Provisioning only creates the hosting account and attaches the order's domain.
+It never installs WordPress or requests SSL from WHMCS — the customer does that
+from the panel afterwards. Disable **Require Domain** on the WHMCS product if you
+want to allow orders without a domain (the account is then created with no
+website attached).

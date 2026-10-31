@@ -1,6 +1,6 @@
 # WHMCS ↔ OPanel Provisioning API Contract
 
-**Version**: 1.0.0  
+**Version**: 1.1.0  
 **Base path**: `/api/provisioning/v1`  
 **Auth**: Bearer token (API token, not user JWT)  
 **Content-Type**: `application/json`
@@ -23,27 +23,24 @@ Scopes: `provisioning:read`, `provisioning:write`, `provisioning:admin`
 
 WHMCS sends token in `Authorization: Bearer <token>` header (from server `Access Hash` or `Password`).
 
-## Response Envelope
+## Response Format
 
-All responses use:
+Success responses return the **raw data object (or array) directly** — there is
+**no** `{success, data, error}` envelope. `GET /plans` returns a JSON array;
+every account endpoint returns a JSON object.
 
-```json
-{
-  "success": true,
-  "data": {},
-  "error": null
-}
-```
-
-Error responses (HTTP 4xx/5xx):
+Error responses use FastAPI's default shape with a 4xx/5xx status:
 
 ```json
 {
-  "success": false,
-  "data": null,
-  "error": "Human-readable error message"
+  "detail": "Human-readable error message"
 }
 ```
+
+A `422` (request-body validation) returns `detail` as an **array** of
+field-error objects rather than a string. The WHMCS module reads `detail`
+(falling back to the raw body) for the message, and tolerates — but does not
+require — a legacy `{data: ...}` wrapper.
 
 ## Endpoints
 
@@ -51,9 +48,11 @@ Error responses (HTTP 4xx/5xx):
 
 #### `GET /plans`
 
-List active hosting plans. Used by WHMCS PackageLoader.
+List the administrator's global hosting plans (`owner_id IS NULL`), used by the
+WHMCS PackageLoader. Note: the list is **not** filtered by the plan's `active`
+flag, so inactive plans are returned too; reseller-owned plans are excluded.
 
-**Response `data`**: Array of plan objects.
+**Response**: Array of plan objects (raw array, no envelope).
 
 ```json
 [
@@ -77,7 +76,7 @@ List active hosting plans. Used by WHMCS PackageLoader.
 
 Get account status. `external_id` format: `whmcs:{serviceid}`
 
-**Response `data`**:
+**Response**:
 
 ```json
 {
@@ -93,9 +92,12 @@ Get account status. `external_id` format: `whmcs:{serviceid}`
   "storage_limit_bytes": 1073741824,
   "website_count": 1,
   "website_limit": 1,
-  "created_at": "2026-08-09T00:00:00Z"
+  "created_at": "2026-08-09T00:00:00"
 }
 ```
+
+> `created_at` is a naive UTC timestamp from `datetime.isoformat()` — no `Z`
+> suffix or offset.
 
 #### `POST /accounts`
 
@@ -126,12 +128,22 @@ Create hosting account. **Idempotent** by `external_id`.
 | `package_id` | no | `1` | Maps to HostingPlan |
 | `php_version` | no | `"8.4"` | |
 | `app_type` | no | `"php"` | `php`, `wordpress`, `static` |
-| `install_wordpress` | no | `false` | |
-| `enable_ssl` | no | `false` | |
+| `install_wordpress` | no | `false` | API accepts it; the WHMCS module never sends it |
+| `enable_ssl` | no | `false` | API accepts it; the WHMCS module never sends it |
 
-**Idempotency**: If `external_id` already exists, returns existing account (HTTP 200, not 201).
+> The provisioning API still accepts `install_wordpress` and `enable_ssl`, but
+> the bundled WHMCS module intentionally does **not** send them: a WHMCS order
+> only creates the account and attaches its domain. WordPress and SSL are left
+> for the customer to set up in the panel. Other API clients may still pass
+> them.
 
-**Response `data`**: Account object (same as GET).
+**Idempotency**: If `external_id` already exists (and is not terminated), the
+existing account is returned unchanged. The status code is **`201` either way** —
+the endpoint is declared `status_code=201` unconditionally, so a replay does not
+return `200`. The WHMCS module accepts any 2xx. A replay against a *suspended*
+account returns it still suspended (create does not re-activate).
+
+**Response**: Account object (same as GET).
 
 #### `POST /accounts/{external_id}/suspend`
 
@@ -145,13 +157,13 @@ Suspend account. Disables panel user, locks Linux user, disables vhost.
 }
 ```
 
-**Response `data`**: Account object with `status: "suspended"`.
+**Response**: Account object with `status: "suspended"`.
 
 #### `POST /accounts/{external_id}/unsuspend`
 
 Unsuspend account. Re-enables everything.
 
-**Response `data`**: Account object with `status: "active"`.
+**Response**: Account object with `status: "active"`.
 
 #### `DELETE /accounts/{external_id}`
 
@@ -167,7 +179,7 @@ Backups already written under `/var/backups/opanel` are outside the home
 directory and survive, but only if backups were configured and had run. Do not
 treat them as a rollback path for terminate.
 
-**Response `data`**: `{"terminated": true}`
+**Response**: `{"terminated": true}`
 
 #### `PATCH /accounts/{external_id}/password`
 
@@ -181,7 +193,7 @@ Change account password. Updates panel + Linux/SFTP.
 }
 ```
 
-**Response `data`**: `{"changed": true}`
+**Response**: `{"changed": true}`
 
 #### `PATCH /accounts/{external_id}/package`
 
@@ -195,13 +207,13 @@ Change hosting plan. Updates quota only, no recreate.
 }
 ```
 
-**Response `data`**: Account object with new plan.
+**Response**: Account object with new plan.
 
 #### `GET /accounts/{external_id}/usage`
 
 Get current resource usage.
 
-**Response `data`**:
+**Response**:
 
 ```json
 {
@@ -216,16 +228,22 @@ Get current resource usage.
 
 #### `POST /accounts/{external_id}/login`
 
-Generate one-time SSO link. Token expires in 60 seconds.
+Generate a one-time SSO link. The token is single-use, 256-bit, and expires in
+**300 seconds** (5 minutes) — the window must survive page-load-to-click time
+because the WHMCS module bakes the URL into a rendered page rather than following
+it at click time. Requires the `provisioning:write` scope.
 
-**Response `data`**:
+**Response**:
 
 ```json
 {
-  "login_url": "https://panel.example.com/sso/eyJ...",
-  "expires_at": "2026-08-09T00:01:00Z"
+  "login_url": "https://panel.example.com/sso#<raw-token>",
+  "expires_at": "2026-08-09T00:05:00"
 }
 ```
+
+The token rides in the URL **fragment** (`/sso#<token>`), not the path. The
+module reads `login_url` and falls back to the plain panel URL if it is absent.
 
 ## Provisioning Behavior
 
@@ -242,14 +260,24 @@ Generate one-time SSO link. Token expires in 60 seconds.
 10. Create `ProvisioningJob` with status `completed`.
 11. If any step fails → set account status `failed`, job `failed`, return error.
 
+**Account `status` values**: `provisioning` (create in progress), `active`,
+`suspended`, `failed` (a provisioning step errored), `terminated`. The WHMCS
+module passes `status` straight through to the client-area template and does not
+map it to a WHMCS service status, so `provisioning`/`failed` can surface to the
+customer verbatim.
+
 ### Suspend
 1. Disable panel user (`is_active = false`).
-2. Lock Linux user (`usermod -L`).
+2. Lock the Linux user via the privileged helper subcommand `panel-user-lock`
+   (not a direct `usermod -L`).
 3. Disable vhost / render suspend page.
 4. Set account `status = "suspended"`.
 
+If some vhosts cannot be toggled, the account status still changes but the
+`ProvisioningJob` is marked `failed`.
+
 ### Unsuspend
-1. Unlock Linux user (`usermod -U`).
+1. Unlock the Linux user via the helper subcommand `panel-user-unlock`.
 2. Enable panel user (`is_active = true`).
 3. Restore vhost.
 4. Set account `status = "active"`.
@@ -280,7 +308,6 @@ files and databases in place.
 - IP allowlist per token (optional).
 - All provisioning actions logged to `provisioning_jobs` table.
 - Passwords/SSO tokens never appear in logs.
-- Rate limiting on token-authenticated endpoints.
 
 ## WHMCS Module
 

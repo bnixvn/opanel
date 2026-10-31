@@ -31,17 +31,17 @@ function opanel_ConfigOptions()
         ],
         'PHP Version' => [
             'Type' => 'dropdown',
-            'Options' => '8.4,8.3,8.2,8.1,8.0,7.4,5.6',
+            // Must stay in sync with the API's SUPPORTED_PHP_VERSIONS
+            // (backend/app/schemas/schemas.py). Offering a version the API
+            // rejects (e.g. 8.0, 5.6) makes CreateAccount fail with
+            // "Unsupported PHP version" and the WHMCS order errors out.
+            'Options' => '8.5,8.4,8.3,8.2,8.1,7.4',
             'Default' => '8.4',
         ],
-        'Install WordPress' => [
-            'Type' => 'yesno',
-            'Description' => 'Install WordPress during provisioning',
-        ],
-        'Auto SSL' => [
-            'Type' => 'yesno',
-            'Description' => 'Request Let\'s Encrypt SSL after provisioning',
-        ],
+        // WHMCS provisioning deliberately only creates the account and attaches
+        // the domain. It never pre-installs WordPress or requests SSL - the
+        // customer does that from the panel afterwards. So there is no "Install
+        // WordPress" or "Auto SSL" product option here.
     ];
 }
 
@@ -66,6 +66,8 @@ function opanel_CreateAccount($params)
     $domain = opanel_domain($params);
     $username = opanel_provision_username($params);
     $password = opanel_password($params);
+    // Create the account and attach the domain only. WordPress and SSL are
+    // never provisioned from WHMCS - the customer sets those up in the panel.
     $payload = [
         'external_id' => opanel_external_id($params),
         'username' => $username,
@@ -73,19 +75,10 @@ function opanel_CreateAccount($params)
         'package_id' => (int) opanel_config($params, 1, '1'),
         'php_version' => opanel_config($params, 3, '8.4'),
         'app_type' => $domain === '' ? 'php' : opanel_config($params, 2, 'php'),
-        'install_wordpress' => opanel_yesno(opanel_config($params, 4, '')),
-        'enable_ssl' => opanel_yesno(opanel_config($params, 5, '')),
     ];
 
     if ($domain !== '') {
         $payload['domain'] = $domain;
-    }
-
-    if ($payload['install_wordpress']) {
-        $payload['app_type'] = 'wordpress';
-    }
-    if ($domain === '' && ($payload['install_wordpress'] || $payload['enable_ssl'])) {
-        return 'A domain is required when Install WordPress or Auto SSL is enabled';
     }
 
     $result = opanel_request($params, 'POST', '/api/provisioning/v1/accounts', $payload);
@@ -166,16 +159,43 @@ function opanel_ClientArea($params)
         }
     }
 
+    // Prefer the username the panel actually provisioned (returned by the
+    // account GET) over the one reconstructed from WHMCS params, which can
+    // drift if the write-back to WHMCS failed at create time.
+    $username = trim((string) ($account['username'] ?? ''));
+    if ($username === '') {
+        $username = opanel_username($params);
+    }
+
+    $storageUsed = isset($account['storage_used_bytes']) ? (int) $account['storage_used_bytes'] : null;
+    $storageLimit = isset($account['storage_limit_bytes']) ? (int) $account['storage_limit_bytes'] : null;
+    $diskPercent = -1; // -1 = unknown; the template hides the usage bar.
+    if ($storageUsed !== null && $storageLimit !== null && $storageLimit > 0) {
+        $diskPercent = (int) min(100, max(0, round($storageUsed / $storageLimit * 100)));
+    }
+
+    $websites = '';
+    if (isset($account['website_count'])) {
+        $count = (int) $account['website_count'];
+        $limit = isset($account['website_limit']) ? (int) $account['website_limit'] : 0;
+        $websites = $limit > 0 ? ($count . ' / ' . $limit) : ($count . ' (unlimited)');
+    }
+
     return [
         'templatefile' => 'clientarea',
         'vars' => [
-            'panelUrl' => opanel_base_url($params),
             'loginUrl' => opanel_sso_url($params),
-            'username' => opanel_username($params),
+            'username' => $username,
             'serviceLabel' => opanel_service_label($params, $account),
             'packageName' => trim((string) ($account['package_name'] ?? '')),
             'domain' => trim((string) ($account['domain'] ?? '')),
             'status' => trim((string) ($account['status'] ?? '')),
+            // Host details from the account GET (no extra API call needed).
+            'diskUsed' => $storageUsed !== null ? opanel_format_bytes($storageUsed) : '',
+            'diskLimit' => $storageLimit === null ? '' : ($storageLimit > 0 ? opanel_format_bytes($storageLimit) : 'Unlimited'),
+            'diskPercent' => $diskPercent,
+            'websites' => $websites,
+            'createdAt' => opanel_format_date((string) ($account['created_at'] ?? '')),
         ],
     ];
 }
@@ -329,6 +349,34 @@ function opanel_config($params, $index, $default)
 function opanel_yesno($value)
 {
     return in_array(strtolower(trim($value)), ['on', 'yes', 'true', '1'], true);
+}
+
+function opanel_format_bytes($bytes)
+{
+    $bytes = max(0, (int) $bytes);
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $i = 0;
+    $value = (float) $bytes;
+    while ($value >= 1024 && $i < count($units) - 1) {
+        $value /= 1024;
+        $i++;
+    }
+    // Whole numbers for bytes/KB, one decimal from MB up.
+    $decimals = $i >= 2 ? 1 : 0;
+    return number_format($value, $decimals) . ' ' . $units[$i];
+}
+
+function opanel_format_date($value)
+{
+    $value = trim((string) $value);
+    if ($value === '') {
+        return '';
+    }
+    $timestamp = strtotime($value);
+    if ($timestamp === false) {
+        return $value;
+    }
+    return date('Y-m-d', $timestamp);
 }
 
 function opanel_package_options($packages)
