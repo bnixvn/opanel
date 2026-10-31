@@ -250,8 +250,9 @@ def test_directadmin_list_skips_only_the_super_admin():
 class _FakeServer:
     """What the other server answers, and what it was asked."""
 
-    def __init__(self, panel, fail_pack=False):
+    def __init__(self, panel, fail_pack=False, fail_verify=False, pack_output=""):
         self.panel, self.fail_pack, self.commands, self.removed = panel, fail_pack, [], []
+        self.fail_verify, self.pack_output = fail_verify, pack_output
         self.folder = "/home/opanel-migrate.Ab12Cd34Ef"
 
     def run(self, client, command, timeout):
@@ -261,8 +262,13 @@ class _FakeServer:
         if command.startswith("rm -rf -- "):
             self.removed.append(command)
             return 0, "", ""
+        if "tar -tf -" in command and "grep -m1" in command:
+            # _verify_da_backup_full: empty = metadata only; a path = real data.
+            return 0, ("" if self.fail_verify else "domains/bob.com/public_html/index.php\n"), ""
         if "pkgacct" in command or "taskq" in command:
-            return (1, "", "pkgacct: no such user") if self.fail_pack else (0, "", "")
+            if self.fail_pack:
+                return 1, "", "pkgacct: no such user"
+            return 0, self.pack_output, ""
         if command.startswith("grep -l '^usertype=admin'"):
             return 0, "/usr/local/directadmin/data/users/admin/user.conf\n", ""
         if command.startswith("chown"):
@@ -319,6 +325,27 @@ def test_an_account_is_packed_there_downloaded_and_the_folder_removed(tmp_path, 
         # The reliable path on every DA version: task.queue + dataskq, never the
         # `taskq --run` subcommand that old DA accepts but does not execute.
         assert "task.queue" in pack and "dataskq" in pack and "taskq --run" not in pack
+
+
+def test_directadmin_metadata_only_backup_is_rejected(tmp_path, monkeypatch):
+    # A backup whose archive carries only backup/ metadata (no domains/mail)
+    # would restore as an empty account; the pack must refuse it, not succeed.
+    server = _FakeServer("directadmin", fail_verify=True)
+    monkeypatch.setattr(migrate_ssh, "_exec", server.run)
+    monkeypatch.setattr(migrate_ssh.time, "sleep", lambda s: None)
+    with pytest.raises(migrate_ssh.MigrateError, match="metadata backup"):
+        migrate_ssh.pack_and_fetch(server, "directadmin", "bob", lambda n: tmp_path / n, lambda *a: None)
+    assert server.removed  # work folder still cleaned up
+
+
+def test_directadmin_invalid_option_is_caught_despite_exit_zero(tmp_path, monkeypatch):
+    # Old DA prints "Invalid option" but exits 0; the pack must treat that as a
+    # failure instead of waiting for an archive that never appears.
+    server = _FakeServer("directadmin", pack_output="Invalid option: --run\n")
+    monkeypatch.setattr(migrate_ssh, "_exec", server.run)
+    monkeypatch.setattr(migrate_ssh.time, "sleep", lambda s: None)
+    with pytest.raises(migrate_ssh.MigrateError, match="rejected the backup"):
+        migrate_ssh.pack_and_fetch(server, "directadmin", "bob", lambda n: tmp_path / n, lambda *a: None)
 
 
 def test_a_failed_pack_still_removes_the_folder_there(tmp_path, monkeypatch):

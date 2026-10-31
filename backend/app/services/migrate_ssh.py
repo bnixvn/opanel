@@ -34,6 +34,11 @@ WORK_RE = re.compile(r"^/home/opanel-migrate\.[A-Za-z0-9]{6,16}$")
 LIST_TIMEOUT = 120
 # A big account takes a long time to pack; a stuck pack still has to end.
 PACK_TIMEOUT = 6 * 3600
+# How long the backup may make no progress at all (no archive appearing and no
+# growth) before we give up, instead of waiting out PACK_TIMEOUT. A real backup
+# of a large account keeps the archive growing, which resets this; only a task
+# that silently produced nothing sits still this long.
+PACK_STALL_GRACE = 300
 DA_USERS = "/usr/local/directadmin/data/users"
 
 StatusFn = Optional[Callable[[str], None]]
@@ -270,25 +275,70 @@ def _pack_directadmin(client, account: str, folder: str, on_status: StatusFn) ->
         f"echo {quoted} >> /usr/local/directadmin/data/task.queue "
         "&& /usr/local/directadmin/dataskq"
     )
-    _must(client, command, PACK_TIMEOUT, f"DirectAdmin backup of {account}")
-    # The run usually ends with the file in place; when DirectAdmin's own cron
-    # took the task first, wait for it to settle.
+    out = _must(client, command, PACK_TIMEOUT, f"DirectAdmin backup of {account}")
+    # Old DA accepts an unknown argument, prints "Invalid option", and still
+    # exits 0 - so a command can "succeed" while doing nothing. Treat that (and
+    # a DirectAdmin usage dump) as a failure rather than waiting for an archive
+    # that will never appear.
+    if re.search(r"invalid option|unknown option|^usage:", out, re.IGNORECASE | re.MULTILINE):
+        line = next((l.strip() for l in out.splitlines() if l.strip()), "")
+        raise MigrateError(
+            f"DirectAdmin rejected the backup command for {account} (likely an old DA version): {line[:200]}")
+    # dataskq normally runs the backup synchronously, so the archive is already
+    # in place; when DirectAdmin's own cron grabbed the task first, wait for it
+    # to appear and settle. Give up once it makes no progress for PACK_STALL_GRACE
+    # instead of sitting here for PACK_TIMEOUT.
     deadline = time.monotonic() + PACK_TIMEOUT
     last: dict[str, int] = {}
     steady = 0
+    last_progress = time.monotonic()
     while time.monotonic() < deadline:
         current = {name: size for name, size in _archives(client, folder) if f".{account}.tar" in name}
+        if current and sum(current.values()) != sum(last.values()):
+            last_progress = time.monotonic()  # appearing or growing == progress
         if current and current == last:
             steady += 1
             if steady >= 2:
-                return sorted(current)[0]
+                archive = sorted(current)[0]
+                _verify_da_backup_full(client, folder, archive, account)
+                return archive
         else:
             steady = 0
+        if time.monotonic() - last_progress > PACK_STALL_GRACE:
+            raise MigrateError(
+                f"DirectAdmin produced no backup of {account} after {PACK_STALL_GRACE // 60} min with no "
+                "progress - the admin backup task likely failed (old DA version, or a backup error on that "
+                "server). Check the DirectAdmin task and backup logs.")
         last = current
-        if on_status and not current:
-            on_status(f"Waiting for DirectAdmin to back up {account}")
+        if on_status:
+            on_status(f"Waiting for DirectAdmin to back up {account}" if not current
+                      else f"Backing up {account}")
         time.sleep(10)
     raise MigrateError(f"DirectAdmin did not write a backup of {account}")
+
+
+def _verify_da_backup_full(client, folder: str, archive: str, account: str) -> None:
+    """Fail if DirectAdmin wrote only the account metadata and none of its data.
+
+    `what=select` with no data categories yields a ~20 KB archive of backup/
+    (user.conf + history) that restores as an empty account. A real backup also
+    carries the domains' files and the mailboxes, so look for one of those.
+    """
+    path = shlex.quote(posixpath.join(folder, archive))
+    # Decompress by extension, list entries, and stop at the first data path
+    # (grep -m1 closes the pipe, so tar is not read to the end).
+    command = (
+        f"f={path}; case \"$f\" in "
+        "*.zst) D='zstd -dc' ;; *.gz|*.tgz) D='gzip -dc' ;; "
+        "*.bz2|*.tbz2) D='bzip2 -dc' ;; *.xz|*.txz) D='xz -dc' ;; *) D='cat' ;; esac; "
+        "$D \"$f\" 2>/dev/null | tar -tf - 2>/dev/null "
+        "| grep -m1 -E '/public_html|/private_html|/email/data|^domains/|/domains/' || true"
+    )
+    out = _must(client, command, LIST_TIMEOUT, f"Checking the backup of {account}")
+    if not out.strip():
+        raise MigrateError(
+            f"DirectAdmin wrote only a metadata backup of {account} (no website files or mail) - it would "
+            "restore as an empty account. The backup's data categories were not included; check the DA version.")
 
 
 # --- FastPanel ------------------------------------------------------------------------------------
