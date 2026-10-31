@@ -243,15 +243,32 @@ def _pack_directadmin(client, account: str, folder: str, on_status: StatusFn) ->
     _must(client, f"chown {shlex.quote(admin)}: {shlex.quote(folder)} && chmod 0700 {shlex.quote(folder)}",
           LIST_TIMEOUT, "Preparing the work folder")
     # DirectAdmin's own "Admin Backup" of one account, to a local folder.
-    task = ("action=backup&append%5Fto%5Fpath=nothing&database%5Fdata%5Faware=yes"
-            "&email%5Fdata%5Faware=yes"
-            f"&local%5Fpath={folder.replace('/', '%2F')}&owner={admin}&select%30={account}"
-            "&type=admin&value=multiple&what=select&when=now&where=local")
+    #
+    # `what=select` means "back up the selected data categories", so every
+    # category has to be named with an option* field. Without them DirectAdmin
+    # writes a metadata-only archive (user.conf + history, no domains, no
+    # databases, no email) - which then restores as an empty account. option0
+    # (%30) is the domains directory, i.e. the actual website files. option13
+    # (trash) is deliberately left out.
+    task = (
+        "action=backup&when=now&where=local"
+        f"&local%5Fpath={folder.replace('/', '%2F')}&owner={admin}"
+        f"&type=admin&value=multiple&what=select&select%30={account}"
+        "&option%30=domain&option1=subdomain&option2=email&option3=forwarder"
+        "&option4=autoresponder&option5=vacation&option6=list&option7=emailsettings"
+        "&option8=ftp&option9=ftpsettings&option10=database&option11=database%5Fdata"
+        "&option12=email%5Fdata"
+    )
     quoted = shlex.quote(task)
+    # Submit through DirectAdmin's task queue and run dataskq. The newer
+    # `directadmin taskq --run <task>` subcommand does NOT exist on older DA
+    # (seen on 1.62.x): it prints "Invalid option: --run" yet still exits 0, so
+    # `_must` reads success while nothing was queued and the wait below times
+    # out after hours. Appending to task.queue and running dataskq is the
+    # long-standing mechanism and works on every DA version.
     command = (
-        "if /usr/local/directadmin/directadmin taskq --help >/dev/null 2>&1; then "
-        f"/usr/local/directadmin/directadmin taskq --run {quoted}; "
-        f"else echo {quoted} >> /usr/local/directadmin/data/task.queue && /usr/local/directadmin/dataskq; fi"
+        f"echo {quoted} >> /usr/local/directadmin/data/task.queue "
+        "&& /usr/local/directadmin/dataskq"
     )
     _must(client, command, PACK_TIMEOUT, f"DirectAdmin backup of {account}")
     # The run usually ends with the file in place; when DirectAdmin's own cron

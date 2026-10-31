@@ -313,6 +313,12 @@ def test_an_account_is_packed_there_downloaded_and_the_folder_removed(tmp_path, 
         assert pack.startswith(f"/usr/local/cpanel/scripts/pkgacct bob {server.folder} ")
     else:
         assert "select%30=bob" in pack and "owner=admin" in pack and "local%5Fpath=%2Fhome%2Fopanel-migrate.Ab12Cd34Ef" in pack
+        # Full backup: the data categories must be selected or DA writes a
+        # metadata-only archive. option0 (%30) is the domains/website files.
+        assert "option%30=domain" in pack and "database%5Fdata" in pack and "email%5Fdata" in pack
+        # The reliable path on every DA version: task.queue + dataskq, never the
+        # `taskq --run` subcommand that old DA accepts but does not execute.
+        assert "task.queue" in pack and "dataskq" in pack and "taskq --run" not in pack
 
 
 def test_a_failed_pack_still_removes_the_folder_there(tmp_path, monkeypatch):
