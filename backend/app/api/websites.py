@@ -971,6 +971,11 @@ def delete_website(website_id: int, request: Request, delete_files: bool = True,
         sftp_accounts.delete_for_website(db, website)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"Cannot remove SFTP logins for this website: {exc}") from exc
+    if website.linux_user:
+        try:
+            cron.remove_website_cron(website.domain, website.linux_user)
+        except (RuntimeError, ValueError) as exc:
+            logger.warning("Cron jobs of %s were not removed: %s", website.domain, exc)
     if delete_files:
         if website.linux_user:
             site_users.delete_site_runtime(website.root_path, website.linux_user)

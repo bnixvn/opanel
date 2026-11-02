@@ -271,6 +271,28 @@ def list_cron(domain: str, cron_user: str) -> str:
 def list_cron_entries(domain: str, cron_user: str) -> list[dict]:
     return [_parse_cron_line(index, line) for index, line in enumerate(list_cron(domain, cron_user).splitlines())]
 
+def remove_website_cron(domain: str, cron_user: str) -> int:
+    """A website is being deleted: drop the cron lines the panel wrote for it.
+
+    Only lines ending in this site's exact `# OPanel:<domain>` marker go, so
+    a.com never takes a.com.vn's jobs with it, and anything else in the
+    user's crontab stays. Without this the deleted site's jobs kept firing
+    into a folder that no longer exists. Returns how many lines went.
+    """
+    safe_domain = _validate_domain(domain)
+    pattern = re.compile(rf"#\s*opanel:{re.escape(safe_domain)}\s*$", re.IGNORECASE)
+    lines = list_cron_all(cron_user).splitlines()
+    keep = [line for line in lines if not pattern.search(line)]
+    removed = len(lines) - len(keep)
+    if removed:
+        shell.privileged(
+            "cron-write",
+            helper_args=[cron_user],
+            input="\n".join(keep) + ("\n" if keep else ""),
+            fallback=["bash", "-lc", "crontab -"],
+        )
+    return removed
+
 
 def rewrite_website_domain(old_domain: str, new_domain: str, old_root: str, new_root: str, cron_user: str) -> bool:
     """Re-point a renamed website's cron lines: swap its `# OPanel:<domain>`
