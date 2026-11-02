@@ -198,7 +198,6 @@ def repoint_under_root(db: Session, website: Website, old_root: str, new_root: s
         shell.privileged(
             "sftp-sub-repoint",
             helper_args=[owner_linux_user(account.owner), account.username, new_dir],
-            check=False,
             fallback=["true"],
         )
         account.directory = new_dir
