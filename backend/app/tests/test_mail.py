@@ -662,3 +662,31 @@ def test_nothing_of_the_mail_server_exists_until_the_addon_is_installed():
     assert "! mail_installed; then" in tls[:1200]
     assert "if webmail_conf.is_file():" in HELPER
     assert not addons.ADDONS["mail"].get("default_on")
+
+
+# ---------------------------------------------------------------------------
+# a website renamed: its mail domain moves with it
+# ---------------------------------------------------------------------------
+
+def test_renaming_moves_mail_and_repoints_its_own_addresses(env):
+    from app.models.entities import MailForwarder
+
+    admin = env.people["root_admin"]
+    domain = mail.add_domain(env.db, admin, "alice.test", owner_id=env.people["alice"].id)
+    box = mail.create_mailbox(env.db, admin, domain.id, "info", "Secret123x")
+    mail.create_forwarder(env.db, admin, domain.id, "sales",
+                          ["info@alice.test", "x@gmail.com", "y@alice.test.vn"])
+    mail.set_catch_all(env.db, admin, domain.id, "info@alice.test")
+    password_hash = box.password_hash
+
+    moved = mail.migrate_domain(env.db, "alice.test", "alice-new.test", owner_id=env.people["alice"].id)
+
+    env.db.expire_all()
+    assert env.db.query(MailDomain).filter(MailDomain.domain == "alice.test").first() is None
+    assert moved.domain == "alice-new.test" and moved.catch_all == "info@alice-new.test"
+    assert [(m.local_part, m.password_hash) for m in moved.mailboxes] == [("info", password_hash)]
+    (forwarder,) = env.db.query(MailForwarder).filter(MailForwarder.domain_id == moved.id).all()
+    # Its own address follows the rename; outside addresses, and a longer
+    # domain that merely starts the same, stay as they were.
+    assert forwarder.destinations.splitlines() == ["info@alice-new.test", "x@gmail.com", "y@alice.test.vn"]
+    assert ["alice.test", "alice-new.test"] in [c.args for c in env.calls if c.command == "mail-move-domain"]

@@ -320,6 +320,17 @@ def delete_domain(db: Session, actor: User, domain_id: int) -> str:
     return name
 
 
+def _readdress(text: str, old: str, new: str) -> str:
+    """Addresses at exactly `old` re-pointed at `new`, one per line; the rest
+    as they were (a@old.vn is not a@old). For a renamed domain's forwarders
+    and catch-all, which would otherwise send mail to a name that is gone."""
+    lines = []
+    for line in (text or "").splitlines():
+        local, at, domain = line.strip().rpartition("@")
+        lines.append(f"{local}@{new}" if at and domain.lower() == old else line)
+    return "\n".join(lines)
+
+
 def migrate_domain(db: Session, old_domain: str, new_domain: str, owner_id: Optional[int] = None) -> Optional[MailDomain]:
     """Move a mail domain when a website is renamed old -> new.
 
@@ -345,7 +356,7 @@ def migrate_domain(db: Session, old_domain: str, new_domain: str, owner_id: Opti
     dst = MailDomain(
         domain=new,
         owner_id=owner_id or src.owner_id,
-        catch_all=(src.catch_all or "").replace(f"@{old}", f"@{new}"),
+        catch_all=_readdress(src.catch_all, old, new),
         webmail_host=had_webmail,
         dkim_public=_dkim_public(new),
     )
@@ -355,7 +366,8 @@ def migrate_domain(db: Session, old_domain: str, new_domain: str, owner_id: Opti
         db.add(Mailbox(domain_id=dst.id, local_part=mb.local_part,
                        password_hash=mb.password_hash, quota_mb=mb.quota_mb, enabled=mb.enabled))
     for fw in list(src.forwarders):
-        db.add(MailForwarder(domain_id=dst.id, local_part=fw.local_part, destinations=fw.destinations))
+        db.add(MailForwarder(domain_id=dst.id, local_part=fw.local_part,
+                             destinations=_readdress(fw.destinations, old, new)))
     # Move the maildirs BEFORE the old record (and any purge of it) goes away,
     # so nothing deletes the mail we just carried across.
     shell.privileged("mail-move-domain", helper_args=[old, new], check=False)
