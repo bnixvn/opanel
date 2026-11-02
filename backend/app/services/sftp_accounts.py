@@ -175,6 +175,37 @@ def delete_for_owner(db: Session, owner: User) -> list[str]:
     return removed
 
 
+def repoint_under_root(db: Session, website: Website, old_root: str, new_root: str) -> list[str]:
+    """A website's home folder moved (old_root -> new_root, e.g. a domain
+    rename): re-attach the SFTP logins that sat inside it, keeping the same
+    Linux user and password. Rewrites the stored directory and repoints the
+    jail bind mount. Best effort; the caller commits.
+    """
+    old = str(old_root).rstrip("/")
+    new = str(new_root).rstrip("/")
+    moved: list[str] = []
+    accounts = db.query(SftpAccount).filter(
+        (SftpAccount.website_id == website.id) | (SftpAccount.owner_id == website.owner_id)
+    ).all()
+    for account in accounts:
+        directory = account.directory or ""
+        if directory == old:
+            new_dir = new
+        elif directory.startswith(old + "/"):
+            new_dir = new + directory[len(old):]
+        else:
+            continue
+        shell.privileged(
+            "sftp-sub-repoint",
+            helper_args=[owner_linux_user(account.owner), account.username, new_dir],
+            check=False,
+            fallback=["true"],
+        )
+        account.directory = new_dir
+        moved.append(account.username)
+    return moved
+
+
 def serialize(account: SftpAccount, websites_by_id: dict[int, Website] | None = None) -> dict:
     website = (websites_by_id or {}).get(account.website_id) if account.website_id else None
     return {

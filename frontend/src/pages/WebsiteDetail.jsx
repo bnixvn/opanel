@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Archive, Clock, Download, Eraser, ExternalLink, FileText, FolderOpen, Gauge, Globe, LayoutDashboard, Lock, LogIn, Plus, RefreshCw,
-  RotateCcw, Save, ShieldCheck, SlidersHorizontal, TerminalIcon, Trash2, Wrench, X, Code2,
+  RotateCcw, Save, ShieldCheck, SlidersHorizontal, TerminalIcon, Trash2, Wrench, X, Code2, Pencil,
 } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
@@ -181,7 +181,7 @@ function OverviewTab({ site, owner, goTab }) {
 
 function DomainsTab({ site, goTab }) {
   const t = useT();
-  const { addWebsiteAlias, aliasDrafts, aliasModes, deleteWebsiteAlias, loading, setAliasDrafts, setAliasModes } = usePanel();
+  const { addWebsiteAlias, aliasDrafts, aliasModes, deleteWebsiteAlias, loading, setAliasDrafts, setAliasModes, setRenameSite } = usePanel();
   const draft = aliasDrafts[site.id] || '';
   const mode = aliasModes[site.id] || 'alias';
   const aliases = site.aliases || [];
@@ -193,7 +193,10 @@ function DomainsTab({ site, goTab }) {
   return <section className="section">
     <PageHeader title={t('Domains')} subtitle={t('Alias serves the same app. Redirect sends visitors to {domain}.', { domain: site.domain })}/>
     <ul className="wsd-domain-list">
-      <li><Globe size={14} aria-hidden="true"/><strong>{site.domain}</strong><span className="badge ok">{t('Main')}</span></li>
+      <li><Globe size={14} aria-hidden="true"/><strong>{site.domain}</strong><span className="badge ok">{t('Main')}</span>
+        <button type="button" className="mini secondary-light" disabled={!!loading}
+          onClick={() => setRenameSite({ site, newDomain: '', reissueSsl: true })}
+          aria-label={t('Rename {domain}', { domain: site.domain })}><Pencil size={13} aria-hidden="true"/> {t('Rename')}</button></li>
       {aliases.map((alias) => <li key={alias.id}>
         <Globe size={14} aria-hidden="true"/><strong>{alias.domain}</strong>
         <span className="badge">{alias.mode === 'redirect' ? t('Redirect') : t('Alias')}</span>

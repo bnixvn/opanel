@@ -272,6 +272,33 @@ def list_cron_entries(domain: str, cron_user: str) -> list[dict]:
     return [_parse_cron_line(index, line) for index, line in enumerate(list_cron(domain, cron_user).splitlines())]
 
 
+def rewrite_website_domain(old_domain: str, new_domain: str, old_root: str, new_root: str, cron_user: str) -> bool:
+    """Re-point a renamed website's cron lines: swap its `# OPanel:<domain>`
+    marker and the old site root path to the new ones. Only this site's lines
+    are touched (matched by the old marker or the old root), so other domains
+    owned by the same Linux user keep their jobs. Returns whether anything
+    changed."""
+    site_users.validate_linux_user(cron_user)
+    old_marker = f"# OPanel:{old_domain}"
+    new_marker = f"# OPanel:{new_domain}"
+    existing = list_cron_all(cron_user)
+    if not existing.strip():
+        return False
+    changed = False
+    lines = []
+    for line in existing.splitlines():
+        if old_marker in line or (old_root and old_root in line):
+            line = line.replace(old_root, new_root).replace(old_marker, new_marker)
+            changed = True
+        lines.append(line)
+    if not changed:
+        return False
+    content = "\n".join(lines).rstrip() + "\n"
+    shell.privileged("cron-write", helper_args=[cron_user], input=content,
+                     fallback=["bash", "-lc", "crontab -"])
+    return True
+
+
 # --- WordPress's own scheduled tasks ---------------------------------------
 # When a site disables WP-Cron (which otherwise fires on page loads), a real
 # system cron has to run WordPress's due events instead. `wp cron event run

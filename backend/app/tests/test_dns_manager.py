@@ -328,7 +328,8 @@ def test_a_removed_website_takes_its_own_records_with_it(env):
     dns_manager.website_removed(env.db, ["alice.test"], env.people["alice"].id)
     assert env.pdns.values("alice.test", "alice.test", "A") == ["203.0.113.7"]
     source = (PROJECT_ROOT / "backend" / "app" / "api" / "websites.py").read_text(encoding="utf-8")
-    assert source.count("dns_manager.website_removed(") == 2
+    # delete_website_alias, delete_website, and rename_website (drops the old name).
+    assert source.count("dns_manager.website_removed(") == 3
 
 
 def test_no_zone_is_made_in_another_accounts_parent_zone(env):

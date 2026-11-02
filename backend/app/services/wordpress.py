@@ -209,6 +209,36 @@ def wp_update(path: str, action: str, linux_user: str | None = None):
     return shell.privileged("wp-site", helper_args=[linux_user, *args], fallback=["wp", *args], timeout=900)
 
 
+def rename_site_url(path: str, linux_user: str | None, old_domain: str, new_domain: str, https: bool = True):
+    """Point a WordPress install at a renamed domain.
+
+    Runs `wp search-replace //old //new` (scheme-agnostic - catches http://,
+    https:// and protocol-relative URLs) across all tables except guid, then
+    sets home/siteurl. As the site user via the wp-site helper, like wp_update.
+    """
+    if not linux_user:
+        raise ValueError("This website has no Linux user; cannot run wp-cli safely")
+    scheme = "https" if https else "http"
+    new_url = f"{scheme}://{new_domain}"
+    search = shell.privileged(
+        "wp-site",
+        helper_args=[linux_user, "search-replace", f"//{old_domain}", f"//{new_domain}",
+                     f"--path={path}", "--all-tables", "--skip-columns=guid",
+                     "--report-changed-only", "--allow-root"],
+        fallback=["wp", "search-replace", f"//{old_domain}", f"//{new_domain}",
+                  f"--path={path}", "--all-tables", "--skip-columns=guid", "--allow-root"],
+        timeout=900,
+    )
+    for option in ("home", "siteurl"):
+        shell.privileged(
+            "wp-site",
+            helper_args=[linux_user, "option", "update", option, new_url, f"--path={path}", "--allow-root"],
+            fallback=["wp", "option", "update", option, new_url, f"--path={path}", "--allow-root"],
+            timeout=120,
+        )
+    return search
+
+
 def install_lscache(path: str, linux_user: str | None):
     """LiteSpeed Cache, installed and on, in a WordPress just made.
 

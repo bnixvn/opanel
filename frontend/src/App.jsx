@@ -802,6 +802,7 @@ function App() {
   const [mailDns, setMailDns] = useState(null);
   const [mailboxEdit, setMailboxEdit] = useState(null);
   const [forwarderEdit, setForwarderEdit] = useState(null);
+  const [renameSite, setRenameSite] = useState(null);
   const [catchAllDraft, setCatchAllDraft] = useState({});
   const [mailSettings, setMailSettings] = useState(null);
   const [mailSettingsForm, setMailSettingsForm] = useState(null);
@@ -3044,6 +3045,24 @@ function App() {
     }
   }
 
+  async function renameWebsite() {
+    if (!renameSite) return;
+    const site = renameSite.site;
+    const next = String(renameSite.newDomain || '').trim().toLowerCase();
+    if (!next || next === site.domain) { setError(tr("Enter a new domain.")); return; }
+    const data = await request(`/websites/${site.id}/rename`, {
+      method: 'POST',
+      body: JSON.stringify({ new_domain: next, reissue_ssl: renameSite.reissueSsl !== false }),
+    }, tr("Renaming {0} to {1}...", site.domain, next));
+    if (data) {
+      const extra = (data.warnings || []).length ? ' ' + data.warnings.join(' ') : '';
+      setNotice(tr("Renamed {0} to {1}.", site.domain, data.domain || next) + extra);
+      setRenameSite(null);
+      setNginxCustomEditing(prev => (prev && prev.id === site.id) ? null : prev);
+      await refreshAll();
+    }
+  }
+
   async function installManualSsl() {
     if (!selectedWebsiteId) return;
     const hasCert = manualSslFiles.certificate || manualSslForm.certificate.trim();
@@ -5148,7 +5167,7 @@ function App() {
       fixNginxSecurity, fixWordPressPermissions, installLsCache, installSslAfterCreate, installWordPress, installWpOnSite,
       loadCreateSslCerts, loadUsers, loadWebsiteLog, loadWebsiteWafConfig, loading, logViewer, nginxCustomEditing,
       openNginxCustom, openWebsiteFileManager, openWpInstall, phpVersion, phpVersionOptions, phpVersions, quickLoginUser,
-      refreshAll, renderSslManage, renderWafSite, renderWildcardProvider, saveWebsiteSettings, selectedWafWebsiteId,
+      refreshAll, renameSite, renameWebsite, renderSslManage, renderWafSite, renderWildcardProvider, saveWebsiteSettings, selectedWafWebsiteId, setRenameSite,
       setAdminEmail, setAliasDrafts, setAliasModes, setBackupTab, setCreateSslForm, setCreateSslMode, setDomain,
       setInstallLsCache, setInstallSslAfterCreate, setInstallWordPress, setNginxCustomEditing, setPhpVersion, setSelectedWebsiteId,
       setShowCreateSite, setSiteOwnerId, setSiteType, setWebsiteSearch, setWebsiteSettingsForm, setWpAdminPassword,
@@ -9738,6 +9757,29 @@ function App() {
             {currentUser?.totp_enabled && <label><span>{tr("2FA code")}</span><input value={profileForm.code} onChange={e => setProfileForm(prev => ({ ...prev, code: e.target.value }))} placeholder={tr("6-digit code")} maxLength={6} /></label>}
             <button disabled={!!loading || !profileForm.password || profileForm.password.length < 12} onClick={changeMyPasswordFromProfile}><KeyRound size={14}/> {tr("Change password")}</button>
           </div>
+        </div>
+      </div>
+    </div>}
+    {renameSite && <div className="modal-overlay" onClick={() => setRenameSite(null)}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{tr("Rename domain")}</h3>
+          <button className="secondary-light" onClick={() => setRenameSite(null)} aria-label={tr("Close")}><X size={16}/></button>
+        </div>
+        <div className="modal-body">
+          <p className="hint">{tr("Changes the main domain of {0}: its folder, web server, certificate, DNS, mail, WordPress address and cron all move to the new name.", renameSite.site.domain)}</p>
+          <label className="field"><span className="field-label">{tr("New domain")}</span>
+            <input value={renameSite.newDomain} autoCapitalize="none" spellCheck={false} autoComplete="off"
+              placeholder="example.com" onChange={e => setRenameSite(prev => ({ ...prev, newDomain: e.target.value }))}/>
+          </label>
+          <label className="checkbox-row"><input type="checkbox" checked={renameSite.reissueSsl !== false}
+            onChange={e => setRenameSite(prev => ({ ...prev, reissueSsl: e.target.checked }))}/>
+            <span>{tr("Reissue the HTTPS certificate for the new domain")}</span></label>
+          <p className="hint">{tr("Point the new domain's DNS at this server first, or HTTPS can only be issued once it resolves here.")}</p>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-light" onClick={() => setRenameSite(null)}>{tr("Cancel")}</button>
+          <button disabled={!!loading || !String(renameSite.newDomain || '').trim() || String(renameSite.newDomain || '').trim().toLowerCase() === renameSite.site.domain} onClick={renameWebsite}><Save size={14}/> {tr("Rename")}</button>
         </div>
       </div>
     </div>}

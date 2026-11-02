@@ -424,6 +424,23 @@ class AuditLogOut(BaseModel):
         )
 
 
+class WebsiteRename(BaseModel):
+    """Rename a website's primary domain (DirectAdmin-style change-a-domain)."""
+    new_domain: str
+    # Re-issue a Let's Encrypt certificate for the new name after the move.
+    # Best effort: DNS for the new domain may not point here yet, so a failure
+    # does not fail the rename (the site serves over HTTP until SSL succeeds).
+    reissue_ssl: bool = True
+
+    @field_validator("new_domain")
+    @classmethod
+    def validate_new_domain(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not DOMAIN_RE.match(value):
+            raise ValueError("Invalid domain")
+        return value
+
+
 class WebsiteCreate(BaseModel):
     domain: str
     owner_id: Optional[int] = None

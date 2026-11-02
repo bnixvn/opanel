@@ -7190,6 +7190,25 @@ mail_purge_domain() {
   echo "mail data removed: ${domain}"
 }
 
+# Move a domain's maildirs when a website's domain is renamed. The Dovecot
+# mail_home is /var/vmail/<domain>/<local>, so moving the whole domain dir
+# carries every mailbox's mail across; the panel re-creates the DB rows (with
+# the same password hashes) and a fresh DKIM key for the new name.
+mail_move_domain() {
+  local old="$1" new="$2" src dst
+  require_domain "$old"; require_domain "$new"
+  [[ "$old" != "$new" ]] || deny "old and new domain are the same"
+  src="${MAIL_VMAIL_DIR}/${old}"; dst="${MAIL_VMAIL_DIR}/${new}"
+  [[ "$(readlink -m "$src")" == "$src" && "$(readlink -m "$dst")" == "$dst" ]] \
+    || deny "refusing an unexpected domain path"
+  [[ ! -e "$dst" ]] || deny "mail data for ${new} already exists"
+  if [[ -d "$src" ]]; then
+    mv -- "$src" "$dst"
+    chown -R vmail:vmail -- "$dst"
+  fi
+  echo "mail data moved: ${old} -> ${new}"
+}
+
 mail_usage() {
   # "<address> <KiB>" for every maildir that exists.
   local dir domain user size
@@ -8490,6 +8509,58 @@ sftp_sub_password() {
   printf '%s:%s\n' "$sub" "$password" | chpasswd
 }
 
+sftp_sub_repoint() {
+  # Re-attach an existing SFTP login to a new folder, keeping the same Linux
+  # user and password. Used when a website is renamed and its home folder moves
+  # (/home/<owner>/<old> -> /home/<owner>/<new>): the old bind mount source is
+  # gone, so the jail must be pointed at the new path or the login breaks.
+  local owner="$1" sub="$2" target="$3" recorded resolved jail old_mp name new_mp gid
+  require_sftp_sub_name "$owner" "$sub"
+  recorded="$(sftp_sub_owner_of "$sub")"
+  [[ "$recorded" == "$owner" ]] || deny "$sub is not an SFTP account of $owner"
+  id -u "$sub" >/dev/null 2>&1 || deny "Linux user $sub does not exist"
+  [[ "$target" == /* ]] || deny "folder must be an absolute path"
+  [[ "$target" =~ ^[A-Za-z0-9._/-]+$ ]] || deny "folder may only contain letters, digits and . _ / -"
+  resolved="$(readlink -e -- "$target")" || deny "folder does not exist: $target"
+  [[ "$resolved" == "$target" ]] || deny "folder must not go through a symlink"
+  [[ -d "$resolved" ]] || deny "not a folder: $target"
+  [[ "$resolved" == "$HOME_ROOT/$owner" || "$resolved" == "$HOME_ROOT/$owner/"* ]] \
+    || deny "folder must be inside $HOME_ROOT/$owner"
+  jail="$SFTP_JAIL_ROOT/$sub"
+  [[ -d "$jail" ]] || deny "no jail for $sub"
+  gid="$(id -g "$owner")"
+  old_mp="$(sftp_sub_mountpoint_of "$sub")"
+  if [[ "$resolved" == "$HOME_ROOT/$owner" ]]; then name="home"; else name="$(basename -- "$resolved")"; fi
+  new_mp="$jail/$name"
+  # Detach the old folder (and anything else attached under the jail) first.
+  local m
+  while IFS= read -r m; do
+    [[ -n "$m" && -d "$m" ]] || continue
+    if mountpoint -q "$m"; then
+      umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
+      mountpoint -q "$m" && deny "could not detach $m from the SFTP jail"
+    fi
+  done < <(printf '%s\n' "$old_mp"; find "$jail" -mindepth 1 -maxdepth 1 -type d)
+  # Clear out stale mountpoint folders left behind, then attach the new one.
+  while IFS= read -r m; do
+    [[ -n "$m" && "$m" != "$new_mp" ]] && rmdir "$m" 2>/dev/null || true
+  done < <(find "$jail" -mindepth 1 -maxdepth 1 -type d)
+  install -d -o root -g "$gid" -m 0750 "$new_mp"
+  if ! mount --bind "$resolved" "$new_mp" || ! mount -o remount,bind,nosuid,nodev "$new_mp"; then
+    mountpoint -q "$new_mp" && umount "$new_mp" 2>/dev/null
+    deny "could not attach $target to the SFTP jail"
+  fi
+  if [[ -f "$SFTP_SUB_STATE" ]]; then
+    local tmp
+    tmp="$(mktemp "${SFTP_JAIL_ROOT}/.accounts.XXXXXX")"
+    awk -v s="$sub" '$1 != s' "$SFTP_SUB_STATE" >"$tmp"
+    printf '%s %s %s %s\n' "$sub" "$owner" "$resolved" "$new_mp" >>"$tmp"
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$SFTP_SUB_STATE"
+  fi
+  echo "$sub repointed to $resolved"
+}
+
 sftp_sub_delete() {
   local owner="$1" sub="$2" mp jail
   require_sftp_sub_name "$owner" "$sub"
@@ -9785,6 +9856,11 @@ EOF
     mail_purge_domain "$1"
     ;;
 
+  mail-move-domain)
+    [[ $# -eq 2 ]] || deny "usage: mail-move-domain <old-domain> <new-domain>"
+    mail_move_domain "$1" "$2"
+    ;;
+
   mail-usage)
     [[ $# -eq 0 ]] || deny "usage: mail-usage"
     mail_usage
@@ -10673,6 +10749,11 @@ PY
   sftp-sub-password)
     [[ $# -eq 2 ]] || deny "usage: sftp-sub-password <owner> <name>  (password on stdin)"
     sftp_sub_password "$1" "$2"
+    ;;
+
+  sftp-sub-repoint)
+    [[ $# -eq 3 ]] || deny "usage: sftp-sub-repoint <owner> <name> <folder>"
+    sftp_sub_repoint "$1" "$2" "$3"
     ;;
 
   sftp-sub-delete)

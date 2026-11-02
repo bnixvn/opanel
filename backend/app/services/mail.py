@@ -320,6 +320,58 @@ def delete_domain(db: Session, actor: User, domain_id: int) -> str:
     return name
 
 
+def migrate_domain(db: Session, old_domain: str, new_domain: str, owner_id: Optional[int] = None) -> Optional[MailDomain]:
+    """Move a mail domain when a website is renamed old -> new.
+
+    Recreates the MailDomain, its mailboxes (same stored password hashes, so
+    logins keep working) and forwarders under the new name, moves the maildirs
+    on disk (Dovecot mail_home is /var/vmail/<domain>/<local>), re-points mail
+    DNS and webmail, and drops the old domain. No-op (returns None) when the old
+    domain has no mail or the Email addon is off. Call AFTER the website's domain
+    has been flipped, so the new name resolves to an owned website.
+    """
+    if not installed():
+        return None
+    old = normalize_domain(old_domain)
+    new = normalize_domain(new_domain)
+    if old == new:
+        return None
+    src = db.query(MailDomain).filter(MailDomain.domain == old).first()
+    if src is None:
+        return None
+    if db.query(MailDomain).filter(MailDomain.domain == new).first() is not None:
+        raise ValueError(f"Email is already on for {new}")
+    had_webmail = bool(src.webmail_host)
+    dst = MailDomain(
+        domain=new,
+        owner_id=owner_id or src.owner_id,
+        catch_all=(src.catch_all or "").replace(f"@{old}", f"@{new}"),
+        webmail_host=had_webmail,
+        dkim_public=_dkim_public(new),
+    )
+    db.add(dst)
+    db.flush()
+    for mb in list(src.mailboxes):
+        db.add(Mailbox(domain_id=dst.id, local_part=mb.local_part,
+                       password_hash=mb.password_hash, quota_mb=mb.quota_mb, enabled=mb.enabled))
+    for fw in list(src.forwarders):
+        db.add(MailForwarder(domain_id=dst.id, local_part=fw.local_part, destinations=fw.destinations))
+    # Move the maildirs BEFORE the old record (and any purge of it) goes away,
+    # so nothing deletes the mail we just carried across.
+    shell.privileged("mail-move-domain", helper_args=[old, new], check=False)
+    db.delete(src)
+    db.commit()
+    sync(db)
+    _dns_changed(db, [dst])
+    from app.services import dns_manager
+
+    dns_manager.mail_domain_removed(db, old, dst.owner_id, hostname())
+    if had_webmail:
+        shell.privileged("mail-webmail-host", helper_args=[old, "off"], check=False)
+        shell.privileged("mail-webmail-host", helper_args=[new, "on"], check=False)
+    return dst
+
+
 def delete_for_owner(db: Session, owner: User) -> list[str]:
     """An account is being deleted: its mail goes with it. The caller commits."""
     rows = db.query(MailDomain).filter(MailDomain.owner_id == owner.id).all()
