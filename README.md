@@ -93,14 +93,6 @@ Các tính năng tuỳ chọn, cài và gỡ ở **Settings › Addons**. Addon 
 | **MCP server** | Cho trợ lý AI (Claude Code, Cursor, VS Code…) đọc và thao tác panel qua Model Context Protocol, mỗi người dùng một token riêng. |
 | **Notifications** | Gửi cảnh báo qua email (SMTP) và Telegram cho quản trị viên: backup lỗi, dịch vụ dừng, ổ đĩa đầy, SSL sắp hết hạn, phát hiện mã độc, có bản cập nhật… |
 
-**Email** và **Resource limits** không có trong Settings › Addons. Muốn dùng thì cài trên server bằng root; cài xong chúng hiện ở Addons như các addon khác:
-
-```bash
-opanel addon install mail      # Email: Exim, Dovecot, Rspamd, webmail
-opanel addon install limits    # Giới hạn CPU, RAM, tiến trình, I/O cho từng tài khoản
-opanel addon list              # Xem trạng thái mọi addon
-```
-
 ## Yêu cầu hệ thống
 
 - Ubuntu 24.04 LTS, nên là máy mới cài
