@@ -148,6 +148,9 @@ def install_addon(
     _admin(current_user)
     try:
         result = addons.install(addon_id, actor=current_user.username)
+    except addons.CliOnly as exc:
+        # Email and Resource limits: not offered by the panel any more.
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         # An unknown id is a 404; "already installed" or "busy" is a 409.
         code = 404 if not addons.is_known(addon_id) else 409

@@ -96,7 +96,7 @@ def installed() -> bool:
 
 def require_installed() -> None:
     if not installed():
-        raise NotInstalled("The Email addon is not installed. An administrator can install it from Settings › Addons.")
+        raise NotInstalled("The Email addon is not installed. An administrator installs it on the server with: opanel addon install mail")
 
 
 def hostname() -> str:

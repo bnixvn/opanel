@@ -7535,8 +7535,9 @@ function App() {
     if (!info) return <section className="section"><h2>{tr("Email")}</h2><p className="hint">{tr("Loading…")}</p></section>;
     if (!info.installed) return <section className="section">
       <h2>{tr("Email")}</h2>
-      <div className="info-box"><AlertCircle size={14}/> {isAdmin ? tr("The Email addon is not installed. Install it on the Addons page.") : tr("Email is not available on this server.")}</div>
-      {isAdmin && <div className="actions"><button onClick={() => navigateToPage('addons')}><PackageOpen size={14}/> {tr("Open Addons")}</button></div>}
+      <div className="info-box"><AlertCircle size={14}/> {isAdmin
+        ? <>{tr("The Email addon is not installed. Install it on the server, as root:")} <code>opanel addon install mail</code></>
+        : tr("Email is not available on this server.")}</div>
     </section>;
     if (mailDns) return renderMailDns();
     const domains = info.domains || [];

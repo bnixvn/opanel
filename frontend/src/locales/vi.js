@@ -2378,7 +2378,7 @@ export default {
   "Spam score: refuse": "Điểm spam: từ chối",
   "Stop serving webmail at webmail.{0}? Webmail stays available on the server's own address.": "Ngừng chạy webmail tại webmail.{0}? Webmail vẫn dùng được qua địa chỉ của máy chủ.",
   "Suspend {0}?\n\nIt keeps receiving mail, but nobody can sign in to it or send from it until it is resumed.": "Tạm khoá {0}?\n\nHộp thư vẫn nhận thư, nhưng không ai đăng nhập hay gửi thư từ nó được cho tới khi mở lại.",
-  "The Email addon is not installed. Install it on the Addons page.": "Addon Email chưa được cài. Hãy cài ở trang Addons.",
+  "The Email addon is not installed. Install it on the server, as root:": "Addon Email chưa được cài. Cài trên server bằng quyền root:",
   "The mail server is stopped: no mail is received or sent, and webmail is off.": "Máy chủ mail đang dừng: không nhận hay gửi thư, webmail cũng tắt.",
   "The name did not match; nothing was deleted.": "Tên không khớp; không có gì bị xoá.",
   "The website's owner": "Chủ của website",

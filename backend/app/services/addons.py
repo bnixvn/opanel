@@ -39,6 +39,19 @@ _state_lock = threading.Lock()
 # when an admin installed every addon in a row.
 _install_lock = threading.Lock()
 
+# Addons the panel no longer offers (operator, 2026-11-02): they are left out
+# of the Addons page until installed, and only `opanel addon install <id>`
+# on the server installs them. Once installed they are managed as before.
+INSTALL_COMMAND = "opanel addon install {id}"
+
+
+class CliOnly(ValueError):
+    """An addon that is installed from the server's shell, not from the panel."""
+
+
+def is_cli_only(addon_id: str) -> bool:
+    return bool(ADDONS.get(addon_id, {}).get("cli_only"))
+
 
 # ---------------------------------------------------------------------------
 # The registry: the complete set of addons this panel release knows
@@ -165,6 +178,7 @@ ADDONS: dict[str, dict] = {
     },
     "mail": {
         "id": "mail",
+        "cli_only": True,
         "name": "Email",
         "summary": "Mail server with webmail: every hosting account manages its own mailboxes.",
         "description": (
@@ -262,6 +276,7 @@ ADDONS: dict[str, dict] = {
     },
     "limits": {
         "id": "limits",
+        "cli_only": True,
         "name": "Resource limits",
         "summary": "CPU, memory, processes and disk I/O limits for each hosting account.",
         "description": (
@@ -732,6 +747,8 @@ def _describe(definition: dict, entry: dict, live: dict, detail: str) -> dict:
         "features": list(definition.get("features") or []),
         "notes": list(definition.get("notes") or []),
         "service": definition.get("service", ""),
+        "cli_only": bool(definition.get("cli_only")),
+        "install_command": INSTALL_COMMAND.format(id=definition["id"]) if definition.get("cli_only") else "",
         **live,
         # Bookkeeping the box cannot answer.
         "busy": bool(entry.get("busy")),
@@ -744,8 +761,13 @@ def _describe(definition: dict, entry: dict, live: dict, detail: str) -> dict:
 
 
 def catalog() -> list[dict]:
-    """Every addon this release ships, each with its live status."""
-    return [status(addon_id) for addon_id in sorted(ADDONS)]
+    """Every addon this release ships, each with its live status.
+
+    A shell-only addon is left out until it is installed or being installed,
+    so the page never offers it; once it is on, it is listed to be managed.
+    """
+    entries = [status(addon_id) for addon_id in sorted(ADDONS)]
+    return [entry for entry in entries if not entry["cli_only"] or entry["installed"] or entry["busy"]]
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +787,26 @@ def _run_addon_command(command: str, addon_id: str) -> str:
     return (result.stdout or "").strip()
 
 
+def _lifecycle(addon_id: str, action: str, command: str) -> None:
+    """One helper install or removal, recording the outcome. Never raises."""
+    try:
+        with _install_lock:
+            _run_addon_command(command, addon_id)
+    except Exception as exc:  # noqa: BLE001 - record it, never crash the caller
+        _update_state(addon_id, last_error=str(exc))
+    else:
+        fields: dict = {"last_error": ""}
+        if action == "install":
+            fields["installed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        elif action == "uninstall":
+            fields["installed_at"] = ""
+            fields["installed_by"] = ""
+        _update_state(addon_id, **fields)
+        _after_lifecycle(addon_id, action)
+    finally:
+        _update_state(addon_id, busy=False, busy_action="")
+
+
 def _background(addon_id: str, action: str, command: str) -> None:
     """Run a long helper call in a thread, recording the outcome.
 
@@ -772,25 +814,7 @@ def _background(addon_id: str, action: str, command: str) -> None:
     immediately and the page polls. `busy` is what stops a second install
     landing on top of the first.
     """
-    def worker() -> None:
-        try:
-            with _install_lock:
-                _run_addon_command(command, addon_id)
-        except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
-            _update_state(addon_id, last_error=str(exc))
-        else:
-            fields: dict = {"last_error": ""}
-            if action == "install":
-                fields["installed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            elif action == "uninstall":
-                fields["installed_at"] = ""
-                fields["installed_by"] = ""
-            _update_state(addon_id, **fields)
-            _after_lifecycle(addon_id, action)
-        finally:
-            _update_state(addon_id, busy=False, busy_action="")
-
-    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=_lifecycle, args=(addon_id, action, command), daemon=True).start()
 
 
 def _after_lifecycle(addon_id: str, action: str) -> None:
@@ -870,29 +894,36 @@ def _panel_addon_changed(addon_id: str) -> None:
         shared_blocklist.reconcile_in_background()
 
 
+def _lifecycle_call(addon_id: str, action: str, work) -> None:
+    """_lifecycle for an addon whose work is panel code, not a helper call."""
+    try:
+        with _install_lock:
+            work()
+    except Exception as exc:  # noqa: BLE001 - record it, never crash the caller
+        _update_state(addon_id, last_error=str(exc))
+    else:
+        fields: dict = {"last_error": ""}
+        if action == "install":
+            fields["installed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        elif action == "uninstall":
+            fields.update(installed_at="", installed_by="")
+        _update_state(addon_id, **fields)
+    finally:
+        _update_state(addon_id, busy=False, busy_action="")
+
+
 def _background_call(addon_id: str, action: str, work) -> None:
     """_background for an addon whose work is panel code, not a helper call."""
-    def worker() -> None:
-        try:
-            with _install_lock:
-                work()
-        except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
-            _update_state(addon_id, last_error=str(exc))
-        else:
-            fields: dict = {"last_error": ""}
-            if action == "install":
-                fields["installed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            elif action == "uninstall":
-                fields.update(installed_at="", installed_by="")
-            _update_state(addon_id, **fields)
-        finally:
-            _update_state(addon_id, busy=False, busy_action="")
-
-    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=_lifecycle_call, args=(addon_id, action, work), daemon=True).start()
 
 
-def install(addon_id: str, actor: str = "") -> dict:
+def install(addon_id: str, actor: str = "", *, from_shell: bool = False) -> dict:
+    """Install an addon. The panel gets it started in the background; the
+    shell (`opanel addon install`, from_shell) waits for it to finish."""
     definition = _require_known(addon_id)
+    if definition.get("cli_only") and not from_shell:
+        raise CliOnly(f"{definition['name']} is installed from the server's shell: "
+                      f"{INSTALL_COMMAND.format(id=addon_id)}")
     current = status(addon_id)
     if current["busy"]:
         raise ValueError(f"{definition['name']} is already {current['busy_action'] or 'working'}")
@@ -905,14 +936,17 @@ def install(addon_id: str, actor: str = "") -> dict:
         return status(addon_id)
     if _is_managed(definition):
         _update_state(addon_id, busy=True, busy_action="install", last_error="", installed_by=actor)
-        _background_call(addon_id, "install", _malware_install)
+        (_lifecycle_call if from_shell else _background_call)(addon_id, "install", _malware_install)
         return status(addon_id)
     _update_state(addon_id, busy=True, busy_action="install", last_error="", installed_by=actor)
-    _background(addon_id, "install", "addon-install")
+    if from_shell:
+        _lifecycle(addon_id, "install", "addon-install")
+    else:
+        _background(addon_id, "install", "addon-install")
     return status(addon_id)
 
 
-def uninstall(addon_id: str, actor: str = "") -> dict:
+def uninstall(addon_id: str, actor: str = "", *, from_shell: bool = False) -> dict:
     definition = _require_known(addon_id)
     current = status(addon_id)
     if current["busy"]:
@@ -927,10 +961,13 @@ def uninstall(addon_id: str, actor: str = "") -> dict:
     if _is_managed(definition):
         _malware_stop()
         _update_state(addon_id, busy=True, busy_action="uninstall", last_error="")
-        _background_call(addon_id, "uninstall", _malware_remove)
+        (_lifecycle_call if from_shell else _background_call)(addon_id, "uninstall", _malware_remove)
         return status(addon_id)
     _update_state(addon_id, busy=True, busy_action="uninstall", last_error="")
-    _background(addon_id, "uninstall", "addon-uninstall")
+    if from_shell:
+        _lifecycle(addon_id, "uninstall", "addon-uninstall")
+    else:
+        _background(addon_id, "uninstall", "addon-uninstall")
     return status(addon_id)
 
 

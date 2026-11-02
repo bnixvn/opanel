@@ -653,6 +653,30 @@ change_panel_ip() {
   "$script" "$old_ip" "$new_ip"
 }
 
+addon_command() {
+  # Addons from the shell. Email and Resource limits are not offered on the
+  # Addons page (operator, 2026-11-02); this is how they are installed. It runs
+  # the panel's own install path as the panel user and waits for it.
+  ensure_env_file
+  local action="${1:-}" addon_id="${2:-}" rc=0
+  case "$action" in
+    list) [[ -z "$addon_id" ]] || fail "Usage: opanel addon list" ;;
+    install|remove) [[ "$addon_id" =~ ^[a-z][a-z0-9-]{1,31}$ ]] || fail "Usage: opanel addon $action <id>  (see: opanel addon list)" ;;
+    *) echo "Usage: opanel addon list | opanel addon install <id> | opanel addon remove <id>"; exit 2 ;;
+  esac
+  cd "$APP_DIR/backend"
+  local runner=(env HOME="$APP_DIR" PYTHONPATH="$APP_DIR/backend" "$APP_DIR/backend/.venv/bin/python")
+  if id -u opanel >/dev/null 2>&1; then
+    runner=(runuser -u opanel -- "${runner[@]}")
+  fi
+  # One at a time: each is an apt run.
+  flock -n -E 75 /run/opanel-addon.lock "${runner[@]}" -c \
+    'import sys; from app.addon_cli import main; raise SystemExit(main(sys.argv[1:]))' \
+    "$action" ${addon_id:+"$addon_id"} || rc=$?
+  [[ $rc -ne 75 ]] || fail "Another addon install or removal is running; try again when it has finished."
+  return "$rc"
+}
+
 menu() {
   while true; do
     echo ""
@@ -707,8 +731,9 @@ case "${1:-menu}" in
   sync-admin-root-password|--sync-admin-root-password|admin-use-root-password|--admin-use-root-password) sync_admin_root_password ;;
   reset-admin-2fa|--reset-admin-2fa) reset_admin_2fa "${2:-}" ;;
   status|--status) show_status ;;
+  addon|--addon) addon_command "${2:-}" "${3:-}" ;;
   *)
-    echo "Usage: opanel [menu|login|status|logs|restart|repair-firewall|change-ip|set-panel-url|install-panel-ssl|fix-permissions|change-admin-password|sync-admin-root-password|reset-admin-2fa [username]|update]"
+    echo "Usage: opanel [menu|login|status|logs|restart|repair-firewall|change-ip|set-panel-url|install-panel-ssl|fix-permissions|change-admin-password|sync-admin-root-password|reset-admin-2fa [username]|addon list|addon install <id>|addon remove <id>|update]"
     exit 2
     ;;
 esac
