@@ -1099,7 +1099,8 @@ def rename_website(website_id: int, payload: WebsiteRename, request: Request, db
     # WordPress: rewrite the stored site/home URL and search-replace the tables.
     if wp_was_installed:
         try:
-            wordpress.rename_site_url(new_root, website.linux_user, old_domain, new_domain, https=True)
+            wp_path = str(site_users.document_root(Path(new_root), website.document_root or "public_html"))
+            wordpress.rename_site_url(wp_path, website.linux_user, old_domain, new_domain, https=True)
         except (RuntimeError, ValueError, OSError) as exc:
             warnings.append(f"WordPress URLs were not updated; run a search-replace from {old_domain} to {new_domain}: {exc}")
         wp_manager.forget_website(db, website.id)
