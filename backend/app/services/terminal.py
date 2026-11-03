@@ -59,15 +59,20 @@ _PHP_VERSION_RE = re.compile(r"^\d+\.\d+$")
 def access_problem(user) -> Optional[str]:
     """Why this account may not open a terminal, or None if it may.
 
-    "impersonate": an administrator or a reseller, who opens a customer's shell
-    by logging in as that customer. "disabled": not part of the account's
-    package. "demo": the read-only demo account.
+    An administrator has one for its own home and websites (operator,
+    2026-11-03: some customers' websites are kept under the admin); a
+    customer's shell is still reached by logging in as that customer.
+    "impersonate": a reseller, who opens a customer's shell that way.
+    "disabled": not part of the account's package. "demo": the read-only
+    demo account.
     """
     if user is None or not user.is_active:
         return "inactive"
     if demo_mode.is_demo_account(user):
         return "demo"
-    if is_admin_role(user.role) or is_reseller_role(user.role):
+    if is_admin_role(user.role):
+        return None
+    if is_reseller_role(user.role):
         return "impersonate"
     if not user.terminal_enabled:
         return "disabled"
@@ -77,7 +82,7 @@ def access_problem(user) -> Optional[str]:
 PROBLEM_TEXT = {
     "inactive": "This account is disabled.",
     "demo": "The terminal is not available in the demo.",
-    "impersonate": "Administrators and resellers open a customer's terminal by logging in as the customer.",
+    "impersonate": "Resellers open a customer's terminal by logging in as the customer.",
     "disabled": "The terminal is not part of this account's package.",
 }
 

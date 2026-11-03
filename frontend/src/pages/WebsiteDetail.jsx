@@ -391,19 +391,23 @@ function TerminalSection({ site }) {
   const [open, setOpen] = useState(() => window.location.hash === '#terminal');
   const owner = users.find((user) => String(user.id) === String(site.owner_id));
   const canLogInAs = canManageUsers && !currentUser?.impersonator && owner && String(owner.id) !== String(currentUser?.id);
+  // An administrator's terminal covers its own websites; a customer's is
+  // opened by logging in as the customer.
+  const ownSite = String(site.owner_id) === String(currentUser?.id);
+  const canOpenHere = canOpenTerminal && ownSite;
   return <>
     <PageHeader title={t('Terminal')} subtitle={t('A bash shell as this website\'s owner, starting in the website\'s folder with its PHP version.')}
-      actions={!canOpenTerminal ? null : open
+      actions={!canOpenHere ? null : open
         ? <button type="button" className="secondary-light" onClick={() => setOpen(false)}><X size={14} aria-hidden="true"/> {t('Close terminal')}</button>
         : <button type="button" className="secondary-light" onClick={() => setOpen(true)}><TerminalIcon size={14} aria-hidden="true"/> {t('Open terminal')}</button>}/>
-    {!canOpenTerminal && <div className="wsd-term-off">
+    {!canOpenHere && <div className="wsd-term-off">
       <p className="hint">{isAdmin || isReseller
         ? t('Administrators and resellers open a customer\'s terminal by logging in as the customer.')
         : t('The terminal is not part of this account\'s package.')}</p>
       {canLogInAs && <button type="button" className="secondary-light" onClick={() => quickLoginUser(owner)}>
         <LogIn size={14} aria-hidden="true"/> {t('Log in as {name}', { name: owner.username })}</button>}
     </div>}
-    {canOpenTerminal && open && <div className="wsd-terminal">
+    {canOpenHere && open && <div className="wsd-terminal">
       <Terminal websiteId={site.id} apiBase={API}/>
     </div>}
   </>;

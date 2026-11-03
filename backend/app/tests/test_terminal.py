@@ -54,9 +54,13 @@ def test_a_customer_whose_package_has_it():
     assert terminal.access_problem(account()) == "disabled", "off unless the package turns it on"
 
 
-@pytest.mark.parametrize("role", ["admin", "reseller"])
-def test_administrators_and_resellers_log_in_as_the_customer(role):
-    assert terminal.access_problem(account(role=role, terminal_enabled=True)) == "impersonate"
+def test_an_administrator_has_one_for_its_own_account():
+    # Some customers' websites are kept under the admin (operator, 2026-11-03).
+    assert terminal.access_problem(account(role="admin")) is None
+
+
+def test_a_reseller_logs_in_as_the_customer():
+    assert terminal.access_problem(account(role="reseller", terminal_enabled=True)) == "impersonate"
 
 
 def test_not_a_disabled_account_nor_the_demo(monkeypatch):
@@ -131,6 +135,10 @@ def test_only_a_hosting_accounts_user():
     assert "require_linux_user" in check, "root and the system users are refused by name"
     assert "uid >= 1000 && uid < 60000" in check
     assert "$opanel_SFTP_GROUP" in check
+    # Whom sudo trusts is asked of sudo, not guessed from group names: the panel
+    # admin's private group is named "admin" (see retire_admin_group_sudo).
+    assert 'sudo -n -l -U "$user"' in check and "may run the following commands" in check
+    assert '" admin "' not in check
     hidden = re.search(r'TERMINAL_HIDDEN_PATHS="([^"]+)"', HELPER).group(1).split()
     for path in ("/opt/opanel", "/etc/opanel", "/var/lib/opanel-sftp", "/var/log", "/var/lib/mysql"):
         assert path in hidden
@@ -174,6 +182,8 @@ def env(monkeypatch):
     db.commit()
     monkeypatch.setattr(terminal_api, "SessionLocal", Session)
     monkeypatch.setattr(terminal, "available", lambda: True)
+    # Every account but the administrator has its Linux home.
+    monkeypatch.setattr(terminal_api, "_has_home", lambda path: not path.endswith("/root_admin"))
     client = TestClient(app)
 
     def connect(name, path="/api/terminal/ws"):
@@ -186,9 +196,16 @@ def env(monkeypatch):
     db.close()
 
 
-def test_an_administrator_gets_no_shell_of_its_own(env):
-    assert env.connect("root_admin") == {"type": "closed", "reason": "impersonate", "code": 4003}
+def test_an_administrator_without_a_home_yet(env):
+    # No website yet: no Linux user, no /home/<user> to start in.
+    assert env.connect("root_admin") == {"type": "closed", "reason": "no-home", "code": 4004}
     assert env.connect("reseller")["reason"] == "impersonate"
+
+
+def test_an_administrator_opens_a_customers_website_by_logging_in_as_them(env):
+    site = env.db.query(Website).filter(Website.domain == "bob.test").one()
+    assert env.connect("root_admin", f"/api/terminal/ws/{site.id}") == {
+        "type": "closed", "reason": "impersonate", "code": 4003}
 
 
 def test_a_customer_without_it_in_the_package(env):
@@ -301,3 +318,20 @@ def test_global_npm_and_composer_installs_land_in_the_account_home():
     # (operator, 2026-10-24, on BPanel). The prefix is ~/.local, on PATH.
     assert '-E "npm_config_prefix=$home/.local"' in SESSION_FN
     assert 'path_value="$home/.local/bin:$home/.composer/vendor/bin:$path_value"' in SESSION_FN
+
+
+# --- group admin is not a sudoer ---------------------------------------------------
+
+@pytest.mark.parametrize("script", ["update.sh", "install.sh"])
+def test_the_installer_and_updater_retire_ubuntus_admin_group_rule(script):
+    text = (PROJECT_ROOT / "installer" / script).read_text(encoding="utf-8")
+    fn = text[text.index("retire_admin_group_sudo() {"):]
+    fn = fn[:fn.index("\n}\n")]
+    # Checked by visudo before it replaces the file, and only the %admin line goes.
+    assert 'visudo -c -f "$tmp"' in fn and 'mv -f "$tmp" "$file"' in fn
+    assert "%admin[[:space:]]" in fn
+    # An account outside the panel's own that relies on the rule keeps it.
+    assert "opanel-sftp" in fn and "www-data|opanel)" in fn
+    marker = "visudo -c -f /etc/sudoers.d/opanel >/dev/null"
+    after = text[text.index(marker) + len(marker):]
+    assert after.lstrip().startswith("retire_admin_group_sudo"), "run once the panel's own rule is in place"

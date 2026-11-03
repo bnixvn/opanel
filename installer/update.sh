@@ -15,6 +15,40 @@
 set -euo pipefail
 
 log()  { echo ""; echo "==> $1"; }
+
+# The panel's own administrator is a hosting account too: its Linux user and
+# private group are both named "admin", and www-data and the panel user sit in
+# that group to read its websites. Ubuntu's /etc/sudoers still carries the
+# 12.04-era "%admin ALL=(ALL) ALL", which made all three sudoers. Retire that
+# line (operator, 2026-11-03), unless an account outside the panel's own relies
+# on it. A hosting account must never be one sudo trusts.
+retire_admin_group_sudo() {
+  local file=/etc/sudoers tmp member gid others=()
+  [[ -f "$file" ]] || return 0
+  grep -qE '^[[:space:]]*%admin[[:space:]]' "$file" || return 0
+  gid="$(getent group admin | cut -d: -f3)"
+  for member in $(getent group admin | cut -d: -f4 | tr ',' ' ') \
+                $(awk -F: -v gid="$gid" 'gid != "" && $4 == gid { print $1 }' /etc/passwd); do
+    case "$member" in www-data|opanel) continue ;; esac
+    if id -nG "$member" 2>/dev/null | tr ' ' '\n' | grep -qx opanel-sftp; then continue; fi
+    others+=("$member")
+  done
+  if (( ${#others[@]} )); then
+    echo "  (warning: /etc/sudoers trusts group admin and ${others[*]} may rely on it; left as it is)"
+    return 0
+  fi
+  tmp="$(mktemp /etc/sudoers.opanel.XXXXXX)"
+  sed -E 's/^([[:space:]]*%admin[[:space:]].*)$/# Disabled by OPanel, group admin is a hosting account: \1/' "$file" >"$tmp"
+  chown root:root "$tmp"
+  chmod 0440 "$tmp"
+  if visudo -c -f "$tmp" >/dev/null 2>&1; then
+    mv -f "$tmp" "$file"
+    echo "  Group admin is no longer trusted by sudo"
+  else
+    rm -f "$tmp"
+    echo "  (warning: could not rewrite /etc/sudoers safely; left as it is)"
+  fi
+}
 fail() { echo "ERROR: $1" >&2; exit 1; }
 
 usage() {
@@ -1340,6 +1374,7 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
     install -m 0440 -o root -g root  "$SOURCE_DIR/installer/files/opanel-sudoers"   /etc/sudoers.d/opanel
     sed -i 's/\r$//' /etc/sudoers.d/opanel
     visudo -c -f /etc/sudoers.d/opanel >/dev/null
+    retire_admin_group_sudo
     # Non-fatal: this is a health check, and it must not be able to abort an
     # update after the new helper is already installed but before migrations run.
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper wp-info >/dev/null || \

@@ -25,6 +25,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app.api.deps import _user_from_token, get_current_user
 from app.core.config import settings
+from app.core.permissions import is_admin_role
 from app.core.database import SessionLocal
 from app.models.entities import RevokedToken, User, Website
 from app.services import resource_limits, site_users, terminal
@@ -52,6 +53,10 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     if settings.panel_url:
         allowed.add(settings.panel_url.rstrip("/"))
     return bool(allowed) and origin in allowed
+
+
+def _has_home(path: str) -> bool:
+    return os.path.isdir(path)
 
 
 def _rules() -> dict:
@@ -135,11 +140,22 @@ async def _serve(websocket: WebSocket, website_id: int | None) -> None:
         if website_id is None:
             linux_user = site_users.linux_user_for_panel_username(user.username)
             cwd, php_version, target = f"/home/{linux_user}", None, "home"
+            # An administrator with no website yet has no Linux user or home.
+            if not _has_home(cwd):
+                await _refuse(websocket, 4004, "no-home")
+                return
         else:
             website = db.query(Website).filter(Website.id == website_id).first()
-            # A customer's own websites only: no one reaches this with another role.
-            if website is None or website.owner_id != user.id:
+            # The account's own websites only. An administrator reaches a
+            # customer's by logging in as the customer.
+            if website is None:
                 await _refuse(websocket, 4004, "not-found")
+                return
+            if website.owner_id != user.id:
+                if is_admin_role(user.role):
+                    await _refuse(websocket, 4003, "impersonate")
+                else:
+                    await _refuse(websocket, 4004, "not-found")
                 return
             try:
                 linux_user = site_users.require_site_linux_user(website)

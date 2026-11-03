@@ -4017,11 +4017,16 @@ require_terminal_user() {
   local groups
   groups=" $(id -nG "$user") "
   [[ "$groups" == *" $opanel_SFTP_GROUP "* ]] || deny "not a hosting account user: $user"
-  # Never one that sudo trusts (Ubuntu's old "admin" group among them), even
-  # though the sandbox could not use it.
+  # Never one that sudo trusts, even though the sandbox could not use it. Ask
+  # sudo what it would allow rather than go by group names alone: the panel's
+  # administrator is a hosting account whose private group is named "admin",
+  # which Ubuntu's sudoers used to trust (retire_admin_group_sudo, updater).
   case "$groups" in
-    *" sudo "*|*" admin "*|*" wheel "*|*" root "*) deny "not a hosting account user: $user" ;;
+    *" sudo "*|*" wheel "*|*" root "*) deny "not a hosting account user: $user" ;;
   esac
+  if sudo -n -l -U "$user" 2>/dev/null | grep -q "may run the following commands"; then
+    deny "$user may use sudo, so it cannot have a terminal"
+  fi
   [[ -d "$HOME_ROOT/$user" && ! -L "$HOME_ROOT/$user" ]] || deny "home directory is missing: $HOME_ROOT/$user"
 }
 
