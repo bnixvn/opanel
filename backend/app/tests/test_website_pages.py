@@ -42,7 +42,10 @@ def test_creating_keeps_opanels_own_choices():
 
 def test_an_administrator_gets_a_customers_shell_only_by_logging_in_as_them():
     section = DETAIL[DETAIL.index("function TerminalSection("):DETAIL.index("function AdvancedTab(")]
-    assert "{canOpenTerminal && open && <div className=\"wsd-terminal\">" in section
+    # An administrator's own terminal covers its own websites only.
+    assert "const ownSite = String(site.owner_id) === String(currentUser?.id);" in section
+    assert "const canOpenHere = canOpenTerminal && ownSite;" in section
+    assert "{canOpenHere && open && <div className=\"wsd-terminal\">" in section
     assert "quickLoginUser(owner)" in section
 
 
