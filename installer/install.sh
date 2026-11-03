@@ -756,7 +756,7 @@ retire_admin_group_sudo() {
   for member in $(getent group admin | cut -d: -f4 | tr ',' ' ') \
                 $(awk -F: -v gid="$gid" 'gid != "" && $4 == gid { print $1 }' /etc/passwd); do
     case "$member" in www-data|opanel) continue ;; esac
-    if id -nG "$member" 2>/dev/null | tr ' ' '\n' | grep -qx opanel-sftp; then continue; fi
+    if [[ " $(id -nG "$member" 2>/dev/null) " == *" opanel-sftp "* ]]; then continue; fi
     others+=("$member")
   done
   if (( ${#others[@]} )); then

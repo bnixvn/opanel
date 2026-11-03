@@ -139,6 +139,16 @@ def test_only_a_hosting_accounts_user():
     # admin's private group is named "admin" (see retire_admin_group_sudo).
     assert 'sudo -n -l -U "$user"' in check and "may run the following commands" in check
     assert '" admin "' not in check
+    # Captured first: piped into an early-exiting grep under pipefail, sudo's
+    # SIGPIPE would make the check fail open.
+    assert 'sudo_rules="$(sudo -n -l -U "$user" 2>/dev/null || true)"' in check
+    assert "| grep -q" not in check
+
+
+def test_the_administrators_own_home_is_not_hidden_from_its_own_session():
+    # /home/admin is hidden from every other session; the admin's own needs it.
+    assert "/home/admin" in re.search(r'TERMINAL_HIDDEN_PATHS="([^"]+)"', HELPER).group(1).split()
+    assert 'if [[ "$p" == "$home" || "$p" == "$home/"* ]]; then continue; fi' in SESSION_FN
     hidden = re.search(r'TERMINAL_HIDDEN_PATHS="([^"]+)"', HELPER).group(1).split()
     for path in ("/opt/opanel", "/etc/opanel", "/var/lib/opanel-sftp", "/var/log", "/var/lib/mysql"):
         assert path in hidden
