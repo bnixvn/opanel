@@ -193,8 +193,20 @@ kept-back cloud-init
 
 def test_the_helper_asks_apt_what_an_upgrade_would_do():
     status = HELPER.split("\nservice_packages_status() {\n", 1)[1].split("\n}\n", 1)[0]
-    assert "apt-get -s -o Debug::NoLocking=1 upgrade" in status
+    # Simulated with the button's own options, phased updates included.
+    assert "apt-get -s -o Debug::NoLocking=1 -o APT::Get::Always-Include-Phased-Updates=true upgrade" in status
     assert "deferred due to phasing:" in status and "have been kept back:" in status
+
+
+def test_update_os_now_takes_the_updates_ubuntu_is_still_phasing_in():
+    # Left to phasing, libsqlite3-0 stayed "available" after every click (2026-11-05).
+    run = HELPER.split("\nrun_os_update() {\n", 1)[1].split("\n}\n", 1)[0]
+    now = HELPER.split("\nrun_os_update_now() {\n", 1)[1].split("\n}\n", 1)[0]
+    for body in (run, now):
+        upgrades = [line for line in body.splitlines() if "upgrade -y" in line or line.strip() == "upgrade -y"]
+        assert upgrades, "the OS update runs apt-get upgrade"
+        assert "APT::Get::Always-Include-Phased-Updates=true" in body
+    assert run.count("APT::Get::Always-Include-Phased-Updates=true") == 2, "the unit and the nohup fallback"
 
 
 def test_the_os_update_is_followed_to_its_end(monkeypatch):

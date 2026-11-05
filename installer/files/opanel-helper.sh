@@ -1157,12 +1157,17 @@ APT
   echo "OS auto updates enabled (${mode}, reboot=${reboot})"
 }
 
+# "Update OS now" is an administrator asking for every update, so it takes
+# the ones Ubuntu is still phasing in too: left to phasing, a package such as
+# libsqlite3-0 stayed "available" after every click for days (operator,
+# 2026-11-05). unattended-upgrades keeps Ubuntu's phasing.
 run_os_update_now() {
   export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none
   apt-get update --allow-releaseinfo-change
   apt-get \
     -o Dpkg::Options::=--force-confdef \
     -o Dpkg::Options::=--force-confold \
+    -o APT::Get::Always-Include-Phased-Updates=true \
     upgrade -y
 }
 
@@ -1188,14 +1193,14 @@ echo "opanel-os-update: started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 status=0
 apt-get -o DPkg::Lock::Timeout=600 update --allow-releaseinfo-change || status=$?
 if [ "$status" -eq 0 ]; then
-  apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y || status=$?
+  apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o APT::Get::Always-Include-Phased-Updates=true upgrade -y || status=$?
 fi
 echo "opanel-os-update: finished (exit $status)"
 exit "$status"'
     echo "OS update started: ${unit}.service"
     return 0
   fi
-  nohup /bin/bash -lc 'export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none; apt-get update --allow-releaseinfo-change; apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y' \
+  nohup /bin/bash -lc 'export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none; apt-get update --allow-releaseinfo-change; apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o APT::Get::Always-Include-Phased-Updates=true upgrade -y' \
     >/var/log/opanel-os-update.log 2>&1 &
   echo "OS update started in background. Log: /var/log/opanel-os-update.log"
 }
@@ -1243,7 +1248,9 @@ service_packages_status() {
   # available" on the bell after an update that had done all it could
   # (cloud-init on .41, 2026-10-24).
   echo "== os-plan"
-  apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | awk '
+  # The same options as the button's run, so a phased update is listed with
+  # what it installs instead of with what waits.
+  apt-get -s -o Debug::NoLocking=1 -o APT::Get::Always-Include-Phased-Updates=true upgrade 2>/dev/null | awk '
     /^Inst / { print "install", $2; next }
     /deferred due to phasing:/ { mode = "phasing"; next }
     /have been kept back:/ { mode = "kept-back"; next }
