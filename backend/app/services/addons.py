@@ -840,6 +840,18 @@ def _after_lifecycle(addon_id: str, action: str) -> None:
     if addon_id == "limits":
         from app.services import resource_limits
 
+        if action == "uninstall":
+            # MariaDB's share of the server came with the addon and goes with it.
+            try:
+                from app.core.database import SessionLocal
+                from app.models.entities import DatabaseAccount
+                from app.services import mysql_limits
+
+                with SessionLocal() as db:
+                    users = [row.db_user for row in db.query(DatabaseAccount.db_user).all()]
+                mysql_limits.release(users)
+            except Exception as exc:  # noqa: BLE001 - record it, never crash the thread
+                _update_state(addon_id, last_error=f"Removed, but MariaDB's limits could not be lifted: {exc}")
         if action == "install":
             try:
                 from app.core.database import SessionLocal

@@ -139,8 +139,11 @@ def _run_sql(sql: str, *, check: bool = True):
 def account_connection_limit() -> int:
     """Server > MySQL's connections per database account (0: none of its own)."""
     try:
-        from app.services import panel_settings
+        from app.services import mysql_limits, panel_settings
 
+        # Part of MariaDB's budget, which comes with the Resource limits addon.
+        if not mysql_limits.available():
+            return 0
         return max(int((panel_settings._read_raw().get("mysql_limits") or {}).get("max_user_connections", 0)), 0)
     except Exception:  # an unreadable setting never stops a database being made
         return 0

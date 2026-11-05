@@ -25,7 +25,7 @@ const FIELDS = [
 
 export default function MysqlPage() {
   const t = useT();
-  const { formatBytes, loading, request, setNotice } = usePanel();
+  const { formatBytes, limitsOn, loading, request, setNotice } = usePanel();
   const [limits, setLimits] = useState(null);
   const [form, setForm] = useState(null);
   const [usage, setUsage] = useState(null);
@@ -46,9 +46,16 @@ export default function MysqlPage() {
   useEffect(() => { refresh(); }, []);
 
   const saved = limits?.limits;
-  const dirty = !!(form && saved) && (FIELDS.some(([key]) => String(form[key]) !== String(saved[key])) || !!form.userstat !== !!saved.userstat);
+  // MariaDB's share of the server comes with the Resource limits addon.
+  const budget = limitsOn && limits?.available !== false;
+  const dirty = !!(form && saved) && FIELDS.some(([key]) => String(form[key]) !== String(saved[key]));
+  async function saveUserstat(on) {
+    const data = await request('/mysql/userstat', { method: 'PUT', body: JSON.stringify({ userstat: on }) },
+      on ? t('Turning per-user statistics on...') : t('Turning per-user statistics off...'));
+    if (data) { setLimits(data); setForm((prev) => ({ ...(prev || {}), userstat: data.limits.userstat })); loadUsage(); }
+  }
   async function save() {
-    const body = { userstat: !!form.userstat };
+    const body = { userstat: !!saved.userstat };
     for (const [key] of FIELDS) body[key] = Number(form[key]);
     const data = await request('/mysql/limits', { method: 'PUT', body: JSON.stringify(body) }, t('Saving MariaDB\'s limits...'));
     if (data) { setLimits(data); setForm({ ...data.limits }); setNotice(t('MariaDB\'s limits saved.')); loadUsage(); }
@@ -66,7 +73,9 @@ export default function MysqlPage() {
   const server = usage?.server;
   const memoryLimit = unit?.memory_max_bytes;
   return <>
-    <PageHeader subtitle={t('MariaDB runs every website\'s queries in its own process, outside the accounts\' limits: here it gets a budget of its own.')}
+    <PageHeader subtitle={budget
+      ? t('MariaDB runs every website\'s queries in its own process, outside the accounts\' limits: here it gets a budget of its own.')
+      : t('MariaDB runs every website\'s queries in its own process: its use, the busiest database users and the statements running.')}
       onRefresh={refresh} refreshing={refreshing} refreshDisabled={!!loading}/>
 
     <section className="section mysql-now" aria-label={t('MariaDB now')}>
@@ -82,7 +91,7 @@ export default function MysqlPage() {
       </div>
     </section>
 
-    {form && limits && <section className="section mysql-limits">
+    {budget && form && limits && <section className="section mysql-limits">
       <PageHeader title={t('MariaDB\'s share of the server')} subtitle={t('Held by systemd on MariaDB\'s service, so a busy database cannot take the whole machine.')}/>
       <div className="mysql-grid">
         {FIELDS.map(([key, label]) => <Field key={key} label={t(label)}
@@ -91,8 +100,6 @@ export default function MysqlPage() {
             onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}/>
         </Field>)}
       </div>
-      <Switch checked={!!form.userstat} onChange={(on) => setForm((prev) => ({ ...prev, userstat: on }))}>
-        {t('Keep per-user statistics (shows the busiest database users below)')}</Switch>
       <div className="mysql-actions">
         <button type="button" disabled={!!loading || !dirty} onClick={save}><Save size={14} aria-hidden="true"/> {t('Save')}</button>
         {dirty && <span className="hint" role="status">{t('Not saved yet: it applies at once, without restarting MariaDB.')}</span>}
@@ -101,7 +108,9 @@ export default function MysqlPage() {
 
     <section className="section">
       <PageHeader title={t('Busiest database users')} subtitle={t('Over the last two seconds.')}/>
-      {usage && !usage.users && <p className="hint">{t('Turn on per-user statistics above to see them.')}</p>}
+      {saved && <Switch checked={!!saved.userstat} disabled={!!loading} onChange={saveUserstat}>
+        {t('Keep per-user statistics (shows the busiest database users below)')}</Switch>}
+      {usage && !usage.users && <p className="hint">{t('Turn on per-user statistics to see them.')}</p>}
       {usage?.users && usage.users.length === 0 && <p className="hint">{t('No database user has used MariaDB yet.')}</p>}
       {usage?.users?.length > 0 && <div className="table-wrap"><table className="data-table">
         <thead><tr><th>{t('Database user')}</th><th>{t('Account')}</th><th>{t('CPU')}</th><th>{t('Busy')}</th><th>{t('Connections')}</th><th>{t('Rows read')}</th></tr></thead>

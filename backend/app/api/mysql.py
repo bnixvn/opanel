@@ -19,7 +19,7 @@ def _owners(db: Session) -> dict[str, str]:
 
 
 def _limits_body() -> dict:
-    return {"limits": mysql_limits.saved(), "defaults": mysql_limits.DEFAULTS, "ranges": mysql_limits.ranges(),
+    return {"available": mysql_limits.available(), "limits": mysql_limits.saved(), "defaults": mysql_limits.DEFAULTS, "ranges": mysql_limits.ranges(),
             "memory_floor_mb": mysql_limits.memory_floor_mb(), "buffer_pool_mb": mysql_limits.buffer_pool_mb()}
 
 
@@ -33,6 +33,9 @@ def get_limits(current_user: User = Depends(get_current_user)):
 def put_limits(payload: dict, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """MariaDB's CPU, IO and memory on its unit, and the per-account connection backstop."""
     ensure_role(current_user.role, Role.admin)
+    if not mysql_limits.available():
+        # MariaDB's share of the server comes with the Resource limits addon.
+        raise HTTPException(status_code=409, detail="MariaDB's limits come with the Resource limits addon, which is not installed.")
     try:
         db_users = [row.db_user for row in db.query(DatabaseAccount.db_user).all()]
         limits = mysql_limits.apply(payload, db_users)
@@ -42,6 +45,22 @@ def put_limits(payload: dict, request: Request, db: Session = Depends(get_db), c
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     log_action(db, current_user.id, "mysql_limits", "mariadb",
                " ".join(f"{key}={limits[key]}" for key in (*mysql_limits.FIELDS, "userstat")), request=request)
+    return _limits_body()
+
+
+@router.put("/userstat")
+def put_userstat(payload: dict, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Per-user statistics (the busiest database users) on or off; not a limit, so always here."""
+    ensure_role(current_user.role, Role.admin)
+    on = bool((payload or {}).get("userstat"))
+    try:
+        db_users = [row.db_user for row in db.query(DatabaseAccount.db_user).all()]
+        mysql_limits.set_userstat(on, db_users)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    log_action(db, current_user.id, "mysql_userstat", "mariadb", "on" if on else "off", request=request)
     return _limits_body()
 
 

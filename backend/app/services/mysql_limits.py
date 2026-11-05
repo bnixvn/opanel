@@ -10,6 +10,11 @@ busiest database users, and the statements running, which an administrator
 may stop.
 
 The settings are kept in panel-settings.json under "mysql_limits".
+
+The budget (CPU, IO, memory and the connection backstop) comes with the
+Resource limits addon (operator, 2026-11-05): without it there is none, and
+removing the addon takes MariaDB's back to none. Per-user statistics and
+the rest of the page are not limits and stay.
 """
 from __future__ import annotations
 
@@ -54,6 +59,13 @@ def memory_floor_mb() -> int:
     """MariaDB's memory may not be capped below its buffer pool and room to work."""
     pool = buffer_pool_mb()
     return (pool or 256) + 512
+
+
+def available() -> bool:
+    """Whether MariaDB may have a budget: the Resource limits addon is installed."""
+    from app.services import resource_limits
+
+    return resource_limits.installed()
 
 
 def saved() -> dict:
@@ -106,6 +118,19 @@ def apply(values: dict, db_users: list[str] | tuple[str, ...] = ()) -> dict:
     for start in range(0, len(statements), 200):
         mariadb._run_sql("".join(statements[start:start + 200]) + "FLUSH PRIVILEGES;\n")
     return saved()
+
+
+def set_userstat(on: bool, db_users: list[str] | tuple[str, ...] = ()) -> dict:
+    """Per-user statistics on or off. Without the addon the budget is none, so
+    a box that had one from before the addon held it is put back to none too."""
+    base = saved() if available() else dict(DEFAULTS)
+    return apply({**base, "userstat": bool(on)}, db_users)
+
+
+def release(db_users: list[str] | tuple[str, ...] = ()) -> dict:
+    """The Resource limits addon is gone: MariaDB's budget goes back to none,
+    the per-account connection limit included. Statistics stay as they were."""
+    return apply({**DEFAULTS, "userstat": saved()["userstat"]}, db_users)
 
 
 # --- now --------------------------------------------------------------------------------
