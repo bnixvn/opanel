@@ -238,3 +238,18 @@ def test_logrotate_may_write_openlitespeeds_own_logs():
     rotation = rotation[:rotation.index("\n}\n")]
     # Before the "config already current" early return, so every box gets it.
     assert rotation.index("ensure_logrotate_writes_ols_logs") < rotation.index("return 0\n  fi")
+
+
+def test_the_opcache_file_cache_is_pruned_every_night():
+    # PHP never prunes its file cache: a file, plugin or website that is gone
+    # leaves its compiled copy behind (operator, 2026-11-06).
+    fn = HELPER[HELPER.index("ensure_opcache_prune_timer() {"):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "OPCACHE_PRUNE_ROOT=/var/lib/php/opcache" in HELPER and "OPCACHE_PRUNE_DAYS=14" in HELPER
+    assert "-mindepth 2 -type f -atime +${OPCACHE_PRUNE_DAYS} -delete" in fn
+    assert "-mindepth 2 -type d -empty -delete" in fn, "each account's own directory stays"
+    assert " -L " not in fn and "-follow" not in fn, "links are never followed"
+    assert "Nice=19" in fn and "IOSchedulingClass=idle" in fn and "Persistent=true" in fn
+    assert 'systemctl enable --now "${OPCACHE_PRUNE_UNIT}.timer"' in fn
+    hygiene = HELPER[HELPER.index("  log-hygiene)"):][:600]
+    assert "ensure_opcache_prune_timer" in hygiene, "every update writes the timer"
