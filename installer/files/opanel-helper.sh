@@ -4251,6 +4251,7 @@ ensure_sites_group() {
 LOG_ROTATION_VERSION=4
 ensure_site_log_rotation() {
   command -v logrotate >/dev/null 2>&1 || return 0
+  ensure_logrotate_writes_ols_logs
   if [[ -f /etc/logrotate.d/opanel-sites ]] \
      && grep -q "opanel log rotation v${LOG_ROTATION_VERSION}" /etc/logrotate.d/opanel-sites; then
     return 0
@@ -4302,6 +4303,31 @@ EOF
   # config can no longer produce it, so clear the stale failure now instead of
   # leaving `systemctl --failed` red until the next midnight run succeeds.
   systemctl reset-failed logrotate.service >/dev/null 2>&1 || true
+}
+
+# Ubuntu 24.04's logrotate.service runs with ProtectSystem=full, so /usr -- and
+# OpenLiteSpeed's own logs in /usr/local/lsws/logs with it -- is read-only to
+# it: every night error.log and stderr.log failed with "Read-only file
+# system" and the unit stayed failed (.41 and .122, 2026-11-06; the v4 config's
+# dateext had been aimed at the wrong cause). Open that one directory to it.
+LOGROTATE_DROPIN=/etc/systemd/system/logrotate.service.d/opanel-ols-logs.conf
+ensure_logrotate_writes_ols_logs() {
+  local wanted
+  [[ -d /usr/local/lsws/logs ]] || return 0
+  wanted="# Managed by OPanel: OpenLiteSpeed's logs live under /usr, which
+# ProtectSystem=full makes read-only to logrotate.
+[Service]
+ReadWritePaths=/usr/local/lsws/logs"
+  if [[ "$(cat "$LOGROTATE_DROPIN" 2>/dev/null)" != "$wanted" ]]; then
+    install -d -m 0755 "${LOGROTATE_DROPIN%/*}"
+    printf '%s\n' "$wanted" >"$LOGROTATE_DROPIN"
+    chmod 0644 "$LOGROTATE_DROPIN"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+  # The failure it left is not current any more; the next run shows the truth.
+  if [[ "$(systemctl show -p Result --value logrotate.service 2>/dev/null)" != "success" ]]; then
+    systemctl reset-failed logrotate.service >/dev/null 2>&1 || true
+  fi
 }
 
 # OpenLiteSpeed ships logLevel DEBUG in the server error log block. opanel sets

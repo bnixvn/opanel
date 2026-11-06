@@ -224,3 +224,17 @@ def test_existing_installs_get_jit_turned_off():
     # Does nothing on a second run.
     assert "disable' \"$ini\" && continue" in block
     assert "ensure_php_jit_disabled" in HELPER[HELPER.index("  log-hygiene)"):][:400]
+
+
+def test_logrotate_may_write_openlitespeeds_own_logs():
+    # Ubuntu's logrotate.service has ProtectSystem=full: /usr/local/lsws/logs is
+    # read-only to it, and error.log/stderr.log failed every night (2026-11-06).
+    fn = HELPER[HELPER.index("ensure_logrotate_writes_ols_logs() {"):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "ReadWritePaths=/usr/local/lsws/logs" in fn
+    assert "/etc/systemd/system/logrotate.service.d/" in HELPER
+    assert "systemctl daemon-reload" in fn
+    rotation = HELPER[HELPER.index("ensure_site_log_rotation() {"):]
+    rotation = rotation[:rotation.index("\n}\n")]
+    # Before the "config already current" early return, so every box gets it.
+    assert rotation.index("ensure_logrotate_writes_ols_logs") < rotation.index("return 0\n  fi")
