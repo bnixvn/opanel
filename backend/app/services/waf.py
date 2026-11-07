@@ -1,5 +1,8 @@
+import hashlib
 import json
 import re
+import subprocess
+import time
 from datetime import datetime, timezone
 from typing import Iterable
 from urllib.parse import unquote
@@ -118,10 +121,14 @@ SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:40
         # (Datadog Security Labs, 2026-10-22): a multipart POST of hundreds of
         # parts, machine-nested or very long field names, the session upload
         # progress field, and code in an upload's file name - which PHP keeps
-        # in the session record. The thresholds sit far above any form
-        # WordPress, WooCommerce or ACF sends; a site that needs more turns
-        # the group off. PHP's own setting (session.upload_progress.enabled=0)
-        # is applied as well; this is the WAF half.
+        # in the session record. PHP's own setting
+        # (session.upload_progress.enabled=0) is applied as well; this is the
+        # WAF half.
+        #
+        # The field and file counts (unpatched_rules) are not shapes only an
+        # exploit sends: WordPress's menu screen posts ~10 fields per item, and
+        # a 50-item menu (552 fields) was refused on .122 (2026-11-07). They
+        # go only on a site whose PHP lacks the fix; the rest stays everywhere.
         #
         # The body is read for form POSTs only (1003001); opanel-base.conf already allows it, with ProcessPartial so a large upload is never refused.
         "id": "php2shell",
@@ -130,13 +137,14 @@ SecRule ARGS:rest_route "@contains /batch/v1" "id:1000002,phase:2,deny,status:40
         "description": "Blocks the request shapes of the php2shell exploits (CVE-2026-109618/109619/115560): the session upload progress field, multipart bodies of hundreds of fields or files, field names nested 16 deep or over 1 KB, and code in upload file names. Reads the body of form POSTs only.",
         "rules": r"""SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*(?:multipart/form-data|application/x-www-form-urlencoded)" "id:1003001,phase:1,pass,nolog,ctl:requestBodyAccess=On"
 SecRule ARGS_POST_NAMES "@rx (?i)^php_session_upload_progress$" "id:1003002,phase:2,deny,status:403,log,msg:'opanel blocked php2shell upload progress field'"
-SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003003,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart with too many fields',chain"
-  SecRule &ARGS_POST "@gt 400" "t:none"
-SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003004,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart with too many files',chain"
-  SecRule &FILES "@gt 100" "t:none"
 SecRule ARGS_NAMES "@rx (?:\[[^\]]*\]){16}" "id:1003005,phase:2,deny,status:403,log,msg:'opanel blocked php2shell nested field name'"
 SecRule ARGS_NAMES "@gt 1024" "id:1003006,phase:2,t:none,t:length,deny,status:403,log,msg:'opanel blocked php2shell oversized field name'"
 SecRule FILES "@rx (?i)<\?php|\|O:\d|[\x00-\x08\x0b\x0c\x0e-\x1f]" "id:1003007,phase:2,deny,status:403,log,msg:'opanel blocked php2shell upload file name'"
+""",
+        "unpatched_rules": r"""SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003003,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart with too many fields',chain"
+  SecRule &ARGS_POST "@gt 400" "t:none"
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:1003004,phase:2,deny,status:403,log,msg:'opanel blocked php2shell multipart with too many files',chain"
+  SecRule &FILES "@gt 100" "t:none"
 """,
     },
     {
@@ -593,6 +601,44 @@ def default_rule_definitions() -> list[dict]:
 SERVER_CUSTOM_RULES_FILE = "/usr/local/lsws/conf/opanel/waf/opanel-custom.conf"
 
 
+# The first release of each branch with the php2shell fix.
+PHP2SHELL_FIXED = {"8.2": (8, 2, 35), "8.3": (8, 3, 36), "8.4": (8, 4, 27), "8.5": (8, 5, 12)}
+PHP_BUILD_TTL = 600
+_php_builds: dict[str, tuple[float, str]] = {}
+
+
+def php_build(version: str | None) -> str:
+    """The release a website's PHP branch runs here ("8.4" -> "8.4.27"), "" if unknown."""
+    match = re.fullmatch(r"([5-9])\.(\d)", str(version or "").strip())
+    if not match:
+        return ""
+    key = match.group(0)
+    cached = _php_builds.get(key)
+    if cached and time.monotonic() - cached[0] < PHP_BUILD_TTL:
+        return cached[1]
+    binary = f"/usr/local/lsws/lsphp{match.group(1)}{match.group(2)}/bin/php"
+    try:
+        # -n: no ini, so a broken extension line cannot garble the answer.
+        out = subprocess.run([binary, "-n", "-r", "echo PHP_VERSION;"], capture_output=True,
+                             text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    if not re.fullmatch(r"\d+\.\d+\.\d+", out):
+        out = ""
+    _php_builds[key] = (time.monotonic(), out)
+    return out
+
+
+def php2shell_fixed(version: str | None) -> bool:
+    """Whether the website's PHP has the php2shell fix. Unknown is not fixed."""
+    build = php_build(version)
+    if not build:
+        return False
+    parts = tuple(int(part) for part in build.split("."))
+    fixed = PHP2SHELL_FIXED.get(f"{parts[0]}.{parts[1]}")
+    return bool(fixed) and parts >= fixed
+
+
 def site_rules_file(domain: str) -> str:
     safe_domain = _validate_domain(domain)
     return f"/usr/local/lsws/conf/opanel/waf/sites/{safe_domain}.conf"
@@ -606,6 +652,7 @@ def render_site_rules(
     bot_blocking: bool = True,
     bot_extra: Iterable[str] = (),
     global_bots: Iterable[str] | None = None,
+    php_version: str | None = None,
 ) -> str:
     safe_domain = _validate_domain(domain)
     enabled = set(validate_enabled_rule_ids(enabled_rule_ids))
@@ -628,6 +675,9 @@ def render_site_rules(
             continue
         chunks.append(f"# {rule['category']} - {rule['title']} ({rule['id']})")
         chunks.append(rule["rules"].strip())
+        if rule.get("unpatched_rules") and not php2shell_fixed(php_version):
+            chunks.append("# This website's PHP lacks the fix: the field and file counts too.")
+            chunks.append(rule["unpatched_rules"].strip())
         if rule.get("exceptions"):
             chunks.append(rule["exceptions"].strip())
 
@@ -666,12 +716,13 @@ def sync_site_rules(
     bot_blocking: bool = True,
     bot_extra: Iterable[str] = (),
     global_bots: Iterable[str] | None = None,
+    php_version: str | None = None,
 ) -> CommandResult:
     safe_domain = _validate_domain(domain)
     content = render_site_rules(
         safe_domain, enabled_rule_ids, custom_rules,
         bot_blocking=bot_blocking, bot_extra=bot_extra,
-        global_bots=global_bots,
+        global_bots=global_bots, php_version=php_version,
     )
     # defer_reload writes the site rules file without restarting OpenLiteSpeed;
     # a bulk caller must trigger one reload afterwards (see da_import).
@@ -699,6 +750,7 @@ def sync_website_rules(
         bot_blocking=bots["bot_blocking_enabled"],
         bot_extra=bots["bot_extra"],
         global_bots=global_bots,
+        php_version=getattr(website, "php_version", None),
     )
 
 
@@ -719,6 +771,37 @@ def resync_all_websites(db) -> dict:
             failed.append(website.domain)
     webserver.reload_service()
     return {"total": len(websites), "failed": failed}
+
+
+RULES_FINGERPRINT_KEY = "waf_rules_fingerprint"
+
+
+def rules_fingerprint(db) -> str:
+    """What a site's rules are made from that ships with the panel or the box:
+    the default groups, and the PHP release each PHP branch in use runs."""
+    versions = sorted({str(row[0]) for row in db.query(Website.php_version).distinct() if row[0]})
+    payload = {"rules": DEFAULT_RULES, "php": {version: php_build(version) for version in versions}}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def resync_if_rules_changed(db) -> dict:
+    """Re-render every site's rules when the shipped rules or a PHP release changed.
+
+    A release that changed a rule group never reached a site until that site
+    was saved again (the php2shell field count, 2026-11-07); the updater calls
+    this once per update, and it does nothing when nothing changed.
+    """
+    from app.services import panel_settings
+
+    current = rules_fingerprint(db)
+    if panel_settings._read_raw().get(RULES_FINGERPRINT_KEY) == current:
+        return {"resynced": False}
+    outcome = resync_all_websites(db)
+    if not outcome["failed"]:
+        data = panel_settings._read_raw()
+        data[RULES_FINGERPRINT_KEY] = current
+        panel_settings._write_raw(data)
+    return {"resynced": True, **outcome}
 
 
 def site_config(website: Website) -> dict:

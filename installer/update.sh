@@ -1854,6 +1854,16 @@ migrate_backup_layout
 migrate_protect_php_from_autoremove
 migrate_service_update_origins
 
+# A release that changes a WAF rule group never reached a site until that site
+# was saved again (the php2shell field count, 2026-11-07). Re-render every
+# site's rules when the shipped rules or a PHP release changed; one reload.
+( cd "$APP_DIR/backend" && sudo -u opanel env HOME="$APP_DIR" PYTHONPATH="$APP_DIR/backend" \
+    "$APP_DIR/backend/.venv/bin/python" -c 'from app.core.database import SessionLocal
+from app.services import waf
+with SessionLocal() as db:
+    print("WAF site rules:", waf.resync_if_rules_changed(db))' ) 2>&1 | tail -1 \
+  || echo "  (could not refresh the websites' WAF rules; saving a website applies them)"
+
 # --- Serve IPv6 when the box has it ----------------------------------------
 # Only fills in a bind host that was never set: an admin who turned IPv6 off in
 # the panel keeps it off.
