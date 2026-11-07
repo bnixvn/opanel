@@ -3405,7 +3405,8 @@ function App() {
   // Copy/Move: remember what and where from; nothing happens until Paste.
   function clipFileItems(action, paths) {
     if (!selectedWebsiteId || !paths?.length) return;
-    setFileClipboard({ action, paths: [...paths], from: fileListPath || '', websiteId: String(selectedWebsiteId) });
+    const label = websites.find(site => String(site.id) === String(selectedWebsiteId))?.domain || '';
+    setFileClipboard({ action, paths: [...paths], from: fileListPath || '', label, websiteId: String(selectedWebsiteId) });
     setSelectedFilePaths([]);
     // Whole phrases per action: "{0}ing" only works in English.
     setNotice(action === 'copy'
@@ -3413,14 +3414,15 @@ function App() {
       : tr("{0} item(s) to move. Open the folder to put them in and press Paste.", paths.length));
   }
 
-  // Paste: into the folder on screen, in the website they came from (the
-  // server copies and moves inside one website only).
+  // Paste: into the folder on screen - in the website they came from, or in
+  // another one of the same account (operator, 2026-11-08).
   async function pasteFileClipboard() {
     const clip = fileClipboard;
-    if (!clip || clip.websiteId !== String(selectedWebsiteId)) return;
+    if (!clip || !selectedWebsiteId) return;
+    const into = clip.websiteId === String(selectedWebsiteId) ? {} : { destination_website_id: Number(selectedWebsiteId) };
     const data = await request(`/maintenance/files/${clip.action}`, {
       method: 'POST',
-      body: JSON.stringify({ website_id: Number(clip.websiteId), paths: clip.paths, destination_path: fileListPath || '' }),
+      body: JSON.stringify({ website_id: Number(clip.websiteId), ...into, paths: clip.paths, destination_path: fileListPath || '' }),
     }, clip.action === 'copy' ? tr("Copying files...") : tr("Moving files..."));
     if (data) {
       // Moved items are no longer where the clipboard says; copies can go again.

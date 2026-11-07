@@ -1270,7 +1270,6 @@ export default {
   "Paste here": "Dán vào đây",
   "Clipboard": "Bộ nhớ tạm",
   "from": "từ",
-  "Open the website they came from to paste them.": "Mở lại website chứa các mục này để dán.",
   "No websites in this account.": "Tài khoản này chưa có website nào.",
   "No files in this folder.": "Thư mục này không có tệp nào.",
   "No global IPv6 address is configured on this server yet. Add one at your provider, then refresh.": "Máy chủ này chưa được cấu hình địa chỉ IPv6 toàn cục nào. Hãy thêm địa chỉ tại nhà cung cấp của bạn, sau đó làm mới.",

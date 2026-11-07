@@ -684,6 +684,26 @@ def _transfer_destination(website: Website, destination_path: str) -> Path:
     return destination
 
 
+def _transfer_into(website: Website, into: Optional[Website]) -> Website:
+    """The website a copy or move lands in: the source's own, or another of the
+    same account (operator, 2026-11-08: Paste in another site of the same user
+    was refused). Never one run by another Linux user: the copy runs as the
+    source's user, inside that user's home."""
+    if into is None:
+        return website
+    if (into.linux_user or None) != (website.linux_user or None):
+        raise ValueError("Files can only be pasted between websites of the same account")
+    return into
+
+
+def _transfer_args(website: Website, into: Website, source: Path, target: Path) -> List[str]:
+    # Within one website the helper is given paths relative to it, as before;
+    # into another, absolute ones, which it keeps inside the same home.
+    if Path(into.root_path).resolve() == Path(website.root_path).resolve():
+        return [_helper_relative_path(website, source), _helper_relative_path(website, target)]
+    return [str(source), str(target)]
+
+
 def _assert_transfer_target(source: Path, destination: Path, target: Path, action: str) -> None:
     if source.is_dir() and (destination == source or source in destination.parents):
         raise ValueError(f"Cannot {action.lower()} a folder into itself")
@@ -698,9 +718,11 @@ def copy_entries(
     allow_executable: bool = False,
     allow_sensitive: bool = False,
     quota_check: Optional[QuotaCheck] = None,
+    into: Optional[Website] = None,
 ) -> List[str]:
     sources = _transfer_sources(website, paths, "Copying", allow_executable, allow_sensitive)
-    destination = _transfer_destination(website, destination_path)
+    into = _transfer_into(website, into)
+    destination = _transfer_destination(into, destination_path)
     targets = [destination / source.name for source in sources]
     for source, target in zip(sources, targets):
         _assert_transfer_target(source, destination, target, "copy")
@@ -716,12 +738,7 @@ def copy_entries(
                 website,
                 root,
                 "cp",
-                [
-                    "-R",
-                    "--",
-                    _helper_relative_path(website, source),
-                    _helper_relative_path(website, target),
-                ],
+                ["-R", "--", *_transfer_args(website, into, source, target)],
                 ["cp", "-R", "--", str(source), str(target)],
             )
         elif source.is_dir():
@@ -740,9 +757,11 @@ def move_entries(
     destination_path: str,
     allow_executable: bool = False,
     allow_sensitive: bool = False,
+    into: Optional[Website] = None,
 ) -> List[str]:
     sources = _transfer_sources(website, paths, "Moving", allow_executable, allow_sensitive)
-    destination = _transfer_destination(website, destination_path)
+    into = _transfer_into(website, into)
+    destination = _transfer_destination(into, destination_path)
     targets = [destination / source.name for source in sources]
     for source, target in zip(sources, targets):
         _assert_transfer_target(source, destination, target, "move")
@@ -756,11 +775,7 @@ def move_entries(
                 website,
                 root,
                 "mv",
-                [
-                    "--",
-                    _helper_relative_path(website, source),
-                    _helper_relative_path(website, target),
-                ],
+                ["--", *_transfer_args(website, into, source, target)],
                 ["mv", "--", str(source), str(target)],
             )
         else:

@@ -54,9 +54,10 @@ def test_copy_and_move_ask_for_no_path():
     assert "clipFileItems('copy'" in APP and "clipFileItems('move'" in APP
 
 
-def test_paste_goes_into_the_folder_on_screen_of_the_same_website():
+def test_paste_goes_into_the_folder_on_screen_of_any_website_of_the_account():
     paste = _function("pasteFileClipboard")
-    assert "clip.websiteId !== String(selectedWebsiteId)" in paste
+    assert "{ destination_website_id: Number(selectedWebsiteId) }" in paste
+    assert "Open the website they came from" not in FILES
     assert "destination_path: fileListPath || ''" in paste
     assert "if (clip.action === 'move') setFileClipboard(null);" in paste
     assert "{fileClipboard && !atHome && <div className=\"fm-selection fm-clipboard\"" in FILES

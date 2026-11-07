@@ -129,11 +129,9 @@ export default function FilesPage({ brand, actions }) {
         <strong>{fileClipboard.action === 'copy'
           ? t('{n} item(s) to copy', { n: fileClipboard.paths.length })
           : t('{n} item(s) to move', { n: fileClipboard.paths.length })}</strong>
-        <span className="hint" title={fileClipboard.paths.join('\n')}>{t('from')} /{fileClipboard.from}</span>
+        <span className="hint" title={fileClipboard.paths.join('\n')}>{t('from')} {fileClipboard.label}/{fileClipboard.from}</span>
         <div className="fm-selection-actions">
-          {fileClipboard.websiteId === String(selectedWebsiteId)
-            ? <button disabled={!!loading} onClick={pasteFileClipboard}><ClipboardPaste size={14} aria-hidden="true"/> {t('Paste here')}</button>
-            : <span className="hint">{t('Open the website they came from to paste them.')}</span>}
+          <button disabled={!!loading} onClick={pasteFileClipboard}><ClipboardPaste size={14} aria-hidden="true"/> {t('Paste here')}</button>
         </div>
         <button type="button" className="secondary-light fm-selection-clear" onClick={() => setFileClipboard(null)}><X size={14} aria-hidden="true"/> {t('Cancel')}</button>
       </div>}
