@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   Archive, ArchiveRestore, ArrowDown, ArrowUp, Clock, Copy, CornerLeftUp, Download, FilePen, FilePlus, FileText, FolderOpen, FolderPlus,
-  Eye, Lock, MoveRight, PencilLine, RefreshCw, Trash2, Upload, X,
+  ClipboardPaste, Eye, Lock, MoveRight, PencilLine, RefreshCw, Trash2, Upload, X,
 } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
 import { useT } from '../lib/t.js';
@@ -43,8 +43,10 @@ export default function FilesPage({ brand, actions }) {
     dismissFileJob, downloadFile, extractArchive, fileBreadcrumbs, fileJobs, fileListPath, files, formatBytes, formatFileTime, isAdmin,
     isExtractableArchive, isTextEditable, listFiles, loading, makeFile, makeFileDirectory, moveSelectedFiles, openChmod, openFileEditorTab,
     parentFilePath, renameFileItem, selectedFilePaths, selectedWebsiteId, storageUsageText, toggleAllFiles, toggleFileSelection,
-    uploadProgress, uploadSiteFile, request,
+    uploadProgress, uploadSiteFile, request, websites, setSelectedWebsiteId, fileClipboard, setFileClipboard, pasteFileClipboard,
   } = usePanel();
+  // The account's home itself is on screen (its websites), not a website.
+  const [atHome, setAtHome] = useState(false);
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
   const shownFiles = useMemo(() => [...files].sort((a, b) => compareFiles(a, b, sort.key, sort.dir)), [files, sort]);
   const sortBy = (key) => setSort((prev) => (prev.key === key
@@ -73,35 +75,68 @@ export default function FilesPage({ brand, actions }) {
   const uploadPercent = uploadProgress?.total ? Math.round((uploadProgress.loaded / uploadProgress.total) * 100) : 0;
 
   const rootPath = currentSite ? `${currentSite.root_path}${fileListPath ? `/${fileListPath}` : ''}` : '';
+  // The tree starts at the account's home, /home/<user>, not at one website
+  // (operator, 2026-11-08, as BPanel): every website of that account is in it.
+  // Files are still changed only inside a website.
+  const fileHome = (String(currentSite?.root_path || '').match(/^(\/home\/[^/]+)\//) || [])[1] || '';
+  const selectSite = (site) => {
+    setAtHome(false);
+    if (String(site.id) === String(selectedWebsiteId)) listFiles('public_html');
+    else setSelectedWebsiteId(String(site.id));
+  };
+  const homeEntries = fileHome ? (websites || [])
+    .filter((site) => String(site.root_path || '').startsWith(`${fileHome}/`))
+    .sort((a, b) => a.domain.localeCompare(b.domain))
+    .map((site) => ({ key: `site:${site.id}`, kind: 'site', label: site.domain, title: site.root_path,
+      active: String(site.id) === String(selectedWebsiteId), onSelect: () => selectSite(site) })) : [];
+  const canEdit = hasTarget && !atHome;
   return <>
     <header className="fm-app-top">
       <div className="fm-app-brand">{brand}<strong>{t('File manager')}</strong></div>
       <div className="fm-app-target">
         <WebsiteSelect/>
-        {currentSite && <span className="fm-app-root" title={rootPath}>{t('Root: {path}', { path: <strong>{rootPath}</strong> })}</span>}
+        {currentSite && <span className="fm-app-root" title={atHome ? fileHome : rootPath}>{t('Root: {path}', { path: <strong>{fileHome || rootPath}</strong> })}</span>}
         {currentUser && !isAdmin && <span className="fm-app-root">{t('Storage: {usage}', { usage: <strong>{storageUsageText(currentUser)}</strong> })}</span>}
       </div>
       <div className="fm-app-actions">{actions}</div>
     </header>
     <FolderTree request={request} base={hasTarget ? `/maintenance/files/${selectedWebsiteId}` : ''} targetKey={String(selectedWebsiteId || '')}
-      current={fileListPath} currentItems={files} onOpen={(path) => listFiles(path)} t={t}
-      rootLabel={currentSite?.domain || t('root')}/>
+      current={fileListPath} currentItems={files} onOpen={(path) => { setAtHome(false); listFiles(path); }} t={t}
+      rootLabel={currentSite?.domain || t('root')}
+      homeLabel={fileHome} homeEntries={homeEntries} atHome={atHome} onHome={() => setAtHome(true)}/>
     <section className="fm-main" aria-label={t('Files')}>
       {currentUser?.demo && <div className="demo-banner" role="status"><Eye size={15} aria-hidden="true"/> <span>{t('You are viewing a read-only demo: you can open every page, and nothing you change is saved.')}</span></div>}
       <div className="path-pill breadcrumb-line">
-        <button className="crumb" disabled={!hasTarget || fileListPath === ''} onClick={() => listFiles('')}>{t('root')}</button>
-        {fileBreadcrumbs(fileListPath).map((crumb) => <button className="crumb" key={crumb.path} onClick={() => listFiles(crumb.path)}>{crumb.label}</button>)}
+        {fileHome
+          ? <>
+              <button className="crumb" disabled={atHome} onClick={() => setAtHome(true)} title={fileHome}>{fileHome}</button>
+              {!atHome && <button className="crumb" disabled={fileListPath === ''} onClick={() => listFiles('')}>{currentSite?.domain}</button>}
+            </>
+          : <button className="crumb" disabled={!hasTarget || fileListPath === ''} onClick={() => listFiles('')}>{t('root')}</button>}
+        {!atHome && fileBreadcrumbs(fileListPath).map((crumb) => <button className="crumb" key={crumb.path} onClick={() => listFiles(crumb.path)}>{crumb.label}</button>)}
       </div>
       <div className="file-toolbar fm-toolbar">
-        <button className="secondary-light" disabled={!hasTarget || fileListPath === '' || !!loading} onClick={() => listFiles(parentFilePath(fileListPath))}><CornerLeftUp size={14} aria-hidden="true"/> {t('Up')}</button>
-        <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={makeFileDirectory}><FolderPlus size={14} aria-hidden="true"/> {t('New folder')}</button>
-        <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={makeFile}><FilePlus size={14} aria-hidden="true"/> {t('New file')}</button>
-        <label className={`upload-button ${(!hasTarget || !!loading || !!uploadProgress) ? 'disabled' : ''}`}>
+        <button className="secondary-light" disabled={!canEdit || fileListPath === '' || !!loading} onClick={() => listFiles(parentFilePath(fileListPath))}><CornerLeftUp size={14} aria-hidden="true"/> {t('Up')}</button>
+        <button className="secondary-light" disabled={!canEdit || !!loading} onClick={makeFileDirectory}><FolderPlus size={14} aria-hidden="true"/> {t('New folder')}</button>
+        <button className="secondary-light" disabled={!canEdit || !!loading} onClick={makeFile}><FilePlus size={14} aria-hidden="true"/> {t('New file')}</button>
+        <label className={`upload-button ${(!canEdit || !!loading || !!uploadProgress) ? 'disabled' : ''}`}>
           <Upload size={14} aria-hidden="true"/> {t('Upload')}
-          <input type="file" disabled={!hasTarget || !!loading || !!uploadProgress} onChange={(e) => { uploadSiteFile(e.target.files?.[0]); e.target.value = ''; }}/>
+          <input type="file" disabled={!canEdit || !!loading || !!uploadProgress} onChange={(e) => { uploadSiteFile(e.target.files?.[0]); e.target.value = ''; }}/>
         </label>
-        <button className="secondary-light" disabled={!hasTarget || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14} aria-hidden="true"/> {t('Refresh')}</button>
+        <button className="secondary-light" disabled={!canEdit || !!loading} onClick={() => listFiles(fileListPath)}><RefreshCw size={14} aria-hidden="true"/> {t('Refresh')}</button>
       </div>
+      {fileClipboard && !atHome && <div className="fm-selection fm-clipboard" role="region" aria-label={t('Clipboard')}>
+        <strong>{fileClipboard.action === 'copy'
+          ? t('{n} item(s) to copy', { n: fileClipboard.paths.length })
+          : t('{n} item(s) to move', { n: fileClipboard.paths.length })}</strong>
+        <span className="hint" title={fileClipboard.paths.join('\n')}>{t('from')} /{fileClipboard.from}</span>
+        <div className="fm-selection-actions">
+          {fileClipboard.websiteId === String(selectedWebsiteId)
+            ? <button disabled={!!loading} onClick={pasteFileClipboard}><ClipboardPaste size={14} aria-hidden="true"/> {t('Paste here')}</button>
+            : <span className="hint">{t('Open the website they came from to paste them.')}</span>}
+        </div>
+        <button type="button" className="secondary-light fm-selection-clear" onClick={() => setFileClipboard(null)}><X size={14} aria-hidden="true"/> {t('Cancel')}</button>
+      </div>}
       {selectedFilePaths.length > 0 && <div className="fm-selection" role="region" aria-label={t('Selected items')}>
         <strong>{t('{count} selected', { count: selectedFilePaths.length })}</strong>
         <div className="fm-selection-actions">
@@ -130,7 +165,16 @@ export default function FilesPage({ brand, actions }) {
           <button type="button" className="file-job-dismiss" onClick={() => dismissFileJob(job.job_id)} aria-label={t('Dismiss')}><X size={13} aria-hidden="true"/></button>
         </div>)}
       </div>}
-      <div className="file-list">
+      {atHome && <div className="file-list fm-home-list">
+        {homeEntries.length === 0 && <div className="empty-box">{t('No websites in this account.')}</div>}
+        {homeEntries.map((entry) => <div className="file-item" key={entry.key}>
+          <span aria-hidden="true"></span>
+          <button className="file-name" onClick={entry.onSelect} title={entry.title}>
+            <FileTypeIcon isDir size={17}/> <strong>{entry.label}</strong>
+          </button>
+        </div>)}
+      </div>}
+      {!atHome && <div className="file-list">
         <div className="file-list-header">
           <input type="checkbox" checked={allSelected} ref={(el) => { if (el) el.indeterminate = selectedFilePaths.length > 0 && !allSelected; }}
             onChange={toggleAllFiles} disabled={files.length === 0} aria-label={t('Select all')}/>
@@ -173,7 +217,7 @@ export default function FilesPage({ brand, actions }) {
             ]}/>
           </div>
         </div>)}
-      </div>
+      </div>}
       {loading && <div className="loading"><span></span>{loading}</div>}
     </section>
   </>;

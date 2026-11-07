@@ -623,6 +623,9 @@ function App() {
   const [fileJobs, setFileJobs] = useState([]);
   const [fileContent, setFileContent] = useState('');
   const [selectedFilePaths, setSelectedFilePaths] = useState([]);
+  // Copy and Move put the items here; Paste in the folder opened next does the
+  // work (operator, 2026-11-08: typing the destination's path was the old way).
+  const [fileClipboard, setFileClipboard] = useState(null);
   // The upload under way, and how far it has got: { name, loaded, total }.
   const [uploadProgress, setUploadProgress] = useState(null);
   const [editorCursor, setEditorCursor] = useState({ line: 1, column: 1 });
@@ -3399,31 +3402,41 @@ function App() {
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
 
-  async function transferFileItems(action, paths) {
+  // Copy/Move: remember what and where from; nothing happens until Paste.
+  function clipFileItems(action, paths) {
     if (!selectedWebsiteId || !paths?.length) return;
+    setFileClipboard({ action, paths: [...paths], from: fileListPath || '', websiteId: String(selectedWebsiteId) });
+    setSelectedFilePaths([]);
     // Whole phrases per action: "{0}ing" only works in English.
-    const copying = action === 'copy';
-    const destination = await promptDialog({
-      title: copying ? tr("Copy to folder") : tr("Move to folder"),
-      subject: paths.length === 1 ? paths[0].split('/').pop() : tr("{0} item(s)", paths.length),
-      label: tr("Folder"), defaultValue: fileListPath || 'public_html', required: false,
-      confirmLabel: copying ? tr("Copy") : tr("Move"),
-    });
-    if (destination === null) return;
-    const targetPath = destination.trim() || fileListPath || 'public_html';
-    const data = await request(`/maintenance/files/${action}`, {
+    setNotice(action === 'copy'
+      ? tr("{0} item(s) to copy. Open the folder to put them in and press Paste.", paths.length)
+      : tr("{0} item(s) to move. Open the folder to put them in and press Paste.", paths.length));
+  }
+
+  // Paste: into the folder on screen, in the website they came from (the
+  // server copies and moves inside one website only).
+  async function pasteFileClipboard() {
+    const clip = fileClipboard;
+    if (!clip || clip.websiteId !== String(selectedWebsiteId)) return;
+    const data = await request(`/maintenance/files/${clip.action}`, {
       method: 'POST',
-      body: JSON.stringify({ website_id: Number(selectedWebsiteId), paths, destination_path: targetPath }),
-    }, copying ? tr("Copying files...") : tr("Moving files..."));
-    if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
+      body: JSON.stringify({ website_id: Number(clip.websiteId), paths: clip.paths, destination_path: fileListPath || '' }),
+    }, clip.action === 'copy' ? tr("Copying files...") : tr("Moving files..."));
+    if (data) {
+      // Moved items are no longer where the clipboard says; copies can go again.
+      if (clip.action === 'move') setFileClipboard(null);
+      setNotice(tr("{0} item(s) pasted.", clip.paths.length));
+      await listFiles(fileListPath);
+      await loadCurrentUser();
+    }
   }
 
-  async function copySelectedFiles(paths) {
-    await transferFileItems('copy', Array.isArray(paths) ? paths : selectedFilePaths);
+  function copySelectedFiles(paths) {
+    clipFileItems('copy', Array.isArray(paths) ? paths : selectedFilePaths);
   }
 
-  async function moveSelectedFiles(paths) {
-    await transferFileItems('move', Array.isArray(paths) ? paths : selectedFilePaths);
+  function moveSelectedFiles(paths) {
+    clipFileItems('move', Array.isArray(paths) ? paths : selectedFilePaths);
   }
 
   function clearFileSelection() {
@@ -5181,6 +5194,7 @@ function App() {
       setShowCreateDb, showCreateDb,
       // The file manager (pages/Files.jsx).
       WebsiteSelect, archiveSelectedFiles, clearFileSelection, copySelectedFiles, currentSite, deleteSelectedFiles, dismissFileJob,
+      fileClipboard, setFileClipboard, pasteFileClipboard,
       downloadFile, extractArchive, fileBreadcrumbs, fileJobs, fileListPath, files, formatFileTime, isExtractableArchive, isTextEditable,
       listFiles, makeFile, makeFileDirectory, moveSelectedFiles, openChmod, openFileEditorTab, parentFilePath, renameFileItem,
       selectedFilePaths, selectedWebsiteId, storageUsageText, toggleAllFiles, toggleFileSelection, uploadProgress, uploadSiteFile,

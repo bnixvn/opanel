@@ -15,7 +15,12 @@ const ancestors = path => {
   return parts.map((_, n) => parts.slice(0, n + 1).join('/'));
 };
 
-export function FolderTree({ request, base, targetKey, current, currentItems, rootLabel, onOpen, t }) {
+// homeLabel/homeEntries: the tree starts at the account's home (operator,
+// 2026-11-07): /home/<user> with each website and apps/<name> under it, and
+// the folders of the one being browsed open beneath it. Files are still only
+// changed inside a website or an application, never in the home itself.
+export function FolderTree({ request, base, targetKey, current, currentItems, rootLabel, onOpen, t,
+  homeLabel = '', homeEntries = [], atHome = false, onHome = () => {} }) {
   // path -> [{ name, path }] once read, 'loading' while it is.
   const [children, setChildren] = useState({});
   const [open, setOpen] = useState(() => new Set(['']));
@@ -85,6 +90,43 @@ export function FolderTree({ request, base, targetKey, current, currentItems, ro
         <ul role="group">{kids.map(kid => node(kid.path, kid.name, depth + 1))}</ul>}
     </li>;
   };
+
+  const entryRow = (entry, depth) => {
+    if (entry.active && !atHome) return <React.Fragment key={entry.key}>{node('', entry.label, depth)}</React.Fragment>;
+    return <li key={entry.key} role="treeitem" aria-selected={false}>
+      <div className="fm-tree-row" style={{ paddingLeft: `${8 + depth * 14}px` }}>
+        <span className="fm-tree-toggle" aria-hidden="true" style={{ visibility: 'hidden' }}><ChevronRight size={14}/></span>
+        <button type="button" className="fm-tree-name" title={entry.title || entry.label} onClick={entry.onSelect}>
+          <FileTypeIcon isDir size={18}/><span>{entry.label}</span>
+        </button>
+      </div>
+    </li>;
+  };
+
+  if (homeLabel) {
+    const sites = homeEntries.filter(entry => entry.kind !== 'app');
+    const apps = homeEntries.filter(entry => entry.kind === 'app');
+    return <nav className="fm-tree" aria-label={t('Folders')}>
+      <ul role="tree"><li role="treeitem" aria-expanded aria-selected={atHome}>
+        <div className={`fm-tree-row${atHome ? ' active' : ''}`} style={{ paddingLeft: '8px' }}>
+          <span className="fm-tree-toggle" aria-hidden="true"><ChevronDown size={14}/></span>
+          <button type="button" className="fm-tree-name" title={homeLabel} onClick={onHome}>
+            <HardDrive size={15} aria-hidden="true"/><span>{homeLabel}</span>
+          </button>
+        </div>
+        <ul role="group">
+          {sites.map(entry => entryRow(entry, 1))}
+          {apps.length > 0 && <li role="treeitem" aria-expanded>
+            <div className="fm-tree-row" style={{ paddingLeft: '22px' }}>
+              <span className="fm-tree-toggle" aria-hidden="true"><ChevronDown size={14}/></span>
+              <span className="fm-tree-name"><FileTypeIcon isDir size={18}/><span>apps</span></span>
+            </div>
+            <ul role="group">{apps.map(entry => entryRow(entry, 2))}</ul>
+          </li>}
+        </ul>
+      </li></ul>
+    </nav>;
+  }
 
   return <nav className="fm-tree" aria-label={t('Folders')}>
     <ul role="tree">{node('', rootLabel || t('root'), 0, true)}</ul>

@@ -673,7 +673,10 @@ def _transfer_sources(website: Website, paths: Iterable[str], action: str, allow
 
 
 def _transfer_destination(website: Website, destination_path: str) -> Path:
-    destination = _safe_path(website, destination_path or site_users.PUBLIC_DIR)
+    # "" is the website's own root (the file manager pastes into the folder on
+    # screen, and that can be the root); a request that says nothing gets
+    # public_html from FileTransfer's default.
+    destination = _safe_path(website, destination_path or "")
     if not destination.exists() or not destination.is_dir():
         raise ValueError("Destination folder not found")
     if destination.is_symlink():
