@@ -5611,6 +5611,11 @@ ensure_php_disable_ini() {
     return 0
   fi
   mv -f "${ini}.tmp" "$ini"
+  # PHP folds function_exists('exec') into the compiled script, and the file
+  # cache keeps that across processes: a plugin guarding exec() with it would
+  # go on calling a function that is gone (or skip one that is back). The
+  # account's compiled scripts are therefore dropped with the list's change.
+  find "/var/lib/php/opcache/${user}" -mindepth 1 -delete 2>/dev/null || true
   # -x: the process name only, so this never matches a shell whose command
   # line merely mentions lsphp. Waited for, so a request right after Save is
   # served by a PHP that read the new ini, not by one still winding down.

@@ -46,6 +46,9 @@ def test_the_account_ini_carries_the_list_and_restarts_its_php():
     assert 'old_pids="$(pgrep -x lsphp -u "$user" 2>/dev/null || true)"' in ini, "-x: never a shell that mentions lsphp"
     assert ini.index("cmp -s") < ini.index("pgrep"), "only when the ini changed"
     assert 'kill -KILL $alive' in ini and "pkill -KILL" not in ini, "only the processes that were running before"
+    # function_exists('exec') is folded into compiled scripts the file cache keeps.
+    assert 'find "/var/lib/php/opcache/${user}" -mindepth 1 -delete' in ini
+    assert ini.index("opcache/${user}") < ini.index("pgrep")
     listing = _function("user_php_disable_list")
     assert listing.count("PHP_DEFAULT_DISABLE_FUNCTIONS") == 2
 
