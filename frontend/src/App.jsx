@@ -454,6 +454,16 @@ const RESTORE_MODES = {
 // The migration addons' pages, and the mode each runs the wizard in.
 const IMPORT_PAGES = { importDirectadmin: 'directadmin', importCpanel: 'cpanel', importFastpanel: 'fastpanel' };
 
+// The name an MCP client files this server under: this panel's address and the
+// account, so one client talking to several servers keeps them apart
+// (operator, 2026-11-08: every server was "opanel"). Letters, digits and
+// hyphens, short enough that the tool names a client builds from it fit.
+function defaultMcpServerName(hostname, username) {
+  const clean = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const host = clean(String(hostname || '').toLowerCase().replace(/^(panel|www)\./, ''));
+  return [host, clean(username)].filter(Boolean).join('-').slice(0, 40).replace(/-+$/, '') || 'opanel';
+}
+
 function App() {
   // Auth is now cookie-based (HttpOnly opanel_session). The SPA does not see
   // the JWT at all. We track only whether the user is authenticated in memory.
@@ -623,6 +633,8 @@ function App() {
   const [fileJobs, setFileJobs] = useState([]);
   const [fileContent, setFileContent] = useState('');
   const [selectedFilePaths, setSelectedFilePaths] = useState([]);
+  // The MCP server's name in a client, when changed from the suggested one.
+  const [mcpServerName, setMcpServerName] = useState('');
   // Copy and Move put the items here; Paste in the folder opened next does the
   // work (operator, 2026-11-08: typing the destination's path was the old way).
   const [fileClipboard, setFileClipboard] = useState(null);
@@ -6410,12 +6422,15 @@ function App() {
     </>;
   }
 
+  const mcpName = mcpServerName || defaultMcpServerName(window.location.hostname, currentUser?.username);
+
   function mcpClientSnippets(token) {
     const bearer = `Bearer ${token || '<your-token>'}`;
+    const name = mcpName;
     return [
-      ['Claude Code', `claude mcp add --transport http opanel ${mcpEndpoint} --header "Authorization: ${bearer}"`],
-      ['Cursor (~/.cursor/mcp.json)', JSON.stringify({ mcpServers: { opanel: { url: mcpEndpoint, headers: { Authorization: bearer } } } }, null, 2)],
-      ['VS Code (.vscode/mcp.json)', JSON.stringify({ servers: { opanel: { type: 'http', url: mcpEndpoint, headers: { Authorization: bearer } } } }, null, 2)],
+      ['Claude Code', `claude mcp add --transport http ${name} ${mcpEndpoint} --header "Authorization: ${bearer}"`],
+      ['Cursor (~/.cursor/mcp.json)', JSON.stringify({ mcpServers: { [name]: { url: mcpEndpoint, headers: { Authorization: bearer } } } }, null, 2)],
+      ['VS Code (.vscode/mcp.json)', JSON.stringify({ servers: { [name]: { type: 'http', url: mcpEndpoint, headers: { Authorization: bearer } } } }, null, 2)],
     ];
   }
 
@@ -7834,6 +7849,11 @@ function App() {
               {' '}<button className="mini" onClick={() => navigateToPage('addons')}><PackageOpen size={13}/> {tr("Open Addons")}</button></>
           : tr("MCP is not enabled on this panel. Ask your administrator to turn it on.")}</div>}
         {enabled && renderCopyBlock(tr("Endpoint"), mcpEndpoint)}
+        {enabled && <label className="field mcp-server-name"><span className="field-label">{tr("Name in your client")}</span>
+          <input value={mcpName} maxLength={40} spellCheck={false} autoComplete="off"
+            onChange={e => setMcpServerName(e.target.value.replace(/[^A-Za-z0-9_-]/g, ''))} />
+          <small className="hint">{tr("A client that talks to several servers needs a different name for each. This one is made from the panel’s address and your account; change it if you like.")}</small>
+        </label>}
       </section>
 
       {enabled && mcpCreated && <section className="section token-created-notice">

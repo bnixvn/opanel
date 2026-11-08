@@ -36,6 +36,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.access import can_access_owner, can_manage_user, scope_owner
+from app.core.config import settings
 from app.core.permissions import is_reseller_role, is_admin_role
 from app.core.version import APP_VERSION
 from app.models.entities import (
@@ -1083,7 +1084,10 @@ def handle_message(ctx: Context, message: Any) -> Optional[dict]:
         return {"jsonrpc": "2.0", "id": message_id, "result": {
             "protocolVersion": negotiate_version(params.get("protocolVersion")),
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "opanel", "title": "OPanel", "version": APP_VERSION},
+            # The panel's address in the title, for a client that lists several
+            # servers (operator, 2026-11-08).
+            "serverInfo": {"name": "opanel", "version": APP_VERSION,
+                           "title": f"OPanel · {settings.panel_domain}" if settings.panel_domain else "OPanel"},
             "instructions": SERVER_INSTRUCTIONS,
         }}
     if method == "ping":

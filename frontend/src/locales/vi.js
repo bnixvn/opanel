@@ -1271,6 +1271,8 @@ export default {
   "Clipboard": "Bộ nhớ tạm",
   "from": "từ",
   "No websites in this account.": "Tài khoản này chưa có website nào.",
+  "Name in your client": "Tên trong client",
+  "A client that talks to several servers needs a different name for each. This one is made from the panel’s address and your account; change it if you like.": "Client kết nối nhiều máy chủ cần mỗi máy một tên riêng. Tên này lấy từ địa chỉ panel và tài khoản của bạn; có thể đổi tuỳ ý.",
   "No files in this folder.": "Thư mục này không có tệp nào.",
   "No global IPv6 address is configured on this server yet. Add one at your provider, then refresh.": "Máy chủ này chưa được cấu hình địa chỉ IPv6 toàn cục nào. Hãy thêm địa chỉ tại nhà cung cấp của bạn, sau đó làm mới.",
   "No longer on the panel": "Không còn trên panel",
