@@ -27,6 +27,9 @@ class User(Base):
     database_limit: Mapped[int] = mapped_column(Integer, default=10)
     # Mailboxes across all of the account's mail domains (Email addon). 0 = unlimited.
     mailbox_limit: Mapped[int] = mapped_column(Integer, default=10, server_default=text("10"))
+    # The PHP functions the account's PHP disables (services/php_functions.py):
+    # None is the default list, "" nothing, else the account's own comma list.
+    php_disable_functions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # The reseller this account was created by and is managed by; NULL for the
     # admin's own accounts. Only end users have one.
     reseller_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
@@ -97,6 +100,13 @@ class Website(Base):
     # PHP fenced into the site's tree by open_basedir. Off unless the site or
     # its package asks: it turns PHP's realpath cache off (services/php_isolation.py).
     open_basedir: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+
+    @property
+    def disable_functions(self) -> Optional[str]:
+        """The account's disabled PHP functions (per account: one lsphp per
+        Linux user serves all of its sites). None is the default list."""
+        return self.owner.php_disable_functions if self.owner is not None else None
+
     # The site's own rewrite rules and response headers (openlitespeed.parse_custom_rules).
     custom_rules: Mapped[str] = mapped_column(Text, default="", server_default="")
     # Set when app_type is "proxy": the http(s) address OpenLiteSpeed forwards

@@ -389,6 +389,8 @@ def create_user_backup(user: User, db, filename: str | None = None,
                 "is_active": user.is_active,
                 "website_limit": user.website_limit,
                 "storage_limit_mb": user.storage_limit_mb,
+                # None is the default list (services/php_functions.py).
+                "php_disable_functions": getattr(user, "php_disable_functions", None),
             },
             "websites": [],
             "databases": [],
@@ -1157,6 +1159,15 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
         db.flush()
         created_user = True
     site_users.ensure_panel_user(user.username)
+    # The account's own disabled-function list; an archive without one
+    # (older, or BPanel's) leaves the default list in place.
+    if user_info.get("php_disable_functions") is not None:
+        from app.services import php_functions
+
+        try:
+            php_functions.apply(db, user, str(user_info.get("php_disable_functions")))
+        except ValueError:
+            pass
 
     restored_websites = []
     restored_databases = []

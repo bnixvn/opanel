@@ -791,6 +791,9 @@ class WebsiteOut(BaseModel):
     ssl_has_ca: bool = False
     lscache_enabled: bool = True
     open_basedir: bool = False
+    # The account's disabled PHP functions (services/php_functions.py); None
+    # is the default list.
+    disable_functions: Optional[str] = None
     custom_rules: str = ""
     proxy_url: str = ""
     proxy_preserve_host: bool = True

@@ -87,6 +87,11 @@
 .wsd-php-fence{display:grid;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
 .wsd-php-fence>h3{margin:0;font-size:14px;font-weight:700;color:var(--text)}
 .wsd-php-fence .hint{margin:0}
+.wsd-php-function-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px 14px}
+.wsd-php-function-grid code{font-size:13px}
+.wsd-php-function-add{display:flex;gap:8px;flex-wrap:wrap}
+.wsd-php-function-add input{flex:1 1 220px;min-width:0}
+.wsd-php-function-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 /* A website's WAF switch, on its Security tab and on the WAF page. */
 .waf-site-switch{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-alt);margin-top:4px}
 .waf-site-switch>div{display:grid;gap:2px;min-width:0}

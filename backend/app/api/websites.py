@@ -4,11 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from app.api.deps import get_current_user
 from app.core.config import settings
@@ -18,7 +19,7 @@ from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
 from app.models.entities import DatabaseAccount, GitRepository, SftpAccount, User, Website, WebsiteAlias
 from app.schemas.schemas import AvailableCertificateOut, ReuseSslRequest, WebsiteAliasCreate, WebsiteAliasOut, WebsiteCacheUpdate, WebsiteCreate, WebsiteCustomRules, WebsiteLogOut, WebsiteNginxConfig, WebsiteNginxCustom, WebsiteOut, WebsiteRename, WebsiteUpdate, WebsiteWafUpdate, WildcardSslRequest
-from app.services import autossl, cron, dns_manager, file_manager, mail, mariadb, openlitespeed, php_isolation, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress, wp_manager
+from app.services import autossl, cron, dns_manager, file_manager, mail, mariadb, openlitespeed, php_functions, php_isolation, sftp_accounts, site_users, ssl, storage_quota, waf, wordpress, wp_manager
 from app.services.audit import log_action
 
 _PLACEHOLDER_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "openlitespeed"
@@ -850,6 +851,39 @@ def set_website_lscache(website_id: int, payload: WebsiteCacheUpdate, request: R
         except (RuntimeError, ValueError):
             pass
     log_action(db, current_user.id, "website_lscache", website.domain, "on" if payload.on else "off", request=request)
+    return website
+
+
+class WebsiteDisableFunctions(BaseModel):
+    # A comma list; None goes back to the default list.
+    functions: Optional[str] = Field(default=None, max_length=8000)
+
+
+@router.put("/{website_id}/disable-functions", response_model=WebsiteOut)
+def set_website_disable_functions(website_id: int, payload: WebsiteDisableFunctions, request: Request,
+                                  db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The PHP functions this site's account may not call (operator, 2026-11-08).
+
+    Every account starts with the default list; its owner takes off the ones
+    their code needs. It holds for every site of the account: LiteSpeed
+    runs one PHP per Linux user (services/php_functions.py).
+    """
+    website = _get_authorized_website(db, website_id, current_user)
+    if (website.app_type or "wordpress") not in {"wordpress", "php"}:
+        raise HTTPException(status_code=400, detail="Disabled functions are for PHP and WordPress sites")
+    owner = db.query(User).filter(User.id == website.owner_id).first()
+    if owner is None:
+        raise HTTPException(status_code=404, detail="Owner not found")
+    try:
+        php_functions.apply(db, owner, payload.functions)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (RuntimeError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=f"Could not write the account's PHP settings: {exc}") from exc
+    db.commit()
+    db.refresh(website)
+    log_action(db, current_user.id, "website_disable_functions", owner.username,
+               "default" if owner.php_disable_functions is None else (owner.php_disable_functions or "none"), request=request)
     return website
 
 

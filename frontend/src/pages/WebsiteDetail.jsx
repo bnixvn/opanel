@@ -282,7 +282,63 @@ function PhpTab({ site }) {
       <button type="button" disabled={!ready || !dirty || !!loading} onClick={saveWebsiteSettings}><Save size={14} aria-hidden="true"/> {t('Save changes')}</button>
     </div>
     {appType !== 'static' && appType !== 'proxy' && <PhpFence site={site}/>}
+    {appType !== 'static' && appType !== 'proxy' && <PhpFunctions site={site}/>}
   </section>;
+}
+
+// What every account's PHP may not call until its owner takes a function off
+// (services/php_functions.py DEFAULT_DISABLED, the helper's own copy too).
+const PHP_DEFAULT_DISABLED = ['exec', 'system', 'passthru', 'shell_exec', 'proc_close', 'proc_open', 'dl', 'show_source',
+  'posix_kill', 'posix_mkfifo', 'posix_getpwuid', 'posix_setpgid', 'posix_setsid', 'posix_setuid', 'posix_setgid',
+  'posix_seteuid', 'posix_setegid', 'posix_uname'];
+
+// The PHP functions the site's account may not call (operator, 2026-11-08):
+// every account starts with the default list; untick what the code needs.
+// Per account: LiteSpeed runs one PHP for all of a user's sites.
+function PhpFunctions({ site }) {
+  const t = useT();
+  const { loading, refreshAll, request, setNotice } = usePanel();
+  const saved = site.disable_functions == null ? PHP_DEFAULT_DISABLED : site.disable_functions.split(',').filter(Boolean);
+  const [draft, setDraft] = useState(null);
+  const names = draft?.names ?? saved;
+  const extra = draft?.extra ?? '';
+  const extras = names.filter((name) => !PHP_DEFAULT_DISABLED.includes(name));
+  const dirty = [...names].sort().join(',') !== [...saved].sort().join(',');
+  const change = (next) => setDraft({ names, extra, ...next });
+  const toggle = (name) => change({ names: names.includes(name) ? names.filter((item) => item !== name) : [...names, name] });
+  const addExtra = () => {
+    const more = extra.toLowerCase().split(/[\s,]+/).filter((name) => /^[a-z_][a-z0-9_]*$/.test(name) && !names.includes(name));
+    change({ names: [...names, ...more], extra: '' });
+  };
+  async function save(functions) {
+    const data = await request(`/websites/${site.id}/disable-functions`, { method: 'PUT', body: JSON.stringify({ functions }) },
+      t('Saving PHP settings...'));
+    if (!data) return;
+    setDraft(null);
+    setNotice(t('Disabled PHP functions saved for {domain}.', { domain: site.domain }));
+    await refreshAll();
+  }
+  return <div className="wsd-php-fence wsd-php-functions">
+    <h3>{t('Disabled PHP functions')}</h3>
+    <p className="hint">{t('Ticked functions cannot be called by PHP. They apply to every website of this account, which share one PHP. If your code needs one, untick it and save. Command-line PHP (cron jobs, the terminal, WP-CLI) is not affected.')}</p>
+    <div className="wsd-php-function-grid">
+      {PHP_DEFAULT_DISABLED.map((name) => <label className="check-line" key={name}>
+        <input type="checkbox" checked={names.includes(name)} disabled={!!loading} onChange={() => toggle(name)}/> <code>{name}</code>
+      </label>)}
+      {extras.map((name) => <label className="check-line" key={name}>
+        <input type="checkbox" checked disabled={!!loading} onChange={() => toggle(name)}/> <code>{name}</code>
+      </label>)}
+    </div>
+    <div className="wsd-php-function-add">
+      <input value={extra} disabled={!!loading} placeholder={t('Disable another function, e.g. popen')} aria-label={t('Disable another function')}
+        onChange={(e) => change({ extra: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addExtra(); } }}/>
+      <button type="button" className="secondary-light" disabled={!!loading || !extra.trim()} onClick={addExtra}><Plus size={14} aria-hidden="true"/> {t('Add')}</button>
+    </div>
+    <div className="wsd-php-function-actions">
+      {site.disable_functions != null && <button type="button" className="secondary-light" disabled={!!loading} onClick={() => save(null)}><RotateCcw size={14} aria-hidden="true"/> {t('Back to the default list')}</button>}
+      <button type="button" disabled={!!loading || !dirty} onClick={() => save(names.join(','))}><Save size={14} aria-hidden="true"/> {t('Save')}</button>
+    </div>
+  </div>;
 }
 
 // open_basedir for the site's PHP: the host's setting (admin or reseller),

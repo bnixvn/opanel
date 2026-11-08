@@ -4975,6 +4975,7 @@ delete_panel_user_runtime() {
   rm -rf "/var/lib/php/sessions/$user" 2>/dev/null || true
   rm -rf "/var/lib/php/uploads/$user" 2>/dev/null || true
   rm -rf "/var/lib/php/opcache/$user" "/etc/opanel/php-users/$user" 2>/dev/null || true
+  rm -f "${PHP_DISABLE_ROOT}/${user}" 2>/dev/null || true
 }
 
 site_php_pool_glob() {
@@ -5517,6 +5518,7 @@ ensure_php_runtime_dirs() {
   install -d -o "$user" -g "$user" -m 0700 "$upload_dir"
   chmod g-s "$upload_dir" 2>/dev/null || true
   ensure_php_file_cache "$user"
+  ensure_php_disable_ini "$user"
 }
 
 # OPcache's file cache for one site user: compiled scripts are kept on disk as
@@ -5548,6 +5550,88 @@ ensure_php_file_cache() {
   mv -f "${ini_dir}/90-opanel-file-cache.ini.tmp" "${ini_dir}/90-opanel-file-cache.ini"
 }
 
+# The PHP functions an account's PHP may not call (operator, 2026-11-08). Per
+# account, not per site: LiteSpeed runs one lsphp per Linux user for all of
+# its sites, and lsphp reads disable_functions only from ini files at start -
+# a vhost's phpIniOverride is ignored for it (tested on .41). Without a list
+# of its own under ${PHP_DISABLE_ROOT}/<user>, an account gets
+# PHP_DEFAULT_DISABLE_FUNCTIONS; the file holds the account's own list, ""
+# when nothing is disabled. Root's, and the ini lands in the root-owned
+# /etc/opanel/php-users/<user>/, so the account's code cannot change it.
+PHP_DISABLE_ROOT="/etc/opanel/php-disable"
+PHP_DEFAULT_DISABLE_FUNCTIONS="exec,system,passthru,shell_exec,proc_close,proc_open,dl,show_source,posix_kill,posix_mkfifo,posix_getpwuid,posix_setpgid,posix_setsid,posix_setuid,posix_setgid,posix_seteuid,posix_setegid,posix_uname"
+
+# "default" drops the account's own list; "none" disables nothing; anything
+# else is a comma list of function names.
+require_php_function_list() {
+  local value="$1"
+  [[ "$value" == "default" || "$value" == "none" ]] && return 0
+  (( ${#value} <= 4000 )) || deny "disabled function list is too long"
+  [[ "$value" =~ ^[a-z_][a-z0-9_]*(,[a-z_][a-z0-9_]*)*$ ]] || deny "invalid disabled function list: $value"
+}
+
+# What the account's PHP disables: its own list, or the default without one.
+# A file that does not read as a list falls back to the default, never to none.
+user_php_disable_list() {
+  local user="$1" marker value
+  marker="${PHP_DISABLE_ROOT}/${user}"
+  if [[ ! -f "$marker" ]]; then
+    printf '%s' "$PHP_DEFAULT_DISABLE_FUNCTIONS"
+    return 0
+  fi
+  value="$(head -c 4000 "$marker")"
+  if [[ -z "$value" || "$value" =~ ^[a-z_][a-z0-9_]*(,[a-z_][a-z0-9_]*)*$ ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$PHP_DEFAULT_DISABLE_FUNCTIONS"
+  fi
+}
+
+# Write the account's ini from its list. When it changed, the account's lsphp
+# processes are ended so the next request starts one that reads it: ini is
+# only read when PHP starts.
+ensure_php_disable_ini() {
+  local user="$1" ini_dir ini list
+  require_linux_user "$user"
+  ini_dir="/etc/opanel/php-users/${user}"
+  ini="${ini_dir}/50-opanel-disable-functions.ini"
+  install -d -o root -g root -m 0755 /etc/opanel /etc/opanel/php-users "$ini_dir"
+  list="$(user_php_disable_list "$user")"
+  {
+    printf '%s\n' "; Managed by OPanel (Website > PHP > Disabled PHP functions). Do not edit."
+    if [[ -n "$list" ]]; then
+      printf 'disable_functions = %s\n' "$list"
+    else
+      printf '%s\n' "; nothing disabled for this account"
+    fi
+  } >"${ini}.tmp"
+  chmod 0644 "${ini}.tmp"
+  if [[ -f "$ini" ]] && cmp -s "${ini}.tmp" "$ini"; then
+    rm -f "${ini}.tmp"
+    return 0
+  fi
+  mv -f "${ini}.tmp" "$ini"
+  # -x: the process name only, so this never matches a shell whose command
+  # line merely mentions lsphp.
+  pkill -x lsphp -u "$user" 2>/dev/null || true
+}
+
+set_user_php_disable() {
+  local user="$1" value="$2" marker
+  require_linux_user "$user"
+  require_php_function_list "$value"
+  marker="${PHP_DISABLE_ROOT}/${user}"
+  if [[ "$value" == "default" ]]; then
+    rm -f "$marker"
+  else
+    [[ "$value" == "none" ]] && value=""
+    install -d -o root -g root -m 0755 "$PHP_DISABLE_ROOT"
+    printf '%s' "$value" >"$marker"
+    chmod 0644 "$marker"
+  fi
+  ensure_php_disable_ini "$user"
+}
+
 # Every site user an existing box already has: their vhosts now point
 # PHP_INI_SCAN_DIR at a directory that has to exist. Rides on log-hygiene.
 ensure_php_file_cache_all() {
@@ -5559,6 +5643,8 @@ ensure_php_file_cache_all() {
       [[ "$done_users" == *" $user "* ]] && continue
       id -u "$user" >/dev/null 2>&1 || continue
       ensure_php_file_cache "$user" 2>/dev/null || true
+      # The default disabled functions reach every account already there.
+      ensure_php_disable_ini "$user" 2>/dev/null || true
       done_users+="$user "
     done < <(awk '$1 == "extUser" { print $2 }' "$conf")
   done
@@ -10023,6 +10109,12 @@ PY
   host-trim)
     [[ $# -eq 0 ]] || deny "usage: host-trim"
     host_trim
+    ;;
+
+  user-php-disable)
+    # The functions an account's PHP may not call: default | none | a,b,c.
+    [[ $# -eq 2 ]] || deny "usage: user-php-disable <site-user> <default|none|list>"
+    set_user_php_disable "$1" "$2"
     ;;
 
   log-hygiene)
