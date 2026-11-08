@@ -24,7 +24,7 @@ from pathlib import Path
 
 import uvicorn
 
-from app.core import tls
+from app.core import https_redirect, tls
 
 logger = logging.getLogger("opanel.server")
 
@@ -199,6 +199,9 @@ def main() -> None:
         config = build_config(pair)
         config.load()
         config.ssl.sni_callback = tls.SniResolver()
+        # http:// on this port gets a redirect to https:// instead of a broken
+        # connection (operator, 2026-11-08).
+        https_redirect.install(config)
         logger.info("Panel listening with HTTPS; per-domain certificates from %s", tls.CERT_STORE)
 
     sock = listen_socket(
