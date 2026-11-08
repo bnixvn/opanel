@@ -5612,8 +5612,24 @@ ensure_php_disable_ini() {
   fi
   mv -f "${ini}.tmp" "$ini"
   # -x: the process name only, so this never matches a shell whose command
-  # line merely mentions lsphp.
-  pkill -x lsphp -u "$user" 2>/dev/null || true
+  # line merely mentions lsphp. Waited for, so a request right after Save is
+  # served by a PHP that read the new ini, not by one still winding down.
+  # Only the processes that were running before: one started meanwhile has
+  # read the new ini already.
+  local old_pids pid tries=0 alive
+  old_pids="$(pgrep -x lsphp -u "$user" 2>/dev/null || true)"
+  [[ -n "$old_pids" ]] || return 0
+  kill $old_pids 2>/dev/null || true
+  while (( tries < 15 )); do
+    alive=""
+    for pid in $old_pids; do
+      if kill -0 "$pid" 2>/dev/null; then alive+="$pid "; fi
+    done
+    [[ -n "$alive" ]] || return 0
+    sleep 0.2
+    tries=$((tries + 1))
+  done
+  kill -KILL $alive 2>/dev/null || true
 }
 
 set_user_php_disable() {

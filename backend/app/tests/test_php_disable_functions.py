@@ -43,8 +43,9 @@ def test_the_account_ini_carries_the_list_and_restarts_its_php():
     ini = _function("ensure_php_disable_ini")
     assert 'ini="${ini_dir}/50-opanel-disable-functions.ini"' in ini
     assert "printf 'disable_functions = %s\\n' \"$list\"" in ini
-    assert 'pkill -x lsphp -u "$user"' in ini, "-x, so it never matches a shell that mentions lsphp"
-    assert ini.index("cmp -s") < ini.index("pkill"), "only when the ini changed"
+    assert 'old_pids="$(pgrep -x lsphp -u "$user" 2>/dev/null || true)"' in ini, "-x: never a shell that mentions lsphp"
+    assert ini.index("cmp -s") < ini.index("pgrep"), "only when the ini changed"
+    assert 'kill -KILL $alive' in ini and "pkill -KILL" not in ini, "only the processes that were running before"
     listing = _function("user_php_disable_list")
     assert listing.count("PHP_DEFAULT_DISABLE_FUNCTIONS") == 2
 
