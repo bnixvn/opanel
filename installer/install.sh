@@ -1489,7 +1489,12 @@ main() {
   log "Copying source to ${APP_DIR}"
   copy_sources
 
-  log "Building frontend"
+  # The Vite build needs ~720 MB besides MariaDB, LiteSpeed and PHP: a small VPS
+  # with no swap stopped there (operator, 2026-11-09). Swap first.
+  log "Making sure the build has memory (swap)"
+  bash "${SCRIPT_DIR}/files/opanel-ensure-swap.sh" || true
+
+  log "Building frontend (a few minutes on a small VPS)"
   build_frontend
 
   log "Creating opanel system user, MariaDB credentials and filesystem ACLs"

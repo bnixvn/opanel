@@ -1817,6 +1817,11 @@ if [[ ! -d node_modules ]] || [[ package.json -nt node_modules ]]; then
     sudo -u opanel env HOME="$APP_DIR" npm install
   }
 fi
+# The Vite build needs ~720 MB besides everything already running; a server
+# with no swap gets some first (installer/files/opanel-ensure-swap.sh).
+if [[ -f "$SOURCE_DIR/installer/files/opanel-ensure-swap.sh" ]]; then
+  bash "$SOURCE_DIR/installer/files/opanel-ensure-swap.sh" || true
+fi
 log "Building frontend with VITE_API_URL=/api..."
 sudo -u opanel env HOME="$APP_DIR" VITE_API_URL=/api npm run build 2>&1 || { log "BUILD FAILED"; exit 1; }
 
