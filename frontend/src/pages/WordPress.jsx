@@ -4,6 +4,7 @@ import {
   LogIn, Package, Palette, Plus, RefreshCw, RotateCcw, ScanSearch, Search, Settings2, ShieldCheck, Trash2, Upload, Wrench, X,
 } from 'lucide-react';
 import { usePanel } from '../lib/panel-context.jsx';
+import { generatePassword } from '../lib/password.js';
 import { useT } from '../lib/t.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Tabs from '../components/Tabs.jsx';
@@ -316,8 +317,16 @@ const LOCALES = [['', msg('English (default)')], ['vi', 'Tiếng Việt'], ['fr_
 
 function InstallDrawer({ open, websites, rooted, busy, close, submit }) {
   const t = useT();
-  const [form, setForm] = useState({ website_id: '', title: '', admin_user: 'admin', admin_email: '', admin_password: '', subfolder: '', locale: '' });
+  // Each install starts from a clean form with a new random password: the last
+  // one's administrator was offered again (operator, 2026-11-09).
+  const fresh = () => ({ website_id: '', title: '', admin_user: 'admin', admin_email: '', admin_password: generatePassword(), subfolder: '', locale: '' });
+  const [form, setForm] = useState(fresh);
   const [tried, setTried] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    setForm(fresh());
+    setTried(false);
+  }, [open]);
   const set = (key) => (value) => setForm((prev) => ({ ...prev, [key]: value }));
   // At a website's root only where it has no WordPress; in a subfolder of any.
   const sub = form.subfolder.trim().toLowerCase();

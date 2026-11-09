@@ -2895,6 +2895,11 @@ function App() {
       } else {
         setNotice(tr("Created site {0}. Upload your files to public_html/ folder.", cleanDomain));
       }
+      // The next site starts with a fresh administrator, not this one's
+      // (operator, 2026-11-09: a second install reused the same account).
+      setWpAdminUser('admin');
+      setWpAdminPassword('');
+      setAdminEmail('');
       if (installSslAfterCreate) await applySslForNewSite(data.id, cleanDomain);
       refreshAll();
       return true;
@@ -9315,8 +9320,8 @@ function App() {
           {creating && <label><span>{tr("Username")}</span><input value={form.username} autoComplete="off" spellCheck={false} onChange={e => set('username', e.target.value.toLowerCase(), true)} placeholder={tr("johndoe")} /></label>}
           <label><span>{tr("Email")}</span><input type="email" value={form.email} autoComplete="off" onChange={e => set('email', e.target.value, true)} placeholder="user@domain.com" /></label>
           {creating
-            ? <label><span>{tr("Password")}</span><input type="password" value={form.password} autoComplete="new-password" onChange={e => set('password', e.target.value, true)} placeholder={tr("Min 12 characters")} /></label>
-            : <label><span>{tr("New password")} <em>{tr("(leave empty to keep)")}</em></span><input type="password" value={form._password || ''} autoComplete="new-password" onChange={e => set('_password', e.target.value, true)} placeholder={tr("Min 12 characters")} /></label>}
+            ? <label><span>{tr("Password")}</span><PasswordField value={form.password} onChange={value => set('password', value, true)} placeholder={tr("Min 12 characters")} generate copy/></label>
+            : <label><span>{tr("New password")} <em>{tr("(leave empty to keep)")}</em></span><PasswordField value={form._password || ''} onChange={value => set('_password', value, true)} placeholder={tr("Min 12 characters")} generate copy/></label>}
           {isAdmin && <label><span>{tr("Role")}</span><select value={form.role} disabled={self} onChange={e => set('role', e.target.value, true)}>
             <option value="end_user">{tr("End user")}</option><option value="reseller">{tr("Reseller")}</option><option value="admin">{tr("Admin")}</option>
           </select></label>}
