@@ -5803,6 +5803,12 @@ FAIL2BAN_JAIL_FILE="/etc/fail2ban/jail.d/opanel.local"
 FAIL2BAN_FILTER_FILE="/etc/fail2ban/filter.d/opanel-panel.conf"
 FAIL2BAN_WP_FILTER_FILE="/etc/fail2ban/filter.d/opanel-wordpress.conf"
 FAIL2BAN_SETTINGS_FILE="/var/lib/opanel/addons/fail2ban-settings.json"
+# An empty file the opanel-wordpress jail's logpath glob always finds. With no
+# website yet there is no *.access.log, fail2ban refuses the whole service
+# ("Have not found any log file for opanel-wordpress jail") and the addon
+# cannot be installed (160.236.192.207, 2026-11-09). Empty, so logrotate
+# (notifempty, copytruncate) never moves it.
+FAIL2BAN_LOG_PLACEHOLDER="/var/log/openlitespeed/00-opanel-fail2ban.access.log"
 
 addon_fail2ban_status() {
   local installed=0 running=0 enabled=0 version=""
@@ -5849,6 +5855,27 @@ FILTER
   chmod 0644 "$FAIL2BAN_WP_FILTER_FILE"
 }
 
+ensure_fail2ban_log_placeholder() {
+  install -d -m 2770 -o www-data -g opanel-sites /var/log/openlitespeed 2>/dev/null \
+    || install -d -m 2770 /var/log/openlitespeed
+  if [[ ! -e "$FAIL2BAN_LOG_PLACEHOLDER" ]]; then
+    install -m 0640 -o www-data -g opanel-sites /dev/null "$FAIL2BAN_LOG_PLACEHOLDER" 2>/dev/null \
+      || install -m 0640 /dev/null "$FAIL2BAN_LOG_PLACEHOLDER"
+  fi
+}
+
+# log-hygiene: the placeholder on a box that has the addon, and a fail2ban
+# that died of the missing log file started again.
+ensure_fail2ban_starts() {
+  [[ -f "$FAIL2BAN_JAIL_FILE" ]] || return 0
+  ensure_fail2ban_log_placeholder
+  if systemctl is-enabled --quiet fail2ban 2>/dev/null && systemctl is-failed --quiet fail2ban 2>/dev/null; then
+    systemctl reset-failed fail2ban 2>/dev/null || true
+    systemctl restart fail2ban 2>/dev/null || true
+  fi
+  return 0
+}
+
 addon_fail2ban_write_jails() {
   # Reads the settings JSON and renders jail.d/opanel.local. Python does the
   # parsing so a value never passes through word splitting.
@@ -5856,6 +5883,7 @@ addon_fail2ban_write_jails() {
   panel_port="$(env_get PANEL_PORT)"
   panel_port="${panel_port:-$DEFAULT_PANEL_PORT}"
   install -d -o root -g root -m 0755 /etc/fail2ban/jail.d
+  ensure_fail2ban_log_placeholder
   python3 - "$FAIL2BAN_SETTINGS_FILE" "$FAIL2BAN_JAIL_FILE" "$panel_port" <<'PY'
 import json
 import re
@@ -10141,6 +10169,7 @@ PY
   log-hygiene)
     [[ $# -eq 0 ]] || deny "usage: log-hygiene"
     ensure_opcache_prune_timer
+    ensure_fail2ban_starts
     ensure_site_log_rotation
     ensure_ols_server_log_level
     ensure_ols_js_expires
