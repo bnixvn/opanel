@@ -355,8 +355,17 @@ def test_file_read_attempts_are_caught(payload):
 def test_injection_rules_inspect_post_bodies_too(rule_id):
     # ARGS covers ARGS_GET and ARGS_POST. Scoping to ARGS_GET left the most
     # common injection vector -- a form POST -- completely uninspected.
-    assert "REQUEST_URI|ARGS " in _rule(rule_id)["rules"]
+    assert "REQUEST_URI|ARGS|!ARGS:/(?i)(?:^pwd$|pass)/ " in _rule(rule_id)["rules"]
     assert "ARGS_GET" not in _rule(rule_id)["rules"]
+
+
+@pytest.mark.parametrize("rule_id", ["sql-injection", "command-injection", "php-path-traversal"])
+def test_password_fields_are_not_inspected(rule_id):
+    # A password with "&&" was refused at wp-login.php (operator, 2026-11-09):
+    # a password is hashed and compared, never run. Every other field still is.
+    rules = _rule(rule_id)["rules"]
+    assert "!ARGS:/(?i)(?:^pwd$|pass)/" in rules
+    assert "!ARGS:" in rules.split('"@rx', 1)[0], "the exclusion is part of the variable list"
 
 
 @pytest.mark.parametrize("rule_id", ["sql-injection", "command-injection", "php-path-traversal", "xss"])
