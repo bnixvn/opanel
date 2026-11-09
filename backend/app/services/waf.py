@@ -40,7 +40,7 @@ DEFAULT_RULES = [
         "category": "PHP",
         "title": "Path traversal",
         "description": "Blocks ../ and encoded traversal, plus direct reads of /etc/passwd and /proc/self/environ, in the URL and in GET or POST arguments.",
-        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:/(?i)(?:^pwd$|pass)/ "@rx (?i)(?:\.\./|\.\.\\|\.\.%2f|%2e%2e%2f|%252e%252e%252f|/etc/(?:passwd|shadow|hosts)\b|/proc/self/(?:environ|cmdline)\b)" "id:1001302,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked PHP path traversal'"
+        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:pwd|!ARGS:/(?i)pass/ "@rx (?i)(?:\.\./|\.\.\\|\.\.%2f|%2e%2e%2f|%252e%252e%252f|/etc/(?:passwd|shadow|hosts)\b|/proc/self/(?:environ|cmdline)\b)" "id:1001302,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked PHP path traversal'"
 """,
     },
     {
@@ -160,7 +160,7 @@ SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:10030
         "category": "Injection",
         "title": "SQL injection",
         "description": "Blocks SQL injection in the URL and in GET or POST arguments. Comments and padding are stripped first, so UN/**/ION and UNION(SELECT(1)) are caught too.",
-        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:/(?i)(?:^pwd$|pass)/ "@rx (?i)(?:\bunion\b[\s(),]*(?:all[\s(),]*)?\bselect\b|\bselect\b.{0,120}?\bfrom\b[\s(]*information_schema\b|\b(?:sleep|benchmark|load_file|updatexml|extractvalue|pg_sleep)\b[\s(]*\(|\binto\s+(?:out|dump)file\b|\b(?:or|and)\s+(['\"]?)(\w+)\1\s*(?:=|<>|!=|\blike\b)\s*\1?\2\1?|\b(?:or|and)\s+\d+\s*(?:=|<>|!=|<|>)\s*\d+|;[\s(]*(?:drop|truncate|alter)\s+(?:table|database)\b)" "id:1001501,phase:2,t:none,t:urlDecodeUni,t:removeComments,t:compressWhitespace,deny,status:403,log,msg:'opanel blocked SQL injection attempt'"
+        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:pwd|!ARGS:/(?i)pass/ "@rx (?i)(?:\bunion\b[\s(),]*(?:all[\s(),]*)?\bselect\b|\bselect\b.{0,120}?\bfrom\b[\s(]*information_schema\b|\b(?:sleep|benchmark|load_file|updatexml|extractvalue|pg_sleep)\b[\s(]*\(|\binto\s+(?:out|dump)file\b|\b(?:or|and)\s+(['\"]?)(\w+)\1\s*(?:=|<>|!=|\blike\b)\s*\1?\2\1?|\b(?:or|and)\s+\d+\s*(?:=|<>|!=|<|>)\s*\d+|;[\s(]*(?:drop|truncate|alter)\s+(?:table|database)\b)" "id:1001501,phase:2,t:none,t:urlDecodeUni,t:removeComments,t:compressWhitespace,deny,status:403,log,msg:'opanel blocked SQL injection attempt'"
 """,
     },
     {
@@ -180,9 +180,11 @@ SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:10030
         # a password is only hashed and compared, never run, and a strong one is
         # made of exactly the characters these rules look for. pwd, pass1/pass2,
         # password, password_1, user_pass, new_password... - any name with "pass".
+        # No "|" inside the regex: ModSecurity splits the variable list on it, and
+        # one did - every site's rule file failed to load (.41, 2026-11-09).
         "title": "Command injection and PHP wrappers",
         "description": "Blocks shell metacharacters followed by a command, php:// data:// file:// stream wrappers, and ${jndi:} lookups, in the URL and in GET or POST arguments.",
-        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:/(?i)(?:^pwd$|pass)/ "@rx (?i)(?:\b(?:php|data|expect|phar|zip|glob|file|gopher|dict)://|[;|`]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh|python|perl|chmod)\b|&&\s*\w|\|\|\s*\w|[\n\r]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh)\b|\$\(\s*\w|\|\s*(?:sh|bash)\b|\$\{\s*(?:jndi|env|sys|lower|upper|date)\s*:)" "id:1001701,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked command injection attempt'"
+        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:pwd|!ARGS:/(?i)pass/ "@rx (?i)(?:\b(?:php|data|expect|phar|zip|glob|file|gopher|dict)://|[;|`]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh|python|perl|chmod)\b|&&\s*\w|\|\|\s*\w|[\n\r]\s*(?:cat|ls|id|whoami|uname|curl|wget|nc|bash|sh)\b|\$\(\s*\w|\|\s*(?:sh|bash)\b|\$\{\s*(?:jndi|env|sys|lower|upper|date)\s*:)" "id:1001701,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked command injection attempt'"
 """,
     },
     {
@@ -190,7 +192,7 @@ SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:10030
         "category": "Injection",
         "title": "Server-side request forgery",
         "description": "Blocks URLs pointing at cloud metadata services, loopback and private networks, including the userinfo@ and decimal-IP forms used to disguise them.",
-        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:/(?i)(?:^pwd$|pass)/ "@rx (?i)(?:https?:)?//(?:[^/@\s]*@)?(?:169\.254\.169\.254|169\.254\.170\.2|metadata\.google\.internal|metadata\.azure\.com|100\.100\.200\.200|localhost(?::\d+)?(?![\w.-])|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|0\.0\.0\.0|\[::1?\]|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|0x[0-9a-f]{8}(?![0-9a-f])|\d{8,10}(?![\d.]))" "id:1001801,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked server-side request forgery attempt'"
+        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:pwd|!ARGS:/(?i)pass/ "@rx (?i)(?:https?:)?//(?:[^/@\s]*@)?(?:169\.254\.169\.254|169\.254\.170\.2|metadata\.google\.internal|metadata\.azure\.com|100\.100\.200\.200|localhost(?::\d+)?(?![\w.-])|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|0\.0\.0\.0|\[::1?\]|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|0x[0-9a-f]{8}(?![0-9a-f])|\d{8,10}(?![\d.]))" "id:1001801,phase:2,t:none,t:urlDecodeUni,t:removeComments,deny,status:403,log,msg:'opanel blocked server-side request forgery attempt'"
 """,
     },
     {
@@ -201,7 +203,7 @@ SecRule REQUEST_HEADERS:Content-Type "@rx (?i)^\s*multipart/form-data" "id:10030
         # No t:removeComments here. It treats # as a comment and deletes the
         # rest of the value, and OGNL uses # as syntax: ${(#a=@java.lang.
         # Runtime@getRuntime().exec(...))} was erased before the rule saw it.
-        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:/(?i)(?:^pwd$|pass)/ "@rx (?i)(?:\{\{\s*\d+\s*[*+\-/]\s*\d+\s*\}\}|\{\{[^}]{0,60}?__(?:class|globals|subclasses|mro|init|builtins|import)__|\{\{\s*(?:config|self|request|session|settings|cycler|joiner|namespace|lipsum|url_for)\b|\{%\s*(?:import|include|extends)\b|<%=[^%]{0,60}?(?:system|exec|eval|IO\.popen|`)|\$\{[^}]{0,120}?(?:Runtime|ProcessBuilder|getClass|forName|javax\.script)|#\{[^}]{0,60}?(?:T\(|java\.lang))" "id:1001901,phase:2,t:none,t:urlDecodeUni,deny,status:403,log,msg:'opanel blocked template injection attempt'"
+        "rules": r"""SecRule REQUEST_URI|ARGS|!ARGS:pwd|!ARGS:/(?i)pass/ "@rx (?i)(?:\{\{\s*\d+\s*[*+\-/]\s*\d+\s*\}\}|\{\{[^}]{0,60}?__(?:class|globals|subclasses|mro|init|builtins|import)__|\{\{\s*(?:config|self|request|session|settings|cycler|joiner|namespace|lipsum|url_for)\b|\{%\s*(?:import|include|extends)\b|<%=[^%]{0,60}?(?:system|exec|eval|IO\.popen|`)|\$\{[^}]{0,120}?(?:Runtime|ProcessBuilder|getClass|forName|javax\.script)|#\{[^}]{0,60}?(?:T\(|java\.lang))" "id:1001901,phase:2,t:none,t:urlDecodeUni,deny,status:403,log,msg:'opanel blocked template injection attempt'"
 """,
     },
 ]
