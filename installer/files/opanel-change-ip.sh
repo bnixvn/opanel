@@ -184,6 +184,7 @@ if (( ${#changed_files[@]} > 0 )); then
   echo "Backup: $backup_root"
   echo "Panel URL: ${env_url:-unchanged}"
 else
-  rmdir "$backup_root" 2>/dev/null || true
+  # Only the DNS database's safety copy can be in it: nothing changed.
+  rm -rf -- "$backup_root"
   echo "Nothing named $old_ip; nothing changed."
 fi
