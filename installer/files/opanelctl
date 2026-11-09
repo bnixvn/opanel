@@ -640,7 +640,7 @@ run_panel_update() {
 
 change_panel_ip() {
   local script="/usr/local/sbin/opanel-change-ip" old_ip new_ip current_ip
-  [[ -x "$script" ]] || fail "$script not found. Reinstall/update opanel or copy change_IP.sh to that path."
+  [[ -x "$script" ]] || fail "$script not found. Run opanel-update to install it."
 
   current_ip="$(detect_ip)"
   read -rp "Old IP: " old_ip

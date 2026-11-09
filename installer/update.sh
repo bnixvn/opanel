@@ -1368,6 +1368,10 @@ if [[ "$venv_needs_recreate" == "true" ]]; then
 fi
 
 # --- Refresh helper + sudoers (idempotent) ---------------------------------
+# `opanel change-ip` runs this; nothing installed it before 2026-11-09.
+if [[ -f "$SOURCE_DIR/installer/files/opanel-change-ip.sh" ]]; then
+  install -m 0755 -o root -g root "$SOURCE_DIR/installer/files/opanel-change-ip.sh" /usr/local/sbin/opanel-change-ip
+fi
 if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
   log "Refreshing /usr/local/sbin/opanel-helper and /etc/sudoers.d/opanel"
   update_progress 40 "runtime" "Refreshing panel helper and runtime"

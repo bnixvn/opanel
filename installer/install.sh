@@ -787,9 +787,8 @@ install_privileged_helper() {
   sed -i 's/\r$//' /etc/sudoers.d/opanel
   visudo -c -f /etc/sudoers.d/opanel >/dev/null
   retire_admin_group_sudo
-  if [[ -f "${PROJECT_ROOT}/change_IP.sh" ]]; then
-    install -m 0755 -o root -g root "${PROJECT_ROOT}/change_IP.sh" /usr/local/sbin/opanel-change-ip
-  fi
+  # `opanel change-ip`: the script it runs (there was none before 2026-11-09).
+  install -m 0755 -o root -g root "${SCRIPT_DIR}/files/opanel-change-ip.sh" /usr/local/sbin/opanel-change-ip
 }
 
 install_panel_cli() {
