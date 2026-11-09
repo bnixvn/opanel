@@ -1491,8 +1491,8 @@ main() {
   log "Copying source to ${APP_DIR}"
   copy_sources
 
-  # The Vite build needs ~720 MB besides MariaDB, LiteSpeed and PHP: a small VPS
-  # with no swap stopped there (operator, 2026-11-09). Swap first.
+  # The Vite build needs ~720 MB besides MariaDB, LiteSpeed and PHP: below 2 GB
+  # of RAM with no swap it may not fit, so such a server gets swap first.
   log "Making sure the build has memory (swap)"
   bash "${SCRIPT_DIR}/files/opanel-ensure-swap.sh" || true
 

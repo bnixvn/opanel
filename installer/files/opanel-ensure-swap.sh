@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Swap for a server that has none, before the panel builds its frontend.
+# Swap for a small server that has none, before the panel builds its frontend.
 #
 # The Vite build needs about 720 MB (measured on .41, 2026-11-09) on top of
 # MariaDB, LiteSpeed and PHP. A customer's install on a small VPS with no swap
@@ -10,10 +10,15 @@
 # Safe to run repeatedly; never fails the install or the update - every step
 # that could go wrong on an unusual host is skipped with a reason.
 #
+# Only below 2 GB of RAM (operator, 2026-11-09: "server người ta ram 4G, trong khi
+# cần có 720MB"): with 2 GB or more the build has room, and swap is the
+# operator's choice, not the panel's.
+#
 # Opt out: touch /etc/opanel/no-swap
 set -uo pipefail
 SWAPFILE="/swapfile"
 SWAP_OPT_OUT="/etc/opanel/no-swap"
+SMALL_RAM_MB=2048
 
 say() { echo "  $*"; }
 ram_mb() { awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo; }
@@ -24,6 +29,10 @@ if [[ $EUID -ne 0 ]]; then
 fi
 if [[ -e "$SWAP_OPT_OUT" ]]; then
   say "swap: disabled by $SWAP_OPT_OUT"
+  exit 0
+fi
+if (( $(ram_mb) >= SMALL_RAM_MB )); then
+  say "swap: not needed, $(ram_mb)MB of RAM is enough for the build"
   exit 0
 fi
 # Any swap at all - a partition, zram, another file - is the operator's policy.
@@ -51,14 +60,8 @@ if [[ -e "$SWAPFILE" ]]; then
   exit 0
 fi
 
-ram="$(ram_mb)"
-if (( ram <= 2048 )); then
-  size="$ram"
-else
-  size=$(( ram / 2 ))
-  (( size < 2048 )) && size=2048
-  (( size > 8192 )) && size=8192
-fi
+# As much swap as RAM: below 2 GB that is what gets the build through.
+size="$(ram_mb)"
 free_mb="$(df -Pm / | awk 'NR==2 {print $4}')"
 # Leave real room behind: filling the disk to make swap trades one outage for a worse one.
 if (( free_mb < size + 10240 )); then
