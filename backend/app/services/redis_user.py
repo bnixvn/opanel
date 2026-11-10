@@ -14,6 +14,10 @@ step whenever the account's limit, package, reseller (its slice) or
 suspension changes, through the root helper's redis-user-* verbs; the helper
 holds the configuration and the unit.
 
+The administrator's account has one too, for the websites it owns itself
+(operator, 2026-11-10: a site created by the admin had no Redis to use); its
+memory is its own limit, 64 MB unless set, as it has no package.
+
 The server's own Redis on 127.0.0.1:6379, if any, is not touched. Nothing
 here does anything until the addon is installed.
 """
@@ -26,7 +30,6 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.core.permissions import is_admin_role
 from app.models.entities import HostingPlan, User
 from app.schemas.schemas import REDIS_MAX_MB
 from app.services import site_users
@@ -44,7 +47,6 @@ STOPPED_MARKER = CONF_DIR / "stopped"
 DEFAULT_MB = 64
 
 PROBLEM_TEXT = {
-    "admin": "Administrators have no Redis of their own: each hosting account turns on its own, and you can log in as the customer to do it.",
     "no_user": "This account has no Linux user to run Redis as.",
     "not_installed": "The Redis per account addon is not installed.",
     "stopped": "Redis per account is stopped on this server.",
@@ -74,9 +76,9 @@ def _linux_name(user: User) -> Optional[str]:
 
 
 def linux_user(user: Optional[User]) -> Optional[str]:
-    """The Linux user an account's Redis runs as; none for an administrator,
-    who uses a customer's by logging in as the customer."""
-    if user is None or is_admin_role(user.role):
+    """The Linux user an account's Redis runs as -- the administrator's too:
+    its own websites run as its own Linux user, like a customer's."""
+    if user is None:
         return None
     return _linux_name(user)
 
@@ -103,8 +105,6 @@ def limit_mb(db: Session, user: User) -> int:
 
 def problem(db: Session, user: User) -> Optional[str]:
     """Why the account may not turn its Redis on (a PROBLEM_TEXT key), or None."""
-    if is_admin_role(user.role):
-        return "admin"
     if linux_user(user) is None:
         return "no_user"
     if not installed():
@@ -203,7 +203,7 @@ def disable(db: Session, user: User) -> None:
     Allowed while the addon is stopped or the account suspended - turning
     something off is never what has to wait."""
     if linux_user(user) is None:
-        raise ValueError(PROBLEM_TEXT["admin" if is_admin_role(user.role) else "no_user"])
+        raise ValueError(PROBLEM_TEXT["no_user"])
     if not installed():
         raise ValueError(PROBLEM_TEXT["not_installed"])
     _remove(user)
@@ -226,7 +226,7 @@ def sync_user(db: Session, user: User) -> None:
     """Bring the account's instance in step with the account, after its limit,
     package, reseller, role or suspension changed. Raises if the helper does.
 
-    Its limit down to 0 (or the account made an administrator) turns it off
+    Its limit down to 0 turns it off
     for good. Suspended, the instance goes but the switch stays on, so
     unsuspending brings it back; with the addon stopped nothing runs anyway,
     and starting the addon re-applies every account (sync_all)."""

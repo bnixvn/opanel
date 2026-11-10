@@ -11,8 +11,9 @@ import './Redis.css';
 // Redis per account (operator, 2026-10-27, as DirectAdmin has it): the
 // account's own Redis, on a unix socket in its home. The account turns it on
 // and off here and empties it; how much memory it may use is its package's.
-// An administrator has none of its own: the page lists the accounts that have
-// Redis on, and a reseller sees its customers' under its own.
+// The administrator's account has one for the websites it owns itself
+// (2026-11-10), and sees under it every account that has Redis on; a reseller
+// sees its customers'.
 export default function RedisPage() {
   const t = useT();
   const { formatBytes, isAdmin, isReseller, loading, renderCopyBlock, request, setNotice, setRedisInfo } = usePanel();
@@ -85,8 +86,8 @@ export default function RedisPage() {
     </table></div>}
   </section>;
 
-  // An administrator has no Redis of its own.
-  if (data.problem === 'admin' || data.problem === 'no_user') {
+  // An account without a Linux user to run it as.
+  if (data.problem === 'no_user') {
     return <>
       {header}
       <section className="section"><p className="hint redis-detail">{t(data.detail)}</p></section>

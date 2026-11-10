@@ -57,8 +57,9 @@ export const TILES = {
   // Advanced
   cron: { label: msg('Cron'), icon: 'cron', page: 'cron' },
   mcp: { label: msg('AI assistants'), icon: 'mcp', page: 'mcp', addon: 'mcp' },
-  // The account's own Redis (operator, 2026-10-27); an administrator has none.
-  redis: { label: 'Redis', icon: 'redis', page: 'redis', addon: 'redis', roles: ['reseller', 'customer'] },
+  // The account's own Redis (operator, 2026-10-27); the administrator's too,
+  // for the websites it owns itself (2026-11-10).
+  redis: { label: 'Redis', icon: 'redis', page: 'redis', addon: 'redis' },
   notifications: { label: msg('Notifications'), icon: 'notifications', page: 'notifications', addon: 'notifications', roles: ['admin'] },
   'panel-settings': { label: msg('Panel settings'), icon: 'panel-settings', page: 'settings', roles: ['admin'] },
   // Migration: each import addon's page, in the Migration hub.

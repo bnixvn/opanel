@@ -297,7 +297,7 @@ def test_the_addon_is_registered_off_by_default_and_run_by_the_helper(monkeypatc
 
 def test_the_page_and_its_fields_appear_only_with_the_addon():
     features = (ROOT / "frontend" / "src" / "lib" / "features.jsx").read_text(encoding="utf-8")
-    assert "redis: { label: 'Redis', icon: 'redis', page: 'redis', addon: 'redis'" in features
+    assert "redis: { label: 'Redis', icon: 'redis', page: 'redis', addon: 'redis' }," in features
     app_jsx = (ROOT / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     assert "const redisOn = !!redisInfo?.installed;" in app_jsx
     assert app_jsx.count('{redisOn && ') >= 2, "the package and the account forms"
@@ -439,17 +439,22 @@ def test_turning_it_on_is_refused_when_it_may_not_run(env, monkeypatch):
     assert env.calls == [], "nothing reached the helper"
 
 
-def test_an_administrator_has_none_of_its_own(env):
+def test_the_administrator_has_one_for_its_own_websites(env, monkeypatch):
+    """A site the admin created runs as the admin's Linux user and had no Redis
+    to use (operator, 2026-11-10)."""
+    monkeypatch.setattr(redis_user, "installed", lambda: True)
+    monkeypatch.setattr(redis_user, "running", lambda: True)
     _login(env.client, "root_admin")
     info = _call(env.client, "GET", "/api/redis").json()
-    assert info["allowed"] is False and info["problem"] == "admin" and info["detail"]
-    assert _call(env.client, "POST", "/api/redis/enable").status_code == 400
-    assert env.calls == []
+    assert info["allowed"] is True and info["problem"] is None
+    assert info["socket"] == "/home/root_admin/.redis/redis.sock"
+    assert _call(env.client, "POST", "/api/redis/enable").status_code == 200
+    assert ["redis-user-apply", "root_admin", str(redis_user.DEFAULT_MB)] in [call[:3] for call in env.calls]
     direct = _user(env.db, "direct")
     direct.redis_enabled = True
     env.db.commit()
     listed = _call(env.client, "GET", "/api/redis/accounts").json()
-    assert [row["username"] for row in listed["accounts"]] == ["direct"]
+    assert [row["username"] for row in listed["accounts"]] == ["direct", "root_admin"]
     _login(env.client, "direct")
     assert _call(env.client, "GET", "/api/redis/accounts").status_code == 403
 

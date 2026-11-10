@@ -3546,7 +3546,6 @@ export default {
   "0 MB on a package (or an account) means that it may not use Redis.": "0 MB ở một gói (hoặc một tài khoản) nghĩa là không được dùng Redis.",
   "Stopping the addon stops every account's Redis, and starting it brings them back; removing it stops and removes them all and turns Redis off for every account.": "Dừng addon sẽ dừng Redis của mọi tài khoản, chạy lại sẽ bật lại chúng; gỡ addon sẽ dừng và xoá tất cả, đồng thời tắt Redis của mọi tài khoản.",
   "The server's own Redis on 127.0.0.1:6379, if there is one, is not touched, and the redis-server package stays installed.": "Redis riêng của server trên 127.0.0.1:6379 (nếu có) không bị động tới, và gói redis-server vẫn được giữ lại.",
-  "Administrators have no Redis of their own: each hosting account turns on its own, and you can log in as the customer to do it.": "Quản trị viên không có Redis riêng: mỗi tài khoản hosting tự bật Redis của mình, và bạn có thể đăng nhập với tư cách khách hàng để bật giúp.",
   "This account has no Linux user to run Redis as.": "Tài khoản này không có user Linux để chạy Redis.",
   "Redis per account is stopped on this server.": "Redis cho từng tài khoản đang dừng trên server này.",
   "This account is suspended.": "Tài khoản này đang bị tạm khoá.",
