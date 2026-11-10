@@ -298,6 +298,8 @@ def test_the_addon_is_registered_off_by_default_and_run_by_the_helper(monkeypatc
 def test_the_page_and_its_fields_appear_only_with_the_addon():
     features = (ROOT / "frontend" / "src" / "lib" / "features.jsx").read_text(encoding="utf-8")
     assert "redis: { label: 'Redis', icon: 'redis', page: 'redis', addon: 'redis' }," in features
+    # On the admin's Dashboard too: where else would it read its connection details?
+    assert "['advanced', msg('Advanced'), ['cron', 'redis', 'mcp', 'notifications', 'panel-settings', 'addons']]," in features
     app_jsx = (ROOT / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     assert "const redisOn = !!redisInfo?.installed;" in app_jsx
     assert app_jsx.count('{redisOn && ') >= 2, "the package and the account forms"

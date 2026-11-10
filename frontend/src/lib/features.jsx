@@ -81,7 +81,7 @@ const ADMIN = [
   ['server', msg('Server'), ['php', 'services', 'processes', 'ram', 'disk', 'traffic', 'account-resources', 'updates']],
   // Addons with the rest of Advanced, not a section of one tile of their own
   // (operator, 2026-10-25, as on BPanel).
-  ['advanced', msg('Advanced'), ['cron', 'mcp', 'notifications', 'panel-settings', 'addons']],
+  ['advanced', msg('Advanced'), ['cron', 'redis', 'mcp', 'notifications', 'panel-settings', 'addons']],
   ['migration', msg('Migration'), ['da-import', 'cpanel-import', 'fastpanel-import']],
 ];
 const CUSTOMER = [
