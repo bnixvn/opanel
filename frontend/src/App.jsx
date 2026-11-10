@@ -26,6 +26,7 @@ import { ChangelogHistory, ChangelogPreview } from './components/Changelog.jsx';
 import { SharedBlocklistSection } from './components/SharedBlocklist.jsx';
 import PageHeader from './components/PageHeader';
 import Drawer from './components/Drawer.jsx';
+import { PasswordField } from './components/Form.jsx';
 import DashboardPage from './pages/Dashboard';
 import WebsitesPage from './pages/Websites';
 import WebsiteDetailPage from './pages/WebsiteDetail';
