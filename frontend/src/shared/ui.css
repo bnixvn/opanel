@@ -1122,7 +1122,7 @@ button svg,.button-link svg,.upload-button svg{flex:none}
 .form-section .check-line{font-size:13.5px;font-weight:500}
 .form-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .form-grid.five{grid-template-columns:repeat(5,minmax(0,1fr))}
-.form-grid label{display:grid;gap:6px;min-width:0;margin:0;font-weight:600}
+.form-grid label{display:grid;gap:6px;align-content:start;min-width:0;margin:0;font-weight:600}
 .form-grid label span{font-size:12.5px;font-weight:600;color:var(--text-secondary)}
 .form-grid label em{font-style:normal;font-weight:500;color:var(--text-secondary)}
 .form-grid input,.form-grid select{width:100%;min-width:0}
