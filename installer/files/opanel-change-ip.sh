@@ -62,7 +62,12 @@ if [[ -z "$new_ip" ]]; then
 fi
 is_ipv4 "$old_ip" || die "Invalid old IP: $old_ip"
 is_ipv4 "$new_ip" || die "Invalid new IP: $new_ip"
-[[ "$old_ip" != "$new_ip" ]] || die "Old IP and new IP are the same"
+# Run at every boot of an image (`opanel change-ip <image-ip> $(hostname -I ...)`),
+# the image's own server sees its own address: nothing to move, not an error.
+if [[ "$old_ip" == "$new_ip" ]]; then
+  echo "The server is still on $old_ip; nothing to change."
+  exit 0
+fi
 
 backup_root="$(mktemp -d /root/opanel-ip-change.XXXXXX)"
 old_ip_ere="${old_ip//./\\.}"

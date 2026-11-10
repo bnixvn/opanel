@@ -638,17 +638,26 @@ run_panel_update() {
   /usr/local/sbin/opanel-update
 }
 
+# `opanel change-ip <old-ip> [new-ip]` runs without asking: a VPS cloned from
+# an image is moved by its provisioning, with no one at a keyboard. The
+# addresses it passed were dropped and the prompt read nothing, so the panel
+# kept the image's IP and phpMyAdmin's sign-on link pointed at the old server
+# (operator, 2026-11-10). Without arguments it still asks.
 change_panel_ip() {
-  local script="/usr/local/sbin/opanel-change-ip" old_ip new_ip current_ip
+  local script="/usr/local/sbin/opanel-change-ip" old_ip="${1:-}" new_ip="${2:-}" current_ip
   [[ -x "$script" ]] || fail "$script not found. Run opanel-update to install it."
 
   current_ip="$(detect_ip)"
-  read -rp "Old IP: " old_ip
-  if [[ -n "$current_ip" ]]; then
-    read -rp "New IP [${current_ip}]: " new_ip
+  if [[ -z "$old_ip" ]]; then
+    read -rp "Old IP: " old_ip || fail "Old IP not given: opanel change-ip <old-ip> [new-ip]"
+  fi
+  if [[ -z "$new_ip" && -n "${1:-}" ]]; then
+    new_ip="$current_ip"
+  elif [[ -z "$new_ip" && -n "$current_ip" ]]; then
+    read -rp "New IP [${current_ip}]: " new_ip || true
     new_ip="${new_ip:-$current_ip}"
-  else
-    read -rp "New IP: " new_ip
+  elif [[ -z "$new_ip" ]]; then
+    read -rp "New IP: " new_ip || fail "New IP not given: opanel change-ip <old-ip> <new-ip>"
   fi
   "$script" "$old_ip" "$new_ip"
 }
@@ -723,7 +732,7 @@ case "${1:-menu}" in
   restart|--restart) restart_panel_command ;;
   repair-firewall|--repair-firewall) repair_firewall ;;
   update|--update) run_panel_update ;;
-  change-ip|--change-ip) change_panel_ip ;;
+  change-ip|--change-ip) change_panel_ip "${2:-}" "${3:-}" ;;
   set-panel-url|--set-panel-url) set_panel_url ;;
   install-panel-ssl|--install-panel-ssl) install_panel_ssl ;;
   fix-permissions|--fix-permissions) fix_permissions ;;
@@ -733,7 +742,7 @@ case "${1:-menu}" in
   status|--status) show_status ;;
   addon|--addon) addon_command "${2:-}" "${3:-}" ;;
   *)
-    echo "Usage: opanel [menu|login|status|logs|restart|repair-firewall|change-ip|set-panel-url|install-panel-ssl|fix-permissions|change-admin-password|sync-admin-root-password|reset-admin-2fa [username]|addon list|addon install <id>|addon remove <id>|update]"
+    echo "Usage: opanel [menu|login|status|logs|restart|repair-firewall|change-ip [old-ip] [new-ip]|set-panel-url|install-panel-ssl|fix-permissions|change-admin-password|sync-admin-root-password|reset-admin-2fa [username]|addon list|addon install <id>|addon remove <id>|update]"
     exit 2
     ;;
 esac

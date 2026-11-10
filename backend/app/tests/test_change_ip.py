@@ -34,3 +34,21 @@ def test_every_change_is_backed_up_first():
     loop = SCRIPT[SCRIPT.index('for file in "${files[@]}"; do'):]
     loop = loop[:loop.index("\ndone\n")]
     assert loop.index('cp -a -- "$file" "$dest"') < loop.index("perl -0pi")
+
+
+def test_change_ip_takes_its_addresses_from_the_command_line():
+    """A cloned VPS runs `sudo opanel change-ip <image-ip> $(hostname -I | awk ...)`
+    at boot (operator, 2026-11-10): the addresses were dropped, the prompt read
+    nothing, and the panel kept the image's IP."""
+    assert 'change-ip|--change-ip) change_panel_ip "${2:-}" "${3:-}" ;;' in CTL
+    fn = CTL[CTL.index("change_panel_ip() {"):]
+    fn = fn[:fn.index("\n}\n")]
+    assert 'old_ip="${1:-}" new_ip="${2:-}"' in fn
+    # No new IP given (the network not up yet at boot): this server's own.
+    assert 'if [[ -z "$new_ip" && -n "${1:-}" ]]; then\n    new_ip="$current_ip"' in fn
+
+
+def test_the_image_server_itself_is_not_an_error():
+    assert 'if [[ "$old_ip" == "$new_ip" ]]; then' in SCRIPT
+    same = SCRIPT[SCRIPT.index('if [[ "$old_ip" == "$new_ip" ]]; then'):]
+    assert same.index("exit 0") < same.index("fi\n")

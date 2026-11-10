@@ -163,7 +163,7 @@ opanel
 Dùng khi không vào được giao diện web: xem thông tin đăng nhập, trạng thái, log gần đây, khởi động lại dịch vụ, mở lại cổng firewall, đổi địa chỉ/cổng panel, sửa SSL của panel, sửa quyền, đổi mật khẩu `admin` và cập nhật OPanel.
 
 ```bash
-opanel change-ip                  # Đổi IP sau khi clone VPS
+opanel change-ip <IP-cũ> [IP-mới] # Đổi IP sau khi clone VPS (không đối số thì hỏi)
 opanel change-admin-password      # Đổi mật khẩu admin
 journalctl -u opanel-api -f       # Xem log của panel
 systemctl status opanel-api lsws mariadb redis-server
