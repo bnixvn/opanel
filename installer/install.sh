@@ -789,6 +789,8 @@ install_privileged_helper() {
   retire_admin_group_sudo
   # `opanel change-ip`: the script it runs (there was none before 2026-11-09).
   install -m 0755 -o root -g root "${SCRIPT_DIR}/files/opanel-change-ip.sh" /usr/local/sbin/opanel-change-ip
+  # `opanel regenerate-secrets`: a server cloned from an image gets keys of its own.
+  install -m 0755 -o root -g root "${SCRIPT_DIR}/files/opanel-regenerate-secrets.sh" /usr/local/sbin/opanel-regenerate-secrets
 }
 
 install_panel_cli() {

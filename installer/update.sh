@@ -1372,6 +1372,10 @@ fi
 if [[ -f "$SOURCE_DIR/installer/files/opanel-change-ip.sh" ]]; then
   install -m 0755 -o root -g root "$SOURCE_DIR/installer/files/opanel-change-ip.sh" /usr/local/sbin/opanel-change-ip
 fi
+# `opanel regenerate-secrets` runs this (2026-11-10).
+if [[ -f "$SOURCE_DIR/installer/files/opanel-regenerate-secrets.sh" ]]; then
+  install -m 0755 -o root -g root "$SOURCE_DIR/installer/files/opanel-regenerate-secrets.sh" /usr/local/sbin/opanel-regenerate-secrets
+fi
 if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
   log "Refreshing /usr/local/sbin/opanel-helper and /etc/sudoers.d/opanel"
   update_progress 40 "runtime" "Refreshing panel helper and runtime"

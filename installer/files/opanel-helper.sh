@@ -180,6 +180,8 @@ ols_sync_main_config() {
   install -d -o root -g root -m 0755 /usr/local/lsws/conf/opanel
   ols_disable_conflicting_apache
   ensure_ols_modsecurity_enabled >/dev/null 2>&1 || true
+  # The HTTPS listener's fallback certificate when ssl-cert's is absent.
+  panel_self_signed_ensure >/dev/null 2>&1 || true
   python3 - "$OLS_HTTPD_CONF" "$OLS_VHOSTS_DIR" "$ENV_FILE" <<'PY'
 import pathlib
 import re
@@ -344,9 +346,17 @@ for domain, _hosts, _has_ssl in sites:
         "",
     ])
 
-# Read panel TLS cert from tools vhost for the HTTPS listener default
+# Read panel TLS cert from tools vhost for the HTTPS listener default.
+# Without one, ssl-cert's snakeoil; and without that, the panel's own
+# self-signed certificate. ssl-cert came only with the Debian phpMyAdmin
+# package: on a server installed after the switch to the upstream tarball the
+# listener named a snakeoil file that did not exist, LiteSpeed served :443 as
+# plain HTTP and every site failed with ERR_SSL_PROTOCOL_ERROR (2026-11-10).
 _tools_cert = pathlib.Path("/etc/ssl/certs/ssl-cert-snakeoil.pem")
 _tools_key = pathlib.Path("/etc/ssl/private/ssl-cert-snakeoil.key")
+if not (_tools_cert.is_file() and _tools_key.is_file()):
+    _tools_cert = pathlib.Path("/etc/opanel/certs/_default/fullchain.pem")
+    _tools_key = pathlib.Path("/etc/opanel/certs/_default/privkey.pem")
 if tools_conf.is_file():
     _tc = tools_conf.read_text(encoding="utf-8", errors="replace")
     _cm = re.search(r"(?m)^\s*certFile\s+(.+?)\s*$", _tc)

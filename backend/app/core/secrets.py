@@ -23,6 +23,7 @@ import base64
 import hashlib
 import logging
 import os
+from functools import lru_cache
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -39,7 +40,7 @@ _PBKDF2_SALT = b"opanel-fernet-v2-salt"
 _PBKDF2_ITERATIONS = 480_000
 
 
-def _derive_key_pbkdf2() -> bytes:
+def _derive_key_pbkdf2(secret_key: Optional[str] = None) -> bytes:
     """Derive a 32-byte Fernet key via PBKDF2-HMAC-SHA256."""
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -47,8 +48,20 @@ def _derive_key_pbkdf2() -> bytes:
         salt=_PBKDF2_SALT,
         iterations=_PBKDF2_ITERATIONS,
     )
-    raw = kdf.derive(settings.secret_key.encode("utf-8"))
+    raw = kdf.derive((secret_key or settings.secret_key).encode("utf-8"))
     return base64.urlsafe_b64encode(raw)
+
+
+@lru_cache(maxsize=2)
+def _fernet_for(secret_key: str) -> Fernet:
+    return Fernet(_derive_key_pbkdf2(secret_key))
+
+
+def encrypt_with(secret_key: str, plaintext: str) -> str:
+    """encrypt() under another SECRET_KEY: app.regenerate_secrets moves every
+    stored value to the server's new key with it."""
+    token = _fernet_for(secret_key).encrypt(plaintext.encode("utf-8")).decode("utf-8")
+    return _ENCRYPTED_PREFIX + token
 
 
 def _derive_key_legacy() -> bytes:

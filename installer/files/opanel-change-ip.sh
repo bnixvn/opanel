@@ -100,7 +100,9 @@ collect_tree() {
 }
 
 shopt -s nullglob
-for path in "$APP_DIR/backend/.env" "$LOGIN_FILE" /etc/hosts /usr/local/lsws/conf/httpd_config.conf; do
+# pdns.conf: the DNS Manager answers on the server's addresses (local-address);
+# left on the old one, PowerDNS on a clone could not start.
+for path in "$APP_DIR/backend/.env" "$LOGIN_FILE" /etc/hosts /usr/local/lsws/conf/httpd_config.conf /etc/powerdns/pdns.conf; do
   add_candidate "$path"
 done
 shopt -u nullglob
@@ -183,6 +185,9 @@ if (( ${#changed_files[@]} > 0 )); then
   systemctl restart opanel-api >/dev/null 2>&1 || warn "Could not restart opanel-api"
   if [[ -x /usr/local/lsws/bin/lswsctrl ]]; then
     /usr/local/lsws/bin/lswsctrl restart >/dev/null 2>&1 || warn "Could not restart LiteSpeed"
+  fi
+  if [[ " ${changed_files[*]} " == *" /etc/powerdns/pdns.conf "* ]]; then
+    systemctl restart pdns >/dev/null 2>&1 || warn "Could not restart PowerDNS"
   fi
   echo "Changed ${#changed_files[@]} item(s) from $old_ip to $new_ip:"
   printf '  %s\n' "${changed_files[@]}"
