@@ -898,6 +898,11 @@ refresh_tools_ols() {
   # opanel-firewall-blocklist.timer plus a blocklist-apply command. Re-applying
   # it from here made every caller -- issuing SSL, refreshing a vhost -- pay for
   # a full reload of the set, which is minutes once the list reaches six figures.
+  #
+  # phpMyAdmin answers under /phpmyadmin/ only. It used to answer at the
+  # server's own address too, so https://<hostname>/ opened phpMyAdmin and
+  # bounced to its sign-on page (operator, 2026-11-11): / now goes to the
+  # panel, and any other path but /.well-known/ (certificates) is refused.
   cat >"${OLS_VHOSTS_DIR}/00-opanel-tools.conf" <<OLS_VHOST
 docRoot                   /usr/share/phpmyadmin/
 vhDomain                  ${host}
@@ -946,7 +951,14 @@ scripthandler {
 
 rewrite  {
   enable                  1
-  rules                   rewriteRule ^/phpmyadmin/(.*)$ /\$1 [L]
+  rules                   <<<END_rules
+RewriteRule ^/phpmyadmin\$ /phpmyadmin/ [R=301,L]
+RewriteRule ^/?\$ https://${host}:${port}/ [R=302,L]
+RewriteCond %{REQUEST_URI} !^/phpmyadmin/
+RewriteCond %{REQUEST_URI} !^/\.well-known/
+RewriteRule ^ - [F,L]
+RewriteRule ^/phpmyadmin/(.*)\$ /\$1 [L]
+END_rules
 }
 
 vhssl  {

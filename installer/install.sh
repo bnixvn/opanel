@@ -1052,6 +1052,11 @@ write_tools_vhost_config() {
   local vhosts_dir="/usr/local/lsws/conf/opanel/vhosts"
   install -d -o root -g opanel -m 2775 "$vhosts_dir"
 
+  # phpMyAdmin answers under /phpmyadmin/ only: the server's own address goes
+  # to the panel (see refresh_tools_ols in the helper, 2026-11-11).
+  local host
+  host="${PANEL_DOMAIN:-$SERVER_IP}"
+  [[ -n "$host" ]] || host="$(detect_server_ip)"
   cat >"${vhosts_dir}/00-opanel-tools.conf" <<OLS
 # OPanel tools vhost (phpMyAdmin)
 docRoot                   /usr/share/phpmyadmin/
@@ -1100,7 +1105,14 @@ scripthandler {
 
 rewrite  {
   enable                  1
-  rules                   rewriteRule ^/phpmyadmin/(.*)\$ /\$1 [L]
+  rules                   <<<END_rules
+RewriteRule ^/phpmyadmin\$ /phpmyadmin/ [R=301,L]
+RewriteRule ^/?\$ https://${host}:${PANEL_PORT}/ [R=302,L]
+RewriteCond %{REQUEST_URI} !^/phpmyadmin/
+RewriteCond %{REQUEST_URI} !^/\.well-known/
+RewriteRule ^ - [F,L]
+RewriteRule ^/phpmyadmin/(.*)\$ /\$1 [L]
+END_rules
 }
 
 vhssl  {
@@ -1110,10 +1122,6 @@ vhssl  {
 OLS
   chown root:opanel "${vhosts_dir}/00-opanel-tools.conf"
   chmod 0664 "${vhosts_dir}/00-opanel-tools.conf"
-
-  local host
-  host="${PANEL_DOMAIN:-$SERVER_IP}"
-  [[ -n "$host" ]] || host="$(detect_server_ip)"
   sed -i -E "/api\/databases\/phpmyadmin-sso/s#'[^']+/api/databases/phpmyadmin-sso/'#'${api_scheme}://127.0.0.1:${PANEL_PORT}/api/databases/phpmyadmin-sso/'#" /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "s#('secure' => )(true|false)#\1${pma_secure}#" /etc/phpmyadmin/conf.d/opanel-signon.php /usr/share/phpmyadmin/opanel-signon.php 2>/dev/null || true
   sed -i -E "/PmaAbsoluteUri/s#'https?://[^']+/phpmyadmin/'#'${tools_scheme}://${host}/phpmyadmin/'#" /etc/phpmyadmin/conf.d/opanel-signon.php 2>/dev/null || true
