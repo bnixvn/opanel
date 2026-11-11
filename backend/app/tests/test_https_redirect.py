@@ -109,3 +109,42 @@ def test_without_tls_nothing_changes():
     config = SimpleNamespace(ssl=None, http_protocol_class=Echo, port=2222, loop="auto")
     https_redirect.install(config)
     assert config.http_protocol_class is Echo and config.loop == "auto"
+
+
+def test_a_transport_closed_with_data_buffered_keeps_its_write_callback(monkeypatch):
+    """Python 3.12.3 (Ubuntu 24.04) dropped it on close(); the writer that
+    resume_writing() then registered had a None callback, and the event loop
+    ran it forever (BPanel on 163.61.72.88, 2026-11-11: hundreds of thousands
+    of "Exception in callback None()", the API all but stalled)."""
+    from asyncio import selector_events
+    import socket
+
+    cls = selector_events._SelectorSocketTransport
+
+    def close_as_in_3_12_3(self):
+        self._read_ready_cb = None
+        self._write_ready = None
+        super(cls, self).close()
+
+    monkeypatch.setattr(cls, "close", close_as_in_3_12_3)
+    monkeypatch.setattr(cls, "_keeps_write_ready", False, raising=False)
+    https_redirect.keep_write_ready_on_close()
+    loop = asyncio.SelectorEventLoop()
+    ours, theirs = socket.socketpair()
+    try:
+        transport = cls(loop, ours, asyncio.Protocol())
+        transport._buffer.append(b"still to send")
+        transport.close()
+        assert transport._write_ready is not None
+    finally:
+        loop.run_until_complete(asyncio.sleep(0))
+        loop.close()
+        ours.close()
+        theirs.close()
+
+
+def test_the_https_port_applies_the_workaround(server_context):
+    import inspect
+
+    install = inspect.getsource(https_redirect.install)
+    assert install.index('config.loop = "asyncio"') < install.index("keep_write_ready_on_close()")

@@ -124,6 +124,36 @@ class FirstByteProtocol(asyncio.Protocol):
         self._transport.close()
 
 
+def keep_write_ready_on_close() -> None:
+    """Work around Python 3.12.3's selector transport (Ubuntu 24.04's).
+
+    Its close() drops the write callback (_write_ready = None) even with data
+    still buffered. When that data drains, resume_writing() lets the protocol
+    write again; write() sends part of it and registers a writer whose
+    callback is that None, and the event loop runs it forever: "Exception in
+    callback None()" hundreds of thousands of times, the panel's API all but
+    stalled (BPanel on 163.61.72.88, 2026-11-11). Python 3.12.10 no longer
+    drops it; keeping the callback lets the rest drain and the connection
+    close as it would have. Only the asyncio loop has this transport, and
+    install() below chooses that loop.
+    """
+    from asyncio import selector_events
+
+    cls = selector_events._SelectorSocketTransport
+    if getattr(cls, "_keeps_write_ready", False):
+        return
+    close = cls.close
+
+    def close_keeping_write_ready(self):
+        write_ready = getattr(self, "_write_ready", None)
+        close(self)
+        if getattr(self, "_write_ready", None) is None and write_ready is not None:
+            self._write_ready = write_ready
+
+    cls.close = close_keeping_write_ready
+    cls._keeps_write_ready = True
+
+
 def install(config) -> None:
     """Make a loaded uvicorn.Config answer plain HTTP with a redirect.
 
@@ -136,4 +166,5 @@ def install(config) -> None:
     ssl_context, protocol_class = config.ssl, config.http_protocol_class
     config.ssl = None
     config.loop = "asyncio"
+    keep_write_ready_on_close()
     config.http_protocol_class = partial(FirstByteProtocol, protocol_class, ssl_context, config.port)
