@@ -7,6 +7,7 @@ server that used it has the addon turned on, once.
 """
 import io
 import json
+import re
 import tarfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -250,13 +251,29 @@ def test_directadmin_list_skips_only_the_super_admin():
 class _FakeServer:
     """What the other server answers, and what it was asked."""
 
-    def __init__(self, panel, fail_pack=False, fail_verify=False, pack_output=""):
+    def __init__(self, panel, fail_pack=False, fail_verify=False, pack_output="", strict="1"):
         self.panel, self.fail_pack, self.commands, self.removed = panel, fail_pack, [], []
         self.fail_verify, self.pack_output = fail_verify, pack_output
         self.folder = "/home/opanel-migrate.Ab12Cd34Ef"
+        # directadmin.conf state the pack reads and temporarily changes.
+        self.conf = {} if strict is None else {"strict_backup_permissions": strict}
+        self.strict_writes = []  # every value the pack wrote (None = line removed)
 
     def run(self, client, command, timeout):
         self.commands.append(command)
+        if "directadmin.conf" in command:
+            key = "strict_backup_permissions"
+            if "cut -d=" in command:  # read
+                v = self.conf.get(key)
+                return 0, (("__ABSENT__" if v is None else v) + "\n"), ""
+            if command.strip().startswith("sed -i '/^"):  # unset
+                self.conf.pop(key, None)
+                self.strict_writes.append(None)
+                return 0, "", ""
+            m = re.search(rf"{key}=(\w+)", command)  # set
+            self.conf[key] = m.group(1) if m else ""
+            self.strict_writes.append(self.conf[key])
+            return 0, "", ""
         if command.startswith("umask 077; mktemp"):
             return 0, self.folder + "\n", ""
         if command.startswith("rm -rf -- "):
@@ -336,6 +353,34 @@ def test_directadmin_metadata_only_backup_is_rejected(tmp_path, monkeypatch):
     with pytest.raises(migrate_ssh.MigrateError, match="metadata backup"):
         migrate_ssh.pack_and_fetch(server, "directadmin", "bob", lambda n: tmp_path / n, lambda *a: None)
     assert server.removed  # work folder still cleaned up
+
+
+@pytest.mark.parametrize("strict, expected_writes, restored", [
+    ("1", ["0", "1"], "1"),        # default on: turned off, then put back to 1
+    (None, ["0", None], None),     # absent: turned off, then the line removed again
+    ("0", [], "0"),                # already off: left untouched, nothing written
+])
+def test_directadmin_backup_runs_with_strict_permissions_off(tmp_path, monkeypatch, strict, expected_writes, restored):
+    # A large account's backup is written as its own user under
+    # strict_backup_permissions=1 and overflows the account quota. The pack holds
+    # root, so it flips the option off for the backup and restores it exactly.
+    server = _FakeServer("directadmin", strict=strict)
+    monkeypatch.setattr(migrate_ssh, "_exec", server.run)
+    monkeypatch.setattr(migrate_ssh.time, "sleep", lambda s: None)
+    migrate_ssh.pack_and_fetch(server, "directadmin", "bob", lambda n: tmp_path / n, lambda *a: None)
+    assert server.strict_writes == expected_writes
+    assert server.conf.get("strict_backup_permissions") == restored
+
+
+def test_directadmin_strict_permissions_restored_even_when_backup_fails(tmp_path, monkeypatch):
+    # The option must be put back even if the backup is rejected mid-way.
+    server = _FakeServer("directadmin", fail_verify=True)
+    monkeypatch.setattr(migrate_ssh, "_exec", server.run)
+    monkeypatch.setattr(migrate_ssh.time, "sleep", lambda s: None)
+    with pytest.raises(migrate_ssh.MigrateError):
+        migrate_ssh.pack_and_fetch(server, "directadmin", "bob", lambda n: tmp_path / n, lambda *a: None)
+    assert server.strict_writes == ["0", "1"]  # turned off, then restored
+    assert server.conf.get("strict_backup_permissions") == "1"
 
 
 def test_directadmin_invalid_option_is_caught_despite_exit_zero(tmp_path, monkeypatch):
