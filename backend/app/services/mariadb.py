@@ -503,20 +503,13 @@ def import_database(
         with sql_path.open("rb") as source:
             return subprocess.run(args, stdin=source, capture_output=True, check=False)
 
-    # The mysql client's own max_allowed_packet defaults to ~16 MB, so a single
-    # oversized statement -- a WordPress post with a base64-embedded image, a big
-    # serialised option, a long wp_postmeta row -- is rejected mid-import with
-    # "Got a packet bigger than 'max_allowed_packet'", leaving a half-loaded
-    # database. Raise the client limit so the whole dump loads; the server still
-    # enforces its own cap.
-    packet = "--max-allowed-packet=1G"
     if as_user:
         if not as_password:
             raise ValueError("A scoped database import needs the account password")
         with _scoped_defaults_file(as_user, as_password) as defaults:
-            completed = _run(["mysql", f"--defaults-file={defaults}", packet, safe_name])
+            completed = _run(["mysql", f"--defaults-file={defaults}", safe_name])
     else:
-        completed = _run(_mysql_args([packet, safe_name]))
+        completed = _run(_mysql_args([safe_name]))
     if completed.returncode != 0:
         stderr = completed.stderr.decode("utf-8", errors="replace")
         raise RuntimeError(f"Database import failed: {stderr.strip()}")
