@@ -44,7 +44,7 @@ from app.schemas.schemas import (
     UserRestoreDescribe,
     WpAction,
 )
-from app.services import backup, backup_scheduler, cpanel_import, cron, da_import, demo_mode, fastpanel_import, migrate_ssh, file_manager, mariadb, notifications, ols_throttle, php, restore_jobs, restore_sources, site_users, storage_quota, wordpress
+from app.services import backup, backup_scheduler, cpanel_import, cron, da_import, demo_mode, destinations, fastpanel_import, migrate_ssh, file_manager, mariadb, notifications, ols_throttle, php, restore_jobs, restore_sources, site_users, storage_quota, wordpress
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
@@ -443,6 +443,15 @@ def upload_archive_to_target(db: Session, target_id: int, archive: str,
     target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
     if not target or not target.is_active:
         raise HTTPException(status_code=404, detail="Backup target not found")
+
+    if destinations.is_external(target.kind):
+        # An addon's destination (Google Drive): one folder of its own, the
+        # archive under its name - which already says whose it is.
+        try:
+            with destinations.opened(target, db) as (driver, config):
+                return target.name, driver.upload(config, archive, Path(archive).name)
+        except destinations.DestinationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     if (target.kind or "sftp") == "s3":
         try:
@@ -1055,6 +1064,11 @@ def _restore_source(payload: RestoreSourceIn, db) -> tuple[restore_sources.Sourc
         ).first()
         if not target:
             raise HTTPException(status_code=404, detail="Backup Destination not found")
+        if destinations.is_external(target.kind):
+            # An addon's destination (Google Drive): by id; its driver is
+            # opened where the work runs.
+            _addon_driver(target.kind)
+            return restore_sources.Source("target", addon=restore_sources.AddonDest(target.id)), target
         if (target.kind or "sftp") == "s3":
             return restore_sources.Source("target", s3=restore_sources.S3Bucket(
                 endpoint=target.s3_endpoint or "",
@@ -1803,6 +1817,19 @@ def _remote_copies(db: Session, relative_key: str) -> list[dict]:
             key = row["key"]
             if key == relative_key or key.endswith(f"/{relative_key}"):
                 found.append({"target": target, "key": key})
+    # A destination an addon brings (Google Drive) keeps one flat folder; the
+    # file's name says whose it is, as on SFTP.
+    name = relative_key.rsplit("/", 1)[-1]
+    for target in db.query(BackupTarget).filter(BackupTarget.is_active == True).all():  # noqa: E712
+        if not destinations.is_external(target.kind):
+            continue
+        try:
+            with destinations.opened(target, db) as (driver, config):
+                rows = driver.listing(config)
+        except destinations.DestinationError:
+            logger.warning("Could not list destination %s while deleting %s", target.name, relative_key)
+            continue
+        found.extend({"target": target, "key": row["key"]} for row in rows if row["name"] == name)
     return found
 
 
@@ -1810,6 +1837,14 @@ def _delete_remote_copies(db: Session, relative_key: str) -> list[str]:
     removed = []
     for item in _remote_copies(db, relative_key):
         target = item["target"]
+        if destinations.is_external(target.kind):
+            try:
+                with destinations.opened(target, db) as (driver, config):
+                    driver.delete(config, item["key"])
+                removed.append(f"{target.name}:{item['key'].split('/', 1)[-1]}")
+            except destinations.DestinationError as exc:
+                logger.warning("Could not delete %s from %s: %s", item["key"], target.name, exc)
+            continue
         try:
             backup.delete_s3_object(
                 endpoint=target.s3_endpoint,
@@ -1837,7 +1872,11 @@ def find_remote_copies(
     ensure_role(current_user.role, Role.admin)
     return {
         "items": [
-            {"target": item["target"].name, "bucket": item["target"].s3_bucket, "key": item["key"]}
+            # An addon destination's key is "<its id>/<name>": the name is what to show.
+            {"target": item["target"].name,
+             "bucket": item["target"].s3_bucket if not destinations.is_external(item["target"].kind)
+             else destinations.label(item["target"].kind),
+             "key": item["key"] if not destinations.is_external(item["target"].kind) else item["key"].split("/", 1)[-1]}
             for item in _remote_copies(db, _remote_relative_key(backup_file))
         ]
     }
@@ -1977,10 +2016,75 @@ def delete_backup_schedule(schedule_id: int, request: Request, db: Session = Dep
     return {"ok": True}
 
 
+def _target_out(target: BackupTarget) -> BackupTargetOut:
+    """A destination as the page sees it; an addon kind with its label, one
+    line about it and whether it is signed in, never a secret."""
+    out = BackupTargetOut.model_validate(target)
+    for key, value in destinations.public_view(target).items():
+        setattr(out, key, value)
+    return out
+
+
+def _addon_driver(kind: str):
+    try:
+        return destinations.driver_for(kind)
+    except destinations.DestinationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _addon_target(db: Session, target_id: int) -> BackupTarget:
+    target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Backup target not found")
+    if not destinations.is_external(target.kind):
+        raise HTTPException(status_code=400, detail="Only a destination an addon brings signs in this way")
+    return target
+
+
+@router.get("/destination-kinds")
+def list_destination_kinds(current_user: User = Depends(get_current_user)):
+    """What the destination form offers: SFTP, S3, and each kind an installed
+    addon brings (Google Drive), with the fields its form asks for."""
+    ensure_role(current_user.role, Role.admin)
+    return {"kinds": destinations.kinds()}
+
+
+@router.post("/backup-targets/{target_id}/connect")
+def connect_backup_target(target_id: int, request: Request, db: Session = Depends(get_db),
+                          current_user: User = Depends(get_current_user)):
+    """Start signing an addon destination in (Google Drive): the code the
+    administrator enters at the address shown, on any device."""
+    ensure_role(current_user.role, Role.admin)
+    target = _addon_target(db, target_id)
+    try:
+        with destinations.opened(target, db) as (driver, config):
+            prompt = driver.connect_start(config)
+    except destinations.DestinationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_action(db, current_user.id, "connect_backup_target", f"{target.kind}:{target.name}", request=request)
+    return {"verification_url": prompt.get("verification_url", ""), "user_code": prompt.get("user_code", ""),
+            "expires_in": int(prompt.get("expires_in") or 0), "interval": int(prompt.get("interval") or 5)}
+
+
+@router.post("/backup-targets/{target_id}/connect/poll")
+def poll_backup_target_connect(target_id: int, db: Session = Depends(get_db),
+                               current_user: User = Depends(get_current_user)):
+    """Whether the code has been entered: "pending", "slow_down", "done",
+    "denied" or "expired"."""
+    ensure_role(current_user.role, Role.admin)
+    target = _addon_target(db, target_id)
+    try:
+        with destinations.opened(target, db) as (driver, config):
+            state = driver.connect_poll(config)
+    except destinations.DestinationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"state": state, "destination": _target_out(target)}
+
+
 @router.get("/backup-targets", response_model=list[BackupTargetOut])
 def list_backup_targets(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
-    return db.query(BackupTarget).order_by(BackupTarget.id.desc()).all()
+    return [_target_out(target) for target in db.query(BackupTarget).order_by(BackupTarget.id.desc()).all()]
 
 
 @router.post("/backup-targets", response_model=BackupTargetOut)
@@ -2013,11 +2117,20 @@ def create_backup_target(
         s3_secret_key=encrypt(payload.s3_secret_key) if payload.s3_secret_key else None,
         s3_use_path_style=payload.s3_use_path_style,
     )
+    if destinations.is_external(payload.kind):
+        # An addon's kind (Google Drive): its driver reads the form; one that
+        # signs in with a code is connected from the list afterwards.
+        driver = _addon_driver(payload.kind)
+        target.remote_path = "/"
+        try:
+            destinations.write_config(target, driver.validate(dict(payload.options), {}))
+        except destinations.DestinationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.add(target)
     db.commit()
     db.refresh(target)
     log_action(db, current_user.id, "create_backup_target", f"{target.kind}:{target.name}", request=request)
-    return target
+    return _target_out(target)
 
 
 @router.put("/backup-targets/{target_id}", response_model=BackupTargetOut)
@@ -2042,6 +2155,18 @@ def update_backup_target(
     if payload.name != target.name and db.query(BackupTarget).filter(BackupTarget.name == payload.name).first():
         raise HTTPException(status_code=409, detail="Backup target name already exists")
     target.name = payload.name
+    if destinations.is_external(target.kind):
+        driver = _addon_driver(target.kind)
+        try:
+            config = destinations.read_config(target)
+            destinations.write_config(target, driver.validate(dict(payload.options), config))
+        except destinations.DestinationError as exc:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        db.commit()
+        db.refresh(target)
+        log_action(db, current_user.id, "update_backup_target", f"{target.kind}:{target.name}", request=request)
+        return _target_out(target)
     target.remote_path = payload.remote_path
     if target.kind == "s3":
         target.s3_endpoint = payload.s3_endpoint
@@ -2067,7 +2192,7 @@ def update_backup_target(
     db.commit()
     db.refresh(target)
     log_action(db, current_user.id, "update_backup_target", f"{target.kind}:{target.name}", request=request)
-    return target
+    return _target_out(target)
 
 
 @router.post("/backup-targets/{target_id}/test")
@@ -2086,6 +2211,13 @@ def test_backup_target(
     target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="Backup target not found")
+    if destinations.is_external(target.kind):
+        # An addon's destination writes and removes a small file itself.
+        try:
+            with destinations.opened(target, db) as (driver, config):
+                return {"ok": True, "message": driver.test(config)}
+        except destinations.DestinationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
     if (target.kind or "sftp") != "s3":
         # Sign in and write a small file in the folder, as a backup would.
         try:
@@ -2144,6 +2276,15 @@ def list_backup_target_objects(
     target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="Backup target not found")
+    if destinations.is_external(target.kind):
+        try:
+            with destinations.opened(target, db) as (driver, config):
+                rows, where = driver.listing(config), driver.summary(config)
+        except destinations.DestinationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"bucket": f"{destinations.label(target.kind)}: {where}", "prefix": "",
+                "items": [{"key": row["key"], "name": row["name"], "size": row.get("size") or 0,
+                           "modified": row.get("modified") or ""} for row in rows]}
     if (target.kind or "sftp") != "s3":
         raise HTTPException(status_code=400, detail="Only S3 destinations can be listed.")
     try:
@@ -2189,6 +2330,18 @@ def delete_backup_target_object(
     target = db.query(BackupTarget).filter(BackupTarget.id == target_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="Backup target not found")
+    if destinations.is_external(target.kind):
+        # Only a file this destination lists: an id from another one is not its to delete.
+        try:
+            with destinations.opened(target, db) as (driver, config):
+                rows = {row["key"]: row["name"] for row in driver.listing(config)}
+                if key not in rows:
+                    raise HTTPException(status_code=404, detail="That file is not in this destination")
+                driver.delete(config, key)
+        except destinations.DestinationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        log_action(db, current_user.id, "delete_destination_backup", target.name, rows[key], request=request)
+        return {"deleted": key}
     if (target.kind or "sftp") != "s3":
         raise HTTPException(status_code=400, detail="Only S3 destinations can be deleted from.")
     try:

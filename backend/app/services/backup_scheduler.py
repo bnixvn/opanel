@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import json
 import logging
+from pathlib import Path
 
 from app.core.database import SessionLocal
 from app.core.secrets import decrypt
@@ -147,6 +148,27 @@ def _upload_to_s3(db, target, archive: str, keep: int, username: str, style: str
     return f"{target.name}:{result['remote_file']}"
 
 
+def _upload_to_addon(db, target, archive: str, keep: int, username: str, style: str) -> str:
+    """An archive to a destination an addon brings (Google Drive): its own
+    folder, the archive under its name - which says whose it is, as on SFTP.
+    Dated and timestamped names are held to the retention, as SFTP's are."""
+    from app.services import destinations
+
+    with destinations.opened(target, db) as (driver, config):
+        remote = driver.upload(config, archive, Path(archive).name)
+        if style in ("date", "timestamp") and keep and keep > 0:
+            try:
+                ours = [row for row in driver.listing(config)
+                        if backup.in_family(row["name"], username, style) and not backup.is_manual_slot(row["name"])]
+                ours.sort(key=lambda row: row.get("modified") or "", reverse=True)
+                for row in ours[keep:]:
+                    driver.delete(config, row["key"])
+            except destinations.DestinationError:
+                # The upload succeeded; a failed prune costs space, not a backup.
+                logger.warning("Prune failed for destination %s", target.name, exc_info=True)
+    return f"{target.name}:{remote}"
+
+
 def _upload_if_configured(db, schedule: BackupSchedule, archive: str, username: str = "") -> str:
     if not schedule.target_id:
         return archive
@@ -155,6 +177,8 @@ def _upload_if_configured(db, schedule: BackupSchedule, archive: str, username: 
         raise ValueError("Backup target not found")
 
     style = _style(schedule)
+    if (target.kind or "sftp") not in ("sftp", "s3"):
+        return _upload_to_addon(db, target, archive, schedule.retention, username, style)
     if (target.kind or "sftp") == "s3":
         return _upload_to_s3(db, target, archive, schedule.retention, username, style)
 

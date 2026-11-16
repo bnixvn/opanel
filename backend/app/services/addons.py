@@ -514,14 +514,28 @@ ADDONS: dict[str, dict] = {
     },
 }
 
+# Addons whose code lives in a repository of their own (Google Drive backup,
+# 2026-11-16). Named here all the same - the list is in
+# services/external_addons.py KNOWN, in this repository - so the rule above
+# holds: nothing outside the repository names an addon. opanelctl fetches
+# their code as root; the panel only loads it (services/external_addons.py).
+from app.services import external_addons as _external  # noqa: E402
+
+ADDONS.update(_external.catalogue_entries())
+
+
+def is_external(addon_id: str) -> bool:
+    return bool(ADDONS.get(addon_id, {}).get("external"))
+
 
 def _is_panel_addon(definition: dict) -> bool:
     """An addon that lives inside the panel and needs nothing from root.
 
     Its installed/running state is the panel's own bookkeeping; there is no
-    package to ask the box about, and the helper does not know its id.
+    package to ask the box about, and the helper does not know its id. An
+    addon from its own repository is one too: root fetched its code already.
     """
-    return definition.get("kind") == "panel"
+    return definition.get("kind") in ("panel", "external")
 
 
 def _is_managed(definition: dict) -> bool:
@@ -939,8 +953,17 @@ def install(addon_id: str, actor: str = "", *, from_shell: bool = False) -> dict
     current = status(addon_id)
     if current["busy"]:
         raise ValueError(f"{definition['name']} is already {current['busy_action'] or 'working'}")
-    if current["installed"]:
+    if current["installed"] and not (definition.get("external") and from_shell):
         raise ValueError(f"{definition['name']} is already installed")
+    if definition.get("external"):
+        # Its code is on disk (opanelctl fetched it as root, again when it was
+        # installed already - that is how it is brought to its latest release):
+        # root's alone and fitting this panel, or it is not called installed.
+        try:
+            info = _external.verify(addon_id)
+        except _external.AddonError as exc:
+            raise ValueError(str(exc)) from exc
+        definition["version"] = str(info.get("version") or "")
     if _is_panel_addon(definition):
         _update_state(addon_id, installed=True, running=True, last_error="", installed_by=actor,
                       installed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
@@ -965,6 +988,24 @@ def uninstall(addon_id: str, actor: str = "", *, from_shell: bool = False) -> di
         raise ValueError(f"{definition['name']} is already {current['busy_action'] or 'working'}")
     if not current["installed"]:
         raise ValueError(f"{definition['name']} is not installed")
+    if definition.get("external"):
+        # A destination of its kind would be left that nothing can reach:
+        # schedules sending to it would fail every night. The shell has not
+        # loaded the addon: its manifest says which kinds are its.
+        from app.core.database import SessionLocal
+        from app.models.entities import BackupTarget
+        from app.services import destinations
+
+        kinds = sorted({*(_external.manifest(addon_id).get("kinds") or []),
+                        *(kind for kind, owner in destinations._addon_of.items() if owner == addon_id)})
+        if kinds:
+            db = SessionLocal()
+            try:
+                left = [row.name for row in db.query(BackupTarget).filter(BackupTarget.kind.in_(kinds)).all()]
+            finally:
+                db.close()
+            if left:
+                raise ValueError(f"Delete the {definition['name']} destinations first: {', '.join(left)}")
     if _is_panel_addon(definition):
         _update_state(addon_id, installed=False, running=False, last_error="",
                       installed_at="", installed_by="")

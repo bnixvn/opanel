@@ -6110,7 +6110,7 @@ function App() {
           <div className="restore-form-row">
             <select value={restoreTargetId} onChange={e => { setRestoreTargetId(e.target.value); setRestoreList(null); setRestoreListError(''); setRestorePicks([]); setRestoreChoice({}); }} aria-label={tr("Destination")}>
               <option value="">{tr("Choose a destination")}</option>
-              {sftpTargets.map(target => <option key={target.id} value={target.id}>{target.name} ({target.kind === 's3' ? 'S3' : 'SFTP'})</option>)}
+              {sftpTargets.map(target => <option key={target.id} value={target.id}>{target.name} ({target.kind_label || (target.kind === 's3' ? 'S3' : 'SFTP')})</option>)}
             </select>
             <button className="secondary" disabled={!restoreTargetId || restoreListing} onClick={() => loadRestoreList('target')}><RefreshCw size={14}/> {tr("Refresh")}</button>
           </div>

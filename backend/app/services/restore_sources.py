@@ -133,13 +133,43 @@ class S3Bucket:
 
 
 @dataclass
+class AddonDest:
+    """A destination an addon brings (Google Drive): by id only. Its driver
+    is opened with a session of its own wherever the work runs, so a token it
+    renews is saved there (services/destinations.py)."""
+    target_id: int
+
+
+@contextmanager
+def _addon(dest: AddonDest):
+    from app.core.database import SessionLocal
+    from app.models.entities import BackupTarget
+    from app.services import destinations
+
+    db = SessionLocal()
+    try:
+        target = db.get(BackupTarget, dest.target_id)
+        if target is None or not target.is_active:
+            raise RestoreSourceError("Backup Destination not found")
+        with destinations.opened(target, db) as (driver, config):
+            yield driver, config
+    except destinations.DestinationError as exc:
+        raise RestoreSourceError(str(exc)) from None
+    finally:
+        db.close()
+
+
+@dataclass
 class Source:
     kind: str  # local | target | remote | ssh
     remote: Optional[Remote] = None
     s3: Optional[S3Bucket] = None
+    addon: Optional[AddonDest] = None
 
     @property
     def location(self) -> str:
+        if self.addon is not None:
+            return "addon"
         if self.s3 is not None:
             return "s3"
         if self.remote is not None:
@@ -604,6 +634,12 @@ def list_source(source: Source) -> list[dict]:
 def _list_archives(source: Source) -> list[dict]:
     if source.kind == "local":
         return list_local()
+    if source.addon is not None:
+        # One flat folder; each file's name says whose it is.
+        with _addon(source.addon) as (driver, config):
+            found = driver.listing(config)
+        return [row for row in (_row(item["key"], item["name"], item.get("size"), item.get("modified") or "", "addon")
+                                for item in found) if row]
     if source.s3 is not None:
         bucket = source.s3
         rows = backup.list_s3_backups(
@@ -662,6 +698,12 @@ def check_ref(source: Source, kind: str, ref: str) -> str:
         if kind == KIND_CPANEL:
             return str(cpanel_import.resolve_path(ref))
         return str(da_import._resolve_da_backup_path(ref))
+    if source.addon is not None:
+        # "<id>/<name>", and one this destination lists - not an id from elsewhere.
+        with _addon(source.addon) as (driver, config):
+            if ref not in {item["key"] for item in driver.listing(config)}:
+                raise ValueError(f"Not in this destination: {ref}")
+        return ref
     if source.s3 is not None:
         base = backup.s3_prefix_for(source.s3.prefix)
         if base and not ref.startswith(base + "/"):
@@ -764,7 +806,12 @@ def fetch(source: Source, kind: str, ref: str, size: int = 0, on_progress: Progr
     destination = _destination(kind, name)
     partial = destination.with_name(destination.name + ".part")
     try:
-        if source.s3 is not None:
+        if source.addon is not None:
+            _ensure_room(destination.parent, size, name)
+            throttle = _Throttle(on_progress, size)
+            with _addon(source.addon) as (driver, config):
+                driver.download(config, ref, str(partial), on_progress=lambda done, _total: throttle.set(done))
+        elif source.s3 is not None:
             _fetch_s3(source.s3, ref, partial, name, size, on_progress)
         elif source.remote is not None and source.remote.protocol == "sftp":
             with _sftp(source.remote) as sftp:

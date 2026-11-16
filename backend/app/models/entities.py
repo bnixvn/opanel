@@ -310,6 +310,9 @@ class BackupTarget(Base):
     # action) and verified on every connect afterwards.
     host_key_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     host_key_fingerprint: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # A kind an addon brings (Google Drive): its settings, encrypted JSON
+    # (services/destinations.py).
+    config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

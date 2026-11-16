@@ -679,12 +679,67 @@ regenerate_secrets() {
   "$script" ${mode:+"$mode"}
 }
 
+EXTERNAL_ADDONS_ROOT="${OPANEL_EXTERNAL_ADDONS:-/opt/opanel-addons}"
+ADDONS_GITLAB_URL="${OPANEL_ADDONS_GITLAB:-https://gitlab.sieunhim.com}"
+
+external_addon_project() {
+  # The GitLab project of an addon that lives in a repository of its own -
+  # the same list as app/services/external_addons.py KNOWN (a test keeps them
+  # equal); nothing for any other addon. Kept here, in a root-owned file,
+  # because root must not run anything from /opt/opanel, which the panel user
+  # can write.
+  case "$1" in
+    gdrive) echo "bnix/addon-gdrive" ;;
+  esac
+}
+
+fetch_external_addon() {
+  # The addon's latest release, fetched as root into EXTERNAL_ADDONS_ROOT/<id>:
+  # owned by root, writable by nobody else, no links - the panel refuses to
+  # load it otherwise. Swapped in whole, so a failed fetch leaves the old one.
+  # JSON is read with the system's python3 in isolated mode, never the
+  # panel's virtualenv.
+  local slug="$1" project="$2" api tag work dest
+  local py=(/usr/bin/python3 -I)
+  api="$ADDONS_GITLAB_URL/api/v4/projects/${project//\//%2F}"
+  # permalink/latest answers with a redirect to the release itself.
+  tag="$(curl -fsSL --max-time 30 "$api/releases/permalink/latest" 2>/dev/null \
+    | "${py[@]}" -c 'import json, sys; print(json.load(sys.stdin).get("tag_name", ""))' 2>/dev/null || true)"
+  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "No release of the $slug addon found at $ADDONS_GITLAB_URL/$project"
+  work="$(mktemp -d)"
+  echo "Fetching the $slug addon $tag from $ADDONS_GITLAB_URL/$project ..."
+  if ! curl -fsSL --max-time 300 -o "$work/addon.tar.gz" "$api/repository/archive.tar.gz?sha=$tag"; then
+    rm -rf "$work"; fail "Could not download the $slug addon $tag"
+  fi
+  mkdir "$work/addon"
+  if ! tar -xzf "$work/addon.tar.gz" -C "$work/addon" --strip-components=1 --no-same-owner --no-same-permissions \
+      || ! "${py[@]}" -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("id") == sys.argv[2] else 1)' \
+        "$work/addon/addon.json" "$slug" 2>/dev/null; then
+    rm -rf "$work"; fail "What was downloaded is not the $slug addon"
+  fi
+  install -d -m 0755 -o root -g root "$EXTERNAL_ADDONS_ROOT"
+  dest="$EXTERNAL_ADDONS_ROOT/$slug"
+  rm -rf "$dest.new" "$dest.old"
+  cp -r "$work/addon" "$dest.new"
+  rm -rf "$work" "$dest.new/tests" "$dest.new/.gitlab-ci.yml" "$dest.new/.git"
+  find "$dest.new" -type l -delete
+  chown -R root:root "$dest.new"
+  find "$dest.new" -type d -exec chmod 0755 {} +
+  find "$dest.new" -type f -exec chmod 0644 {} +
+  [[ ! -d "$dest" ]] || mv "$dest" "$dest.old"
+  mv "$dest.new" "$dest"
+  rm -rf "$dest.old"
+  echo "The $slug addon $tag is in $dest"
+}
+
 addon_command() {
   # Addons from the shell. Email and Resource limits are not offered on the
   # Addons page (operator, 2026-11-02); this is how they are installed. It runs
-  # the panel's own install path as the panel user and waits for it.
+  # the panel's own install path as the panel user and waits for it. An addon
+  # from a repository of its own (Google Drive backup, 2026-11-16) is fetched
+  # first, as root; installing it again brings it to its latest release.
   ensure_env_file
-  local action="${1:-}" addon_id="${2:-}" rc=0
+  local action="${1:-}" addon_id="${2:-}" rc=0 project=""
   case "$action" in
     list) [[ -z "$addon_id" ]] || fail "Usage: opanel addon list" ;;
     install|remove) [[ "$addon_id" =~ ^[a-z][a-z0-9-]{1,31}$ ]] || fail "Usage: opanel addon $action <id>  (see: opanel addon list)" ;;
@@ -695,11 +750,21 @@ addon_command() {
   if id -u opanel >/dev/null 2>&1; then
     runner=(runuser -u opanel -- "${runner[@]}")
   fi
-  # One at a time: each is an apt run.
-  flock -n -E 75 /run/opanel-addon.lock "${runner[@]}" -c \
-    'import sys; from app.addon_cli import main; raise SystemExit(main(sys.argv[1:]))' \
+  # One at a time: each is an apt run, or a fetch.
+  exec 9>/run/opanel-addon.lock
+  flock -n 9 || fail "Another addon install or removal is running; try again when it has finished."
+  [[ "$action" == list ]] || project="$(external_addon_project "$addon_id")"
+  if [[ -n "$project" && "$action" == install ]]; then
+    fetch_external_addon "$addon_id" "$project"
+  fi
+  "${runner[@]}" -c 'import sys; from app.addon_cli import main; raise SystemExit(main(sys.argv[1:]))' \
     "$action" ${addon_id:+"$addon_id"} || rc=$?
-  [[ $rc -ne 75 ]] || fail "Another addon install or removal is running; try again when it has finished."
+  if [[ -n "$project" && $rc -eq 0 ]]; then
+    [[ "$action" != remove ]] || rm -rf "${EXTERNAL_ADDONS_ROOT:?}/$addon_id"
+    # The API loads external addons when it starts.
+    systemctl restart opanel-api && echo "The panel was restarted to $([[ $action == remove ]] && echo unload || echo load) it."
+  fi
+  exec 9>&-
   return "$rc"
 }
 

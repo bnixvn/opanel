@@ -1283,7 +1283,11 @@ class BackupTargetCreate(BaseModel):
     moves the failure to 2am on the first scheduled run."""
 
     name: str = Field(min_length=2, max_length=100, pattern=r"^[A-Za-z0-9._ -]+$")
-    kind: Literal["sftp", "s3"] = "sftp"
+    # sftp and s3 are the panel's own; any other is an addon's (Google Drive,
+    # services/destinations.py), checked by its driver against `options`.
+    kind: str = Field(default="sftp", pattern=r"^(sftp|s3|[a-z][a-z0-9]{1,7})$")
+    # The form fields of an addon kind, as its driver declared them.
+    options: dict = Field(default_factory=dict)
     remote_path: str = Field(default="/backups/opanel", min_length=1, max_length=500)
 
     # --- SFTP ---
@@ -1343,8 +1347,21 @@ class BackupTargetCreate(BaseModel):
             )
         return value
 
+    @field_validator("options")
+    @classmethod
+    def validate_options(cls, value: dict) -> dict:
+        # Plain values only, and not many: the driver reads them.
+        if len(value) > 20 or any(not isinstance(key, str) or len(key) > 40 for key in value):
+            raise ValueError("Invalid options")
+        if any(not isinstance(item, (str, int, float, bool, type(None))) or (isinstance(item, str) and len(item) > 2000)
+               for item in value.values()):
+            raise ValueError("Invalid options")
+        return value
+
     @model_validator(mode="after")
     def check_kind(self):
+        if self.kind not in ("sftp", "s3"):
+            return self           # an addon kind: its driver checks the options
         if self.kind == "s3":
             # The same rules the uploader applies to a key prefix. Without this
             # a bad prefix is accepted here and only fails when the scheduled
@@ -1384,6 +1401,8 @@ class BackupTargetUpdate(BackupTargetCreate):
 
     @model_validator(mode="after")
     def check_kind(self):
+        if self.kind not in ("sftp", "s3"):
+            return self
         if self.kind == "s3":
             from app.services.backup import s3_prefix_for
 
@@ -1422,6 +1441,13 @@ class BackupTargetOut(BaseModel):
     s3_access_key: str = ""
     s3_use_path_style: bool = False
     # s3_secret_key is deliberately absent: it never leaves the server.
+
+    # An addon kind's: its label, one line about it, whether it is signed in,
+    # and its form's own fields (services/destinations.public_view). No secret.
+    kind_label: str = ""
+    summary: str = ""
+    connected: bool = True
+    options: dict = Field(default_factory=dict)
 
     class Config:
         from_attributes = True
