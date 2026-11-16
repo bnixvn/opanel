@@ -4931,6 +4931,7 @@ function App() {
     if (isAuthenticated && page === 'security') {
       loadTwoFactorStatus();
       loadPasskeys();
+      if (isAdmin) loadNotifications();
     }
     if (isAuthenticated && page === 'malware' && isAdmin) {
       loadMalwareScanStatus();
@@ -8807,6 +8808,20 @@ function App() {
           </div>
         </div>}
       </section>
+      {notifyPrefs?.enabled && <section className="section">
+        <div className="section-title">
+          <div>
+            <h2>{tr("Sign-in alerts")}</h2>
+            <p className="hint">{tr("Email me when my account signs in from an address it has not been seen from before.")}</p>
+          </div>
+        </div>
+        <label className="check-line">
+          <input type="checkbox" checked={notifyPrefs.events?.login_new_ip !== false}
+            onChange={e => saveNotifyPrefs({ events: { ...(notifyPrefs.events || {}), login_new_ip: e.target.checked } })} />
+          {tr("Email me on sign-in from a new address")}
+        </label>
+        {!notifyPrefs.email_usable && <p className="hint">{tr("Set your email address and SMTP under Notifications for this alert to be delivered.")}</p>}
+      </section>}
     </>;
   }
 
