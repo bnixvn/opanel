@@ -40,6 +40,7 @@ PACK_TIMEOUT = 6 * 3600
 # that silently produced nothing sits still this long.
 PACK_STALL_GRACE = 300
 DA_USERS = "/usr/local/directadmin/data/users"
+DA_CONF = "/usr/local/directadmin/conf/directadmin.conf"
 
 StatusFn = Optional[Callable[[str], None]]
 ProgressFn = Optional[Callable[[int, int], None]]
@@ -243,10 +244,61 @@ def _da_admin(client) -> str:
     return admin
 
 
+def _da_conf_get(client, key: str) -> Optional[str]:
+    """The value of ``key`` in directadmin.conf, or None when the key is absent."""
+    out = _must(
+        client,
+        f"if grep -q '^{key}=' {DA_CONF} 2>/dev/null; then "
+        f"grep -m1 '^{key}=' {DA_CONF} | cut -d= -f2-; else echo __ABSENT__; fi",
+        LIST_TIMEOUT, "Reading the DirectAdmin config")
+    out = out.strip()
+    return None if out == "__ABSENT__" else out
+
+
+def _da_conf_set(client, key: str, value: str) -> None:
+    """Set ``key=value`` in directadmin.conf, replacing or appending the line."""
+    _must(
+        client,
+        f"if grep -q '^{key}=' {DA_CONF}; then sed -i 's/^{key}=.*/{key}={value}/' {DA_CONF}; "
+        f"else printf '%s\\n' '{key}={value}' >> {DA_CONF}; fi",
+        LIST_TIMEOUT, "Adjusting the DirectAdmin config")
+
+
+def _da_conf_unset(client, key: str) -> None:
+    """Remove any ``key=`` line from directadmin.conf (back to DA's default)."""
+    _must(client, f"sed -i '/^{key}=/d' {DA_CONF}", LIST_TIMEOUT, "Restoring the DirectAdmin config")
+
+
 def _pack_directadmin(client, account: str, folder: str, on_status: StatusFn) -> str:
     admin = _da_admin(client)
     _must(client, f"chown {shlex.quote(admin)}: {shlex.quote(folder)} && chmod 0700 {shlex.quote(folder)}",
           LIST_TIMEOUT, "Preparing the work folder")
+    # DirectAdmin runs each account's backup under that account's own uid when
+    # strict_backup_permissions=1 (the default): the database dump and the
+    # compressed archive are written as the account user, so they count against
+    # *its* disk quota. An account whose real data is about as large as its
+    # quota -- e.g. an 8 GB database under an 8 GB quota -- then overflows
+    # mid-backup. tar reports "Wrote only N of M bytes" and gzip "Disk quota
+    # exceeded", and DA is left with a 0-byte archive even though the server has
+    # plenty of free disk (quota is per-uid, not per-filesystem). We hold root
+    # here, so turn the option off for the duration: the backup is then written
+    # by the admin/diradmin user, which is quota-exempt, and the option is put
+    # back exactly as it was. Files keep their own uid/gid inside the archive
+    # either way -- only the process doing the writing changes.
+    prev_strict = _da_conf_get(client, "strict_backup_permissions")
+    if prev_strict != "0":
+        _da_conf_set(client, "strict_backup_permissions", "0")
+    try:
+        return _run_da_backup(client, account, admin, folder, on_status)
+    finally:
+        if prev_strict != "0":
+            if prev_strict is None:
+                _da_conf_unset(client, "strict_backup_permissions")
+            else:
+                _da_conf_set(client, "strict_backup_permissions", prev_strict)
+
+
+def _run_da_backup(client, account: str, admin: str, folder: str, on_status: StatusFn) -> str:
     # DirectAdmin's own "Admin Backup" of one account, to a local folder.
     #
     # `what=select` means "back up the selected data categories", so every
@@ -338,7 +390,9 @@ def _verify_da_backup_full(client, folder: str, archive: str, account: str) -> N
     if not out.strip():
         raise MigrateError(
             f"DirectAdmin wrote only a metadata backup of {account} (no website files or mail) - it would "
-            "restore as an empty account. The backup's data categories were not included; check the DA version.")
+            "restore as an empty account. The DirectAdmin backup likely failed while packing (the account's "
+            "disk quota exceeded while writing the archive, or an old DA version). Check the DirectAdmin "
+            "backup logs.")
 
 
 # --- FastPanel ------------------------------------------------------------------------------------
