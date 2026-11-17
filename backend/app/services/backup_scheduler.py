@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import json
 import logging
+import subprocess
 from pathlib import Path
 
 from app.core.database import SessionLocal
@@ -324,6 +325,26 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
 
         notifications.backup_schedule_failed(schedule, errors, warnings, now)
     return not errors
+
+
+def _timer_run_going() -> bool:
+    """The minute timer's runner is a process of its own, so a restart of the
+    API leaves it writing; when it cannot be asked, assume it is."""
+    try:
+        return subprocess.run(
+            ["systemctl", "is-active", "--quiet", "opanel-backup-scheduler.service"],
+            check=False, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return True
+
+
+def sweep_after_restart() -> list[str]:
+    """What a backup this process was writing when it was stopped left behind:
+    its staging folder and any ``.part`` archive. Not while the timer's runner
+    is going, which may be writing one of its own."""
+    if _timer_run_going():
+        return []
+    return backup.sweep_unfinished()
 
 
 def run_due_schedules(now: datetime | None = None) -> int:
