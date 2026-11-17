@@ -31,6 +31,7 @@ OLS_VHOSTS_DIR="/usr/local/lsws/conf/opanel/vhosts"
 PHP_LOG_ROOT="/var/log/opanel-php"
 PHP_CONF_DIRS=(/usr/local/lsws/lsphp{83,84}/etc/php.d)
 opanel_SITES_GROUP="opanel-sites"
+opanel_PMA_USER="opanel-pma"
 opanel_SFTP_GROUP="opanel-sftp"
 APP_DIR="/opt/opanel"
 ENV_FILE="${APP_DIR}/backend/.env"
@@ -111,20 +112,77 @@ ensure_lshttpd_runtime_dir() {
   chmod 0664 /tmp/lshttpd/lsphp*.sock.pid 2>/dev/null || true
 }
 
+# phpMyAdmin's PHP runs as an account of its own, in no other group.
+#
+# It ran as www-data, the web server's account. www-data is a member of every
+# panel user's private group (homes are 0750 root:<user>, which is how the web
+# server reaches a site), so phpMyAdmin's PHP could read every tenant's files:
+# one flaw in phpMyAdmin and every wp-config.php on the server, database
+# passwords and all, was readable (checked on a live server, 2026-11-17: the
+# account read six of six). No open_basedir stood in the way either.
+# OpenLiteSpeed starts an lsphp as any account at or above its minUID, which
+# the panel leaves at 11, so a system account works.
+ensure_pma_account() {
+  getent group "$opanel_PMA_USER" >/dev/null || groupadd --system "$opanel_PMA_USER" 2>/dev/null || true
+  id -u "$opanel_PMA_USER" >/dev/null 2>&1 \
+    || useradd --system --gid "$opanel_PMA_USER" --home-dir /var/lib/phpmyadmin --no-create-home \
+         --shell /usr/sbin/nologin "$opanel_PMA_USER" 2>/dev/null || true
+  # In no supplementary group, whatever put it in one: a tenant's group or
+  # opanel-sites would give back what the account exists to take away.
+  if id -u "$opanel_PMA_USER" >/dev/null 2>&1; then
+    usermod -G "" "$opanel_PMA_USER" 2>/dev/null || true
+  fi
+}
+
+# The account phpMyAdmin's PHP runs as: its own, or www-data as before on a
+# server where the account could not be made (phpMyAdmin keeps working).
+pma_php_user() {
+  if id -u "$opanel_PMA_USER" >/dev/null 2>&1; then
+    echo "$opanel_PMA_USER"
+  else
+    echo www-data
+  fi
+}
+
+# The group that may read phpMyAdmin's secrets: the account's own, or
+# opanel-sites (which www-data is in) while phpMyAdmin still runs as www-data.
+pma_secrets_group() {
+  if id -u "$opanel_PMA_USER" >/dev/null 2>&1; then
+    echo "$opanel_PMA_USER"
+  else
+    echo "$opanel_SITES_GROUP"
+  fi
+}
+
 fix_phpmyadmin_permissions() {
+  ensure_pma_account
+  local pma_user pma_group secrets_group
+  pma_user="$(pma_php_user)"
+  pma_group="$(id -gn "$pma_user" 2>/dev/null || echo "$pma_user")"
+  secrets_group="$(pma_secrets_group)"
   # Private session store for the phpMyAdmin sign-on handshake. It used to
   # write into /var/lib/php/sessions, the same parent every site's per-user
   # session directory lives under, and those sessions carry a cleartext
   # database user and password.
-  install -d -o www-data -g www-data -m 0700 /var/lib/php/pma-sessions 2>/dev/null || true
-  chown www-data:www-data /var/lib/php/pma-sessions 2>/dev/null || true
+  install -d -o "$pma_user" -g "$pma_group" -m 0700 /var/lib/php/pma-sessions 2>/dev/null || true
+  chown "$pma_user":"$pma_group" /var/lib/php/pma-sessions 2>/dev/null || true
   chmod 0700 /var/lib/php/pma-sessions 2>/dev/null || true
-  # All of these are 0640 root:opanel-sites. www-data is a member of
-  # opanel-sites (install.sh, ensure_sites_group and update.sh all put it
-  # there), so group-readable is enough for the PHP that has to read them --
+  # Sessions another account wrote (www-data's, from before phpMyAdmin had
+  # its own) cannot be read any more and hold database passwords: removed.
+  find /var/lib/php/pma-sessions -maxdepth 1 -type f ! -user "$pma_user" -delete 2>/dev/null || true
+  # phpMyAdmin's working directory (TempDir: its template cache, uploads in
+  # progress).
+  if [[ -d /var/lib/phpmyadmin/tmp ]]; then
+    chown -R "$pma_user":"$pma_group" /var/lib/phpmyadmin/tmp 2>/dev/null || true
+    chmod 0770 /var/lib/phpmyadmin/tmp 2>/dev/null || true
+  fi
+  # All of these are 0640 root:<the group above>: group-readable is enough
+  # for the PHP that has to read them, and nobody else should --
   # the signon files in particular carry the X-OPanel-Signon-Secret that gates
   # an endpoint returning any account's database credentials, and they were
-  # world-readable, which every site's Linux user could exploit.
+  # world-readable, which every site's Linux user could exploit. With
+  # phpMyAdmin under its own account the group is that account's, so the web
+  # server's account no longer reads them either.
   local file
   for file in \
     /etc/phpmyadmin/conf.d/opanel-signon.php \
@@ -133,7 +191,7 @@ fix_phpmyadmin_permissions() {
     /etc/phpmyadmin/config-db.php \
     /var/lib/phpmyadmin/blowfish_secret.inc.php; do
     [[ -e "$file" ]] || continue
-    chgrp "$opanel_SITES_GROUP" "$file" 2>/dev/null || true
+    chgrp "$secrets_group" "$file" 2>/dev/null || true
     chmod 0640 "$file" 2>/dev/null || true
   done
 }
@@ -884,7 +942,12 @@ refresh_tools_ols() {
   panel_cert="$(env_get PANEL_SSL_CERT)"; panel_key="$(env_get PANEL_SSL_KEY)"
   php_version="${PHP_DEFAULT:-8.4}"
   default_ver_no_dot="${php_version//./}"
-  lsphp_sock="/tmp/lshttpd/lsphp${default_ver_no_dot}.sock"
+  # phpMyAdmin's PHP: its own account, and a socket of its own name - under
+  # the old name an lsphp still running as www-data would go on answering.
+  ensure_pma_account
+  pma_user="$(pma_php_user)"
+  pma_group="$(id -gn "$pma_user" 2>/dev/null || echo "$pma_user")"
+  lsphp_sock="/tmp/lshttpd/opanel-pma-lsphp${default_ver_no_dot}.sock"
   # The panel API is always TLS (app/server.py never serves plain HTTP; without
   # a certificate of its own it uses a self-signed default), so phpMyAdmin's
   # sign-on calls it over https. It called http:// on every server without a
@@ -922,7 +985,7 @@ context / {
   allowBrowse             1
 }
 
-extprocessor lsphp${default_ver_no_dot} {
+extprocessor opanel-pma {
   type                    lsapi
   address                 uds://${lsphp_sock}
   maxConns                10
@@ -936,8 +999,8 @@ extprocessor lsphp${default_ver_no_dot} {
   path                    /usr/local/lsws/lsphp${default_ver_no_dot}/bin/lsphp
   backlog                 100
   instances               1
-  extUser                 www-data
-  extGroup                www-data
+  extUser                 ${pma_user}
+  extGroup                ${pma_group}
   # phpMyAdmin's PHP starts with the first request and stops after 5 idle
   # minutes: resident from boot it held ~39 MB on a server nobody had opened
   # phpMyAdmin on (measured on a fresh 2 GB VPS, 2026-09-30).
@@ -946,7 +1009,7 @@ extprocessor lsphp${default_ver_no_dot} {
 }
 
 scripthandler {
-  add                     lsapi:lsphp${default_ver_no_dot} php
+  add                     lsapi:opanel-pma php
 }
 
 rewrite  {
