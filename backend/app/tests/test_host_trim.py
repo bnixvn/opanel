@@ -56,7 +56,8 @@ def test_the_demo_site_edit_works_on_openlitespeeds_own_spelling(tmp_path):
 
 def test_phpmyadmins_php_starts_on_demand_and_idles_out():
     for source in (HELPER, INSTALL):
-        tools = source.split("extprocessor lsphp${default_ver_no_dot} {", 1)[1].split("\n}", 1)[0]
+        # phpMyAdmin's own extprocessor (test_phpmyadmin_own_account.py).
+        tools = source.split("extprocessor opanel-pma {", 1)[1].split("\n}", 1)[0]
         assert "runOnStartUp            0" in tools and "runOnStartUp            1" not in tools
         # OLS's name for it; "maxIdleTime" was ignored and the process stayed
         # (seen on the test VPS, 2026-09-30).
