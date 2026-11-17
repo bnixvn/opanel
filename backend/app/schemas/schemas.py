@@ -6,6 +6,11 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+# A schedule counts as running while its heartbeat (running_since) is no older
+# than this. The runner refreshes it every ~20s, so a run killed mid-way stops
+# reading as running within this window instead of for ever.
+BACKUP_SCHEDULE_RUNNING_FRESH_SECONDS = 90
+
 
 DOMAIN_RE = re.compile(r"^(?!-)([a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,}$")
 SUPPORTED_PHP_VERSIONS = {"7.4", "8.1", "8.2", "8.3", "8.4", "8.5"}
@@ -1258,6 +1263,19 @@ class BackupScheduleOut(BaseModel):
     last_run_at: Optional[datetime] = None
     last_status: str
     last_message: str = ""
+    running_since: Optional[datetime] = None
+    # True while a run's heartbeat is fresh. A run killed mid-way leaves
+    # running_since behind, so it falls back to not-running on its own once the
+    # heartbeat goes stale, instead of showing "running" for ever.
+    running: bool = False
+
+    @model_validator(mode="after")
+    def _derive_running(self):
+        if self.running_since is not None:
+            from datetime import datetime as _dt
+            age = (_dt.utcnow() - self.running_since).total_seconds()
+            self.running = 0 <= age <= BACKUP_SCHEDULE_RUNNING_FRESH_SECONDS
+        return self
 
     @field_validator("user_ids", mode="before")
     @classmethod

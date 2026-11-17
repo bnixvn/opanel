@@ -349,14 +349,16 @@ export default function BackupsPage() {
                   {item.name_style !== 'none' && <> · {t('keeps {count}', { count: item.retention })}</>}</small>
                 {live
                   ? <><small>{live.message || t('Running')}</small><JobProgress job={live}/></>
-                  : <small>
-                    {item.last_status === 'ok' && <span className="badge ok">{t('OK')}</span>}
-                    {item.last_status === 'error' && <span className="badge bad">{t('Failed')}</span>}
-                    {' '}{item.last_message || t('Not run yet')}
-                  </small>}
+                  : item.running
+                    ? <small><span className="badge">{t('Running')}</span> {item.last_message || t('Running')}</small>
+                    : <small>
+                      {item.last_status === 'ok' && <span className="badge ok">{t('OK')}</span>}
+                      {item.last_status === 'error' && <span className="badge bad">{t('Failed')}</span>}
+                      {' '}{item.last_message || t('Not run yet')}
+                    </small>}
               </span>
               <div className="actions bk-row-actions">
-                <button className="secondary-light" disabled={busy || !!live} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14} aria-hidden="true"/> {t('Run now')}</button>
+                <button className="secondary-light" disabled={busy || !!live || item.running} onClick={() => runBackupScheduleNow(item, scheduleUserLabel(item))}><Play size={14} aria-hidden="true"/> {t('Run now')}</button>
                 <ActionMenu label={t('More actions for {name}', { name: scheduleUserLabel(item) })} items={[
                   { label: t('Edit schedule'), icon: Pencil, disabled: busy, onClick: () => openSchedule(item) },
                   'separator',

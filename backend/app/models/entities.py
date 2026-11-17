@@ -337,6 +337,11 @@ class BackupSchedule(Base):
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_status: Mapped[str] = mapped_column(String(32), default="pending")
     last_message: Mapped[str] = mapped_column(Text, default="")
+    # Refreshed while a run is going (timer or Run now) and cleared at the end,
+    # so the page can show the schedule as running in between. A run killed
+    # mid-way leaves this behind, so the page treats it as running only while
+    # it is recent (see run_schedule / the schedules API).
+    running_since: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
