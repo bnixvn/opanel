@@ -779,9 +779,16 @@ def catalog() -> list[dict]:
 
     A shell-only addon is left out until it is installed or being installed,
     so the page never offers it; once it is on, it is listed to be managed.
+
+    An addon from a repository of its own (kind "external", e.g. Google Drive)
+    is never listed at all: it is installed, managed and removed only from the
+    server's shell - not offered to every customer - so the page stays silent
+    about it whether it is on or off. It still works once installed (it adds
+    its backup destination); it just has no tile here.
     """
     entries = [status(addon_id) for addon_id in sorted(ADDONS)]
-    return [entry for entry in entries if not entry["cli_only"] or entry["installed"] or entry["busy"]]
+    return [entry for entry in entries if entry["kind"] != "external"
+            and (not entry["cli_only"] or entry["installed"] or entry["busy"])]
 
 
 # ---------------------------------------------------------------------------
