@@ -90,7 +90,14 @@ mv "$extracted" "$PMA_DIR"
 rm -rf "${PMA_DIR}.old"
 echo "$PHPMYADMIN_VERSION" >"$PMA_MARKER"
 
-install -d -o www-data -g www-data -m 0770 "$PMA_TEMP_DIR"
+# The account phpMyAdmin's PHP runs as owns it: opanel-pma once the panel
+# has made it (fix_phpmyadmin_permissions, which runs after this script and
+# on every refresh-tools), www-data until then.
+pma_owner="www-data"
+if id -u opanel-pma >/dev/null 2>&1; then
+  pma_owner="opanel-pma"
+fi
+install -d -o "$pma_owner" -g "$(id -gn "$pma_owner")" -m 0770 "$PMA_TEMP_DIR"
 
 # Written fresh every time, not only when missing: the apt package purged
 # above is what was emptying this out from under an earlier version of this
