@@ -3159,8 +3159,6 @@ export default {
   "Waiting for the code to be entered...": "Đang chờ nhập mã...",
   "Access was refused on the Google page. Connect again to retry.": "Quyền truy cập bị từ chối trên trang Google. Bấm Kết nối lại để thử lại.",
   "The code expired before it was entered. Connect again for a new one.": "Mã đã hết hạn trước khi được nhập. Bấm Kết nối lại để lấy mã mới.",
-  "Folder in Google Drive": "Thư mục trong Google Drive",
-  "Made in the Drive the first time a backup goes there; a / makes folders inside folders.": "Được tạo trên Drive ở lần backup đầu tiên; dấu / tạo thư mục lồng nhau.",
   "Seven files, each overwritten a week later.": "Bảy file, mỗi file bị ghi đè sau một tuần.",
   "Used by {count} schedule(s)": "Được dùng bởi {count} lịch",
   "With a timestamp": "Kèm dấu thời gian",
