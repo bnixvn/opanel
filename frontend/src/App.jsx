@@ -4884,6 +4884,9 @@ function App() {
   useEffect(() => { if (selectedBackupUserId && page === 'backups') listUserBackups(selectedBackupUserId); }, [selectedBackupUserId, page]);
 
   const jobsRunning = backupJobs.some(job => job.status === 'running' || job.status === 'queued');
+  // A schedule the timer is running has no job here to watch, so the page
+  // follows its own "running" heartbeat and keeps the list fresh while it lasts.
+  const schedulesRunning = backupSchedules.some(s => s.running);
 
   useEffect(() => {
     if (!isAuthenticated || page !== 'backups') return undefined;
@@ -4893,6 +4896,14 @@ function App() {
     const timer = setInterval(loadBackupJobs, jobsRunning ? 2000 : 5000);
     return () => clearInterval(timer);
   }, [isAuthenticated, page, selectedWebsiteId, selectedBackupUserId, jobsRunning]);
+
+  // Keep the schedules list fresh so a timer-run schedule shows as running and
+  // updates its account/phase; quicker while one is running, idle otherwise.
+  useEffect(() => {
+    if (!isAuthenticated || page !== 'backups' || !isAdmin) return undefined;
+    const timer = setInterval(loadBackupSchedules, schedulesRunning ? 3000 : 15000);
+    return () => clearInterval(timer);
+  }, [isAuthenticated, page, isAdmin, schedulesRunning]);
 
   // When a restore finishes, what it created should show up: the new panel
   // users, their websites, and -- for this server -- the list it came from.

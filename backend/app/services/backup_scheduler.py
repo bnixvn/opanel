@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 import json
 import logging
+import subprocess
+import threading
 from pathlib import Path
 
 from app.core.database import SessionLocal
@@ -257,6 +259,28 @@ def _short_message(parts: list[str]) -> str:
     return message[:4000]
 
 
+HEARTBEAT_SECONDS = 20
+
+
+def _heartbeat_loop(schedule_id: int, label: list[str], stop: threading.Event) -> None:
+    """Keep a running schedule's heartbeat fresh on a session of its own until
+    the run ends, so the page keeps seeing it as running through a long pack or
+    upload. A Session is not shared across threads, hence its own one."""
+    while not stop.wait(HEARTBEAT_SECONDS):
+        hb = SessionLocal()
+        try:
+            s = hb.get(BackupSchedule, schedule_id)
+            if s is not None:
+                s.running_since = datetime.utcnow()
+                s.last_status = "running"
+                s.last_message = label[0]
+                hb.commit()
+        except Exception:  # noqa: BLE001 - a heartbeat must never break the run
+            logger.warning("backup schedule heartbeat failed", exc_info=True)
+        finally:
+            hb.close()
+
+
 def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
                  on_progress=None) -> bool:
     """Run one schedule now, whether or not its cron says it is due.
@@ -264,6 +288,11 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
     Shared by the timer and by the panel's Run now button, so a run started by
     hand is the same run -- same rotation slot, same retention, same recorded
     status -- and not a second code path that drifts from it.
+
+    Marks the schedule running for the whole run (a heartbeat on its own
+    session), so a run started by the timer -- which has no job in the API to
+    watch -- still shows as running on the page instead of looking idle until
+    it finishes.
 
     Returns True when every account succeeded.
     """
@@ -273,43 +302,70 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
         schedule.last_run_at = now
         schedule.last_status = "error"
         schedule.last_message = "No users selected"
+        schedule.running_since = None
         db.commit()
         return False
 
     messages = []
     errors = []
     warnings = []
-    for index, user in enumerate(users, start=1):
-        if on_progress:
-            on_progress(index, len(users), user.username, 0, 0, "")
-        try:
-            # Named as the schedule says. The default is DirectAdmin-style
-            # rotation: a week of dailies occupies seven files named for the
-            # day, each overwritten a week later, so the destination cannot
-            # grow without bound even if the prune below never succeeds.
-            style = _style(schedule)
-            skipped: list = []
-            archive = backup.create_user_backup(
-                user, db, filename=backup.archive_filename(user.username, style, now), skipped=skipped,
-                on_progress=(lambda done, total, label, _i=index:
-                             on_progress(_i, len(users), user.username, done, total, label))
-                if on_progress else None,
-            )
-            target = _upload_if_configured(db, schedule, archive, user.username)
-            if schedule.target_id:
-                # The week lives on the destination now; keeping it here too
-                # doubled the disk a schedule with a destination was meant to
-                # spare. A failed upload raised above and leaves it in place.
-                backup.discard_local_copy(archive)
-            backup.prune_user_backups(user.username, schedule.retention, style)
-            messages.append(f"{user.username}: {target}")
-            # An archive with a hole in it still ran, so it is not an error --
-            # but the operator has to be told, or the gap only turns up when a
-            # restore needs the missing file.
-            if skipped:
-                warnings.append(f"{user.username}: {backup.describe_skipped(skipped)}")
-        except Exception as exc:  # pragma: no cover - operational path
-            errors.append(f"{user.username}: {exc}")
+    # Running from the first moment, with a heartbeat kept fresh in the
+    # background through every phase (see _heartbeat_loop).
+    label = [f"Backing up {users[0].username} (1/{len(users)})"]
+    schedule.running_since = datetime.utcnow()
+    schedule.last_status = "running"
+    schedule.last_message = label[0]
+    db.commit()
+    stop = threading.Event()
+    # The heartbeat re-reads the row by id on a session of its own; without a
+    # persisted id (a stubbed schedule in a test) there is nothing to refresh.
+    schedule_id = getattr(schedule, "id", None)
+    heartbeat = (threading.Thread(target=_heartbeat_loop, args=(schedule_id, label, stop), daemon=True)
+                 if schedule_id is not None else None)
+    if heartbeat:
+        heartbeat.start()
+    try:
+        for index, user in enumerate(users, start=1):
+            label[0] = f"Backing up {user.username} ({index}/{len(users)})"
+            if on_progress:
+                on_progress(index, len(users), user.username, 0, 0, "")
+
+            def _prog(done, total, lbl, _i=index, _u=user.username, _n=len(users), _op=on_progress):
+                label[0] = f"Backing up {_u} ({_i}/{_n})" + (f": {lbl}" if lbl else "")
+                if _op:
+                    _op(_i, _n, _u, done, total, lbl)
+
+            try:
+                # Named as the schedule says. The default is DirectAdmin-style
+                # rotation: a week of dailies occupies seven files named for the
+                # day, each overwritten a week later, so the destination cannot
+                # grow without bound even if the prune below never succeeds.
+                style = _style(schedule)
+                skipped: list = []
+                archive = backup.create_user_backup(
+                    user, db, filename=backup.archive_filename(user.username, style, now),
+                    skipped=skipped, on_progress=_prog,
+                )
+                label[0] = f"Uploading {user.username} ({index}/{len(users)})"
+                target = _upload_if_configured(db, schedule, archive, user.username)
+                if schedule.target_id:
+                    # The week lives on the destination now; keeping it here too
+                    # doubled the disk a schedule with a destination was meant to
+                    # spare. A failed upload raised above and leaves it in place.
+                    backup.discard_local_copy(archive)
+                backup.prune_user_backups(user.username, schedule.retention, style)
+                messages.append(f"{user.username}: {target}")
+                # An archive with a hole in it still ran, so it is not an error --
+                # but the operator has to be told, or the gap only turns up when a
+                # restore needs the missing file.
+                if skipped:
+                    warnings.append(f"{user.username}: {backup.describe_skipped(skipped)}")
+            except Exception as exc:  # pragma: no cover - operational path
+                errors.append(f"{user.username}: {exc}")
+    finally:
+        stop.set()
+        if heartbeat:
+            heartbeat.join(timeout=5)
 
     if errors:
         schedule.last_status = "error"
@@ -318,12 +374,33 @@ def run_schedule(db, schedule: BackupSchedule, now: datetime | None = None,
         schedule.last_status = "warning" if warnings else "ok"
         schedule.last_message = _short_message([f"ok {len(messages)} user(s)"] + warnings + messages)
     schedule.last_run_at = now
+    schedule.running_since = None
     db.commit()
     if errors or warnings:
         from app.services import notifications
 
         notifications.backup_schedule_failed(schedule, errors, warnings, now)
     return not errors
+
+
+def _timer_run_going() -> bool:
+    """The minute timer's runner is a process of its own, so a restart of the
+    API leaves it writing; when it cannot be asked, assume it is."""
+    try:
+        return subprocess.run(
+            ["systemctl", "is-active", "--quiet", "opanel-backup-scheduler.service"],
+            check=False, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return True
+
+
+def sweep_after_restart() -> list[str]:
+    """What a backup this process was writing when it was stopped left behind:
+    its staging folder and any ``.part`` archive. Not while the timer's runner
+    is going, which may be writing one of its own."""
+    if _timer_run_going():
+        return []
+    return backup.sweep_unfinished()
 
 
 def run_due_schedules(now: datetime | None = None) -> int:

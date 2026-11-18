@@ -277,6 +277,10 @@ ADDONS: dict[str, dict] = {
     "limits": {
         "id": "limits",
         "cli_only": True,
+        # The operator installs it from the shell for the accounts that need it;
+        # the panel admin never sees it on the Addons page (its limits still
+        # show on packages and accounts once it is on). See catalog().
+        "operator_only": True,
         "name": "Resource limits",
         "summary": "CPU, memory, processes and disk I/O limits for each hosting account.",
         "description": (
@@ -762,6 +766,7 @@ def _describe(definition: dict, entry: dict, live: dict, detail: str) -> dict:
         "notes": list(definition.get("notes") or []),
         "service": definition.get("service", ""),
         "cli_only": bool(definition.get("cli_only")),
+        "operator_only": bool(definition.get("operator_only")) or definition.get("kind") == "external",
         "install_command": INSTALL_COMMAND.format(id=definition["id"]) if definition.get("cli_only") else "",
         **live,
         # Bookkeeping the box cannot answer.
@@ -779,9 +784,17 @@ def catalog() -> list[dict]:
 
     A shell-only addon is left out until it is installed or being installed,
     so the page never offers it; once it is on, it is listed to be managed.
+
+    An operator-only addon - one from a repository of its own (Google Drive)
+    or Resource limits - is never listed at all: the operator installs, manages
+    and removes it only from the server's shell, for the accounts that need it,
+    so the page stays silent about it whether it is on or off. It still works
+    once installed (Google Drive adds its backup destination; Resource limits
+    shows its caps on packages and accounts); it just has no tile here.
     """
     entries = [status(addon_id) for addon_id in sorted(ADDONS)]
-    return [entry for entry in entries if not entry["cli_only"] or entry["installed"] or entry["busy"]]
+    return [entry for entry in entries if not entry["operator_only"]
+            and (not entry["cli_only"] or entry["installed"] or entry["busy"])]
 
 
 # ---------------------------------------------------------------------------
