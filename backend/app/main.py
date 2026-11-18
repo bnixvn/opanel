@@ -25,6 +25,40 @@ os.umask(0o022)
 
 logger = logging.getLogger("OPanel")
 
+
+def _load_external_addons() -> None:
+    """Addons from their own repositories (Google Drive backup): loaded now,
+    so one that will not load says so in the log at start, not at 2 a.m."""
+    try:
+        from app.services import addons, external_addons
+
+        loaded = external_addons.load_installed(addons.is_enabled)
+        if loaded:
+            logger.info("External addons loaded: %s", ", ".join(loaded))
+    except Exception:  # noqa: BLE001 - never let this stop the panel booting
+        logger.warning("Could not load the external addons", exc_info=True)
+
+
+_load_external_addons()
+
+
+def _sweep_unfinished_backups() -> None:
+    """A backup killed mid-run (a panel update or restart) leaves its staging
+    folder behind, and on a tight disk that space is never reclaimed until the
+    same account runs again hours later. Clear it now, at start, unless the
+    minute timer is itself running a backup."""
+    try:
+        from app.services import backup_scheduler
+
+        removed = backup_scheduler.sweep_after_restart()
+        if removed:
+            logger.warning("Removed %d unfinished backup leftover(s) at start", len(removed))
+    except Exception:  # noqa: BLE001 - never let this stop the panel booting
+        logger.warning("Could not sweep unfinished backups", exc_info=True)
+
+
+_sweep_unfinished_backups()
+
 app = FastAPI(title="OPanel API", version=APP_VERSION)
 
 # Refuse to start in production with unsafe defaults.

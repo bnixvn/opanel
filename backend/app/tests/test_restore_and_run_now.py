@@ -495,8 +495,10 @@ def test_a_restore_reports_each_site():
 def test_a_schedule_nests_the_site_fraction_inside_the_account_one():
     source = inspect.getsource(backup_scheduler.run_schedule)
 
-    assert "on_progress=(lambda done, total, label" in source
-    assert "on_progress(_i, len(users), user.username, done, total, label)" in source
+    # Per-account progress carries the site fraction (done/total) inside the
+    # account slot (_i of _n), so the bar nests rather than restarting per site.
+    assert "def _prog(done, total, lbl" in source
+    assert "_op(_i, _n, _u, done, total, lbl)" in source
 
 
 def test_a_finished_run_reads_one_hundred():

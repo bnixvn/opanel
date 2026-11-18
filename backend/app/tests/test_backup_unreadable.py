@@ -339,3 +339,69 @@ def test_a_backup_sweeps_before_it_stages():
     stage = source.index("tempfile.TemporaryDirectory(prefix=STAGING_PREFIX")
 
     assert sweep < stage
+
+
+def test_sweep_unfinished_reclaims_staging_and_part_at_once(tmp_path):
+    """At start, with no run going, there is no six-hour wait: a killed run's
+    staging folder and a half-written .part are freed immediately, whatever
+    their age -- the fix for the 2 AM schedule that ate 10 GB of free disk."""
+    users = tmp_path / "users" / "bnix"
+    users.mkdir(parents=True)
+    staging = users / f"{backup.STAGING_PREFIX}fresh"
+    staging.mkdir()
+    (staging / "archive.tar.gz").write_bytes(b"x" * 4096)  # brand new, not stale
+    part = users / "bnix-monday.tar.gz.part"
+    part.write_bytes(b"y" * 2048)
+    keep = users / "bnix-sunday.tar.gz"
+    keep.write_bytes(b"z")
+
+    removed = backup.sweep_unfinished(tmp_path)
+
+    assert not staging.exists()
+    assert not part.exists()
+    assert keep.exists(), "a finished archive is never touched"
+    assert str(staging) in removed and str(part) in removed
+
+
+def test_sweep_unfinished_never_follows_a_symlink(tmp_path):
+    users = tmp_path / "users" / "acme"
+    users.mkdir(parents=True)
+    outside = tmp_path / "precious"
+    outside.mkdir()
+    (outside / "keep.txt").write_bytes(b"important")
+    link = users / f"{backup.STAGING_PREFIX}link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available")
+
+    backup.sweep_unfinished(tmp_path)
+
+    assert (outside / "keep.txt").exists(), "the sweep must not walk through a symlink"
+
+
+def test_sweep_after_restart_waits_for_the_timer_run(monkeypatch):
+    from app.services import backup_scheduler
+
+    calls = {"swept": False}
+    monkeypatch.setattr(backup_scheduler, "_timer_run_going", lambda: True)
+    monkeypatch.setattr(backup_scheduler.backup, "sweep_unfinished",
+                        lambda *a, **k: calls.__setitem__("swept", True) or [])
+
+    assert backup_scheduler.sweep_after_restart() == []
+    assert calls["swept"] is False, "never sweep while the timer may be writing a backup"
+
+    monkeypatch.setattr(backup_scheduler, "_timer_run_going", lambda: False)
+    monkeypatch.setattr(backup_scheduler.backup, "sweep_unfinished", lambda *a, **k: ["one"])
+    assert backup_scheduler.sweep_after_restart() == ["one"]
+
+
+def test_the_api_sweeps_unfinished_backups_at_start():
+    """main.py must clear killed-run leftovers when the API boots, so a tight
+    disk is not held hostage until the same account runs again."""
+    import inspect
+    from app import main
+
+    source = inspect.getsource(main)
+    assert "_sweep_unfinished_backups()" in source
+    assert "sweep_after_restart()" in inspect.getsource(main._sweep_unfinished_backups)

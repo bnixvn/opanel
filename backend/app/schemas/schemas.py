@@ -6,6 +6,11 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+# A schedule counts as running while its heartbeat (running_since) is no older
+# than this. The runner refreshes it every ~20s, so a run killed mid-way stops
+# reading as running within this window instead of for ever.
+BACKUP_SCHEDULE_RUNNING_FRESH_SECONDS = 90
+
 
 DOMAIN_RE = re.compile(r"^(?!-)([a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,}$")
 SUPPORTED_PHP_VERSIONS = {"7.4", "8.1", "8.2", "8.3", "8.4", "8.5"}
@@ -1258,6 +1263,19 @@ class BackupScheduleOut(BaseModel):
     last_run_at: Optional[datetime] = None
     last_status: str
     last_message: str = ""
+    running_since: Optional[datetime] = None
+    # True while a run's heartbeat is fresh. A run killed mid-way leaves
+    # running_since behind, so it falls back to not-running on its own once the
+    # heartbeat goes stale, instead of showing "running" for ever.
+    running: bool = False
+
+    @model_validator(mode="after")
+    def _derive_running(self):
+        if self.running_since is not None:
+            from datetime import datetime as _dt
+            age = (_dt.utcnow() - self.running_since).total_seconds()
+            self.running = 0 <= age <= BACKUP_SCHEDULE_RUNNING_FRESH_SECONDS
+        return self
 
     @field_validator("user_ids", mode="before")
     @classmethod
@@ -1283,7 +1301,11 @@ class BackupTargetCreate(BaseModel):
     moves the failure to 2am on the first scheduled run."""
 
     name: str = Field(min_length=2, max_length=100, pattern=r"^[A-Za-z0-9._ -]+$")
-    kind: Literal["sftp", "s3"] = "sftp"
+    # sftp and s3 are the panel's own; any other is an addon's (Google Drive,
+    # services/destinations.py), checked by its driver against `options`.
+    kind: str = Field(default="sftp", pattern=r"^(sftp|s3|[a-z][a-z0-9]{1,7})$")
+    # The form fields of an addon kind, as its driver declared them.
+    options: dict = Field(default_factory=dict)
     remote_path: str = Field(default="/backups/opanel", min_length=1, max_length=500)
 
     # --- SFTP ---
@@ -1343,8 +1365,21 @@ class BackupTargetCreate(BaseModel):
             )
         return value
 
+    @field_validator("options")
+    @classmethod
+    def validate_options(cls, value: dict) -> dict:
+        # Plain values only, and not many: the driver reads them.
+        if len(value) > 20 or any(not isinstance(key, str) or len(key) > 40 for key in value):
+            raise ValueError("Invalid options")
+        if any(not isinstance(item, (str, int, float, bool, type(None))) or (isinstance(item, str) and len(item) > 2000)
+               for item in value.values()):
+            raise ValueError("Invalid options")
+        return value
+
     @model_validator(mode="after")
     def check_kind(self):
+        if self.kind not in ("sftp", "s3"):
+            return self           # an addon kind: its driver checks the options
         if self.kind == "s3":
             # The same rules the uploader applies to a key prefix. Without this
             # a bad prefix is accepted here and only fails when the scheduled
@@ -1384,6 +1419,8 @@ class BackupTargetUpdate(BackupTargetCreate):
 
     @model_validator(mode="after")
     def check_kind(self):
+        if self.kind not in ("sftp", "s3"):
+            return self
         if self.kind == "s3":
             from app.services.backup import s3_prefix_for
 
@@ -1422,6 +1459,13 @@ class BackupTargetOut(BaseModel):
     s3_access_key: str = ""
     s3_use_path_style: bool = False
     # s3_secret_key is deliberately absent: it never leaves the server.
+
+    # An addon kind's: its label, one line about it, whether it is signed in,
+    # and its form's own fields (services/destinations.public_view). No secret.
+    kind_label: str = ""
+    summary: str = ""
+    connected: bool = True
+    options: dict = Field(default_factory=dict)
 
     class Config:
         from_attributes = True

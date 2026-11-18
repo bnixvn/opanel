@@ -346,6 +346,41 @@ def _sweep_stale_staging(backup_dir: Path) -> None:
             continue
 
 
+def sweep_unfinished(root: Optional[Path] = None) -> list[str]:
+    """Remove what a backup killed half way left behind: its staging folder
+    and any ``.part`` archive. Unlike ``_sweep_stale_staging`` this takes no
+    age cutoff, so it reclaims the space at once -- only call it when nothing
+    can be writing a backup (the API starting, with no scheduled run going).
+
+    A whole account's archive is built in a staging folder next to its
+    destination; a killed process (a panel update or restart mid-backup) never
+    gets to remove it, and on a tight disk one such leftover fills it. The 2 AM
+    schedule of three 24 GB accounts left 30 GB free down to 20 GB this way.
+    """
+    root = Path(root or settings.backup_root)
+    removed: list[str] = []
+    if not root.is_dir():
+        return removed
+    targets = [
+        *root.glob(f"users/*/{STAGING_PREFIX}*"),
+        *root.glob(f"sites/*/{STAGING_PREFIX}*"),
+        *root.glob("users/*/*.part"),
+        *root.glob("sites/*/*.part"),
+        *root.glob("restore/*.part"),
+    ]
+    for path in targets:
+        try:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            removed.append(str(path))
+            logger.warning("Removed the unfinished backup %s", path)
+        except OSError as exc:
+            logger.warning("Could not remove the unfinished backup %s: %s", path, exc)
+    return removed
+
+
 def create_user_backup(user: User, db, filename: str | None = None,
                        skipped: Optional[list] = None, on_progress=None) -> str:
     if skipped is None:
