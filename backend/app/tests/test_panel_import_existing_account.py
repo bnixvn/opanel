@@ -106,7 +106,10 @@ def test_the_list_marks_accounts_already_here():
     assert "User.username.in_(accounts)" in source
 
 
-def test_the_page_marks_them_and_offers_to_restore_over_them():
+def test_the_page_marks_them_and_restores_over_them_by_default():
+    # Operator, 2026-11-19: "Import mặc định sẽ tự ghi đè kể cả trùng tên" - the
+    # box is ticked when the other server's accounts are listed, and can be unticked.
+    assert "source.startsWith('ssh-')) setRestoreOverwrite(true);" in APP
     assert "restoreList?.existing" in APP
     assert 'tr("Already here")' in APP
     assert 'tr("Restore over accounts already on this server ({0})"' in APP

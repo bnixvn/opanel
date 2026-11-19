@@ -3807,6 +3807,9 @@ function App() {
         return;
       }
       setRestoreList(data);
+      // OPanel/BPanel Import restores over a same-named account by default
+      // (operator, 2026-11-19); the box stays, ticked, so it can be turned off.
+      if ((restoreMode === 'opanel' || restoreMode === 'panel') && source.startsWith('ssh-')) setRestoreOverwrite(true);
       if (data.addons) setRestoreAddons(data.addons);
       const keys = new Set((data.items || []).map(restoreGroupKey));
       setRestorePicks(prev => prev.filter(key => keys.has(key)));
