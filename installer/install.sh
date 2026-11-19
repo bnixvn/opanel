@@ -622,6 +622,20 @@ build_frontend() {
     echo "WARNING: falling back to npm install -- the installed graph is NOT the reviewed one."
     npm install
   }
+  # npm optional-dependency bug (npm/cli#4828): make sure rolldown's binding for
+  # this machine's arch+libc is present, or `npm run build` fails with "Cannot
+  # find native binding" (seen on a glibc box left with only the musl one).
+  if [[ -d node_modules/rolldown ]]; then
+    _rd_arch=""; case "$(uname -m)" in x86_64) _rd_arch=x64 ;; aarch64|arm64) _rd_arch=arm64 ;; esac
+    if [[ -n "$_rd_arch" ]]; then
+      if ldd --version 2>&1 | grep -qi musl || [[ -e /lib/ld-musl-x86_64.so.1 ]]; then _rd_libc=musl; else _rd_libc=gnu; fi
+      _rd_pkg="@rolldown/binding-linux-${_rd_arch}-${_rd_libc}"
+      if [[ ! -d "node_modules/${_rd_pkg}" ]]; then
+        _rd_ver="$(sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' node_modules/rolldown/package.json | head -n1)"
+        [[ -n "$_rd_ver" ]] && { echo "Installing ${_rd_pkg}@${_rd_ver} (npm optional-deps workaround)"; npm install --no-save "${_rd_pkg}@${_rd_ver}" || echo "WARNING: could not install ${_rd_pkg}@${_rd_ver}"; }
+      fi
+    fi
+  fi
   VITE_API_URL=/api npm run build
   if [[ ! -f dist/index.html ]]; then
     fail "Frontend build failed: ${APP_DIR}/frontend/dist/index.html is missing"
