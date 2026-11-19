@@ -653,7 +653,7 @@ class _FakeNative:
         return Sftp()
 
 
-@pytest.mark.parametrize("panel", ["opanel", "bpanel"])
+@pytest.mark.parametrize("panel", ["opanel", "bpanel", "bnix"])
 def test_opanel_bpanel_account_list_is_read(panel):
     rows = migrate_ssh.parse_panel_accounts("bob\tbob.com\t1048576\t2\nsue\tsue.net\t0\t1\n", panel)
     assert [row["account"] for row in rows] == ["bob", "sue"]
@@ -664,7 +664,7 @@ def test_opanel_bpanel_account_list_is_read(panel):
         migrate_ssh.parse_panel_accounts(migrate_ssh.PANEL_MISSING[panel] + "\n", panel)
 
 
-@pytest.mark.parametrize("panel", ["opanel", "bpanel"])
+@pytest.mark.parametrize("panel", ["opanel", "bpanel", "bnix"])
 def test_list_accounts_dispatches_to_the_native_cli(panel):
     server = _FakeNative(panel, list_out="bob\tbob.com\t10\t1\n")
     import app.services.migrate_ssh as m
@@ -677,7 +677,7 @@ def test_list_accounts_dispatches_to_the_native_cli(panel):
     assert any("list-accounts" in c for c in server.commands)
 
 
-@pytest.mark.parametrize("panel", ["opanel", "bpanel"])
+@pytest.mark.parametrize("panel", ["opanel", "bpanel", "bnix"])
 def test_native_account_is_packed_downloaded_and_removed(tmp_path, monkeypatch, panel):
     path = "/home/bob/backups/bob-manual-tuesday.tar.gz"
     server = _FakeNative(panel, pack_out=path + "\n")
@@ -701,7 +701,7 @@ def test_native_pack_refuses_a_non_archive_path_and_removes_nothing(tmp_path, mo
     assert server.removed == []
 
 
-@pytest.mark.parametrize("panel", ["opanel", "bpanel"])
+@pytest.mark.parametrize("panel", ["opanel", "bpanel", "bnix"])
 def test_check_ref_treats_a_native_source_as_this_panels_kind(panel):
     source = restore_sources.Source("ssh", remote=restore_sources.Remote(
         protocol="ssh", host="host", port=22, panel=panel))
@@ -710,3 +710,12 @@ def test_check_ref_treats_a_native_source_as_this_panels_kind(panel):
     # A foreign kind off a native source is refused.
     with pytest.raises(ValueError):
         restore_sources.check_ref(source, restore_sources.KIND_CPANEL, "bob")
+
+
+def test_bnix_source_probes_both_panel_clis():
+    # The auto-detecting "bnix" source tries both OPanel's and BPanel's CLI names,
+    # so whichever the old server runs answers -- the operator need not know.
+    cmd = migrate_ssh._panelctl_cmd("bnix", "list-accounts")
+    for name in ("opanelctl", "bpanelctl", "opanel", "bpanel"):
+        assert name in cmd
+    assert "bnix" in migrate_ssh.NATIVE_PANELS
