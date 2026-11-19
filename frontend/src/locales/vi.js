@@ -3574,4 +3574,9 @@ export default {
   "Redis per account is stopped on this server.": "Redis cho từng tài khoản đang dừng trên server này.",
   "This account is suspended.": "Tài khoản này đang bị tạm khoá.",
   "Redis is off for this account.": "Redis đang tắt cho tài khoản này.",
+  "An account with this name is already on this server": "Trên máy chủ này đã có một tài khoản trùng tên",
+  "Already here": "Đã có ở đây",
+  "Restore over accounts already on this server ({0})": "Khôi phục đè lên các tài khoản đã có trên máy chủ này ({0})",
+  "Already on this server: {0}. Their sites and databases are replaced by the ones from the other server.": "Đã có trên máy chủ này: {0}. Website và cơ sở dữ liệu của các tài khoản này sẽ bị thay bằng bản từ máy chủ kia.",
+  "Already on this server, so skipped: {0}. Tick \"Restore over accounts already on this server\" to replace them.": "Đã có trên máy chủ này nên sẽ bỏ qua: {0}. Đánh dấu \"Khôi phục đè lên các tài khoản đã có trên máy chủ này\" để thay thế.",
 };

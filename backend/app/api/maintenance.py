@@ -1159,6 +1159,12 @@ def list_restore_source(payload: RestoreSourceIn, request: Request, db: Session 
         items = [item for item in items if item.get("kind") in payload.kinds]
     result = {"items": items, "addons": {
         kind: restore_sources.kind_enabled(kind) for kind in (restore_sources.KIND_DA, restore_sources.KIND_CPANEL)}}
+    # Accounts the source lists whose username is already here: the page marks
+    # them, since one pulled from another server would be someone else's.
+    accounts = {item.get("account") for item in items if item.get("account")}
+    result["existing"] = sorted(
+        username for (username,) in db.query(User.username).filter(User.username.in_(accounts)).all()
+    ) if accounts else []
     remote = source.remote
     if remote is not None and remote.protocol in {"sftp", "ssh"} and remote.seen_host_key_fingerprint:
         # A saved destination that has never been used pins its key now, the
@@ -1289,6 +1295,14 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
                 # From another server the download is the first half of an
                 # item's share of the bar and the restore the second.
                 remote = source.kind != "local"
+                # An account pulled from another OPanel/BPanel server whose
+                # username is already here belongs to someone else: refuse it
+                # before the archive is even packed there, unless the operator
+                # asked to restore over existing accounts.
+                refuse_existing = (source.kind == "ssh" and kind == restore_sources.KIND_OPANEL
+                                   and not overwrite)
+                if refuse_existing and db.query(User).filter(User.username == name).first() is not None:
+                    raise ValueError(backup.existing_account_message(name))
 
                 def item_percent(fraction, _i=index):
                     return _nested_percent(_i, total, int(min(1.0, fraction) * 1000), 1000)
@@ -1331,7 +1345,8 @@ def _run_restore_job(job_id: str, request_user_id: int, source: restore_sources.
                         )
 
                     _set_backup_job(job_id, message=f"Restoring {name} {position}", progress_label=name)
-                    result = backup.restore_user_backup(local_path, db, on_progress=site_progress)
+                    result = backup.restore_user_backup(local_path, db, on_progress=site_progress,
+                                                        refuse_existing_user=refuse_existing)
                     log_action(db, request_user_id, "restore_user", result.get("username", "user"), name)
                     note = f"{result.get('username', name)}: {len(result.get('websites') or [])} site(s)"
                     if result.get("certificates"):

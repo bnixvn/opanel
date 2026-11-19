@@ -1139,7 +1139,21 @@ def _preflight_restore(db, manifest: dict, user, owned_databases: list) -> None:
         mariadb.assert_db_user_available(db, db_user, owner_id)
 
 
-def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
+def existing_account_message(username: str) -> str:
+    return (f"An account named {username} is already on this server. It is a different account "
+            "from the one on the other server, so it is left alone: tick \"Restore over accounts "
+            "already on this server\" to replace it, or remove it first.")
+
+
+def restore_user_backup(backup_file: str, db, on_progress=None, refuse_existing_user: bool = False) -> dict:
+    """Restore a native OPanel/BPanel account archive.
+
+    ``refuse_existing_user`` is for an archive pulled from ANOTHER server: a
+    username already here is then someone else's account, not this archive's
+    own, and restoring into it would add the archive's sites to that account
+    and re-import its databases of the same name. Only an operator who asked to
+    restore over existing accounts gets that.
+    """
     archive = user_backup_path(backup_file)
     manifest = read_backup_manifest(str(archive))
     if manifest.get("kind") not in RESTORABLE_BACKUP_KINDS:
@@ -1150,6 +1164,8 @@ def restore_user_backup(backup_file: str, db, on_progress=None) -> dict:
         raise ValueError("Invalid user in backup")
 
     user = db.query(User).filter(User.username == username).first()
+    if refuse_existing_user and user is not None:
+        raise ValueError(existing_account_message(username))
 
     # Reject the archive before anything privileged happens. ensure_panel_user
     # below creates a Linux account, so the preflight has to run ahead of it,

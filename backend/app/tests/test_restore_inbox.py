@@ -123,7 +123,8 @@ def test_a_restore_from_the_drop_folder_moves_it_first_and_keeps_it(inbox, monke
         os.replace(ref, moved)
         return str(moved)
 
-    def restore(path, db, on_progress=None):
+    def restore(path, db, on_progress=None, refuse_existing_user=False):
+        assert refuse_existing_user is False, "this server's own backup restores over its own account"
         order.append(("restore", path))
         return {"username": "erin", "websites": []}
 

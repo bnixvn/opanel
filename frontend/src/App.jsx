@@ -3869,7 +3869,16 @@ function App() {
     if (chosen.length === 0) return;
     const names = chosen.map(item => `  - ${item.account || item.username || '?'} (${RESTORE_KIND_LABELS[item.kind] || item.kind}): ${item.filename}`).join('\n');
     const notes = [];
-    if (chosen.some(item => item.kind === 'opanel')) notes.push(tr("This overwrites that account's sites and databases with what is in the archive."));
+    // Pulled from another OPanel/BPanel server: a username already here is a
+    // different account, restored over only when the box is ticked.
+    const crossServer = (restoreMode === 'opanel' || restoreMode === 'panel') && restoreSource.startsWith('ssh-');
+    const existingHere = new Set(crossServer ? (restoreList?.existing || []) : []);
+    const clashing = chosen.filter(item => existingHere.has(item.account)).map(item => item.account);
+    if (crossServer) {
+      if (clashing.length) notes.push(restoreOverwrite
+        ? tr("Already on this server: {0}. Their sites and databases are replaced by the ones from the other server.", clashing.join(', '))
+        : tr("Already on this server, so skipped: {0}. Tick \"Restore over accounts already on this server\" to replace them.", clashing.join(', ')));
+    } else if (chosen.some(item => item.kind === 'opanel')) notes.push(tr("This overwrites that account's sites and databases with what is in the archive."));
     if (chosen.some(item => item.kind !== 'opanel')) notes.push(restoreOverwrite
       ? tr("Overwrite is on. A user or website already on this server is replaced by what the archive carries: its files are copied over the ones there, its databases are re-imported, and the panel user gets a new password. Websites the account has that the archive does not mention are kept.")
       : tr("Overwrite is off. An archive whose user or domains are already on this server stops without touching them; the others still import."));
@@ -6061,6 +6070,11 @@ function App() {
     // overwrite toggle); only the DirectAdmin/cPanel/FastPanel modes do.
     const nativeMode = restoreMode === 'opanel' || restoreMode === 'panel';
     const pickedHasDa = !nativeMode && pickedGroups.length > 0;
+    // From another OPanel/BPanel server, an account whose username is already
+    // here is someone else's: marked, and restored over only on request.
+    const crossServer = nativeMode && restoreSource.startsWith('ssh-');
+    const existingHere = new Set(crossServer ? (restoreList?.existing || []) : []);
+    const pickedExisting = pickedGroups.filter(group => existingHere.has(group.account));
     const allPicked = selectable.length > 0 && selectable.every(group => restorePicks.includes(group.key));
     const somePicked = selectable.some(group => restorePicks.includes(group.key));
     const job = restoreJob;
@@ -6244,6 +6258,7 @@ function App() {
                   <strong>
                     {group.account || chosen.username || chosen.filename}
                     {chosen.location === 'inbox' && <span className="badge restore-kind" title="/home/admin/backups">SFTP</span>}
+                    {existingHere.has(group.account) && <span className="badge warn restore-kind" title={tr("An account with this name is already on this server")}>{tr("Already here")}</span>}
                   </strong>
                   <small>{detail}</small>
                 </span>
@@ -6275,6 +6290,10 @@ function App() {
         {pickedHasDa && <label className="check-line">
           <input type="checkbox" checked={restoreOverwrite} onChange={e => setRestoreOverwrite(e.target.checked)} />
           {tr("Overwrite a user or website that is already on this server")}
+        </label>}
+        {pickedExisting.length > 0 && <label className="check-line">
+          <input type="checkbox" checked={restoreOverwrite} onChange={e => setRestoreOverwrite(e.target.checked)} />
+          {tr("Restore over accounts already on this server ({0})", pickedExisting.map(group => group.account).join(', '))}
         </label>}
         <div className="actions">
           <button disabled={!!loading || jobActive || pickedGroups.length === 0} onClick={runRestore}>
