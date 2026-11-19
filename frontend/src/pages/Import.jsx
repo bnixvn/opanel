@@ -25,13 +25,20 @@ const PANELS = {
     name: 'FastPanel', flag: 'fastpanelImport',
     subtitle: msg('Accounts from a FastPanel server, straight off it over SSH: FastPanel keeps files and databases in separate backups, so the panel packs each account itself.'),
   },
+  // Core, no addon flag: an OPanel/BPanel archive restores natively here. Its
+  // restore history is the panel's own native kind.
+  panel: {
+    name: 'OPanel/BPanel', historyKind: 'opanel',
+    subtitle: msg('Accounts from another OPanel or BPanel server, straight off it over SSH as root: its own panel backs up each account you pick and this one restores it directly - an OPanel account into BPanel and the other way round.'),
+  },
 };
 
 export default function ImportPage({ panel }) {
   const t = useT();
   const { backupJobs, enterRestoreMode, isAdmin, loadBackupJobs, navCtx, navigateToPage, renderRestoreWizard, restoreMode } = usePanel();
   const meta = PANELS[panel];
-  const on = !!navCtx?.[meta.flag];
+  // A core page (no addon flag) is always on; an addon page follows its flag.
+  const on = meta.flag ? !!navCtx?.[meta.flag] : true;
   useEffect(() => { if (on) enterRestoreMode(panel); }, [panel, on]);
   useEffect(() => { if (on) loadBackupJobs?.(); }, [on]);
 
@@ -49,6 +56,6 @@ export default function ImportPage({ panel }) {
   return <section className="section import-page">
     {header}
     {restoreMode === panel && renderRestoreWizard()}
-    <RestoreHistory kind={panel} running={running}/>
+    <RestoreHistory kind={meta.historyKind || panel} running={running}/>
   </section>;
 }

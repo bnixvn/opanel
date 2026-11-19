@@ -134,6 +134,7 @@ const PAGE_ROUTES = {
   importDirectadmin: '/migration/directadmin',
   importCpanel: '/migration/cpanel',
   importFastpanel: '/migration/fastpanel',
+  importPanel: '/migration/panel',
   // The hubs' own addresses (lib/navigation.jsx): each opens its first tab.
   server: '/server',
   'security-center': '/security-center',
@@ -446,17 +447,18 @@ const RESTORE_KIND_LABELS = { opanel: 'OPanel', bpanel: 'BPanel', directadmin: '
 // Backup & Restore, an addon page of its own like cPanel's): what each restores
 // and where from. Backup & Restore is the panel's own backups only.
 const RESTORE_MODES = {
-  // Another OPanel/BPanel server, over root SSH: it packs each account into a
-  // native archive this panel restores directly, so it belongs with the panel's
-  // own backups, not behind a foreign-import addon.
-  opanel: { kinds: ['opanel'], sources: ['local', 'target', 'remote', 'ssh-opanel', 'ssh-bpanel'] },
+  opanel: { kinds: ['opanel'], sources: ['local', 'target', 'remote'] },
   directadmin: { kinds: ['directadmin'], sources: ['ssh-directadmin', 'local', 'remote'] },
   cpanel: { kinds: ['cpanel'], sources: ['ssh-cpanel', 'local', 'remote'] },
   // FastPanel's own backups split files and databases: over SSH only.
   fastpanel: { kinds: ['fastpanel'], sources: ['ssh-fastpanel'] },
+  // Another OPanel/BPanel server over root SSH: its own panel packs each account
+  // into a native archive restored directly here, so it is a Migration hub page
+  // of its own (like the others) but needs no foreign importer and no addon.
+  panel: { kinds: ['opanel'], sources: ['ssh-opanel', 'ssh-bpanel'] },
 };
 // The migration addons' pages, and the mode each runs the wizard in.
-const IMPORT_PAGES = { importDirectadmin: 'directadmin', importCpanel: 'cpanel', importFastpanel: 'fastpanel' };
+const IMPORT_PAGES = { importDirectadmin: 'directadmin', importCpanel: 'cpanel', importFastpanel: 'fastpanel', importPanel: 'panel' };
 
 // The name an MCP client files this server under: this panel's address and the
 // account, so one client talking to several servers keeps them apart
@@ -6055,7 +6057,10 @@ function App() {
       : allGroups;
     const selectable = groups.filter(group => restoreChosen(group).valid !== false);
     const pickedGroups = allGroups.filter(group => restorePicks.includes(group.key));
-    const pickedHasDa = restoreMode !== 'opanel' && pickedGroups.length > 0;
+    // opanel and panel both restore native archives (no foreign importer, no
+    // overwrite toggle); only the DirectAdmin/cPanel/FastPanel modes do.
+    const nativeMode = restoreMode === 'opanel' || restoreMode === 'panel';
+    const pickedHasDa = !nativeMode && pickedGroups.length > 0;
     const allPicked = selectable.length > 0 && selectable.every(group => restorePicks.includes(group.key));
     const somePicked = selectable.some(group => restorePicks.includes(group.key));
     const job = restoreJob;
@@ -6063,7 +6068,7 @@ function App() {
     const remote = restoreRemote;
     const setRemote = patch => setRestoreRemote(prev => ({ ...prev, ...patch }));
     const mode = RESTORE_MODES[restoreMode];
-    const foreign = restoreMode !== 'opanel' ? RESTORE_KIND_LABELS[restoreMode] : '';
+    const foreign = !nativeMode ? RESTORE_KIND_LABELS[restoreMode] : '';
     const sourceCards = {
       local: [HardDrive, tr("This server"), foreign
         ? tr("{0} backups uploaded here, or put in the SFTP folder.", foreign)

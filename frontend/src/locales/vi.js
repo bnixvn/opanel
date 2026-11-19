@@ -3430,6 +3430,8 @@ export default {
   "The panel's account backups: choose where they are, pick the accounts, then restore.": "Bản sao lưu tài khoản của panel: chọn nơi chứa, chọn tài khoản, rồi khôi phục.",
   "Accounts from a FastPanel server, straight off it over SSH: FastPanel keeps files and databases in separate backups, so the panel packs each account itself.": "Tài khoản từ máy chủ FastPanel, lấy thẳng qua SSH: bản sao lưu của FastPanel tách riêng file và cơ sở dữ liệu, nên panel tự đóng gói từng tài khoản.",
   "FastPanel Import": "Nhập từ FastPanel",
+  "OPanel/BPanel Import": "Nhập từ OPanel/BPanel",
+  "Accounts from another OPanel or BPanel server, straight off it over SSH as root: its own panel backs up each account you pick and this one restores it directly - an OPanel account into BPanel and the other way round.": "Tài khoản từ một máy chủ OPanel hoặc BPanel khác, lấy thẳng qua SSH bằng root: panel bên đó sao lưu từng tài khoản bạn chọn và panel này khôi phục trực tiếp - tài khoản OPanel sang BPanel và ngược lại.",
   "FastPanel server": "Máy chủ FastPanel",
   "OPanel server": "Máy chủ OPanel",
   "BPanel server": "Máy chủ BPanel",
