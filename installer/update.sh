@@ -1833,6 +1833,27 @@ fi
 if [[ -f "$SOURCE_DIR/installer/files/opanel-ensure-swap.sh" ]]; then
   bash "$SOURCE_DIR/installer/files/opanel-ensure-swap.sh" || true
 fi
+# npm's optional-dependency bug (npm/cli#4828) can leave the wrong platform
+# binding for rolldown (the bundler Vite 8 uses): a glibc box that ended up with
+# only the musl binding (160.236.192.238, 2026-11-19) failed the build with
+# "Cannot find native binding". Make sure the binding for THIS machine's arch
+# and libc is present before building; install just that one, unsaved, if it is
+# missing. Idempotent and a no-op when npm already got it right.
+if [[ -d node_modules/rolldown ]]; then
+  _rd_arch=""; case "$(uname -m)" in x86_64) _rd_arch=x64 ;; aarch64|arm64) _rd_arch=arm64 ;; esac
+  if [[ -n "$_rd_arch" ]]; then
+    if ldd --version 2>&1 | grep -qi musl || [[ -e /lib/ld-musl-x86_64.so.1 ]]; then _rd_libc=musl; else _rd_libc=gnu; fi
+    _rd_pkg="@rolldown/binding-linux-${_rd_arch}-${_rd_libc}"
+    if [[ ! -d "node_modules/${_rd_pkg}" ]]; then
+      _rd_ver="$(sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' node_modules/rolldown/package.json | head -n1)"
+      if [[ -n "$_rd_ver" ]]; then
+        log "rolldown binding ${_rd_pkg} missing; installing ${_rd_pkg}@${_rd_ver} (npm optional-deps workaround)"
+        sudo -u opanel env HOME="$APP_DIR" npm install --no-save "${_rd_pkg}@${_rd_ver}" 2>&1 | tail -3 \
+          || log "WARNING: could not install ${_rd_pkg}@${_rd_ver}; the build may fail"
+      fi
+    fi
+  fi
+fi
 log "Building frontend with VITE_API_URL=/api..."
 sudo -u opanel env HOME="$APP_DIR" VITE_API_URL=/api npm run build 2>&1 || { log "BUILD FAILED"; exit 1; }
 
