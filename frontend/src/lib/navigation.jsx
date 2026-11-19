@@ -45,6 +45,7 @@ export const PAGE_TITLES = {
   git: msg('Git'),
   wordpress: msg('WordPress Manager'),
   redis: 'Redis',
+  importPanel: msg('OPanel/BPanel Import'),
   importDirectadmin: msg('DirectAdmin Import'),
   importCpanel: msg('cPanel Import'),
   importFastpanel: msg('FastPanel Import'),
@@ -101,6 +102,8 @@ export const HUBS = [
   // Accounts moved here from other panels: a tab per migration addon that is
   // on, reached from the Dashboard's Migration tools and the Addons page.
   { key: 'migration', title: msg('Migration'), roles: ['admin'], tabs: [
+    // OPanel/BPanel import is core (native restore): always on, no addon.
+    { page: 'importPanel', label: 'OPanel/BPanel' },
     { page: 'importDirectadmin', label: 'DirectAdmin', when: (c) => c.directadminImport },
     { page: 'importCpanel', label: 'cPanel', when: (c) => c.cpanelImport },
     { page: 'importFastpanel', label: 'FastPanel', when: (c) => c.fastpanelImport },

@@ -26,7 +26,27 @@ from typing import Callable, Optional
 
 import paramiko
 
-PANELS = {"cpanel": "cPanel", "directadmin": "DirectAdmin", "fastpanel": "FastPanel"}
+PANELS = {"cpanel": "cPanel", "directadmin": "DirectAdmin", "fastpanel": "FastPanel",
+          "opanel": "OPanel", "bpanel": "BPanel"}
+# An OPanel or BPanel server signed in to as root: it has the same panel code
+# we do (the list-accounts / backup-account CLI), and the archive it packs is a
+# native backup this panel restores directly (backup.restore_user_backup). So a
+# pulled account is listed and restored as this panel's own kind, not a foreign
+# one -- an OPanel account imports into BPanel and the other way round.
+NATIVE_PANELS = ("opanel", "bpanel")
+# This panel's restorable backup kind (restore_sources.KIND_OPANEL). BPanel's
+# copy of this file sets it to "bpanel"; both restore each other's archives.
+NATIVE_KIND = "opanel"
+# The source panel's CLI, tried in turn; an absolute path also answers to
+# `command -v`. The install name is <panel>ctl, with a bare <panel> alias.
+PANEL_CTL = {
+    "opanel": ("opanelctl", "/usr/local/sbin/opanelctl", "opanel", "/usr/local/sbin/opanel"),
+    "bpanel": ("bpanelctl", "/usr/local/sbin/bpanelctl", "bpanel", "/usr/local/sbin/bpanel"),
+}
+PANEL_MISSING = {"opanel": "NO_OPANEL_CLI", "bpanel": "NO_BPANEL_CLI"}
+# An absolute path to a .tar.gz: what backup-account prints, and the only kind
+# of path ever downloaded or removed on the other server.
+NATIVE_ARCHIVE_RE = re.compile(r"^/[^\x00]*/[^/\x00]+\.tar\.gz$")
 ACCOUNT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 # What mktemp makes on the other server, and the only folder ever removed there.
@@ -184,6 +204,39 @@ def parse_directadmin_accounts(text: str) -> list[dict]:
     return rows
 
 
+def _panelctl_cmd(panel: str, subcommand: str) -> str:
+    """Run the source panel's own CLI, whichever name it installed under, with
+    the given subcommand. Prints the missing-CLI token when none is found, so a
+    server that is not that panel (or is too old for the subcommand) is told
+    apart from one that answered."""
+    candidates = " ".join(shlex.quote(name) for name in PANEL_CTL[panel])
+    missing = PANEL_MISSING[panel]
+    return (f"for c in {candidates}; do "
+            f"command -v \"$c\" >/dev/null 2>&1 && exec \"$c\" {subcommand}; done; "
+            f"echo {missing}")
+
+
+def parse_panel_accounts(text: str, panel: str) -> list[dict]:
+    """The rows of ``<panel>ctl list-accounts``: username, main domain, bytes,
+    site count. Listed as this panel's native kind -- the archive restores here
+    directly, whichever panel it came from."""
+    head = text.strip()[:64]
+    if PANEL_MISSING[panel] in head or "NO_OPANEL_CLI" in head or "NO_BPANEL_CLI" in head:
+        raise MigrateError(
+            f"That server has no {PANELS[panel]} CLI with list-accounts. Sign in to an "
+            f"{PANELS[panel]} server that is up to date.")
+    rows = []
+    for line in text.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 4 or not ACCOUNT_RE.fullmatch(parts[0]):
+            continue
+        user, domain, size, sites = parts[:4]
+        note = f"{sites} sites" if sites.isdigit() and int(sites) != 1 else ""
+        rows.append(_row(NATIVE_KIND, user, domain.strip().lower(),
+                         int(size) if size.isdigit() else 0, note))
+    return rows
+
+
 def list_accounts(client: paramiko.SSHClient, panel: str) -> list[dict]:
     if panel == "cpanel":
         return parse_cpanel_accounts(_must(client, _CPANEL_LIST, LIST_TIMEOUT, "Listing the accounts"))
@@ -191,6 +244,9 @@ def list_accounts(client: paramiko.SSHClient, panel: str) -> list[dict]:
         return parse_directadmin_accounts(_must(client, _DA_LIST, LIST_TIMEOUT, "Listing the accounts"))
     if panel == "fastpanel":
         return parse_fastpanel_accounts(_must(client, _FASTPANEL_LIST, LIST_TIMEOUT, "Listing the accounts"))
+    if panel in NATIVE_PANELS:
+        return parse_panel_accounts(
+            _must(client, _panelctl_cmd(panel, "list-accounts"), LIST_TIMEOUT, "Listing the accounts"), panel)
     raise ValueError(f"Unknown panel: {panel}")
 
 
@@ -484,6 +540,51 @@ def _pack_fastpanel(client, account: str, folder: str) -> str:
     return name
 
 
+def _remove_native_archive(client, path: str) -> None:
+    """Delete the archive backup-account just made, so the migration leaves no
+    fresh copy behind. Only ever an absolute .tar.gz path; best effort."""
+    if NATIVE_ARCHIVE_RE.fullmatch(path or ""):
+        try:
+            _exec(client, f"rm -f -- {shlex.quote(path)}", LIST_TIMEOUT)
+        except Exception:  # noqa: BLE001 - the source still holds it; not fatal
+            pass
+
+
+def _pack_and_fetch_native(client, panel: str, account: str,
+                           destination_for: Callable[[str], Path],
+                           ensure_room: Callable[[Path, int, str], None],
+                           on_status: StatusFn, on_progress: ProgressFn) -> str:
+    """An OPanel/BPanel account: its own panel packs it into a native archive
+    (backup-account prints the path), which comes down and is restored here."""
+    if on_status:
+        on_status(f"Backing up {account} on the other server")
+    out = _must(client, _panelctl_cmd(panel, f"backup-account {shlex.quote(account)}"),
+                PACK_TIMEOUT, f"Backing up {account}")
+    path = (out.strip().splitlines() or [""])[-1].strip()
+    if PANEL_MISSING[panel] in path or not NATIVE_ARCHIVE_RE.fullmatch(path):
+        raise MigrateError(
+            f"Backing up {account} on the other server left no archive"
+            f"{f' ({path[:200]})' if path else ''}")
+    name = posixpath.basename(path)
+    destination = destination_for(name)
+    partial = destination.with_name(destination.name + ".part")
+    sftp = client.open_sftp()
+    try:
+        total = sftp.stat(path).st_size or 0
+        ensure_room(destination.parent, total, name)
+        if on_status:
+            on_status(f"Downloading {name}")
+        sftp.get(path, str(partial), callback=(lambda done, of: on_progress(done, of)) if on_progress else None)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    finally:
+        sftp.close()
+    os.replace(partial, destination)
+    _remove_native_archive(client, path)
+    return str(destination)
+
+
 def pack_and_fetch(client: paramiko.SSHClient, panel: str, account: str,
                    destination_for: Callable[[str], Path], ensure_room: Callable[[Path, int, str], None],
                    on_status: StatusFn = None, on_progress: ProgressFn = None) -> str:
@@ -493,6 +594,8 @@ def pack_and_fetch(client: paramiko.SSHClient, panel: str, account: str,
     Returns the local path of the downloaded archive.
     """
     check_account(account)
+    if panel in NATIVE_PANELS:
+        return _pack_and_fetch_native(client, panel, account, destination_for, ensure_room, on_status, on_progress)
     folder = _work_folder(client)
     try:
         if on_status:

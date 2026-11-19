@@ -134,6 +134,7 @@ const PAGE_ROUTES = {
   importDirectadmin: '/migration/directadmin',
   importCpanel: '/migration/cpanel',
   importFastpanel: '/migration/fastpanel',
+  importPanel: '/migration/panel',
   // The hubs' own addresses (lib/navigation.jsx): each opens its first tab.
   server: '/server',
   'security-center': '/security-center',
@@ -441,7 +442,7 @@ function CodeEditor({ value, mode, disabled, theme, onChange, onCursorChange }) 
 }
 
 // Restore: what each kind of archive is called (services/restore_sources.py).
-const RESTORE_KIND_LABELS = { opanel: 'OPanel', directadmin: 'DirectAdmin', cpanel: 'cPanel', fastpanel: 'FastPanel' };
+const RESTORE_KIND_LABELS = { opanel: 'OPanel', bpanel: 'BPanel', directadmin: 'DirectAdmin', cpanel: 'cPanel', fastpanel: 'FastPanel' };
 // One wizard, several pages (operator, 2026-10-18: DirectAdmin import out of
 // Backup & Restore, an addon page of its own like cPanel's): what each restores
 // and where from. Backup & Restore is the panel's own backups only.
@@ -451,9 +452,13 @@ const RESTORE_MODES = {
   cpanel: { kinds: ['cpanel'], sources: ['ssh-cpanel', 'local', 'remote'] },
   // FastPanel's own backups split files and databases: over SSH only.
   fastpanel: { kinds: ['fastpanel'], sources: ['ssh-fastpanel'] },
+  // Another OPanel/BPanel server over root SSH: its own panel packs each account
+  // into a native archive restored directly here, so it is a Migration hub page
+  // of its own (like the others) but needs no foreign importer and no addon.
+  panel: { kinds: ['opanel'], sources: ['ssh-opanel', 'ssh-bpanel'] },
 };
 // The migration addons' pages, and the mode each runs the wizard in.
-const IMPORT_PAGES = { importDirectadmin: 'directadmin', importCpanel: 'cpanel', importFastpanel: 'fastpanel' };
+const IMPORT_PAGES = { importDirectadmin: 'directadmin', importCpanel: 'cpanel', importFastpanel: 'fastpanel', importPanel: 'panel' };
 
 // The name an MCP client files this server under: this panel's address and the
 // account, so one client talking to several servers keeps them apart
@@ -6052,7 +6057,10 @@ function App() {
       : allGroups;
     const selectable = groups.filter(group => restoreChosen(group).valid !== false);
     const pickedGroups = allGroups.filter(group => restorePicks.includes(group.key));
-    const pickedHasDa = restoreMode !== 'opanel' && pickedGroups.length > 0;
+    // opanel and panel both restore native archives (no foreign importer, no
+    // overwrite toggle); only the DirectAdmin/cPanel/FastPanel modes do.
+    const nativeMode = restoreMode === 'opanel' || restoreMode === 'panel';
+    const pickedHasDa = !nativeMode && pickedGroups.length > 0;
     const allPicked = selectable.length > 0 && selectable.every(group => restorePicks.includes(group.key));
     const somePicked = selectable.some(group => restorePicks.includes(group.key));
     const job = restoreJob;
@@ -6060,7 +6068,7 @@ function App() {
     const remote = restoreRemote;
     const setRemote = patch => setRestoreRemote(prev => ({ ...prev, ...patch }));
     const mode = RESTORE_MODES[restoreMode];
-    const foreign = restoreMode !== 'opanel' ? RESTORE_KIND_LABELS[restoreMode] : '';
+    const foreign = !nativeMode ? RESTORE_KIND_LABELS[restoreMode] : '';
     const sourceCards = {
       local: [HardDrive, tr("This server"), foreign
         ? tr("{0} backups uploaded here, or put in the SFTP folder.", foreign)
@@ -6072,6 +6080,8 @@ function App() {
       'ssh-directadmin': [Server, tr("DirectAdmin server"), tr("Sign in as root over SSH: the server backs up each account you pick and the panel brings it over.")],
       'ssh-cpanel': [Server, tr("cPanel server"), tr("Sign in as root over SSH: pkgacct packs each account you pick and the panel brings it over.")],
       'ssh-fastpanel': [Server, tr("FastPanel server"), tr("Sign in as root over SSH: the panel packs each account you pick - its sites, databases and certificates - and brings it over.")],
+      'ssh-opanel': [Server, tr("OPanel server"), tr("Sign in as root over SSH: the other OPanel backs up each account you pick and the panel brings it over.")],
+      'ssh-bpanel': [Server, tr("BPanel server"), tr("Sign in as root over SSH: the BPanel server backs up each account you pick and the panel brings it over.")],
     };
     const sources = mode.sources.map(id => [id, ...sourceCards[id]]);
     const sshPanel = restoreSource.startsWith('ssh-') ? RESTORE_KIND_LABELS[restoreSource.slice(4)] : '';
