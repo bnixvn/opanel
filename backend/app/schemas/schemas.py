@@ -1148,7 +1148,8 @@ class RestoreRemoteIn(BaseModel):
     # What the server showed when it was listed; the download insists on it.
     host_key_fingerprint: str = Field(default="", max_length=128)
     # protocol "ssh": the control panel on that server, which packs the accounts.
-    panel: Optional[Literal["cpanel", "directadmin", "fastpanel"]] = None
+    # opanel/bpanel pull a native archive (restored directly); the others import.
+    panel: Optional[Literal["cpanel", "directadmin", "fastpanel", "opanel", "bpanel"]] = None
 
     @field_validator("host")
     @classmethod

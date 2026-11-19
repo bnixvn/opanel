@@ -608,3 +608,105 @@ def test_a_database_that_fails_does_not_take_the_account_with_it(tmp_path, monke
     db.expire_all()
     assert db.query(User).filter_by(username="bob").count() == 1
     assert sorted(site.domain for site in db.query(Website)) == ["blog.bob.test", "bob.test", "shop.test"]
+
+
+# --- OPanel/BPanel source (feat/panel-import) -------------------------------------------------------
+# Another OPanel or BPanel server, signed in to as root, lists its accounts with
+# <panel>ctl list-accounts and packs one with backup-account, which prints a
+# native .tar.gz path. The archive restores here with backup.restore_user_backup,
+# so it is listed and checked as this panel's own kind -- cross-panel included.
+
+class _FakeNative:
+    """A minimal OPanel/BPanel source: its CLI answers, and SFTP hands the file over."""
+
+    def __init__(self, panel, list_out="", pack_out=""):
+        self.panel, self.list_out, self.pack_out = panel, list_out, pack_out
+        self.commands, self.removed, self.downloaded = [], [], None
+
+    def run(self, client, command, timeout):
+        self.commands.append(command)
+        if "list-accounts" in command:
+            return 0, self.list_out, ""
+        if "backup-account" in command:
+            return 0, self.pack_out, ""
+        if command.startswith("rm -f -- "):
+            self.removed.append(command)
+            return 0, "", ""
+        raise AssertionError(command)
+
+    def open_sftp(self):
+        server = self
+
+        class Sftp:
+            def stat(self, path):
+                return SimpleNamespace(st_size=4321)
+
+            def get(self, remote, local, callback=None):
+                server.downloaded = remote
+                Path(local).write_bytes(b"opanelarchive")
+                if callback:
+                    callback(4321, 4321)
+
+            def close(self):
+                pass
+
+        return Sftp()
+
+
+@pytest.mark.parametrize("panel", ["opanel", "bpanel"])
+def test_opanel_bpanel_account_list_is_read(panel):
+    rows = migrate_ssh.parse_panel_accounts("bob\tbob.com\t1048576\t2\nsue\tsue.net\t0\t1\n", panel)
+    assert [row["account"] for row in rows] == ["bob", "sue"]
+    assert rows[0]["kind"] == migrate_ssh.NATIVE_KIND == "opanel"
+    assert rows[0]["domain"] == "bob.com" and rows[0]["size"] == 1048576 and rows[0]["note"] == "2 sites"
+    assert rows[1]["size"] == 0 and rows[1]["note"] == ""
+    with pytest.raises(migrate_ssh.MigrateError, match="up to date"):
+        migrate_ssh.parse_panel_accounts(migrate_ssh.PANEL_MISSING[panel] + "\n", panel)
+
+
+@pytest.mark.parametrize("panel", ["opanel", "bpanel"])
+def test_list_accounts_dispatches_to_the_native_cli(panel):
+    server = _FakeNative(panel, list_out="bob\tbob.com\t10\t1\n")
+    import app.services.migrate_ssh as m
+    orig, m._exec = m._exec, server.run
+    try:
+        rows = m.list_accounts(server, panel)
+    finally:
+        m._exec = orig
+    assert rows[0]["account"] == "bob" and rows[0]["kind"] == migrate_ssh.NATIVE_KIND
+    assert any("list-accounts" in c for c in server.commands)
+
+
+@pytest.mark.parametrize("panel", ["opanel", "bpanel"])
+def test_native_account_is_packed_downloaded_and_removed(tmp_path, monkeypatch, panel):
+    path = "/home/bob/backups/bob-manual-tuesday.tar.gz"
+    server = _FakeNative(panel, pack_out=path + "\n")
+    monkeypatch.setattr(migrate_ssh, "_exec", server.run)
+    got = migrate_ssh.pack_and_fetch(server, panel, "bob", lambda n: tmp_path / n, lambda *a: None)
+    assert Path(got) == tmp_path / "bob-manual-tuesday.tar.gz"
+    assert Path(got).read_bytes() == b"opanelarchive"
+    assert server.downloaded == path
+    # The fresh backup it made is removed, so the migration leaves nothing behind.
+    assert server.removed == [f"rm -f -- {path}"]
+    assert any("backup-account bob" in c for c in server.commands)
+
+
+def test_native_pack_refuses_a_non_archive_path_and_removes_nothing(tmp_path, monkeypatch):
+    # backup-account must print an absolute .tar.gz; anything else is refused and
+    # never fed to rm on the source.
+    server = _FakeNative("opanel", pack_out="/etc/passwd\n")
+    monkeypatch.setattr(migrate_ssh, "_exec", server.run)
+    with pytest.raises(migrate_ssh.MigrateError, match="no archive"):
+        migrate_ssh.pack_and_fetch(server, "opanel", "bob", lambda n: tmp_path / n, lambda *a: None)
+    assert server.removed == []
+
+
+@pytest.mark.parametrize("panel", ["opanel", "bpanel"])
+def test_check_ref_treats_a_native_source_as_this_panels_kind(panel):
+    source = restore_sources.Source("ssh", remote=restore_sources.Remote(
+        protocol="ssh", host="host", port=22, panel=panel))
+    # Listed and picked as this panel's own kind.
+    assert restore_sources.check_ref(source, restore_sources.KIND_OPANEL, "bob") == "bob"
+    # A foreign kind off a native source is refused.
+    with pytest.raises(ValueError):
+        restore_sources.check_ref(source, restore_sources.KIND_CPANEL, "bob")
