@@ -27,23 +27,31 @@ from typing import Callable, Optional
 import paramiko
 
 PANELS = {"cpanel": "cPanel", "directadmin": "DirectAdmin", "fastpanel": "FastPanel",
-          "opanel": "OPanel", "bpanel": "BPanel"}
+          "opanel": "OPanel", "bpanel": "BPanel", "bnix": "OPanel/BPanel"}
 # An OPanel or BPanel server signed in to as root: it has the same panel code
 # we do (the list-accounts / backup-account CLI), and the archive it packs is a
 # native backup this panel restores directly (backup.restore_user_backup). So a
 # pulled account is listed and restored as this panel's own kind, not a foreign
 # one -- an OPanel account imports into BPanel and the other way round.
-NATIVE_PANELS = ("opanel", "bpanel")
+# "bnix" is the auto-detecting source: an OPanel or BPanel server (both BNIX,
+# same CLI and backup format), told apart by which CLI answers -- the operator
+# need not know which panel the old server runs, the way cPanel transfer does
+# not ask. "opanel"/"bpanel" stay valid for an explicit pick.
+NATIVE_PANELS = ("opanel", "bpanel", "bnix")
 # This panel's restorable backup kind (restore_sources.KIND_OPANEL). BPanel's
 # copy of this file sets it to "bpanel"; both restore each other's archives.
 NATIVE_KIND = "opanel"
 # The source panel's CLI, tried in turn; an absolute path also answers to
 # `command -v`. The install name is <panel>ctl, with a bare <panel> alias.
+# "bnix" tries both panels' names, so whichever is installed answers.
+_OPANEL_CTL = ("opanelctl", "/usr/local/sbin/opanelctl", "opanel", "/usr/local/sbin/opanel")
+_BPANEL_CTL = ("bpanelctl", "/usr/local/sbin/bpanelctl", "bpanel", "/usr/local/sbin/bpanel")
 PANEL_CTL = {
-    "opanel": ("opanelctl", "/usr/local/sbin/opanelctl", "opanel", "/usr/local/sbin/opanel"),
-    "bpanel": ("bpanelctl", "/usr/local/sbin/bpanelctl", "bpanel", "/usr/local/sbin/bpanel"),
+    "opanel": _OPANEL_CTL,
+    "bpanel": _BPANEL_CTL,
+    "bnix": _OPANEL_CTL + _BPANEL_CTL,
 }
-PANEL_MISSING = {"opanel": "NO_OPANEL_CLI", "bpanel": "NO_BPANEL_CLI"}
+PANEL_MISSING = {"opanel": "NO_OPANEL_CLI", "bpanel": "NO_BPANEL_CLI", "bnix": "NO_BNIX_CLI"}
 # An absolute path to a .tar.gz: what backup-account prints, and the only kind
 # of path ever downloaded or removed on the other server.
 NATIVE_ARCHIVE_RE = re.compile(r"^/[^\x00]*/[^/\x00]+\.tar\.gz$")
@@ -221,10 +229,10 @@ def parse_panel_accounts(text: str, panel: str) -> list[dict]:
     site count. Listed as this panel's native kind -- the archive restores here
     directly, whichever panel it came from."""
     head = text.strip()[:64]
-    if PANEL_MISSING[panel] in head or "NO_OPANEL_CLI" in head or "NO_BPANEL_CLI" in head:
+    if any(token in head for token in PANEL_MISSING.values()):
         raise MigrateError(
-            f"That server has no {PANELS[panel]} CLI with list-accounts. Sign in to an "
-            f"{PANELS[panel]} server that is up to date.")
+            "That server has no OPanel or BPanel CLI with list-accounts. Sign in to an "
+            "OPanel or BPanel server that is up to date.")
     rows = []
     for line in text.splitlines():
         parts = line.split("\t")
