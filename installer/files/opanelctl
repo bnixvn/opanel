@@ -809,8 +809,74 @@ menu() {
   done
 }
 
+# list-accounts / backup-account: the stable contract another panel's "OPanel
+# import" calls over SSH. list-accounts prints one TSV row per hosting account
+# (username, main domain, on-disk bytes, site count); backup-account packs one
+# account into a native archive and prints its path. Both go through the panel's
+# own code, so the archive is exactly what Restore accepts.
+list_accounts_command() {
+  [[ -x "$APP_DIR/backend/.venv/bin/python" ]] || fail "Panel backend not found at $APP_DIR"
+  cd "$APP_DIR/backend"
+  local rows
+  rows="$(runuser -u opanel -- env HOME="$APP_DIR" opanel_USE_HELPER=true "$APP_DIR/backend/.venv/bin/python" - <<'PY'
+from app.core.database import SessionLocal
+from app.models.entities import User, Website
+db = SessionLocal()
+try:
+    for u in db.query(User).order_by(User.username.asc()).all():
+        if str(getattr(u, "role", "") or "") == "admin":
+            continue  # the admin owns the server, not a hosting account
+        sites = db.query(Website).filter(Website.owner_id == u.id).order_by(Website.id.asc()).all()
+        main = sites[0].domain if sites else ""
+        print(f"{u.username}\t{main}\t{len(sites)}")
+finally:
+    db.close()
+PY
+)" || fail "Could not read the account list"
+  # The on-disk size needs root (the panel user cannot read inside /home/<user>,
+  # 0750), and du scans every file, so a huge account would stall the whole
+  # list. Each du is bounded; an account too big to measure in time reports 0
+  # (unknown), which the importer shows as "--" rather than making the caller wait.
+  while IFS=$'\t' read -r user domain sites; do
+    [[ -n "$user" ]] || continue
+    local size=0
+    # `|| true`: du (or its 5s timeout) failing must not abort the script (set -e).
+    [[ -d "/home/$user" ]] && size="$(timeout 5 du -sb "/home/$user" 2>/dev/null | cut -f1 || true)"
+    [[ "$size" =~ ^[0-9]+$ ]] || size=0
+    printf '%s\t%s\t%s\t%s\n' "$user" "$domain" "$size" "${sites:-0}"
+  done <<< "$rows"
+}
+
+backup_account_command() {
+  local user="${1:-}"
+  [[ -n "$user" ]] || fail "Usage: opanel backup-account <username>"
+  [[ "$user" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || fail "Not an account name: $user"
+  [[ -x "$APP_DIR/backend/.venv/bin/python" ]] || fail "Panel backend not found at $APP_DIR"
+  cd "$APP_DIR/backend"
+  runuser -u opanel -- env HOME="$APP_DIR" opanel_USE_HELPER=true OPANEL_BACKUP_ACCOUNT="$user" \
+    "$APP_DIR/backend/.venv/bin/python" - <<'PY'
+import os, sys
+from app.core.database import SessionLocal
+from app.models.entities import User
+from app.services import backup
+name = os.environ.get("OPANEL_BACKUP_ACCOUNT", "")
+db = SessionLocal()
+try:
+    user = db.query(User).filter(User.username == name).first()
+    if not user:
+        sys.stderr.write(f"No such account: {name}\n"); sys.exit(3)
+    if str(getattr(user, "role", "") or "") == "admin":
+        sys.stderr.write(f"Not a hosting account: {name}\n"); sys.exit(3)
+    print(backup.create_user_backup(user, db))
+finally:
+    db.close()
+PY
+}
+
 case "${1:-menu}" in
   menu|--menu) menu ;;
+  list-accounts|--list-accounts) list_accounts_command ;;
+  backup-account|--backup-account) backup_account_command "${2:-}" ;;
   login|--login|show-login|--show-login) show_login_info ;;
   logs|--logs) show_logs ;;
   restart|--restart) restart_panel_command ;;
@@ -827,7 +893,7 @@ case "${1:-menu}" in
   status|--status) show_status ;;
   addon|--addon) addon_command "${2:-}" "${3:-}" ;;
   *)
-    echo "Usage: opanel [menu|login|status|logs|restart|repair-firewall|change-ip [old-ip] [new-ip]|regenerate-secrets [--once]|set-panel-url|install-panel-ssl|fix-permissions|change-admin-password|sync-admin-root-password|reset-admin-2fa [username]|addon list|addon install <id>|addon remove <id>|update]"
+    echo "Usage: opanel [menu|login|status|logs|restart|repair-firewall|change-ip [old-ip] [new-ip]|regenerate-secrets [--once]|set-panel-url|install-panel-ssl|fix-permissions|change-admin-password|sync-admin-root-password|reset-admin-2fa [username]|list-accounts|backup-account <username>|addon list|addon install <id>|addon remove <id>|update]"
     exit 2
     ;;
 esac

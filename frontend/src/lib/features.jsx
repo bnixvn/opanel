@@ -66,6 +66,8 @@ export const TILES = {
   'da-import': { label: msg('DirectAdmin Import'), icon: 'directadmin-import', page: 'importDirectadmin', roles: ['admin'], addon: 'directadmin' },
   'cpanel-import': { label: msg('cPanel Import'), icon: 'cpanel-import', page: 'importCpanel', roles: ['admin'], addon: 'cpanel' },
   'fastpanel-import': { label: msg('FastPanel Import'), icon: 'migration', page: 'importFastpanel', roles: ['admin'], addon: 'fastpanel' },
+  // Core, no addon: an OPanel/BPanel archive restores natively, so it is always on.
+  'panel-import': { label: msg('OPanel/BPanel Import'), icon: 'migration', page: 'importPanel', roles: ['admin'] },
   // In Advanced.
   addons: { label: msg('Manage addons'), icon: 'addons', page: 'addons', roles: ['admin'] },
 };
@@ -82,7 +84,7 @@ const ADMIN = [
   // Addons with the rest of Advanced, not a section of one tile of their own
   // (operator, 2026-10-25, as on BPanel).
   ['advanced', msg('Advanced'), ['cron', 'redis', 'mcp', 'notifications', 'panel-settings', 'addons']],
-  ['migration', msg('Migration'), ['da-import', 'cpanel-import', 'fastpanel-import']],
+  ['migration', msg('Migration'), ['panel-import', 'da-import', 'cpanel-import', 'fastpanel-import']],
 ];
 const CUSTOMER = [
   ['websites', msg('Websites and domains'), ['websites', 'website-add', 'ssl', 'dns', 'wordpress']],

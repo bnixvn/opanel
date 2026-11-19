@@ -680,8 +680,13 @@ def check_ref(source: Source, kind: str, ref: str) -> str:
     if not kind_enabled(kind):
         raise ValueError(_off_message(kind))
     if source.kind == "ssh":
-        # An account on that server, not a file: the server packs it later.
-        if source.remote is None or kind != source.remote.panel:
+        # An account on that server, not a file: the server packs it later. A
+        # cPanel/DirectAdmin account is its own foreign kind; an OPanel/BPanel
+        # one is a native archive, listed and restored as this panel's kind.
+        if source.remote is None:
+            raise ValueError(f"Not an account of that server: {ref}")
+        expected = KIND_OPANEL if source.remote.panel in migrate_ssh.NATIVE_PANELS else source.remote.panel
+        if kind != expected:
             raise ValueError(f"Not an account of that server: {ref}")
         return migrate_ssh.check_account(ref)
     _check_remote_path(ref)
