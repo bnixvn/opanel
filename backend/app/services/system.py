@@ -173,7 +173,10 @@ def _disk_usage() -> dict:
 
 
 def resource_usage() -> dict:
-    sample_seconds = 0.2
+    # A full second, not a fraction: a 0.2s window caught momentary spikes and
+    # read noisy and high (and never matched the Processes tab or `top`). One
+    # second is what mpstat/top sample over, so the chip now tracks reality.
+    sample_seconds = 1.0
     cpu_start = _read_cpu_times()
     network_start = _read_network_totals()
     time.sleep(sample_seconds)
