@@ -441,12 +441,15 @@ function CodeEditor({ value, mode, disabled, theme, onChange, onCursorChange }) 
 }
 
 // Restore: what each kind of archive is called (services/restore_sources.py).
-const RESTORE_KIND_LABELS = { opanel: 'OPanel', directadmin: 'DirectAdmin', cpanel: 'cPanel', fastpanel: 'FastPanel' };
+const RESTORE_KIND_LABELS = { opanel: 'OPanel', bpanel: 'BPanel', directadmin: 'DirectAdmin', cpanel: 'cPanel', fastpanel: 'FastPanel' };
 // One wizard, several pages (operator, 2026-10-18: DirectAdmin import out of
 // Backup & Restore, an addon page of its own like cPanel's): what each restores
 // and where from. Backup & Restore is the panel's own backups only.
 const RESTORE_MODES = {
-  opanel: { kinds: ['opanel'], sources: ['local', 'target', 'remote'] },
+  // Another OPanel/BPanel server, over root SSH: it packs each account into a
+  // native archive this panel restores directly, so it belongs with the panel's
+  // own backups, not behind a foreign-import addon.
+  opanel: { kinds: ['opanel'], sources: ['local', 'target', 'remote', 'ssh-opanel', 'ssh-bpanel'] },
   directadmin: { kinds: ['directadmin'], sources: ['ssh-directadmin', 'local', 'remote'] },
   cpanel: { kinds: ['cpanel'], sources: ['ssh-cpanel', 'local', 'remote'] },
   // FastPanel's own backups split files and databases: over SSH only.
@@ -6072,6 +6075,8 @@ function App() {
       'ssh-directadmin': [Server, tr("DirectAdmin server"), tr("Sign in as root over SSH: the server backs up each account you pick and the panel brings it over.")],
       'ssh-cpanel': [Server, tr("cPanel server"), tr("Sign in as root over SSH: pkgacct packs each account you pick and the panel brings it over.")],
       'ssh-fastpanel': [Server, tr("FastPanel server"), tr("Sign in as root over SSH: the panel packs each account you pick - its sites, databases and certificates - and brings it over.")],
+      'ssh-opanel': [Server, tr("OPanel server"), tr("Sign in as root over SSH: the other OPanel backs up each account you pick and the panel brings it over.")],
+      'ssh-bpanel': [Server, tr("BPanel server"), tr("Sign in as root over SSH: the BPanel server backs up each account you pick and the panel brings it over.")],
     };
     const sources = mode.sources.map(id => [id, ...sourceCards[id]]);
     const sshPanel = restoreSource.startsWith('ssh-') ? RESTORE_KIND_LABELS[restoreSource.slice(4)] : '';
