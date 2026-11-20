@@ -446,6 +446,25 @@ def export_database(db_name: str, output_file: str):
     return shell.run(args, sensitive=True)
 
 
+def _option_value(value: str) -> str:
+    """A value as a MariaDB option file reads it back unchanged.
+
+    Unquoted, a ``#`` starts a comment and cuts the rest off -- and
+    random_password() puts a ``#`` in about one password in three, so a
+    scoped import was refused with ERROR 1045 for those databases (found on a
+    BPanel box, 2026-11-20; the same code). Always quoted; the file unescapes
+    backslashes in any value, so those are doubled.
+    """
+    if "\n" in value or "\r" in value or "\x00" in value:
+        raise ValueError("Invalid database password")
+    escaped = value.replace("\\", "\\\\")
+    if '"' not in value:
+        return f'"{escaped}"'
+    if "'" not in value:
+        return f"'{escaped}'"
+    raise ValueError("A database password with both kinds of quote cannot be used for an import")
+
+
 @contextlib.contextmanager
 def _scoped_defaults_file(db_user: str, db_password: str):
     """A 0600 [client] defaults-file for one database user.
@@ -455,8 +474,7 @@ def _scoped_defaults_file(db_user: str, db_password: str):
     password of the schema being imported.
     """
     safe_user = _validate_identifier(db_user)
-    if "\n" in db_password or "\r" in db_password or "\x00" in db_password:
-        raise ValueError("Invalid database password")
+    password = _option_value(db_password)
     handle = tempfile.NamedTemporaryFile(
         "w", encoding="utf-8", prefix="opanel-mysql-", suffix=".cnf", delete=False
     )
@@ -464,7 +482,7 @@ def _scoped_defaults_file(db_user: str, db_password: str):
         os.chmod(handle.name, 0o600)
         handle.write("[client]\n")
         handle.write(f"user={safe_user}\n")
-        handle.write(f"password={db_password}\n")
+        handle.write(f"password={password}\n")
         handle.write("host=localhost\n")
         handle.close()
         yield handle.name
