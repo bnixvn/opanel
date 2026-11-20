@@ -1165,7 +1165,7 @@ else
   log "Backing up the panel database"
   backup_db
   write_update_state "checking" "" "Checking for opanel releases"
-  update_progress 5 "checking" "Backing up SQLite DB before update"
+  update_progress 5 "checking" "Backing up the panel database"
 fi
 
 # --- Fetch source -----------------------------------------------------------
@@ -1190,7 +1190,7 @@ else
       [[ -n "$RELEASE_TAG" ]] || fail "--tag requires a release tag"
       UPDATE_REF="$RELEASE_TAG"
       write_update_state "updating" "$UPDATE_REF" "Updating opanel from ${UPDATE_REF}"
-      update_progress 15 "fetching" "Downloading release ${RELEASE_TAG}"
+      update_progress 15 "fetching" "Downloading the update"
       download_release_source "$RELEASE_TAG"
       detail "Release: ${RELEASE_TAG}"
       ;;
@@ -1212,7 +1212,7 @@ else
       ensure_git_remote
       remote_branch="${GIT_REMOTE}/${BRANCH}"
       log "Downloading the update"
-      update_progress 15 "fetching" "Pulling latest from ${remote_branch}"
+      update_progress 15 "fetching" "Downloading the update"
       quiet git fetch --prune "$GIT_REMOTE" "+refs/heads/${BRANCH}:refs/remotes/${GIT_REMOTE}/${BRANCH}" --tags
       UPDATE_REF="$remote_branch"
       write_update_state "updating" "$UPDATE_REF" "Updating opanel from ${UPDATE_REF}"
@@ -1280,7 +1280,7 @@ fi
 if [[ -z "${opanel_UPDATE_STAGE2:-}" && -f "$SOURCE_DIR/installer/update.sh" ]] \
   && ! cmp -s "$SOURCE_DIR/installer/update.sh" "${opanel_UPDATE_STABLE_COPY:-/nonexistent}"; then
   detail "==> The updater changed in this release; continuing with the new one"
-  update_progress 20 "syncing" "Handing over to the updater from ${UPDATE_REF:-the new release}"
+  update_progress 20 "syncing" "Installing the update"
   stage2_copy="$(mktemp /tmp/opanel-update-stage2.XXXXXX.sh)"
   cp "$SOURCE_DIR/installer/update.sh" "$stage2_copy"
   chmod 0700 "$stage2_copy"
@@ -1353,7 +1353,7 @@ if [[ ! -f "$APP_DIR/backend/.env" ]]; then
   fail "$APP_DIR/backend/.env is missing. Run installer/install.sh first or restore .env from backup."
 fi
 detail "==> Installing direct panel runtime"
-update_progress 25 "syncing" "Syncing source into ${APP_DIR}"
+update_progress 25 "syncing" "Installing the update"
 install_panel_runtime
 
 # Ensure DA backup import directory exists
@@ -1399,7 +1399,7 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-regenerate-secrets.sh" ]]; then
 fi
 if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
   detail "==> Refreshing /usr/local/sbin/opanel-helper and /etc/sudoers.d/opanel"
-  update_progress 40 "runtime" "Refreshing panel helper and runtime"
+  update_progress 40 "runtime" "Installing the update"
   if id -u opanel >/dev/null 2>&1; then
     install -m 0750 -o root -g opanel "$SOURCE_DIR/installer/files/opanel-helper.sh" /usr/local/sbin/opanel-helper
     sed -i "s#^APP_DIR=\"/opt/opanel\"#APP_DIR=\"${APP_DIR}\"#" /usr/local/sbin/opanel-helper
@@ -1530,7 +1530,7 @@ fi
 
 # --- Backend ---------------------------------------------------------------
 detail "==> Updating backend dependencies"
-update_progress 55 "backend" "Updating backend dependencies"
+update_progress 55 "backend" "Installing the update"
 cd "$APP_DIR/backend"
 # Run the venv and pip as the opanel account, not root. backend/ and its .venv
 # are opanel-owned, so a root `pip` / `source activate` executes setup hooks and
@@ -1610,7 +1610,7 @@ if [[ -d "$WAF_SITES_DIR" && -d "$OLS_VHOSTS_DIR_CLEAN" ]]; then
   [[ "$orphans" -gt 0 ]] && log "Removed $orphans orphaned WAF rule file(s) from deleted sites"
 fi
 
-update_progress 62 "backend" "Checking the database schema"
+update_progress 62 "backend" "Updating the database"
 MIGRATE_RUNNER="python"
 id -u opanel >/dev/null 2>&1 && MIGRATE_RUNNER="sudo -u opanel $APP_DIR/backend/.venv/bin/python"
 # Almost every update ships no new migration. `alembic upgrade head` still opens
@@ -1630,10 +1630,10 @@ except Exception:
 PY
 )"
 if [[ "$(printf '%s' "$SCHEMA_AT_HEAD" | tr -cd 'a-z' | tail -c3)" == "yes" ]]; then
-  update_progress 65 "backend" "Database schema up to date"
+  update_progress 65 "backend" "Updating the database"
 else
   log "Updating the database"
-  update_progress 65 "backend" "Running database migrations"
+  update_progress 65 "backend" "Updating the database"
   # Run migrations as the opanel user so the SQLite file ownership stays correct.
   $MIGRATE_RUNNER -c "from app.core.database import run_migrations; run_migrations()"
 fi
@@ -1820,7 +1820,7 @@ systemctl restart opanel-api
 
 # --- Frontend --------------------------------------------------------------
 log "Building the web interface"
-update_progress 80 "frontend" "Building frontend"
+update_progress 80 "frontend" "Building the web interface"
 cd "$APP_DIR/frontend"
 
 # Check Node.js availability
@@ -1904,7 +1904,7 @@ systemctl restart opanel-api
 
 # --- Reload OpenLiteSpeed --------------------------------------------------
 detail "==> Reloading OpenLiteSpeed"
-update_progress 92 "restarting" "Restarting services and reloading OpenLiteSpeed"
+update_progress 92 "restarting" "Restarting the panel"
 migrate_nginx_wordpress_csp_worker_src
 migrate_drop_iframe_blocking
 migrate_backup_layout
@@ -1952,7 +1952,7 @@ systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart
 
 # --- Health check ----------------------------------------------------------
 log "Checking the panel"
-update_progress 98 "healthcheck" "Running API health check"
+update_progress 98 "healthcheck" "Checking the panel"
 for _ in {1..20}; do
   if panel_healthcheck; then
     echo ""
@@ -1967,5 +1967,5 @@ done
 echo "API did not respond. Check logs:"
 echo "  journalctl -u opanel-api -n 100 --no-pager"
 write_update_state "failed" "${UPDATE_REF:-}" "API health check failed after update"
-update_progress 0 "failed" "API health check failed after update"
+update_progress 0 "failed" "The panel did not start after the update"
 exit 1

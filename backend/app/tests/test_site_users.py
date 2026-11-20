@@ -366,7 +366,7 @@ def test_update_skips_migrations_when_the_schema_is_already_at_head():
     update = UPDATE_SCRIPT.read_text(encoding="utf-8")
     # at head: no migration run, and nothing printed about it
     gate = update.split('== "yes" ]]; then', 1)[1].split("else", 1)[0]
-    assert 'update_progress 65 "backend" "Database schema up to date"' in gate
+    assert 'update_progress 65 "backend" "Updating the database"' in gate
     assert "log " not in gate and "run_migrations" not in gate
     assert "get_current_heads()" in update
     assert "from app.core.database import run_migrations; run_migrations()" in update
