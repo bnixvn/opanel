@@ -38,9 +38,6 @@ accesslog {{ access_log }} {
 vhssl {
     keyFile               {{ ssl_key_path }}
     certFile              {{ ssl_cert_path }}
-{% if ssl_ca_path %}
-    caBundlePath          {{ ssl_ca_path }}
-{% endif %}
     certChain             1
 }
 {% endif %}

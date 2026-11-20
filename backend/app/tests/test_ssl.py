@@ -275,8 +275,20 @@ def test_panel_ssl_tools_vhost_includes_cert_block():
     assert "vhssl  {" in helper
     assert 'panel_cert="$(env_get PANEL_SSL_CERT)"' in helper
     assert 'panel_key="$(env_get PANEL_SSL_KEY)"' in helper
-    assert "keyFile                 ${panel_key:-/dev/null}" in helper
-    assert "certFile                ${panel_cert:-/dev/null}" in helper
+    assert "keyFile                 ${panel_key}" in helper
+    assert "certFile                ${panel_cert}" in helper
+
+
+def test_a_panel_without_a_certificate_writes_no_vhssl_for_phpmyadmin():
+    """OpenLiteSpeed 1.9.4 drops a vhost whose certificate does not load: the
+    /dev/null pair written for an http:// panel made phpMyAdmin 404 on every
+    path (production box, 2026-11-20)."""
+    helper = (PROJECT_ROOT / "installer" / "files" / "opanel-helper.sh").read_text(encoding="utf-8")
+    body = helper.split("refresh_tools_ols() {", 1)[1].split("\nOLS_VHOST\n", 1)[0]
+    assert ":-/dev/null}" not in body
+    gate = body.split('local tools_vhssl=""', 1)[1].split("\n  fi\n", 1)[0]
+    assert "if panel_tls_enabled; then" in gate and "vhssl  {" in gate
+    assert "\n${tools_vhssl}\n" in body
 
 
 def test_installer_panel_ssl_uses_helper_webroot_flow():

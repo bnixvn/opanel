@@ -758,6 +758,22 @@ remove_ufw_legacy() {
 # re-runs it regardless.
 HARDEN_SITES_VERSION=2
 
+# An uploaded certificate is served from fullchain.crt (certificate + CA): the
+# vhosts name it once a CA bundle exists, since OpenLiteSpeed 1.9.4 refuses the
+# caBundlePath they used to carry and sent the leaf alone (2026-11-20). The
+# helper writes fullchain.crt with every upload; this fills in any that older
+# releases left without one, before the per-site refresh renders the vhosts.
+ensure_manual_cert_fullchains() {
+  local dir
+  for dir in /usr/local/lsws/conf/opanel/ssl/sites/*/; do
+    dir="${dir%/}"
+    [[ -f "$dir/cert.crt" && -f "$dir/ca.crt" && ! -f "$dir/fullchain.crt" ]] || continue
+    cat "$dir/cert.crt" "$dir/ca.crt" >"$dir/fullchain.crt.tmp" \
+      && install -m 0640 -o root -g opanel "$dir/fullchain.crt.tmp" "$dir/fullchain.crt"
+    rm -f "$dir/fullchain.crt.tmp"
+  done
+}
+
 harden_existing_panel_users() {
   local user home_dir site_dir
   getent group opanel-sftp >/dev/null || return 0
@@ -1620,6 +1636,7 @@ fi
 systemctl enable --now opanel-backup-scheduler.timer >/dev/null 2>&1 || true
 systemctl enable --now opanel-malware-scheduler.timer >/dev/null 2>&1 || true
 
+ensure_manual_cert_fullchains || true
 log "Refreshing managed site config"
 # The per-site refresh has two costs, gated separately:
 #  1. Rewriting every vhost + WAF file (cheap: render + `cmp -s` skip, one
