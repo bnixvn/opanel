@@ -15,6 +15,22 @@
 set -euo pipefail
 
 log()  { echo ""; echo "==> $1"; }
+# What the person running the update sees is the main steps, the result and
+# errors (operator, 2026-11-20: no notes, no "already/skipping" lines). The
+# rest goes to the detail log, kept for when something needs looking into.
+UPDATE_DETAIL_LOG="${UPDATE_DETAIL_LOG:-/var/log/opanel-update-detail.log}"
+detail() { printf '%s\n' "$*" >>"$UPDATE_DETAIL_LOG" 2>/dev/null || true; }
+# An external command, its output into the detail log; shown only if it fails.
+# Not for shell functions: `set -e` does not apply inside an `||` list.
+quiet() {
+  local tmp rc=0
+  tmp="$(mktemp)"
+  "$@" >"$tmp" 2>&1 || rc=$?
+  cat "$tmp" >>"$UPDATE_DETAIL_LOG" 2>/dev/null || true
+  if (( rc != 0 )); then tail -n 40 "$tmp" >&2; fi
+  rm -f "$tmp"
+  return "$rc"
+}
 
 # The panel's own administrator is a hosting account too: its Linux user and
 # private group are both named "admin", and www-data and the panel user sit in
@@ -46,7 +62,7 @@ retire_admin_group_sudo() {
   chmod 0440 "$tmp"
   if visudo -c -f "$tmp" >/dev/null 2>&1; then
     mv -f "$tmp" "$file"
-    echo "  Group admin is no longer trusted by sudo"
+    detail "Group admin is no longer trusted by sudo"
   else
     rm -f "$tmp"
     echo "  (warning: could not rewrite /etc/sudoers safely; left as it is)"
@@ -273,14 +289,14 @@ ensure_git_remote() {
   if current="$(git remote get-url "$GIT_REMOTE" 2>/dev/null)"; then
     for legacy in "${LEGACY_REPO_URLS[@]}"; do
       if [[ "$current" == "$legacy" && "$current" != "$REPO_URL" ]]; then
-        log "Moving git remote ${GIT_REMOTE} from ${current} to ${REPO_URL}"
+        detail "==> Moving git remote ${GIT_REMOTE} from ${current} to ${REPO_URL}"
         git remote set-url "$GIT_REMOTE" "$REPO_URL"
         break
       fi
     done
     return 0
   fi
-  log "Adding git remote ${GIT_REMOTE} -> ${REPO_URL}"
+  detail "==> Adding git remote ${GIT_REMOTE} -> ${REPO_URL}"
   git remote add "$GIT_REMOTE" "$REPO_URL"
 }
 
@@ -324,7 +340,7 @@ download_release_source() {
   archive="${RELEASE_WORK_DIR}/opanel-release.zip"
   extract_dir="${RELEASE_WORK_DIR}/extract"
   archive_url="$(release_archive_url "$tag")"
-  log "Downloading release ${tag}"
+  detail "==> Downloading release ${tag}"
   curl -fL --connect-timeout 10 --max-time 300 "$archive_url" -o "$archive"
   mkdir -p "$extract_dir"
   unzip -q "$archive" -d "$extract_dir"
@@ -335,12 +351,14 @@ download_release_source() {
 
 reset_worktree_to_ref() {
   local ref="$1" branch_name="${2-}"
+  # -q: "Reset branch", "set up to track", "Your branch is up to date" and
+  # "HEAD is now at" said nothing the "HEAD:" line below does not.
   if [[ -n "$branch_name" ]]; then
-    git checkout -f -B "$branch_name" "$ref"
+    git checkout -q -f -B "$branch_name" "$ref"
   else
-    git checkout -f --detach "$ref"
+    git checkout -q -f --detach "$ref"
   fi
-  git reset --hard "$ref"
+  git reset -q --hard "$ref"
 }
 
 current_panel_version() {
@@ -570,7 +588,7 @@ migrate_protect_php_from_autoremove() {
   )
   if [[ ${#packages[@]} -gt 0 ]]; then
     apt-mark manual "${packages[@]}" >/dev/null 2>&1 || true
-    echo "    apt: ${#packages[@]} web server / PHP package(s) held back from autoremove"
+    detail "apt: ${#packages[@]} web server / PHP package(s) held back from autoremove"
   fi
 }
 
@@ -716,7 +734,7 @@ ensure_terminal_tools() {
   command -v unzip >/dev/null 2>&1 || missing+=(unzip)
   command -v zstd >/dev/null 2>&1 || missing+=(zstd)
   if [[ ${#missing[@]} -gt 0 ]]; then
-    log "Installing terminal/file-manager tools: ${missing[*]}"
+    detail "==> Installing terminal/file-manager tools: ${missing[*]}"
     DEBIAN_FRONTEND=noninteractive apt-get update --allow-releaseinfo-change
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
   fi
@@ -740,7 +758,7 @@ ensure_dns_ssl_plugin() {
   # demand, but doing it here keeps the first issuance fast.
   command -v certbot >/dev/null 2>&1 || return 0
   if ! certbot plugins 2>/dev/null | grep -q 'dns-cloudflare'; then
-    log "Installing certbot Cloudflare DNS plugin"
+    detail "==> Installing certbot Cloudflare DNS plugin"
     DEBIAN_FRONTEND=noninteractive apt-get install -y python3-certbot-dns-cloudflare >/dev/null 2>&1 || true
   fi
 }
@@ -769,8 +787,7 @@ harden_existing_panel_users() {
   local do_recursive=1
   if [[ "$FORCE_SITE_REFRESH" != "true" \
         && "$(cat "$harden_marker" 2>/dev/null || true)" == "$HARDEN_SITES_VERSION" ]]; then
-    do_recursive=0
-    log "Panel-user site permissions already at v${HARDEN_SITES_VERSION} -- skipping the recursive re-harden"
+    do_recursive=0  # already at this version: nothing to say (operator, 2026-11-20)
   fi
   while IFS= read -r user; do
     [[ -n "$user" ]] || continue
@@ -780,13 +797,15 @@ harden_existing_panel_users() {
     esac
     id -u "$user" >/dev/null 2>&1 || continue
     getent group "$user" >/dev/null || groupadd "$user" 2>/dev/null || true
-    usermod -aG "$user" www-data 2>/dev/null || true
+    # usermod prints "usermod: no changes" on stdout when there is nothing to
+    # do, once per account on every update: silenced.
+    usermod -aG "$user" www-data >/dev/null 2>&1 || true
     # The panel reads site trees in-process as the opanel account (file manager,
     # backup writer), so it needs group access now that "other" no longer grants
     # any. Mirrors ensure_panel_user_home in the helper.
-    usermod -aG "$user" opanel 2>/dev/null || true
+    usermod -aG "$user" opanel >/dev/null 2>&1 || true
     home_dir="/home/$user"
-    usermod --home "$home_dir" --shell /usr/sbin/nologin --gid "$user" "$user" 2>/dev/null || true
+    usermod --home "$home_dir" --shell /usr/sbin/nologin --gid "$user" "$user" >/dev/null 2>&1 || true
     mkdir -p "$home_dir"
     chown "root:$user" "$home_dir"
     # 0750, not 0751 -- and this has to agree with ensure_panel_user_home in
@@ -872,7 +891,7 @@ install_panel_runtime() {
   if [[ "$panel_url" == https://* && -n "$panel_domain" ]]; then
     _pcert="$(env_get PANEL_SSL_CERT)"; _pkey="$(env_get PANEL_SSL_KEY)"
     if [[ -z "$_pcert" || -z "$_pkey" || ! -f "$_pcert" || ! -f "$_pkey" ]]; then
-      log "SSL cert missing for $panel_domain â€” requesting Let's Encrypt certificate"
+      detail "==> SSL cert missing for $panel_domain â€” requesting Let's Encrypt certificate"
       sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper panel-ssl-install "$panel_domain" "$panel_port" "$(env_get SSL_EMAIL)" || \
         echo "WARNING: certbot failed; panel will use self-signed cert"
     fi
@@ -886,8 +905,8 @@ install_panel_runtime() {
     DEBIAN_FRONTEND=noninteractive apt-get update --allow-releaseinfo-change
     DEBIAN_FRONTEND=noninteractive apt-get install -y acl
   fi
-  usermod -aG opanel-sites opanel 2>/dev/null || true
-  usermod -aG opanel-sites www-data 2>/dev/null || true
+  usermod -aG opanel-sites opanel >/dev/null 2>&1 || true
+  usermod -aG opanel-sites www-data >/dev/null 2>&1 || true
   harden_existing_panel_users
   install -d -o root -g opanel -m 2775 /etc/nginx/conf.d
   chmod g+s /etc/nginx/conf.d 2>/dev/null || true
@@ -920,7 +939,7 @@ SSHD
       systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
     else
       cp "$sshd_backup" "$sshd_config"
-      echo "WARNING: invalid SSHD configuration; skipped opanel SFTP password block"
+      echo "WARNING: invalid SSH configuration; SFTP password login was left as it was"
     fi
   fi
 
@@ -1048,7 +1067,7 @@ SERVICE
   # Refresh tools vhost (phpMyAdmin) via OLS helper â€” handles phpmyadmin
   # signon config, phpIniOverride, SSL, and OLS main config sync.
   # Must invoke as 'opanel' user (helper enforces caller identity).
-  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper refresh-tools 2>/dev/null || write_tools_nginx_config
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper refresh-tools >/dev/null 2>&1 || write_tools_nginx_config
 }
 
 panel_healthcheck() {
@@ -1133,15 +1152,17 @@ backup_db() {
   else
     cp -a "$db_path" "$snap"
   fi
-  echo "DB snapshot saved: $snap"
+  detail "DB snapshot saved: $snap"
   # Keep the 10 most recent snapshots.
   ls -1t "$snap_dir"/opanel-*.db 2>/dev/null | tail -n +11 | xargs -r rm -f
 }
 
 if [[ -n "${opanel_UPDATE_STAGE2:-}" ]]; then
-  log "Continuing with the updater shipped in this release"
+  detail "==> Continuing with the updater shipped in this release"
 else
-  log "Backing up SQLite DB before update"
+  if [[ -f "$UPDATE_DETAIL_LOG" ]]; then mv -f "$UPDATE_DETAIL_LOG" "${UPDATE_DETAIL_LOG}.1" 2>/dev/null || true; fi
+  install -m 0600 /dev/null "$UPDATE_DETAIL_LOG" 2>/dev/null || true
+  log "Backing up the panel database"
   backup_db
   write_update_state "checking" "" "Checking for opanel releases"
   update_progress 5 "checking" "Backing up SQLite DB before update"
@@ -1157,13 +1178,13 @@ if [[ "$SKIP_PULL" == "true" ]]; then
 else
   case "$UPDATE_CHANNEL" in
     release)
-      log "Checking latest release from ${REPO_URL}"
+      log "Downloading the update"
       RELEASE_TAG="$(latest_release_tag)"
       [[ -n "$RELEASE_TAG" ]] || fail "No release tags found matching $RELEASE_PATTERN"
       UPDATE_REF="$RELEASE_TAG"
       write_update_state "updating" "$UPDATE_REF" "Updating opanel from ${UPDATE_REF}"
       download_release_source "$RELEASE_TAG"
-      echo "Release: ${RELEASE_TAG}"
+      detail "Release: ${RELEASE_TAG}"
       ;;
     tag)
       [[ -n "$RELEASE_TAG" ]] || fail "--tag requires a release tag"
@@ -1171,7 +1192,7 @@ else
       write_update_state "updating" "$UPDATE_REF" "Updating opanel from ${UPDATE_REF}"
       update_progress 15 "fetching" "Downloading release ${RELEASE_TAG}"
       download_release_source "$RELEASE_TAG"
-      echo "Release: ${RELEASE_TAG}"
+      detail "Release: ${RELEASE_TAG}"
       ;;
     branch)
       if [[ "$(readlink -f "$SOURCE_DIR")" == "$(readlink -f "$APP_DIR")" ]]; then
@@ -1180,24 +1201,24 @@ else
       if [[ ! -d "$SOURCE_DIR/.git" ]]; then
         if [[ -e "$SOURCE_DIR" && -n "$(ls -A "$SOURCE_DIR" 2>/dev/null)" ]]; then
           source_backup="${SOURCE_DIR}.release-archive-$(date -u +%Y%m%d-%H%M%S)"
-          log "Archiving non-git release source to ${source_backup}"
+          detail "==> Archiving non-git release source to ${source_backup}"
           cd /
           mv "$SOURCE_DIR" "$source_backup"
         fi
-        log "Cloning ${REPO_URL} to ${SOURCE_DIR} with remote ${GIT_REMOTE}"
-        git clone -o "$GIT_REMOTE" "$REPO_URL" "$SOURCE_DIR"
+        detail "==> Cloning ${REPO_URL} to ${SOURCE_DIR} with remote ${GIT_REMOTE}"
+        quiet git clone -o "$GIT_REMOTE" "$REPO_URL" "$SOURCE_DIR"
       fi
       cd "$SOURCE_DIR"
       ensure_git_remote
       remote_branch="${GIT_REMOTE}/${BRANCH}"
-      log "Pulling latest from ${remote_branch}"
+      log "Downloading the update"
       update_progress 15 "fetching" "Pulling latest from ${remote_branch}"
-      git fetch --prune "$GIT_REMOTE" "+refs/heads/${BRANCH}:refs/remotes/${GIT_REMOTE}/${BRANCH}" --tags
+      quiet git fetch --prune "$GIT_REMOTE" "+refs/heads/${BRANCH}:refs/remotes/${GIT_REMOTE}/${BRANCH}" --tags
       UPDATE_REF="$remote_branch"
       write_update_state "updating" "$UPDATE_REF" "Updating opanel from ${UPDATE_REF}"
       reset_worktree_to_ref "$remote_branch" "$BRANCH"
       INSTALLED_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
-      echo "HEAD: $(git rev-parse --short HEAD) - $(git log -1 --pretty=%s)"
+      detail "HEAD: $(git rev-parse --short HEAD) - $(git log -1 --pretty=%s)"
       ;;
     *)
       fail "Unsupported UPDATE_CHANNEL: $UPDATE_CHANNEL"
@@ -1243,7 +1264,7 @@ if [[ "${ALLOW_DOWNGRADE:-0}" != "1" && -n "$INSTALLED_VERSION" && -n "$INCOMING
 If this rollback is deliberate, re-run with ALLOW_DOWNGRADE=1."
   fi
 fi
-[[ -n "$INCOMING_VERSION" ]] && log "Installing opanel ${INCOMING_VERSION} (was ${INSTALLED_VERSION:-unknown})"
+[[ -n "$INCOMING_VERSION" ]] && log "Installing OPanel ${INCOMING_VERSION} (was ${INSTALLED_VERSION:-unknown})"
 
 # bash reads a script as it runs, which is why this one re-execs a copy of
 # itself out of /tmp. That copy is the updater of the release the server is
@@ -1258,7 +1279,7 @@ fi
 # second stage fetches nothing again. BPanel has done the same since 2026-08.
 if [[ -z "${opanel_UPDATE_STAGE2:-}" && -f "$SOURCE_DIR/installer/update.sh" ]] \
   && ! cmp -s "$SOURCE_DIR/installer/update.sh" "${opanel_UPDATE_STABLE_COPY:-/nonexistent}"; then
-  log "The updater changed in this release; continuing with the new one"
+  detail "==> The updater changed in this release; continuing with the new one"
   update_progress 20 "syncing" "Handing over to the updater from ${UPDATE_REF:-the new release}"
   stage2_copy="$(mktemp /tmp/opanel-update-stage2.XXXXXX.sh)"
   cp "$SOURCE_DIR/installer/update.sh" "$stage2_copy"
@@ -1292,7 +1313,7 @@ find /tmp -maxdepth 1 -type f \( -name 'opanel-update.*.sh' -o -name 'opanel-upd
   -mmin +1440 -delete 2>/dev/null || true
 
 # --- Sync code into APP_DIR -------------------------------------------------
-log "Syncing source to $APP_DIR"
+detail "==> Syncing source to $APP_DIR"
 mkdir -p "$APP_DIR"
 
 if command -v rsync >/dev/null 2>&1; then
@@ -1331,13 +1352,13 @@ ensure_panel_runtime_ownership
 if [[ ! -f "$APP_DIR/backend/.env" ]]; then
   fail "$APP_DIR/backend/.env is missing. Run installer/install.sh first or restore .env from backup."
 fi
-log "Installing direct panel runtime"
+detail "==> Installing direct panel runtime"
 update_progress 25 "syncing" "Syncing source into ${APP_DIR}"
 install_panel_runtime
 
 # Ensure DA backup import directory exists
 if id -u opanel >/dev/null 2>&1; then
-  log "Ensuring DirectAdmin backup import directory"
+  detail "==> Ensuring DirectAdmin backup import directory"
   install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/da
   # cPanel archives waiting to be restored (the cPanel Import addon).
   install -d -o opanel -g opanel -m 0750 /home/admin/opanel-backups/cpanel
@@ -1351,7 +1372,7 @@ if id -u opanel >/dev/null 2>&1; then
   chown "$inbox_owner:opanel" /home/admin/backups
   chmod 2770 /home/admin/backups
 fi
-log "Configuring legacy FastCGI cache compatibility"
+detail "==> Configuring legacy FastCGI cache compatibility"
 configure_fastcgi_cache
 ensure_terminal_tools
 ensure_dns_ssl_plugin
@@ -1362,7 +1383,7 @@ elif ! head -n1 "$APP_DIR/backend/.venv/bin/uvicorn" 2>/dev/null | grep -Fq "$AP
   venv_needs_recreate=true
 fi
 if [[ "$venv_needs_recreate" == "true" ]]; then
-  log "Recreating Python virtualenv (missing or stale path)"
+  detail "==> Recreating Python virtualenv (missing or stale path)"
   rm -rf "$APP_DIR/backend/.venv"
   python3 -m venv "$APP_DIR/backend/.venv"
 fi
@@ -1377,7 +1398,7 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-regenerate-secrets.sh" ]]; then
   install -m 0755 -o root -g root "$SOURCE_DIR/installer/files/opanel-regenerate-secrets.sh" /usr/local/sbin/opanel-regenerate-secrets
 fi
 if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
-  log "Refreshing /usr/local/sbin/opanel-helper and /etc/sudoers.d/opanel"
+  detail "==> Refreshing /usr/local/sbin/opanel-helper and /etc/sudoers.d/opanel"
   update_progress 40 "runtime" "Refreshing panel helper and runtime"
   if id -u opanel >/dev/null 2>&1; then
     install -m 0750 -o root -g opanel "$SOURCE_DIR/installer/files/opanel-helper.sh" /usr/local/sbin/opanel-helper
@@ -1402,7 +1423,7 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper panel-cert-sync >/dev/null || \
       echo "  (warning: could not sync the panel certificate store; panel may stay on HTTP)"
   else
-    echo "  (opanel user not found; skipping helper refresh - run install.sh first)"
+    echo "  (warning: the opanel user is missing; run install.sh first)"
   fi
 fi
 
@@ -1416,7 +1437,7 @@ LIMITS_AGENT_SOURCE="$SOURCE_DIR/backend/app/agents/opanel_limits_agent.py"
 if [[ -f /etc/systemd/system/opanel-limits.service && -f "$LIMITS_AGENT_SOURCE" ]] \
   && id -u opanel >/dev/null 2>&1 \
   && ! cmp -s "$LIMITS_AGENT_SOURCE" /usr/local/sbin/opanel-limits-agent; then
-  log "Updating the resource limits agent"
+  detail "==> Updating the resource limits agent"
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper limits-agent-install \
     <"$LIMITS_AGENT_SOURCE" >/dev/null \
     || echo "  (warning: could not update the resource limits agent; stop and start the addon on the Addons page)"
@@ -1459,34 +1480,34 @@ for _ini in /usr/local/lsws/lsphp*/etc/php/*/mods-available/99-opanel.ini; do
   [[ "$_before" != "$_after" ]] && opcache_repaired=$((opcache_repaired + 1))
 done
 if [[ "$opcache_repaired" -gt 0 ]]; then
-  log "Repaired OPcache validate_timestamps in ${opcache_repaired} php.ini file(s)"
+  detail "==> Repaired OPcache validate_timestamps in ${opcache_repaired} php.ini file(s)"
   systemctl restart lshttpd.service 2>/dev/null || /usr/local/lsws/bin/lswsctrl restart 2>/dev/null || true
 fi
 
-log "Removing legacy UFW firewall package"
+detail "==> Removing legacy UFW firewall package"
 remove_ufw_legacy
 rm -f /usr/local/sbin/opanel-rescue-ufw-blocklist
 
 if [[ -f "$SOURCE_DIR/change_IP.sh" ]]; then
-  log "Refreshing panel IP change command"
+  detail "==> Refreshing panel IP change command"
   install -m 0755 -o root -g root "$SOURCE_DIR/change_IP.sh" /usr/local/sbin/opanel-change-ip
 fi
 
 if [[ -f "$SOURCE_DIR/installer/update.sh" ]]; then
-  log "Refreshing panel update command"
+  detail "==> Refreshing panel update command"
   install -m 0755 -o root -g root "$SOURCE_DIR/installer/update.sh" /usr/local/sbin/opanel-update
 fi
 
 if [[ -f "$SOURCE_DIR/installer/files/opanelctl" ]]; then
-  log "Refreshing SSH menu command: opanel"
+  detail "==> Refreshing SSH menu command: opanel"
   install -m 0755 -o root -g root "$SOURCE_DIR/installer/files/opanelctl" /usr/local/sbin/opanel
   ln -sfn /usr/local/sbin/opanel /usr/local/sbin/opanelctl
   sed -i "s#APP_DIR=\"\${APP_DIR:-/opt/opanel}\"#APP_DIR=\"\${APP_DIR:-${APP_DIR}}\"#" /usr/local/sbin/opanel /usr/local/sbin/opanelctl 2>/dev/null || true
 fi
 
-log "Ensuring OpenLiteSpeed ModSecurity WAF engine is installed"
+detail "==> Ensuring OpenLiteSpeed ModSecurity WAF engine is installed"
 if id -u opanel >/dev/null 2>&1; then
-  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper waf-install || \
+  sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper waf-install >/dev/null || \
     echo "WARNING: WAF engine installation failed; continuing without ModSecurity."
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper certbot-auto-renew-install >/dev/null 2>&1 || true
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper blocklist-timer-install >/dev/null 2>&1 || true
@@ -1499,7 +1520,7 @@ if id -u opanel >/dev/null 2>&1; then
     fi
   done
 else
-  echo "  (opanel user not found; skipping WAF install - run install.sh first)"
+  echo "  (warning: the opanel user is missing; run install.sh first)"
 fi
 
 # --- Restore ownership so opanel user can read/write the deploy ------------
@@ -1508,7 +1529,7 @@ if id -u opanel >/dev/null 2>&1; then
 fi
 
 # --- Backend ---------------------------------------------------------------
-log "Updating backend dependencies"
+detail "==> Updating backend dependencies"
 update_progress 55 "backend" "Updating backend dependencies"
 cd "$APP_DIR/backend"
 # Run the venv and pip as the opanel account, not root. backend/ and its .venv
@@ -1519,10 +1540,10 @@ cd "$APP_DIR/backend"
 if [[ ! -d .venv ]]; then
   sudo -u opanel python3 -m venv .venv
 fi
-sudo -u opanel env HOME="$APP_DIR" .venv/bin/pip install --upgrade pip
-sudo -u opanel env HOME="$APP_DIR" .venv/bin/pip install -r requirements.txt
+quiet sudo -u opanel env HOME="$APP_DIR" .venv/bin/pip install --upgrade pip
+quiet sudo -u opanel env HOME="$APP_DIR" .venv/bin/pip install -r requirements.txt
 
-log "Refreshing MariaDB grants"
+detail "==> Refreshing MariaDB grants"
 refresh_opanel_mariadb_grants
 
 # Linux Malware Detect is layered on ClamAV, but only for boxes that already run
@@ -1530,11 +1551,11 @@ refresh_opanel_mariadb_grants
 if dpkg -s clamav-daemon >/dev/null 2>&1 \
    && grep -qE '"malware_scan_enabled"[[:space:]]*:[[:space:]]*true' /var/lib/opanel/panel-settings.json 2>/dev/null \
    && ! command -v maldet >/dev/null 2>&1; then
-  log "Adding Linux Malware Detect to the malware scanner"
+  detail "==> Adding Linux Malware Detect to the malware scanner"
   # opanel-helper only accepts calls made *as the opanel user* via sudo -- the
   # same wrapper every other helper call in this script uses.
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper maldet-ensure >/dev/null 2>&1 \
-    || echo "  (Linux Malware Detect install skipped; ClamAV scanning still works)"
+    || echo "  (warning: Linux Malware Detect could not be installed; ClamAV scanning still works)"
 fi
 
 # The real-time monitor unit is only written when someone enables the feature,
@@ -1543,7 +1564,7 @@ fi
 # forever. Either way the watcher was not running while the panel said it was.
 # Rewrite and restart it here for boxes that have the feature enabled.
 if [[ -f /etc/systemd/system/opanel-maldet-monitor.service ]]    && ! grep -q '^ExecStartPre=' /etc/systemd/system/opanel-maldet-monitor.service    && grep -qE '"malware_realtime_enabled"[[:space:]]*:[[:space:]]*true' /var/lib/opanel/panel-settings.json 2>/dev/null; then
-  log "Repairing the real-time malware monitor service"
+  detail "==> Repairing the real-time malware monitor service"
   systemctl stop opanel-maldet-monitor.service >/dev/null 2>&1 || true
   systemctl reset-failed opanel-maldet-monitor.service >/dev/null 2>&1 || true
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper maldet-monitor enable >/dev/null 2>&1     || echo "  (could not restart the real-time monitor; enable it again from the panel)"
@@ -1560,7 +1581,7 @@ fi
 # OPANEL_INPUT and OPANEL_USER at zero references with an INPUT policy of
 # ACCEPT, and nothing was being filtered at all.
 if command -v iptables >/dev/null 2>&1    && iptables -L INPUT -n --line-numbers 2>/dev/null       | awk '/OPANEL_INPUT/{i=NR} /OPANEL_USER/{u=NR} END{exit !(!i || !u || i < u)}'; then
-  log "Repairing firewall chain jumps"
+  detail "==> Repairing firewall chain jumps"
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper iptables-enable >/dev/null 2>&1     || echo "  (could not repair firewall chains; run Reload on the Firewall page)"
 fi
 
@@ -1568,7 +1589,7 @@ fi
 # logLevel DEBUG, a weekly-only rotation that covered just php_error.log, and an
 # uncapped journal. One live server had 97 GB under /usr/local/lsws/logs and
 # 43 GB under /var/log/openlitespeed against 3.7 MB of actual cache.
-sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper log-hygiene 2>/dev/null   || echo "  (could not apply log hygiene; run: opanel-helper log-hygiene)"
+sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper log-hygiene >/dev/null 2>&1   || echo "  (could not apply log hygiene; run: opanel-helper log-hygiene)"
 
 # Deleting a website removed its vhost but left its WAF rules file behind, so
 # boxes accumulate one orphan per site ever deleted. The helper drops the file
@@ -1609,10 +1630,9 @@ except Exception:
 PY
 )"
 if [[ "$(printf '%s' "$SCHEMA_AT_HEAD" | tr -cd 'a-z' | tail -c3)" == "yes" ]]; then
-  log "Database schema already at head -- skipping migrations"
   update_progress 65 "backend" "Database schema up to date"
 else
-  log "Running database migrations"
+  log "Updating the database"
   update_progress 65 "backend" "Running database migrations"
   # Run migrations as the opanel user so the SQLite file ownership stays correct.
   $MIGRATE_RUNNER -c "from app.core.database import run_migrations; run_migrations()"
@@ -1620,7 +1640,7 @@ fi
 systemctl enable --now opanel-backup-scheduler.timer >/dev/null 2>&1 || true
 systemctl enable --now opanel-malware-scheduler.timer >/dev/null 2>&1 || true
 
-log "Refreshing managed site config"
+detail "==> Refreshing managed site config"
 # The per-site refresh has two costs, gated separately:
 #  1. Rewriting every vhost + WAF file (cheap: render + `cmp -s` skip, one
 #     deferred `ols-sync-main` at the end). Runs whenever the code that shapes a
@@ -1699,12 +1719,12 @@ PY
   fi
   if [[ "$FORCE_SITE_REFRESH" != "true" && "$SITE_REHARDEN" == "0" \
         && -n "$NEW_SITE_FP" && "$NEW_SITE_FP" == "$OLD_SITE_FP" ]]; then
-    log "Site config + permissions unchanged since last update -- skipping the per-site refresh (--refresh-sites to override)"
+    :  # nothing site-facing changed since the last update (--refresh-sites forces it)
   else
     if [[ "$SITE_REHARDEN" == "1" ]]; then
-      log "Re-applying per-site file permissions + rewriting vhost/WAF config"
+      log "Updating websites"
     else
-      log "Rewriting per-site vhost + WAF config (file permissions unchanged)"
+      log "Updating websites"
     fi
     sudo -u opanel env HOME="$APP_DIR" opanel_USE_HELPER=true SITE_REHARDEN="$SITE_REHARDEN" \
       "$APP_DIR/backend/.venv/bin/python" - <<'PY' | _site_refresh_progress
@@ -1749,7 +1769,7 @@ PY
   fi
 fi
 
-log "Compiling backend modules"
+detail "==> Compiling backend modules"
 sudo -u opanel env HOME="$APP_DIR" .venv/bin/python -I -m py_compile \
   app/main.py \
   app/api/auth.py \
@@ -1784,7 +1804,7 @@ sudo -u opanel env HOME="$APP_DIR" .venv/bin/python -I -m py_compile \
   app/schemas/schemas.py \
   app/seed.py
 
-log "Restarting opanel-api"
+detail "==> Restarting opanel-api"
 mkdir -p /etc/systemd/system/opanel-api.service.d
 cat >/etc/systemd/system/opanel-api.service.d/10-opanel-helper.conf <<'SERVICE'
 [Service]
@@ -1799,39 +1819,39 @@ systemctl daemon-reload
 systemctl restart opanel-api
 
 # --- Frontend --------------------------------------------------------------
-log "Building frontend (clean rebuild)"
+log "Building the web interface"
 update_progress 80 "frontend" "Building frontend"
 cd "$APP_DIR/frontend"
 
 # Check Node.js availability
 if ! command -v node >/dev/null 2>&1; then
-  log "WARNING: Node.js not found, installing..."
+  detail "==> WARNING: Node.js not found, installing..."
   DEBIAN_FRONTEND=noninteractive apt-get update --allow-releaseinfo-change
   DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm
 fi
-echo "Node version: $(node --version)"
-echo "npm version: $(npm --version)"
+detail "Node version: $(node --version)"
+detail "npm version: $(npm --version)"
 
 rm -rf dist .vite node_modules/.vite
 
 if [[ ! -d node_modules ]] || [[ package.json -nt node_modules ]]; then
-  log "Installing npm dependencies..."
+  detail "==> Installing npm dependencies..."
   # See build_frontend in install.sh: the committed lockfile is the only thing
   # binding this root-run build to a reviewed dependency graph, so it stays.
   rm -rf node_modules
   # npm install scripts and `npm run build` execute node_modules/.bin code; run
   # them as opanel (which owns frontend/) so root never executes a tree the
   # lower-trust account controls.
-  sudo -u opanel env HOME="$APP_DIR" npm ci || {
-    log "WARNING: npm ci failed (package-lock.json out of sync with package.json)"
-    log "WARNING: falling back to npm install -- installed graph is NOT the reviewed one"
-    sudo -u opanel env HOME="$APP_DIR" npm install
+  quiet sudo -u opanel env HOME="$APP_DIR" npm ci || {
+    detail "==> WARNING: npm ci failed (package-lock.json out of sync with package.json)"
+    detail "==> WARNING: falling back to npm install -- installed graph is NOT the reviewed one"
+    quiet sudo -u opanel env HOME="$APP_DIR" npm install
   }
 fi
 # The Vite build needs ~720 MB besides everything already running; a server
 # with no swap gets some first (installer/files/opanel-ensure-swap.sh).
 if [[ -f "$SOURCE_DIR/installer/files/opanel-ensure-swap.sh" ]]; then
-  bash "$SOURCE_DIR/installer/files/opanel-ensure-swap.sh" || true
+  quiet bash "$SOURCE_DIR/installer/files/opanel-ensure-swap.sh" || true
 fi
 # npm's optional-dependency bug (npm/cli#4828) can leave the wrong platform
 # binding for rolldown (the bundler Vite 8 uses): a glibc box that ended up with
@@ -1847,19 +1867,19 @@ if [[ -d node_modules/rolldown ]]; then
     if [[ ! -d "node_modules/${_rd_pkg}" ]]; then
       _rd_ver="$(sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' node_modules/rolldown/package.json | head -n1)"
       if [[ -n "$_rd_ver" ]]; then
-        log "rolldown binding ${_rd_pkg} missing; installing ${_rd_pkg}@${_rd_ver} (npm optional-deps workaround)"
+        detail "==> rolldown binding ${_rd_pkg} missing; installing ${_rd_pkg}@${_rd_ver} (npm optional-deps workaround)"
         sudo -u opanel env HOME="$APP_DIR" npm install --no-save "${_rd_pkg}@${_rd_ver}" 2>&1 | tail -3 \
-          || log "WARNING: could not install ${_rd_pkg}@${_rd_ver}; the build may fail"
+          || detail "WARNING: could not install ${_rd_pkg}@${_rd_ver}; the build may fail"
       fi
     fi
   fi
 fi
-log "Building frontend with VITE_API_URL=/api..."
-sudo -u opanel env HOME="$APP_DIR" VITE_API_URL=/api npm run build 2>&1 || { log "BUILD FAILED"; exit 1; }
+detail "==> Building frontend with VITE_API_URL=/api..."
+quiet sudo -u opanel env HOME="$APP_DIR" VITE_API_URL=/api npm run build || { log "BUILD FAILED"; exit 1; }
 
 [[ -f dist/index.html ]] || fail "Frontend build failed: dist/index.html missing"
 HASHED=$(grep -oE 'index-[a-zA-Z0-9_-]+\.js' dist/index.html | head -n1 || true)
-echo "Built bundle: ${HASHED:-unknown}"
+detail "Built bundle: ${HASHED:-unknown}"
 
 # Make sure nginx (www-data) can read the freshly built bundle.
 # $APP_DIR is deliberately NOT widened. `chmod o+rX "$APP_DIR"` left
@@ -1879,11 +1899,11 @@ chown -R opanel:opanel "$APP_DIR/backend" 2>/dev/null || true
 # The API mounts /assets only when the built directory exists at process start.
 # Restart once more after the clean frontend rebuild so newly hashed JS/CSS
 # files are served as static assets instead of falling through to index.html.
-log "Restarting opanel-api after frontend build"
+log "Restarting the panel"
 systemctl restart opanel-api
 
 # --- Reload OpenLiteSpeed --------------------------------------------------
-log "Reloading OpenLiteSpeed"
+detail "==> Reloading OpenLiteSpeed"
 update_progress 92 "restarting" "Restarting services and reloading OpenLiteSpeed"
 migrate_nginx_wordpress_csp_worker_src
 migrate_drop_iframe_blocking
@@ -1898,7 +1918,7 @@ migrate_service_update_origins
     "$APP_DIR/backend/.venv/bin/python" -c 'from app.core.database import SessionLocal
 from app.services import waf
 with SessionLocal() as db:
-    print("WAF site rules:", waf.resync_if_rules_changed(db))' ) 2>&1 | tail -1 \
+    print("WAF site rules:", waf.resync_if_rules_changed(db))' ) >>"$UPDATE_DETAIL_LOG" 2>&1 \
   || echo "  (could not refresh the websites' WAF rules; saving a website applies them)"
 
 # --- Serve IPv6 when the box has it ----------------------------------------
@@ -1909,13 +1929,13 @@ if grep -q '^PANEL_BIND_HOST=::' "$APP_DIR/backend/.env" 2>/dev/null && ! host_h
   # not. Left alone the API cannot listen at all, and the panel is what the
   # admin would use to undo it.
   sed -i 's|^PANEL_BIND_HOST=.*|PANEL_BIND_HOST=0.0.0.0|' "$APP_DIR/backend/.env"
-  log "IPv6 is gone from this host; panel bind reset to 0.0.0.0"
+  detail "==> IPv6 is gone from this host; panel bind reset to 0.0.0.0"
 fi
 
 if ! grep -q '^PANEL_BIND_HOST=' "$APP_DIR/backend/.env" 2>/dev/null; then
   if host_has_global_ipv6; then
     printf 'PANEL_BIND_HOST=%s\n' "::" >>"$APP_DIR/backend/.env"
-    log "Detected global IPv6; panel will listen on IPv6 as well"
+    detail "==> Detected global IPv6; panel will listen on IPv6 as well"
   else
     printf 'PANEL_BIND_HOST=%s\n' "0.0.0.0" >>"$APP_DIR/backend/.env"
   fi
@@ -1931,14 +1951,12 @@ fi
 systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart
 
 # --- Health check ----------------------------------------------------------
-log "Health check"
+log "Checking the panel"
 update_progress 98 "healthcheck" "Running API health check"
 for _ in {1..20}; do
   if panel_healthcheck; then
-    echo "API is healthy."
     echo ""
     echo "Update completed."
-    echo "If the browser still shows the old UI, hard refresh (Ctrl + Shift + R)."
     write_update_state "completed" "${UPDATE_REF:-}" "Update completed"
     update_progress 100 "completed" "Update completed"
     exit 0

@@ -45,7 +45,7 @@ def test_a_checkout_on_github_moves_and_any_other_remote_stays(tmp_path):
     legacy = UPDATE[UPDATE.index("LEGACY_REPO_URLS=("):].split("\n", 1)[0]
     script = tmp_path / "t.sh"
     script.write_text(
-        "set -euo pipefail\nlog() { :; }\n"
+        "set -euo pipefail\nlog() { :; }\ndetail() { :; }\n"
         f'REPO_URL="{GITLAB}"\nGIT_REMOTE=origin\n{legacy}\n{function}'
         "cd \"$1\"\nensure_git_remote\ngit remote get-url origin\n",
         encoding="utf-8",

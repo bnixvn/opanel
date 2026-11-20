@@ -77,11 +77,33 @@ def test_the_handover_leaves_nothing_behind():
 
 
 def test_the_second_stage_does_not_snapshot_the_database_twice():
-    assert '''if [[ -n "${opanel_UPDATE_STAGE2:-}" ]]; then
-  log "Continuing with the updater shipped in this release"
-else
-  log "Backing up SQLite DB before update"
-  backup_db''' in _script()
+    block = _script().split('if [[ -n "${opanel_UPDATE_STAGE2:-}" ]]; then\n', 1)[1].split("\nfi\n", 1)[0]
+    stage2, first = block.split("\nelse\n", 1)
+    assert "backup_db" not in stage2
+    assert 'log "Backing up the panel database"\n  backup_db' in first
+
+
+def test_the_update_shows_only_the_main_steps():
+    """Operator, 2026-11-20: no notes, no "already / skipping" lines; the main
+    steps, the result and errors. The rest goes to the detail log."""
+    script = _script()
+    shown = [line.strip() for line in script.splitlines()
+             if line.strip().startswith(("log \"", "echo \"")) or " log \"" in line]
+    for line in shown:
+        lowered = line.lower()
+        assert "already" not in lowered and "skipping" not in lowered, line
+    steps = [line for line in shown if line.startswith('log "')]
+    assert len(steps) <= 12, steps
+    # chatty tools run quietly: their output is shown only when they fail
+    for command in ('quiet git fetch --prune', 'quiet sudo -u opanel env HOME="$APP_DIR" .venv/bin/pip install -r',
+                    'quiet sudo -u opanel env HOME="$APP_DIR" VITE_API_URL=/api npm run build',
+                    'quiet sudo -u opanel env HOME="$APP_DIR" npm ci'):
+        assert command in script, command
+    assert 'usermod --home "$home_dir" --shell /usr/sbin/nologin --gid "$user" "$user" >/dev/null 2>&1' in script
+    assert "hard refresh" not in script and 'echo "API is healthy."' not in script
+    quiet = script[script.index("quiet() {"):]
+    quiet = quiet[:quiet.index("\n}\n")]
+    assert 'tail -n 40 "$tmp" >&2' in quiet and 'return "$rc"' in quiet
 
 
 def test_an_update_installs_the_new_resource_limits_agent_itself():

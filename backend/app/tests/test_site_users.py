@@ -329,7 +329,8 @@ def test_update_skips_per_site_refresh_when_nothing_site_facing_changed():
     assert "site_refresh_fingerprint()" in update
     assert 'backend/app/services/openlitespeed.py' in update
     assert 'backend/app/api/websites.py' in update
-    assert "skipping the per-site refresh" in update
+    # unchanged: the refresh is skipped, silently (operator, 2026-11-20)
+    assert '"$NEW_SITE_FP" == "$OLD_SITE_FP" ]]; then\n    :  # nothing site-facing changed' in update
     assert "--refresh-sites)" in update
     assert 'FORCE_SITE_REFRESH="${FORCE_SITE_REFRESH:-false}"' in update
     # when the loop does run it defers the OLS/WAF reload to the single
@@ -363,7 +364,10 @@ def test_the_expensive_tree_reharden_is_gated_separately_from_the_config_rewrite
 
 def test_update_skips_migrations_when_the_schema_is_already_at_head():
     update = UPDATE_SCRIPT.read_text(encoding="utf-8")
-    assert "Database schema already at head -- skipping migrations" in update
+    # at head: no migration run, and nothing printed about it
+    gate = update.split('== "yes" ]]; then', 1)[1].split("else", 1)[0]
+    assert 'update_progress 65 "backend" "Database schema up to date"' in gate
+    assert "log " not in gate and "run_migrations" not in gate
     assert "get_current_heads()" in update
     assert "from app.core.database import run_migrations; run_migrations()" in update
 
