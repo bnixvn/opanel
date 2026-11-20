@@ -774,6 +774,39 @@ ensure_manual_cert_fullchains() {
   done
 }
 
+# An openlitespeed package upgrade can leave the old master running outside
+# systemd. It keeps the ports and the configuration it loaded, every restart
+# after that dies with "Address already in use", and the sites stay on the old
+# configuration - 404 once their vhosts are rewritten (production box upgraded
+# 1.9.3 -> 1.9.4, 2026-11-20). Healthy means: the unit is active and its MainPID
+# is the one and only master. Anything else gets a clean stop and start.
+ensure_single_ols_master() {
+  local ctl="${OLS_CTL:-/usr/local/lsws/bin/lswsctrl}" unit_pid masters
+  [[ -x "$ctl" ]] || return 0
+  for _ in 1 2 3 4 5; do
+    [[ "$(systemctl is-active lshttpd 2>/dev/null)" == "activating" ]] || break
+    sleep 2
+  done
+  unit_pid="$(systemctl show -p MainPID --value lshttpd 2>/dev/null || echo 0)"
+  masters="$(pgrep -f 'openlitespeed \(lshttpd - main\)' | paste -sd' ' || true)"
+  if [[ "$(systemctl is-active lshttpd 2>/dev/null)" == "active" && -n "$masters" \
+        && "$masters" == "$unit_pid" ]]; then
+    return 0
+  fi
+  systemctl stop lshttpd >/dev/null 2>&1 || true
+  "$ctl" stop >/dev/null 2>&1 || true
+  for _ in $(seq 1 15); do pgrep -f 'openlitespeed \(lshttpd - main\)' >/dev/null || break; sleep 1; done
+  pkill -TERM -f 'openlitespeed \(lshttpd - main\)' 2>/dev/null || true
+  sleep 2
+  pkill -KILL -f 'openlitespeed \((lshttpd|lscgid)' 2>/dev/null || true
+  systemctl reset-failed lshttpd >/dev/null 2>&1 || true
+  if systemctl start lshttpd >/dev/null 2>&1; then
+    echo "  OpenLiteSpeed restarted cleanly"
+  else
+    echo "  (warning: OpenLiteSpeed did not start; run: systemctl start lshttpd)"
+  fi
+}
+
 harden_existing_panel_users() {
   local user home_dir site_dir
   getent group opanel-sftp >/dev/null || return 0
@@ -1946,6 +1979,7 @@ if id -u opanel >/dev/null 2>&1; then
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper ols-sync-main >/dev/null 2>&1 || true
 fi
 systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart
+ensure_single_ols_master
 
 # --- Health check ----------------------------------------------------------
 log "Health check"
