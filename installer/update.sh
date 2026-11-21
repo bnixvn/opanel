@@ -776,6 +776,148 @@ remove_ufw_legacy() {
 # re-runs it regardless.
 HARDEN_SITES_VERSION=2
 
+# An uploaded certificate is served from fullchain.crt (certificate + CA): the
+# vhosts name it once a CA bundle exists, since OpenLiteSpeed 1.9.4 refuses the
+# caBundlePath they used to carry and sent the leaf alone (2026-11-20). The
+# helper writes fullchain.crt with every upload; this fills in any that older
+# releases left without one, before the per-site refresh renders the vhosts.
+ensure_manual_cert_fullchains() {
+  local dir
+  for dir in /usr/local/lsws/conf/opanel/ssl/sites/*/; do
+    dir="${dir%/}"
+    [[ -f "$dir/cert.crt" && -f "$dir/ca.crt" && ! -f "$dir/fullchain.crt" ]] || continue
+    cat "$dir/cert.crt" "$dir/ca.crt" >"$dir/fullchain.crt.tmp" \
+      && install -m 0640 -o root -g opanel "$dir/fullchain.crt.tmp" "$dir/fullchain.crt"
+    rm -f "$dir/fullchain.crt.tmp"
+  done
+}
+
+# An openlitespeed package upgrade can leave the old master running outside
+# systemd. It keeps the ports and the configuration it loaded, every restart
+# after that dies with "Address already in use", and the sites stay on the old
+# configuration - 404 once their vhosts are rewritten (production box upgraded
+# 1.9.3 -> 1.9.4, 2026-11-20). Healthy means: the unit is active and its MainPID
+# is the one and only master. Anything else gets a clean stop and start.
+ensure_single_ols_master() {
+  local ctl="${OLS_CTL:-/usr/local/lsws/bin/lswsctrl}" unit_pid masters
+  [[ -x "$ctl" ]] || return 0
+  for _ in 1 2 3 4 5; do
+    [[ "$(systemctl is-active lshttpd 2>/dev/null)" == "activating" ]] || break
+    sleep 2
+  done
+  unit_pid="$(systemctl show -p MainPID --value lshttpd 2>/dev/null || echo 0)"
+  masters="$(pgrep -f 'openlitespeed \(lshttpd - main\)' | paste -sd' ' || true)"
+  if [[ "$(systemctl is-active lshttpd 2>/dev/null)" == "active" && -n "$masters" \
+        && "$masters" == "$unit_pid" ]]; then
+    return 0
+  fi
+  systemctl stop lshttpd >/dev/null 2>&1 || true
+  "$ctl" stop >/dev/null 2>&1 || true
+  for _ in $(seq 1 15); do pgrep -f 'openlitespeed \(lshttpd - main\)' >/dev/null || break; sleep 1; done
+  pkill -TERM -f 'openlitespeed \(lshttpd - main\)' 2>/dev/null || true
+  sleep 2
+  pkill -KILL -f 'openlitespeed \((lshttpd|lscgid)' 2>/dev/null || true
+  systemctl reset-failed lshttpd >/dev/null 2>&1 || true
+  if systemctl start lshttpd >/dev/null 2>&1; then
+    echo "  OpenLiteSpeed restarted cleanly"
+  else
+    echo "  (warning: OpenLiteSpeed did not start; run: systemctl start lshttpd)"
+  fi
+}
+
+# --- Operating system before the panel --------------------------------------
+# The panel is updated only on a sound system with current packages. A dpkg
+# run cut short -- a provisioning script rebooted the VM while cloud-init's
+# first-boot dist-upgrade was unpacking (163.61.73.54, 2026-11-20) -- left
+# nodejs "reinst-required" with npm already deleted and ~30 packages unpacked
+# but never configured. The panel update that followed died at
+# `npm: command not found` after removing frontend/dist, and the panel served
+# no UI. So before anything of the panel changes: wait out any other package
+# run, finish what dpkg left half done, reinstall what it left broken, then
+# upgrade the OS packages. Detail goes to OS_UPDATE_LOG; the screen gets the
+# step and any error.
+OS_UPDATE_LOG="${OS_UPDATE_LOG:-/var/log/opanel-os-update.log}"
+DPKG_LOCK_WAIT="${DPKG_LOCK_WAIT:-900}"
+# Daemons a package upgrade may stop and not start again. One that ran before
+# the upgrade and does not after is started at once: sites must not stay down
+# for the rest of the update.
+OS_UPDATE_UNITS=(lshttpd.service mariadb.service redis-server.service)
+
+# unattended-upgrades, cloud-init's first-boot upgrade or the Service versions
+# page may be mid-run. apt waits for the lock by itself (DPkg::Lock::Timeout
+# above); a bare dpkg fails at once.
+wait_for_dpkg_lock() {
+  local waited=0
+  command -v fuser >/dev/null 2>&1 || return 0
+  while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
+    (( waited < DPKG_LOCK_WAIT )) || return 1
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
+# Packages dpkg marks "reinstall required" (the R of `iHR`): a run died while
+# it was replacing their files, so some of them are simply missing.
+dpkg_broken_packages() {
+  dpkg-query -W -f='${db:Status-Abbrev}|${binary:Package}\n' 2>/dev/null | awk -F'|' 'substr($1, 3, 1) == "R" { print $2 }'
+}
+
+# `dpkg --audit` lists every package left unpacked, half-configured,
+# half-installed, awaiting triggers or reinstall-required; silent means sound.
+dpkg_is_sound() {
+  [[ -z "$(dpkg --audit 2>/dev/null)" && -z "$(dpkg_broken_packages)" ]]
+}
+
+repair_dpkg() {
+  local broken
+  dpkg_is_sound && return 0
+  echo "--- repairing dpkg"
+  UCF_FORCE_CONFFOLD=1 dpkg --force-confdef --force-confold --configure -a || true
+  apt-get -y -f install || true
+  broken="$(dpkg_broken_packages)"
+  if [[ -n "$broken" ]]; then
+    # shellcheck disable=SC2086 # one package name per word
+    apt-get -y install --reinstall $broken || true
+  fi
+  dpkg_is_sound
+}
+
+# 0: packages sound and current. 1: dpkg is still broken; the panel must not be
+# touched. 2: dpkg is sound but the upgrade did not finish (a mirror down, a
+# package that failed); the panel update goes on, so a flaky mirror cannot
+# hold back a panel fix.
+update_operating_system() {
+  local unit status=0 running=()
+  install -m 0640 /dev/null "$OS_UPDATE_LOG"
+  {
+    echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    wait_for_dpkg_lock || echo "--- another package run still holds the dpkg lock"
+    for unit in "${OS_UPDATE_UNITS[@]}"; do
+      systemctl is-active --quiet "$unit" 2>/dev/null && running+=("$unit")
+    done
+    apt-get update --allow-releaseinfo-change || echo "--- package lists not fully refreshed"
+    if ! repair_dpkg; then
+      status=1
+    elif ! apt-get -y --with-new-pkgs upgrade; then
+      status=2
+    fi
+    # A package whose postinst failed during the upgrade is left half done too.
+    if (( status != 1 )) && ! repair_dpkg; then
+      status=1
+    fi
+    for unit in "${running[@]}"; do
+      systemctl is-active --quiet "$unit" 2>/dev/null && continue
+      if [[ "$unit" == lshttpd.service ]] && getent group opanel-sites >/dev/null 2>&1; then
+        install -d -o www-data -g opanel-sites -m 2770 /tmp/lshttpd /tmp/lshttpd/swap || true
+      fi
+      echo "--- starting $unit again"
+      systemctl start "$unit" || true
+    done
+    echo "=== exit $status"
+  } >>"$OS_UPDATE_LOG" 2>&1
+  return "$status"
+}
+
 harden_existing_panel_users() {
   local user home_dir site_dir
   getent group opanel-sftp >/dev/null || return 0
@@ -1312,6 +1454,20 @@ fi
 find /tmp -maxdepth 1 -type f \( -name 'opanel-update.*.sh' -o -name 'opanel-update-stage2.*.sh' \) \
   -mmin +1440 -delete 2>/dev/null || true
 
+# --- Operating system first -------------------------------------------------
+# Here, after the handover and before the first change to the panel, it runs
+# exactly once per update; a stop here leaves the installed panel as it was.
+log "Updating the operating system"
+update_progress 22 "system" "Updating the operating system"
+os_status=0
+update_operating_system || os_status=$?
+if (( os_status == 1 )); then
+  tail -n 15 "$OS_UPDATE_LOG" >&2 || true
+  fail "Operating system packages are broken and could not be repaired; the panel was not updated. Details: $OS_UPDATE_LOG"
+elif (( os_status != 0 )); then
+  echo "ERROR: some operating system packages could not be updated (details: $OS_UPDATE_LOG)" >&2
+fi
+
 # --- Sync code into APP_DIR -------------------------------------------------
 detail "==> Syncing source to $APP_DIR"
 mkdir -p "$APP_DIR"
@@ -1640,6 +1796,7 @@ fi
 systemctl enable --now opanel-backup-scheduler.timer >/dev/null 2>&1 || true
 systemctl enable --now opanel-malware-scheduler.timer >/dev/null 2>&1 || true
 
+ensure_manual_cert_fullchains || true
 detail "==> Refreshing managed site config"
 # The per-site refresh has two costs, gated separately:
 #  1. Rewriting every vhost + WAF file (cheap: render + `cmp -s` skip, one
@@ -1823,11 +1980,17 @@ log "Building the web interface"
 update_progress 80 "frontend" "Building the web interface"
 cd "$APP_DIR/frontend"
 
-# Check Node.js availability
-if ! command -v node >/dev/null 2>&1; then
-  detail "==> WARNING: Node.js not found, installing..."
-  DEBIAN_FRONTEND=noninteractive apt-get update --allow-releaseinfo-change
-  DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm
+# Check Node.js availability. node without npm is a NodeSource nodejs whose
+# replacement was cut short: that package carries npm itself, and Ubuntu's npm
+# package conflicts with it, so the cure is reinstalling nodejs.
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  detail "==> Installing Node.js"
+  quiet env DEBIAN_FRONTEND=noninteractive apt-get update --allow-releaseinfo-change || true
+  if [[ "$(dpkg-query -W -f='${Version}' nodejs 2>/dev/null)" == *nodesource* ]]; then
+    quiet env DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall nodejs
+  else
+    quiet env DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm
+  fi
 fi
 detail "Node version: $(node --version)"
 detail "npm version: $(npm --version)"
@@ -1949,6 +2112,7 @@ if id -u opanel >/dev/null 2>&1; then
   sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper ols-sync-main >/dev/null 2>&1 || true
 fi
 systemctl restart lshttpd.service || /usr/local/lsws/bin/lswsctrl restart
+ensure_single_ols_master
 
 # --- Health check ----------------------------------------------------------
 log "Checking the panel"

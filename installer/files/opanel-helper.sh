@@ -953,8 +953,18 @@ refresh_tools_ols() {
   # sign-on calls it over https. It called http:// on every server without a
   # panel certificate, got no answer, and single sign-on failed there.
   api_scheme="https"; tools_scheme="http"; pma_secure="false"
+  # OpenLiteSpeed 1.9.4 drops a whole vhost whose certificate cannot be loaded.
+  # A panel without a certificate of its own (an http:// panel URL) got the
+  # /dev/null pair this used to write, and phpMyAdmin answered 404 on every
+  # path once the box was on 1.9.4 (2026-11-20). No certificate, no vhssl: the
+  # HTTPS listener's own certificate covers it.
+  local tools_vhssl=""
   if panel_tls_enabled; then
     tools_scheme="https"; pma_secure="true"
+    tools_vhssl="vhssl  {
+  keyFile                 ${panel_key}
+  certFile                ${panel_cert}
+}"
   fi
   ensure_ols_conf_dir_writable
   # The IP blocklist is not part of the web configuration and has its own
@@ -1024,10 +1034,7 @@ RewriteRule ^/phpmyadmin/(.*)\$ /\$1 [L]
 END_rules
 }
 
-vhssl  {
-  keyFile                 ${panel_key:-/dev/null}
-  certFile                ${panel_cert:-/dev/null}
-}
+${tools_vhssl}
 
 phpIniOverride  {
   php_value               include_path .:/usr/share/php

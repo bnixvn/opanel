@@ -626,6 +626,28 @@ def _proxy_context(domain: str, proxy_url: str, preserve_host: bool) -> dict:
     }
 
 
+def _chained_certificate(cert_path: str | None, ca_path: str | None) -> str | None:
+    """The certificate file OpenLiteSpeed should serve: with a CA bundle, the
+    fullchain.crt the helper writes next to cert.crt (certificate + CA).
+
+    OLS sends exactly what certFile holds (certChain 1); there is no separate
+    CA-bundle setting. The templates used caBundlePath, which OLS 1.9.4 refuses
+    ("Not support [cabundlepath]"), so every site with an uploaded certificate
+    and a CA bundle sent its leaf certificate alone after the 1.9.4 upgrade:
+    browsers that do not fetch the intermediate themselves refused the site
+    (found on a production box, 2026-11-20).
+    """
+    if not cert_path or not ca_path:
+        return cert_path
+    cert = PurePosixPath(cert_path)
+    if cert.name != "cert.crt":
+        return cert_path
+    chained = str(cert.with_name("fullchain.crt"))
+    # Never point OLS at a file that is not there: that takes the site down.
+    # update.sh writes the missing ones before the per-site refresh.
+    return chained if os.path.isfile(chained) else cert_path
+
+
 def _build_context(
     domain: str,
     root_path: str,
@@ -663,6 +685,7 @@ def _build_context(
     safe_doc_root = _effective_document_root(document_root, checked_rewrite)
     safe_aliases = _safe_alias_domains(aliases)
     has_ssl = bool(ssl_cert_path and ssl_key_path)
+    ssl_cert_path = _chained_certificate(ssl_cert_path, ssl_ca_path)
 
     # Determine LSPHP external app
     lsphp_app = ""
