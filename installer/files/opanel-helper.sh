@@ -8836,7 +8836,7 @@ sftp_sub_set_start() {
   [[ "$(cut -d: -f6 <<<"$entry")" == "$start" ]] && return 0
   uid="$(cut -d: -f3 <<<"$entry")"
   gid="$(cut -d: -f4 <<<"$entry")"
-  hash="$(getent shadow "$sub" | cut -d: -f2)"
+  hash="$(getent shadow "$sub" | cut -d: -f2)" || hash=""
   # usermod -d refuses: the uid is the owner's, so it is always "in use" by the
   # owner's PHP. The user is made again: same name, uid, group and password.
   userdel -f "$sub" 2>/dev/null || deny "could not update the Linux user $sub"
