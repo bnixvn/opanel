@@ -1085,16 +1085,6 @@ SSHD
     fi
   fi
 
-  # Extra SFTP logins see their folder through a bind mount. Up to 1.49.6 the
-  # helper made it inside opanel-api's private mount namespace, so sshd never
-  # saw it (the login worked, the folder was empty) until a reboot ran the boot
-  # unit. Run that unit now: it attaches, on the host, every folder that is not
-  # attached yet.
-  if [[ -f /etc/systemd/system/opanel-sftp-mounts.service ]]; then
-    systemctl restart opanel-sftp-mounts.service >/dev/null 2>&1 \
-      || echo "WARNING: could not re-attach the folders of the extra SFTP logins"
-  fi
-
   cat >/usr/local/sbin/opanel-api-start <<STARTER
 #!/usr/bin/env bash
 # Trusted forwarders: only a local reverse proxy (127.0.0.1) is allowed to set
@@ -1588,6 +1578,12 @@ if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
     # matching certificate for whichever hostname a browser asks for.
     sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper panel-cert-sync >/dev/null || \
       echo "  (warning: could not sync the panel certificate store; panel may stay on HTTP)"
+    # Extra SFTP logins made by older versions: each now starts inside its
+    # folder (1.49.8), and its folder is attached where sshd sees it (up to
+    # 1.49.6 it was attached inside the API's own mount namespace, so the login
+    # showed an empty folder until a reboot). Nothing to do on a box without any.
+    sudo -u opanel env HOME="$APP_DIR" sudo -n /usr/local/sbin/opanel-helper sftp-sub-refresh >/dev/null 2>&1 || \
+      echo "  (warning: could not bring the extra SFTP logins up to date)"
   else
     echo "  (warning: the opanel user is missing; run install.sh first)"
   fi
