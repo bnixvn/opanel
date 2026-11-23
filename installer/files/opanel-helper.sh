@@ -8674,6 +8674,46 @@ SFTP_SUB_STATE="${SFTP_JAIL_ROOT}/.accounts"
 SFTP_MOUNT_SCRIPT="/usr/local/sbin/opanel-sftp-mounts"
 SFTP_MOUNT_UNIT="/etc/systemd/system/opanel-sftp-mounts.service"
 
+# Runs a command in the host's mount namespace. opanel-api's sandboxing
+# (PrivateTmp, PrivateDevices, ...) gives it -- and this helper, which it starts
+# through sudo -- a mount namespace of its own, and systemd lets mounts flow
+# into it from the host but never back out. sshd lives in the host's, so a jail
+# bind-mounted from in here came up empty over SFTP: the login worked and the
+# folder showed nothing, while the File Manager saw every file (2026-11-23).
+# PID 1 starts the command instead, in the host's namespace; the mount then
+# reaches the API's namespace too. setns/nsenter is not an option: the API's
+# RestrictNamespaces= forbids it.
+in_host_mount_ns() {
+  if [[ "$(readlink /proc/self/ns/mnt 2>/dev/null)" == "$(readlink /proc/1/ns/mnt 2>/dev/null)" ]]; then
+    "$@"
+  else
+    systemd-run --quiet --wait --pipe --collect -- "$@" </dev/null
+  fi
+}
+
+sftp_jail_attach() {
+  # Bind <folder> onto <mountpoint>, nosuid and nodev, as the host sees it.
+  local src="$1" mp="$2"
+  if in_host_mount_ns mount --bind "$src" "$mp" \
+    && in_host_mount_ns mount -o remount,bind,nosuid,nodev "$mp"; then
+    return 0
+  fi
+  sftp_jail_is_attached "$mp" && in_host_mount_ns umount "$mp" 2>/dev/null
+  return 1
+}
+
+sftp_jail_detach() {
+  # Returns non-zero only when <mountpoint> is still attached afterwards.
+  local mp="$1"
+  sftp_jail_is_attached "$mp" || return 0
+  in_host_mount_ns umount "$mp" 2>/dev/null || in_host_mount_ns umount -l "$mp" 2>/dev/null || true
+  ! sftp_jail_is_attached "$mp"
+}
+
+sftp_jail_is_attached() {
+  in_host_mount_ns mountpoint -q "$1"
+}
+
 require_sftp_sub_name() {
   local owner="$1" sub="$2"
   require_linux_user "$owner"
@@ -8807,9 +8847,8 @@ sftp_sub_create() {
     deny "could not create the Linux user $sub"
   fi
   printf '%s:%s\n' "$sub" "$password" | chpasswd
-  if ! mount --bind "$resolved" "$mp" || ! mount -o remount,bind,nosuid,nodev "$mp"; then
-    mountpoint -q "$mp" && umount "$mp" 2>/dev/null
-    if ! mountpoint -q "$mp"; then
+  if ! sftp_jail_attach "$resolved" "$mp"; then
+    if ! sftp_jail_is_attached "$mp"; then
       userdel -f "$sub" 2>/dev/null || true
       rmdir "$mp" "$jail" 2>/dev/null || true
     fi
@@ -8861,20 +8900,14 @@ sftp_sub_repoint() {
   local m
   while IFS= read -r m; do
     [[ -n "$m" && -d "$m" ]] || continue
-    if mountpoint -q "$m"; then
-      umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
-      mountpoint -q "$m" && deny "could not detach $m from the SFTP jail"
-    fi
+    sftp_jail_detach "$m" || deny "could not detach $m from the SFTP jail"
   done < <(printf '%s\n' "$old_mp"; find "$jail" -mindepth 1 -maxdepth 1 -type d)
   # Clear out stale mountpoint folders left behind, then attach the new one.
   while IFS= read -r m; do
     [[ -n "$m" && "$m" != "$new_mp" ]] && rmdir "$m" 2>/dev/null || true
   done < <(find "$jail" -mindepth 1 -maxdepth 1 -type d)
   install -d -o root -g "$gid" -m 0750 "$new_mp"
-  if ! mount --bind "$resolved" "$new_mp" || ! mount -o remount,bind,nosuid,nodev "$new_mp"; then
-    mountpoint -q "$new_mp" && umount "$new_mp" 2>/dev/null
-    deny "could not attach $target to the SFTP jail"
-  fi
+  sftp_jail_attach "$resolved" "$new_mp" || deny "could not attach $target to the SFTP jail"
   if [[ -f "$SFTP_SUB_STATE" ]]; then
     local tmp
     tmp="$(mktemp "${SFTP_JAIL_ROOT}/.accounts.XXXXXX")"
@@ -8903,10 +8936,7 @@ sftp_sub_delete() {
   local m
   while IFS= read -r m; do
     [[ -n "$m" && -d "$m" ]] || continue
-    if mountpoint -q "$m"; then
-      umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
-      mountpoint -q "$m" && deny "could not detach $m; $sub was left in place"
-    fi
+    sftp_jail_detach "$m" || deny "could not detach $m; $sub was left in place"
   done < <(printf '%s\n' "$mp"; [[ -d "$jail" ]] && find "$jail" -mindepth 1 -maxdepth 1 -type d)
   if id -u "$sub" >/dev/null 2>&1; then
     # -f: the shared uid is always "in use" by the owner's processes. Never -r.
@@ -8914,7 +8944,7 @@ sftp_sub_delete() {
   fi
   if [[ -d "$jail" ]]; then
     while IFS= read -r m; do
-      mountpoint -q "$m" && deny "a folder is still attached under $jail"
+      sftp_jail_is_attached "$m" && deny "a folder is still attached under $jail"
       rmdir "$m" 2>/dev/null || true
     done < <(find "$jail" -mindepth 1 -maxdepth 1 -type d)
     rmdir "$jail" 2>/dev/null || true

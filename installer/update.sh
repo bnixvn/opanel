@@ -1085,6 +1085,16 @@ SSHD
     fi
   fi
 
+  # Extra SFTP logins see their folder through a bind mount. Up to 1.49.6 the
+  # helper made it inside opanel-api's private mount namespace, so sshd never
+  # saw it (the login worked, the folder was empty) until a reboot ran the boot
+  # unit. Run that unit now: it attaches, on the host, every folder that is not
+  # attached yet.
+  if [[ -f /etc/systemd/system/opanel-sftp-mounts.service ]]; then
+    systemctl restart opanel-sftp-mounts.service >/dev/null 2>&1 \
+      || echo "WARNING: could not re-attach the folders of the extra SFTP logins"
+  fi
+
   cat >/usr/local/sbin/opanel-api-start <<STARTER
 #!/usr/bin/env bash
 # Trusted forwarders: only a local reverse proxy (127.0.0.1) is allowed to set
