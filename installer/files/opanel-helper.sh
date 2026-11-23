@@ -8750,17 +8750,32 @@ ensure_sftp_sub_runtime() {
     cat >>"$cfg" <<'SSHD'
 # BEGIN opanel SFTP SUBACCOUNTS
 # Extra SFTP logins for one folder of a hosting account. Each is jailed in
-# /var/lib/opanel-sftp/<name>, which holds a bind mount of that folder.
+# /var/lib/opanel-sftp/<name>, which holds a bind mount of that folder. The
+# login starts inside that folder (its home, a path in the jail).
 Match Group opanel-sftp-sub
     PasswordAuthentication yes
     ChrootDirectory /var/lib/opanel-sftp/%u
-    ForceCommand internal-sftp -d /
+    ForceCommand internal-sftp -d %d
     PermitTTY no
     X11Forwarding no
     AllowTcpForwarding no
     PermitTunnel no
 # END opanel SFTP SUBACCOUNTS
 SSHD
+    if sshd -t >/dev/null 2>&1; then
+      reload_sshd_service
+      rm -f "$backup"
+    else
+      cp -p "$backup" "$cfg"
+      rm -f "$backup"
+      deny "sshd rejected the SFTP account block; sshd_config was left as it was"
+    fi
+  elif sed -n '/^# BEGIN opanel SFTP SUBACCOUNTS$/,/^# END opanel SFTP SUBACCOUNTS$/p' "$cfg" \
+      | grep -q '^[[:space:]]*ForceCommand internal-sftp -d /$'; then
+    # A block written before 1.49.8 started every login at the jail root.
+    backup="$(mktemp)"
+    cp -p "$cfg" "$backup"
+    sed -i '/^# BEGIN opanel SFTP SUBACCOUNTS$/,/^# END opanel SFTP SUBACCOUNTS$/ s#^\([[:space:]]*ForceCommand internal-sftp -d\) /$#\1 %d#' "$cfg"
     if sshd -t >/dev/null 2>&1; then
       reload_sshd_service
       rm -f "$backup"
@@ -8809,6 +8824,46 @@ UNIT
   systemctl enable opanel-sftp-mounts.service >/dev/null 2>&1 || true
 }
 
+# Where a login starts: inside its folder, not at the jail root. The jail root
+# must be root's (sshd's rule for ChrootDirectory), so nothing can be uploaded
+# there, and a client that opened on it -- WinSCP does -- had customers dropping
+# files next to the folder and getting "Permission denied" (2026-11-23). sshd
+# runs internal-sftp -d %d, so the start is the passwd home: "/<folder>", a path
+# inside the jail. A home that does not exist there falls back to the root.
+sftp_sub_set_start() {
+  local sub="$1" start="$2" entry uid gid hash
+  entry="$(getent passwd "$sub")" || deny "Linux user $sub does not exist"
+  [[ "$(cut -d: -f6 <<<"$entry")" == "$start" ]] && return 0
+  uid="$(cut -d: -f3 <<<"$entry")"
+  gid="$(cut -d: -f4 <<<"$entry")"
+  hash="$(getent shadow "$sub" | cut -d: -f2)"
+  # usermod -d refuses: the uid is the owner's, so it is always "in use" by the
+  # owner's PHP. The user is made again: same name, uid, group and password.
+  userdel -f "$sub" 2>/dev/null || deny "could not update the Linux user $sub"
+  useradd -o -u "$uid" -g "$gid" -G "$opanel_SFTP_SUB_GROUP" -d "$start" -M -s /usr/sbin/nologin "$sub" \
+    || deny "could not re-create the Linux user $sub"
+  if [[ -n "$hash" ]]; then
+    printf '%s:%s\n' "$sub" "$hash" | chpasswd -e || deny "could not restore the password of $sub"
+  fi
+}
+
+# Run by update.sh: bring the extra SFTP logins made by older versions up to
+# date -- the sshd block, where each login starts, and its folder attached on
+# the host (1.49.7 and older attached it where sshd could not see it).
+sftp_sub_refresh() {
+  [[ -s "$SFTP_SUB_STATE" ]] || return 0
+  ensure_sftp_sub_runtime
+  local sub owner src mp failed=0
+  while read -r sub owner src mp <&3; do
+    [[ "$sub" =~ ^[a-z_][a-z0-9_-]{2,31}$ && "$mp" == "$SFTP_JAIL_ROOT/$sub/"* ]] || continue
+    id -u "$sub" >/dev/null 2>&1 || continue
+    # A subshell: deny exits, and one login must not stop the others.
+    ( sftp_sub_set_start "$sub" "/${mp#"$SFTP_JAIL_ROOT/$sub/"}" ) || failed=1
+  done 3<"$SFTP_SUB_STATE"
+  systemctl restart opanel-sftp-mounts.service >/dev/null 2>&1 || failed=1
+  [[ "$failed" == 0 ]] || deny "some extra SFTP logins could not be brought up to date"
+}
+
 sftp_sub_create() {
   local owner="$1" sub="$2" target="$3" password resolved uid gid jail name mp
   require_sftp_sub_name "$owner" "$sub"
@@ -8842,7 +8897,8 @@ sftp_sub_create() {
 
   install -d -o root -g "$gid" -m 0750 "$jail"
   install -d -o root -g "$gid" -m 0750 "$mp"
-  if ! useradd -o -u "$uid" -g "$gid" -G "$opanel_SFTP_SUB_GROUP" -d "$jail" -M -s /usr/sbin/nologin "$sub"; then
+  # Home "/<folder>": where the login starts, inside its jail (see sftp_sub_set_start).
+  if ! useradd -o -u "$uid" -g "$gid" -G "$opanel_SFTP_SUB_GROUP" -d "/$name" -M -s /usr/sbin/nologin "$sub"; then
     rmdir "$mp" "$jail" 2>/dev/null || true
     deny "could not create the Linux user $sub"
   fi
@@ -8908,6 +8964,7 @@ sftp_sub_repoint() {
   done < <(find "$jail" -mindepth 1 -maxdepth 1 -type d)
   install -d -o root -g "$gid" -m 0750 "$new_mp"
   sftp_jail_attach "$resolved" "$new_mp" || deny "could not attach $target to the SFTP jail"
+  sftp_sub_set_start "$sub" "/$name"
   if [[ -f "$SFTP_SUB_STATE" ]]; then
     local tmp
     tmp="$(mktemp "${SFTP_JAIL_ROOT}/.accounts.XXXXXX")"
@@ -11122,6 +11179,11 @@ PY
   sftp-sub-delete)
     [[ $# -eq 2 ]] || deny "usage: sftp-sub-delete <owner> <name>"
     sftp_sub_delete "$1" "$2"
+    ;;
+
+  sftp-sub-refresh)
+    [[ $# -eq 0 ]] || deny "usage: sftp-sub-refresh"
+    sftp_sub_refresh
     ;;
 
   # provisioning.suspend_account and unsuspend_account have called these two

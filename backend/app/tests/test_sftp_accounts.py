@@ -266,9 +266,39 @@ def test_jail_mounts_are_made_where_sshd_can_see_them():
     assert "/proc/1/ns/mnt" in runner and "systemd-run" in runner and "--wait" in runner
 
 
-def test_update_reattaches_existing_jails_on_the_host():
+def test_update_brings_existing_logins_up_to_date():
     update = (PROJECT_ROOT / "installer" / "update.sh").read_text(encoding="utf-8")
-    assert "systemctl restart opanel-sftp-mounts.service" in update
+    assert "sudo -n /usr/local/sbin/opanel-helper sftp-sub-refresh" in update
+    refresh = _code("sftp_sub_refresh")
+    # Nothing on a box without extra logins; otherwise the sshd block, each
+    # login's start folder, and the folders attached on the host.
+    assert refresh.index('[[ -s "$SFTP_SUB_STATE" ]] || return 0') < refresh.index("ensure_sftp_sub_runtime")
+    assert "sftp_sub_set_start" in refresh
+    assert "systemctl restart opanel-sftp-mounts.service" in refresh
+    assert "sftp-sub-refresh)" in HELPER.read_text(encoding="utf-8")
+
+
+def test_a_login_starts_inside_its_folder():
+    # The jail root is root's and cannot take uploads; WinSCP opened there and
+    # customers uploaded next to the folder (2026-11-23).
+    runtime = _function("ensure_sftp_sub_runtime")
+    block = runtime[runtime.index("# BEGIN opanel SFTP SUBACCOUNTS"):runtime.index("# END opanel SFTP SUBACCOUNTS")]
+    assert "ForceCommand internal-sftp -d %d" in block
+    assert "internal-sftp -d /\n" not in block
+    # A block from an older version is rewritten in place, checked by sshd -t.
+    upgrade = runtime[runtime.index("elif sed -n"):]
+    assert "ForceCommand internal-sftp -d\\) /$#\\1 %d#" in upgrade and "sshd -t" in upgrade
+    assert '-d "/$name"' in _code("sftp_sub_create")
+    assert 'sftp_sub_set_start "$sub" "/$name"' in _code("sftp_sub_repoint")
+
+
+def test_the_start_folder_is_set_without_usermod():
+    # usermod -d refuses a login that shares the owner's uid ("currently used
+    # by process"): the user is made again with the same password hash.
+    code = _code("sftp_sub_set_start")
+    assert "usermod" not in code
+    assert code.index("getent shadow") < code.index("userdel -f") < code.index("useradd -o") < code.index("chpasswd -e")
+    assert "userdel -r" not in code
 
 
 def test_the_owner_goes_after_its_extra_logins():
