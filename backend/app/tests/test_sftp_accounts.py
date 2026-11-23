@@ -230,9 +230,13 @@ def _function(name: str) -> str:
     return text[start:text.index("\n}\n", start)]
 
 
+def _code(name: str) -> str:
+    return "\n".join(line for line in _function(name).splitlines() if not line.strip().startswith("#"))
+
+
 def test_the_helper_detaches_the_folder_before_removing_the_login():
-    code = "\n".join(line for line in _function("sftp_sub_delete").splitlines() if not line.strip().startswith("#"))
-    assert code.index("umount") < code.index("userdel")
+    code = _code("sftp_sub_delete")
+    assert code.index("sftp_jail_detach") < code.index("userdel")
     # The uid is shared with the owner: -u would kill the owner's PHP, and
     # -r would follow the jail into a folder still attached to it.
     assert "userdel -r" not in code and "pkill -u" not in code
@@ -242,7 +246,29 @@ def test_the_jail_is_root_owned_and_closed_to_other_tenants():
     body = _function("sftp_sub_create")
     assert 'install -d -o root -g "$gid" -m 0750 "$jail"' in body
     assert "useradd -o -u \"$uid\" -g \"$gid\"" in body
-    assert "nosuid,nodev" in body
+    assert "sftp_jail_attach" in body
+    assert "nosuid,nodev" in _function("sftp_jail_attach")
+
+
+def test_jail_mounts_are_made_where_sshd_can_see_them():
+    # opanel-api runs in a mount namespace of its own (PrivateTmp and the
+    # rest), and the helper it calls inherits it. A bind mount made there never
+    # reached sshd: the login worked and the folder was empty (2026-11-23).
+    for name in ("sftp_sub_create", "sftp_sub_repoint", "sftp_sub_delete"):
+        code = _code(name)
+        for raw in ("mount --bind", "mount -o", "umount ", "mountpoint -q"):
+            assert raw not in code, f"{name} runs `{raw}` in the API's namespace"
+    for name in ("sftp_jail_attach", "sftp_jail_detach", "sftp_jail_is_attached"):
+        for line in _code(name).splitlines():
+            if any(raw in line for raw in ("mount --bind", "mount -o", "umount ", "mountpoint -q")):
+                assert "in_host_mount_ns" in line, line
+    runner = _code("in_host_mount_ns")
+    assert "/proc/1/ns/mnt" in runner and "systemd-run" in runner and "--wait" in runner
+
+
+def test_update_reattaches_existing_jails_on_the_host():
+    update = (PROJECT_ROOT / "installer" / "update.sh").read_text(encoding="utf-8")
+    assert "systemctl restart opanel-sftp-mounts.service" in update
 
 
 def test_the_owner_goes_after_its_extra_logins():
