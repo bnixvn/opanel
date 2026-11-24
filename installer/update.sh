@@ -1077,11 +1077,14 @@ Match Group opanel-sftp
     PermitTunnel no
 # END opanel SFTP USERS
 SSHD
-    if sshd -t; then
-      systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
-    else
+    if ! sshd -t; then
       cp "$sshd_backup" "$sshd_config"
       echo "WARNING: invalid SSH configuration; SFTP password login was left as it was"
+    elif ! bash "$SOURCE_DIR/installer/files/opanel-sshd-reload.sh"; then
+      # Every running sshd, not only the one systemd tracks: a fresh VPS can
+      # run a second one that answered half the SFTP logins with an old
+      # configuration ("This account is currently not available").
+      echo "WARNING: sshd did not reload its configuration; SFTP logins may fail until the server restarts"
     fi
   fi
 
@@ -1552,6 +1555,10 @@ fi
 # `opanel regenerate-secrets` runs this (2026-11-10).
 if [[ -f "$SOURCE_DIR/installer/files/opanel-regenerate-secrets.sh" ]]; then
   install -m 0755 -o root -g root "$SOURCE_DIR/installer/files/opanel-regenerate-secrets.sh" /usr/local/sbin/opanel-regenerate-secrets
+fi
+# The helper reloads sshd through it after changing sshd_config.
+if [[ -f "$SOURCE_DIR/installer/files/opanel-sshd-reload.sh" ]]; then
+  install -m 0755 -o root -g root "$SOURCE_DIR/installer/files/opanel-sshd-reload.sh" /usr/local/sbin/opanel-sshd-reload
 fi
 if [[ -f "$SOURCE_DIR/installer/files/opanel-helper.sh" ]]; then
   detail "==> Refreshing /usr/local/sbin/opanel-helper and /etc/sudoers.d/opanel"
