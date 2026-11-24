@@ -285,9 +285,11 @@ def test_a_login_starts_inside_its_folder():
     block = runtime[runtime.index("# BEGIN opanel SFTP SUBACCOUNTS"):runtime.index("# END opanel SFTP SUBACCOUNTS")]
     assert "ForceCommand internal-sftp -d %d" in block
     assert "internal-sftp -d /\n" not in block
-    # A block from an older version is rewritten in place, checked by sshd -t.
+    # A block from an older version is rewritten in place, checked by sshd -t
+    # before every sshd takes it.
     upgrade = runtime[runtime.index("elif sed -n"):]
-    assert "ForceCommand internal-sftp -d\\) /$#\\1 %d#" in upgrade and "sshd -t" in upgrade
+    assert "ForceCommand internal-sftp -d\\) /$#\\1 %d#" in upgrade and "sftp_sub_sshd_commit" in upgrade
+    assert "sshd -t" in _code("sftp_sub_sshd_commit")
     assert '-d "/$name"' in _code("sftp_sub_create")
     assert 'sftp_sub_set_start "$sub" "/$name"' in _code("sftp_sub_repoint")
 

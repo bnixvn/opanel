@@ -279,11 +279,15 @@ Match Group opanel-sftp
     AllowTcpForwarding no
 # END OPANEL SFTP USERS
 SSHD
-    if sshd -t; then
-      systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
-    else
+    if ! sshd -t; then
       cp "$sshd_backup" "$sshd_config"
       echo "WARNING: invalid SSHD configuration; skipped OPanel SFTP password block"
+    elif [[ -x /usr/local/sbin/opanel-sshd-reload ]]; then
+      # Every running sshd, not only the one systemd tracks.
+      /usr/local/sbin/opanel-sshd-reload \
+        || echo "WARNING: sshd did not reload its configuration; SFTP logins may fail until the server restarts"
+    else
+      systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
     fi
   fi
   install -d -o opanel -g opanel -m 0750 "$APP_DIR" "$APP_DIR/backend" "$APP_DIR/frontend"

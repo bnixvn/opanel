@@ -8673,6 +8673,7 @@ SFTP_JAIL_ROOT="/var/lib/opanel-sftp"
 SFTP_SUB_STATE="${SFTP_JAIL_ROOT}/.accounts"
 SFTP_MOUNT_SCRIPT="/usr/local/sbin/opanel-sftp-mounts"
 SFTP_MOUNT_UNIT="/etc/systemd/system/opanel-sftp-mounts.service"
+SSHD_RELOAD="/usr/local/sbin/opanel-sshd-reload"
 
 # Runs a command in the host's mount namespace. opanel-api's sandboxing
 # (PrivateTmp, PrivateDevices, ...) gives it -- and this helper, which it starts
@@ -8733,8 +8734,41 @@ sftp_sub_mountpoint_of() {
   awk -v s="$1" '$1 == s { print $4; exit }' "$SFTP_SUB_STATE"
 }
 
+# Makes sshd take sshd_config as it is now; non-zero when it did not. A plain
+# `systemctl reload ssh || true` reached only the sshd systemd tracks, and a
+# fresh VPS can run a second one that kept the old configuration (see
+# opanel-sshd-reload), and its failures went unseen. PID 1 runs the reload,
+# outside the API's sandbox, as it does the jail mounts.
 reload_sshd_service() {
-  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+  local unit
+  if [[ -x "$SSHD_RELOAD" ]]; then
+    in_host_mount_ns "$SSHD_RELOAD"
+    return
+  fi
+  for unit in ssh.service sshd.service; do
+    systemctl is-active --quiet "$unit" || continue
+    systemctl reload "$unit"
+    return
+  done
+  return 0
+}
+
+# sshd_config (<cfg>) was just changed and <backup> holds it as it was: sshd
+# must accept the change and every running sshd take it, or the old copy goes
+# back and the request is refused.
+sftp_sub_sshd_commit() {
+  local cfg="$1" backup="$2" why=""
+  if ! sshd -t >/dev/null 2>&1; then
+    why="sshd rejected the SFTP account block"
+  elif ! reload_sshd_service >/dev/null; then
+    why="sshd did not reload with the SFTP account block"
+  fi
+  if [[ -n "$why" ]]; then
+    cp -p "$backup" "$cfg"
+    rm -f "$backup"
+    deny "$why; sshd_config was left as it was"
+  fi
+  rm -f "$backup"
 }
 
 ensure_sftp_sub_runtime() {
@@ -8762,28 +8796,14 @@ Match Group opanel-sftp-sub
     PermitTunnel no
 # END opanel SFTP SUBACCOUNTS
 SSHD
-    if sshd -t >/dev/null 2>&1; then
-      reload_sshd_service
-      rm -f "$backup"
-    else
-      cp -p "$backup" "$cfg"
-      rm -f "$backup"
-      deny "sshd rejected the SFTP account block; sshd_config was left as it was"
-    fi
+    sftp_sub_sshd_commit "$cfg" "$backup"
   elif sed -n '/^# BEGIN opanel SFTP SUBACCOUNTS$/,/^# END opanel SFTP SUBACCOUNTS$/p' "$cfg" \
       | grep -q '^[[:space:]]*ForceCommand internal-sftp -d /$'; then
     # A block written before 1.49.8 started every login at the jail root.
     backup="$(mktemp)"
     cp -p "$cfg" "$backup"
     sed -i '/^# BEGIN opanel SFTP SUBACCOUNTS$/,/^# END opanel SFTP SUBACCOUNTS$/ s#^\([[:space:]]*ForceCommand internal-sftp -d\) /$#\1 %d#' "$cfg"
-    if sshd -t >/dev/null 2>&1; then
-      reload_sshd_service
-      rm -f "$backup"
-    else
-      cp -p "$backup" "$cfg"
-      rm -f "$backup"
-      deny "sshd rejected the SFTP account block; sshd_config was left as it was"
-    fi
+    sftp_sub_sshd_commit "$cfg" "$backup"
   fi
 
   cat >"$SFTP_MOUNT_SCRIPT" <<'MOUNTS'

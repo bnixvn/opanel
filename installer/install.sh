@@ -753,7 +753,12 @@ SSHD
     cp "$backup" "$sshd_config"
     fail "Invalid SSHD configuration for opanel SFTP users"
   fi
-  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+  # Every running sshd, not only the one systemd tracks: on a fresh VPS
+  # cloud-init can leave a second one that would keep answering half the
+  # logins without this block ("This account is currently not available").
+  if ! bash "${SCRIPT_DIR}/files/opanel-sshd-reload.sh"; then
+    echo "WARNING: sshd did not reload its configuration; SFTP logins may fail until the server restarts"
+  fi
 }
 
 # The panel's own administrator is a hosting account too: its Linux user and
@@ -805,6 +810,8 @@ install_privileged_helper() {
   install -m 0755 -o root -g root "${SCRIPT_DIR}/files/opanel-change-ip.sh" /usr/local/sbin/opanel-change-ip
   # `opanel regenerate-secrets`: a server cloned from an image gets keys of its own.
   install -m 0755 -o root -g root "${SCRIPT_DIR}/files/opanel-regenerate-secrets.sh" /usr/local/sbin/opanel-regenerate-secrets
+  # The helper reloads sshd through it after changing sshd_config.
+  install -m 0755 -o root -g root "${SCRIPT_DIR}/files/opanel-sshd-reload.sh" /usr/local/sbin/opanel-sshd-reload
 }
 
 install_panel_cli() {
