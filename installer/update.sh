@@ -781,6 +781,30 @@ HARDEN_SITES_VERSION=2
 # caBundlePath they used to carry and sent the leaf alone (2026-11-20). The
 # helper writes fullchain.crt with every upload; this fills in any that older
 # releases left without one, before the per-site refresh renders the vhosts.
+# /etc/opanel 0751 root:opanel. The panel certificate's install and renewal
+# hook set it 0750, and fix-permissions chmod-ed its directories 0640: either
+# way the sites' PHP, running as their own users, could not reach their
+# account's ini in php-users/<user>/ and ran without the disabled functions
+# and the OPcache file cache OPanel showed (160.236.192.53, 2026-11-26).
+# Renewal configs that carry the old hook are given the new one.
+ensure_etc_opanel_traversable() {
+  local conf
+  [[ -d /etc/opanel ]] || return 0
+  chown root:opanel /etc/opanel 2>/dev/null || true
+  chmod 0751 /etc/opanel
+  if [[ -d /etc/opanel/php-users ]]; then
+    chmod 0755 /etc/opanel/php-users
+    find /etc/opanel/php-users -mindepth 1 -maxdepth 1 -type d -exec chmod 0755 {} + 2>/dev/null || true
+    find /etc/opanel/php-users -mindepth 2 -maxdepth 2 -type f -name '*.ini' -exec chmod 0644 {} + 2>/dev/null || true
+  fi
+  [[ -d /etc/opanel/certs ]] && chmod 0750 /etc/opanel/certs
+  for conf in /etc/letsencrypt/renewal/*.conf; do
+    [[ -f "$conf" ]] || continue
+    grep -q -- '-m 0750 /etc/opanel ' "$conf" || continue
+    sed -i 's#-m 0750 /etc/opanel #-m 0751 /etc/opanel #' "$conf"
+  done
+}
+
 ensure_manual_cert_fullchains() {
   local dir
   for dir in /usr/local/lsws/conf/opanel/ssl/sites/*/; do
@@ -1810,6 +1834,7 @@ systemctl enable --now opanel-backup-scheduler.timer >/dev/null 2>&1 || true
 systemctl enable --now opanel-malware-scheduler.timer >/dev/null 2>&1 || true
 
 ensure_manual_cert_fullchains || true
+ensure_etc_opanel_traversable || true
 detail "==> Refreshing managed site config"
 # The per-site refresh has two costs, gated separately:
 #  1. Rewriting every vhost + WAF file (cheap: render + `cmp -s` skip, one
