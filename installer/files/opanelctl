@@ -296,9 +296,13 @@ SSHD
   install -d -o opanel -g opanel -m 0750 "$BACKUP_ROOT"
   install -d -o opanel -g opanel -m 0750 /var/lib/opanel
   if [[ -d /etc/opanel ]]; then
-    chown root:opanel /etc/opanel /etc/opanel/* 2>/dev/null || true
-    chmod 0750 /etc/opanel 2>/dev/null || true
-    chmod 0640 /etc/opanel/* 2>/dev/null || true
+    # 0751: the sites' PHP (their own users) goes through to their account's
+    # ini in php-users/<user>/ (disable_functions, the OPcache file cache)
+    # without listing anything; the panel's key stays 0640 root:opanel. Files
+    # only below: a 0640 directory would shut every user out of php-users.
+    chown root:opanel /etc/opanel 2>/dev/null || true
+    chmod 0751 /etc/opanel 2>/dev/null || true
+    find /etc/opanel -maxdepth 1 -type f -exec chown root:opanel {} + -exec chmod 0640 {} + 2>/dev/null || true
   fi
   chown -R opanel:opanel "$APP_DIR/backend" "$APP_DIR/frontend" 2>/dev/null || true
   chown opanel:opanel /var/lib/opanel 2>/dev/null || true

@@ -3561,7 +3561,7 @@ copy_panel_live_certificate() {
   [[ -n "$panel_host" && "$domain" == "$panel_host" ]] || return 0
   [[ "$(panel_url_scheme)" == "https" ]] || return 0
   [[ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" && -f "/etc/letsencrypt/live/${domain}/privkey.pem" ]] || return 0
-  install -d -o root -g opanel -m 0750 /etc/opanel
+  install -d -o root -g opanel -m 0751 /etc/opanel
   install -m 0640 -o root -g opanel "/etc/letsencrypt/live/${domain}/fullchain.pem" /etc/opanel/panel-fullchain.pem
   install -m 0640 -o root -g opanel "/etc/letsencrypt/live/${domain}/privkey.pem" /etc/opanel/panel-privkey.pem
   if [[ -f "$ENV_FILE" ]]; then
@@ -5632,7 +5632,8 @@ ensure_php_file_cache() {
   chown root:root /var/lib/php/opcache
   chmod 0751 /var/lib/php/opcache
   install -d -o "$user" -g "$user" -m 0700 "$cache"
-  install -d -o root -g root -m 0755 /etc/opanel /etc/opanel/php-users "$ini_dir"
+  install -d -o root -g opanel -m 0751 /etc/opanel
+  install -d -o root -g root -m 0755 /etc/opanel/php-users "$ini_dir"
   printf '%s\n' \
     "; Managed by OPanel (ensure_php_file_cache). Do not edit." \
     "opcache.file_cache=${cache}" \
@@ -5687,7 +5688,8 @@ ensure_php_disable_ini() {
   require_linux_user "$user"
   ini_dir="/etc/opanel/php-users/${user}"
   ini="${ini_dir}/50-opanel-disable-functions.ini"
-  install -d -o root -g root -m 0755 /etc/opanel /etc/opanel/php-users "$ini_dir"
+  install -d -o root -g opanel -m 0751 /etc/opanel
+  install -d -o root -g root -m 0755 /etc/opanel/php-users "$ini_dir"
   list="$(user_php_disable_list "$user")"
   {
     printf '%s\n' "; Managed by OPanel (Website > PHP > Disabled PHP functions). Do not edit."
@@ -10219,7 +10221,7 @@ EOF
       --cert-name "$domain" \
       --agree-tos \
       --non-interactive \
-      --deploy-hook "install -d -o root -g opanel -m 0750 /etc/opanel && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/fullchain.pem /etc/opanel/panel-fullchain.pem && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/privkey.pem /etc/opanel/panel-privkey.pem")
+      --deploy-hook "install -d -o root -g opanel -m 0751 /etc/opanel && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/fullchain.pem /etc/opanel/panel-fullchain.pem && install -m 0640 -o root -g opanel /etc/letsencrypt/live/${domain}/privkey.pem /etc/opanel/panel-privkey.pem")
     if [[ -n "$email" ]]; then
       require_email "$email"
       certbot_args+=(--email "$email")

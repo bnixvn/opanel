@@ -39,7 +39,10 @@ def test_every_new_step_runs_on_every_update():
 def test_the_file_cache_is_the_users_own_and_its_settings_are_roots():
     body = _body("ensure_php_file_cache")
     assert 'install -d -o "$user" -g "$user" -m 0700 "$cache"' in body, "no other uid writes code this PHP runs"
-    assert 'install -d -o root -g root -m 0755 /etc/opanel /etc/opanel/php-users "$ini_dir"' in body
+    # Root's settings, reachable by the site's PHP: /etc/opanel 0751 root:opanel
+    # (test_etc_opanel_traversable), php-users and the account's folder 0755.
+    assert 'install -d -o root -g opanel -m 0751 /etc/opanel' in body
+    assert 'install -d -o root -g root -m 0755 /etc/opanel/php-users "$ini_dir"' in body
     assert "opcache.file_cache=${cache}" in body
     assert '/var/lib/php/opcache/${user}' in body, "outside /home: not in backups, not in the quota"
     # A new site gets it with its PHP folders, and deleting the user removes it.
