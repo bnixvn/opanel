@@ -37,3 +37,12 @@ def test_the_update_repairs_live_boxes_and_their_renewal_hooks():
     assert "chmod 0751 /etc/opanel" in body
     assert "s#-m 0750 /etc/opanel #-m 0751 /etc/opanel #" in body
     assert "\nensure_etc_opanel_traversable || true\n" in UPDATE
+
+
+def test_php_that_started_without_its_ini_is_ended_once():
+    """LSAPI keeps PHP processes across an OpenLiteSpeed restart; those that
+    started while the ini was unreadable keep running without it (.207)."""
+    body = UPDATE.split("ensure_etc_opanel_traversable() {", 1)[1].split("\n}\n", 1)[0]
+    assert body.index("before=\"$(stat -c '%a %U:%G' /etc/opanel") < body.index("chmod 0751 /etc/opanel")
+    assert 'if [[ -n "$before" && "$before" != "751 root:opanel" ]]; then' in body
+    assert "pkill -x lsphp" in body

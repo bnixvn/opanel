@@ -788,8 +788,9 @@ HARDEN_SITES_VERSION=2
 # and the OPcache file cache OPanel showed (160.236.192.53, 2026-11-26).
 # Renewal configs that carry the old hook are given the new one.
 ensure_etc_opanel_traversable() {
-  local conf
+  local conf before
   [[ -d /etc/opanel ]] || return 0
+  before="$(stat -c '%a %U:%G' /etc/opanel 2>/dev/null || true)"
   chown root:opanel /etc/opanel 2>/dev/null || true
   chmod 0751 /etc/opanel
   if [[ -d /etc/opanel/php-users ]]; then
@@ -803,6 +804,13 @@ ensure_etc_opanel_traversable() {
     grep -q -- '-m 0750 /etc/opanel ' "$conf" || continue
     sed -i 's#-m 0750 /etc/opanel #-m 0751 /etc/opanel #' "$conf"
   done
+  # A site's PHP reads its ini when it starts, and LSAPI keeps its processes
+  # across an OpenLiteSpeed restart: those that started while the ini was out
+  # of reach go on without it (.207, 2026-11-27). When the mode was wrong they
+  # are ended; the next request starts them with it. Once, not every update.
+  if [[ -n "$before" && "$before" != "751 root:opanel" ]]; then
+    pkill -x lsphp 2>/dev/null || true
+  fi
 }
 
 ensure_manual_cert_fullchains() {
