@@ -11,6 +11,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES
 
 from app.api import addons, autossl as autossl_api, api_tokens, auth, dashboard, databases, demo, dns, firewall, git, mail, maintenance, mcp, mysql, notifications, panel_settings as panel_settings_api, plans, provisioning, redis_user as redis_user_api, resource_limits, server_monitor, services, sftp, terminal, updates, users, waf, websites, wordpress_manager
 from app.core.config import settings
@@ -83,7 +84,15 @@ app.add_middleware(
 
 # Compress responses (the ~1.8 MB JS bundle drops to ~490 KB, JSON lists shrink
 # too). Matters most for admins reaching the panel over a slow/long-haul link.
-app.add_middleware(GZipMiddleware, minimum_size=700, compresslevel=6)
+# File-manager downloads (application/octet-stream) go out as they are: gzip on
+# the fly drops Content-Length, so the browser could show neither size nor
+# progress, and it burned the API's CPU re-packing zips for no gain.
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=700,
+    compresslevel=6,
+    exclude_content_types=DEFAULT_EXCLUDED_CONTENT_TYPES + ("application/octet-stream",),
+)
 
 
 def _is_potentially_trustworthy_origin(request) -> bool:

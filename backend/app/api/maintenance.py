@@ -10,13 +10,14 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 import paramiko
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import SessionLocal, get_db
+from app.core import downloads
 from app.core.access import can_access_owner, ensure_owner_access, managed_user
 from app.core.permissions import Role, ensure_role, is_admin_role
 from app.core.secrets import decrypt, encrypt
@@ -771,12 +772,15 @@ def list_backups(website_id: int, db: Session = Depends(get_db), current_user: U
 
 
 @router.get("/backups/{website_id}/download")
-def download_backup(website_id: int, backup_file: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def download_backup(website_id: int, backup_file: str, check: bool = False, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     website = get_owned_website(db, current_user, website_id)
     try:
         path = backup.backup_path(website.domain, backup_file)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Backup not found") from exc
+    if check:
+        # See download_file: the page checks first, then lets the browser download.
+        return {"name": path.name, "size": path.stat().st_size}
     return FileResponse(str(path), filename=path.name, media_type="application/gzip")
 
 
@@ -1755,12 +1759,14 @@ def create_user_backup(payload: UserBackupCreate, request: Request, db: Session 
 
 
 @router.get("/user-backups-download")
-def download_user_backup(backup_file: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def download_user_backup(backup_file: str, check: bool = False, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     ensure_role(current_user.role, Role.admin)
     try:
         path = backup.user_backup_path(backup_file)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Backup not found") from exc
+    if check:
+        return {"name": path.name, "size": path.stat().st_size}
     return FileResponse(str(path), filename=path.name, media_type="application/gzip")
 
 
@@ -2800,7 +2806,17 @@ def read_file(website_id: int, path: str, db: Session = Depends(get_db), current
 
 
 @router.get("/files/{website_id}/download")
-def download_file(website_id: int, path: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def download_file(
+    website_id: int,
+    path: str,
+    request: Request,
+    # check=1 runs every check a download runs and answers with JSON instead
+    # of the file, so the page can show why a download is refused before it
+    # hands the real one to the browser's download manager.
+    check: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     website = get_owned_website(db, current_user, website_id)
     try:
         # Opened here, not by FileResponse later: FileResponse opens the path
@@ -2811,22 +2827,10 @@ def download_file(website_id: int, path: str, db: Session = Depends(get_db), cur
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    def _stream():
-        try:
-            while chunk := handle.read(64 * 1024):
-                yield chunk
-        finally:
-            handle.close()
-
-    return StreamingResponse(
-        _stream(),
-        media_type="application/octet-stream",
-        headers={
-            "Content-Length": str(size),
-            "Content-Disposition": f'attachment; filename="{name}"',
-        },
-    )
+    if check:
+        handle.close()
+        return {"name": name, "size": size}
+    return downloads.file_download(handle, name, request.headers)
 
 
 @router.post("/files/mkdir")
