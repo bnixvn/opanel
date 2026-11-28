@@ -3325,20 +3325,24 @@ function App() {
     if (data) { await listFiles(fileListPath); await loadCurrentUser(); }
   }
 
+  // Hand a download to the browser's own download manager: it writes to disk
+  // as the bytes arrive, shows size and progress, and can resume. fetch + blob
+  // held the whole file inside the page and showed nothing until the last
+  // byte, so a 580 MB zip looked dead for minutes, and a reload or a second
+  // click lost it ("File download failed."). check=1 runs the server's checks
+  // first, so a refused download still says why here.
+  async function browserDownload(path, label) {
+    const info = await request(`${path}${path.includes('?') ? '&' : '?'}check=1`, {}, label);
+    if (!info) return;
+    const link = document.createElement('a');
+    link.href = `${API}${path}`;
+    link.download = info.name || '';
+    document.body.appendChild(link); link.click(); link.remove();
+  }
+
   async function downloadFile(path) {
     if (!selectedWebsiteId || !path) return;
-    try {
-      setError(''); setLoading(tr("Downloading file..."));
-      const res = await fetch(`${API}/maintenance/files/${selectedWebsiteId}/download?path=${encodeURIComponent(path)}`, { credentials: 'include' });
-      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Download failed."))); return; }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url; link.download = path.split('/').pop() || 'download';
-      document.body.appendChild(link); link.click(); link.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) { setError(tr("File download failed.")); }
-    finally { setLoading(''); }
+    await browserDownload(`/maintenance/files/${selectedWebsiteId}/download?path=${encodeURIComponent(path)}`, tr("Downloading file..."));
   }
 
   function fileEditorUrl(websiteId, path) {
@@ -4042,35 +4046,11 @@ function App() {
 
   async function downloadBackup(file) {
     if (!selectedWebsiteId) return;
-    try {
-      setError(''); setLoading(tr("Downloading backup..."));
-      const res = await fetch(`${API}/maintenance/backups/${selectedWebsiteId}/download?backup_file=${encodeURIComponent(file)}`, { credentials: 'include' });
-      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Download failed."))); return; }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url; link.download = file.split('/').pop() || 'backup.tar.gz';
-      document.body.appendChild(link); link.click(); link.remove();
-      URL.revokeObjectURL(url);
-      setNotice(tr("Backup downloaded."));
-    } catch (err) { setError(tr("Backup download failed.")); }
-    finally { setLoading(''); }
+    await browserDownload(`/maintenance/backups/${selectedWebsiteId}/download?backup_file=${encodeURIComponent(file)}`, tr("Downloading backup..."));
   }
 
   async function downloadUserBackup(file) {
-    try {
-      setError(''); setLoading(tr("Downloading full user backup..."));
-      const res = await fetch(`${API}/maintenance/user-backups-download?backup_file=${encodeURIComponent(file)}`, { credentials: 'include' });
-      if (!res.ok) { const data = await res.json().catch(() => ({})); if (handleAuthExpired(res.status, data.detail)) return; setError(formatApiError(data.detail, tr("Download failed."))); return; }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url; link.download = file.split('/').pop() || 'user-backup.tar.gz';
-      document.body.appendChild(link); link.click(); link.remove();
-      URL.revokeObjectURL(url);
-      setNotice(tr("Full user backup downloaded."));
-    } catch (err) { setError(tr("Full user backup download failed.")); }
-    finally { setLoading(''); }
+    await browserDownload(`/maintenance/user-backups-download?backup_file=${encodeURIComponent(file)}`, tr("Downloading full user backup..."));
   }
 
   async function restoreUserBackup(file) {
